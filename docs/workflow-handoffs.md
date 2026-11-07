@@ -1358,9 +1358,21 @@ With neither variable set, every path is what it was before this section.
   `update_check` across both roots (upstream `docs/state-root.md`, "Privacy
   settings never get looser when the root moves").
 - **`~/.gstack-extend` does not move.** gstack-extend's own telemetry store and
-  the `telemetry-call` helper stay under `$HOME/.gstack-extend`;
-  `GSTACK_EXTEND_STATE_DIR` governs the store, as [telemetry](telemetry.md)
-  describes.
+  the `telemetry-call` helper stay under `$HOME/.gstack-extend` (writing provenance
+  rows to `analytics/stage-runs/<host>.jsonl`); `GSTACK_EXTEND_STATE_DIR` governs
+  the store, as [telemetry](telemetry.md) describes.
+- **Run-mode provenance signals.** Orchestrators that launch workers set one of
+  `GSTACK_SESSION_KIND=spawned` (or `unattended`), `GSTACK_EXTEND_WORK_ITEM=<id>`
+  or `GSTACK_EXTEND_RUN_MODE=orchestrated` so the provenance row records
+  `run_mode: "orchestrated"` with `run_mode_source` (`"session-kind"`,
+  `"work-item"` or `"run-mode-env"`). Any other non-empty `GSTACK_EXTEND_RUN_MODE`
+  value is ignored and recorded as `run_mode: "unknown"`,
+  `run_mode_source: "unrecognized-run-mode-env"`. A non-default absolute
+  `GSTACK_HOME` is supporting evidence that blocks `user-directed` and records
+  `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"` when no primary
+  orchestration signal is set. An orchestrator that launches workers without any
+  signal will have those runs counted as `user-directed` until it sets one;
+  `run_mode_source` shows why each row got its mode.
 - **Other upstream variables are not followed.** `GSTACK_STATE_DIR` and
   `CLAUDE_PLUGIN_DATA` select an upstream root, but these paths do not read them.
 - **A fresh root is used and created.** When either variable is set to an absolute

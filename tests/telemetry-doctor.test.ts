@@ -1,6 +1,6 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROTOCOL_LINE, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
@@ -561,5 +561,167 @@ describe('gstack helper warning', () => {
     expect(codexReport.warnings.join('\n')).not.toContain('gstack helper unresolvable:');
     expect(codexReport.gstack_logger).toBe(join(codexBin, 'gstack-telemetry-log'));
     expect(codexReport.gstack_config).toBe(join(codexBin, 'gstack-config'));
+  });
+
+  test('doctor telemetry and gstack-extend-telemetry report coexist cleanly with per-host stage-runs files and report skips', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const telBin = join(ROOT, 'bin/gstack-extend-telemetry');
+
+    // Empty state report
+    const emptyRep = spawnSync(telBin, ['report', '--json'], { env: fix.env, encoding: 'utf8' });
+    expect([emptyRep.status, emptyRep.stderr]).toEqual([0, '']);
+    const emptyData = JSON.parse(emptyRep.stdout);
+    expect(emptyData).toMatchObject({
+      v: 1,
+      modes: ['orchestrated', 'user-directed', 'unknown', 'unrecorded'],
+      files: { read: 0, unreadable: 0 },
+      rows: { counted: 0, routed: 0, malformed: 0, invalid: 0, unsupported: 0 },
+    });
+    expect(emptyData.skills.map((s: { skill: string }) => s.skill)).toEqual([...EXPECTED_SETUP_SKILLS]);
+    expect(emptyData.empty_cells).toHaveLength(EXPECTED_SETUP_SKILLS.length * 3);
+
+    const emptyText = spawnSync(telBin, ['report'], { env: fix.env, encoding: 'utf8' });
+    expect([emptyText.status, emptyText.stderr]).toEqual([0, '']);
+    expect(emptyText.stdout).toContain('Stage-runs report — files: read=0 unreadable=0; rows: counted=0');
+    expect(emptyText.stdout).toContain('Empty cells (');
+
+    // Emit user-directed, orchestrated, and unknown v3 runs across two hosts
+    const cliEnv = { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' };
+    expect(spawnSync(telBin, ['start', '--skill', 'extend:roadmap'], { env: cliEnv, encoding: 'utf8' }).status).toBe(0);
+    expect(spawnSync(telBin, ['finish', '--skill', 'extend:roadmap', '--outcome', 'blocked', '--blocked-reason', 'awaiting-spec'], { env: cliEnv, encoding: 'utf8' }).status).toBe(0);
+    expect(fix.ledgerFiles()).toHaveLength(1);
+
+    mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'host_id=host-two\n');
+    const orchEnv = { ...fix.env, GSTACK_EXTEND_RUN_MODE: 'orchestrated' };
+    expect(spawnSync(telBin, ['start', '--skill', 'extend:roadmap'], { env: orchEnv, encoding: 'utf8' }).status).toBe(0);
+    expect(spawnSync(telBin, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: orchEnv, encoding: 'utf8' }).status).toBe(0);
+
+    const unkEnv = { ...fix.env };
+    expect(spawnSync(telBin, ['start', '--skill', 'extend:roadmap'], { env: unkEnv, encoding: 'utf8' }).status).toBe(0);
+    expect(spawnSync(telBin, ['finish', '--skill', 'extend:roadmap', '--outcome', 'error'], { env: unkEnv, encoding: 'utf8' }).status).toBe(0);
+
+    // Plant legacy v2 row (unrecorded), extra non-installed stage row, foreign source, malformed, non-object, invalid v3, future v4, FIFO, and symlink in stage-runs/
+    const legacyPath = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    const legacyV2 = {
+      stage: 'implement', agent: 'claude', model: 'claude-opus-4-6', effort: 'high', rung: 0,
+      outcome: 'success', started_at: '2026-11-01T12:00:00Z', duration_s: 20,
+      session_id: 'sid-secret-legacy-123', repo: 'secret-owner/secret-repo', branch: 'secret-branch',
+      work_item: 'secret-work-item-456', source: 'gstack-extend', route: 'cli', entrypoint_raw: 'cli',
+      schema_version: 2, producer_version: '0.2.0.0', agent_source: 'detected', model_source: 'detected',
+      effort_source: 'detected', workspace_host: null, host_agent_id: 'secret-agent-789',
+    };
+    const extraStageV3 = {
+      ...legacyV2,
+      stage: 'custom-extra-skill',
+      schema_version: 3,
+      run_mode: 'orchestrated',
+      run_mode_source: 'session-kind',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'orchestrated',
+      blocked_reason: null,
+      blocked_reason_source: 'orchestrated',
+    };
+    const foreignRow = { ...legacyV2, source: 'other-tool' };
+    const futureV4 = { ...legacyV2, schema_version: 4 };
+    const invalidRow = { source: 'gstack-extend', schema_version: 3, stage: 'roadmap', run_mode: 'user-directed', outcome: 'not-an-outcome' };
+    writeFileSync(
+      legacyPath,
+      [
+        JSON.stringify(legacyV2),
+        JSON.stringify(extraStageV3),
+        JSON.stringify(foreignRow),
+        '{malformed-json',
+        '[]',
+        JSON.stringify(invalidRow),
+        JSON.stringify(futureV4),
+      ].join('\n') + '\n',
+    );
+    const symlinkHost = join(fix.home, '.gstack-extend/analytics/stage-runs/symlink-host.jsonl');
+    symlinkSync(legacyPath, symlinkHost);
+    const fifoHost = join(fix.home, '.gstack-extend/analytics/stage-runs/fifo-host.jsonl');
+    expect(spawnSync('mkfifo', [fifoHost]).status).toBe(0);
+
+    // Doctor telemetry reads legacy + per-host files and ignores symlinked/FIFO host files
+    const doc = JSON.parse(run(fix.env).stdout);
+    expect(doc.error).toBeUndefined();
+    expect(stat(doc, 'roadmap')).toMatchObject({ activations: 3, completions: 3, paired: 3 });
+
+    // Report JSON aggregates all 4 mode columns, empty_cells, installed + extra skills, and skip counts
+    const rep = spawnSync(telBin, ['report', '--json'], { env: fix.env, encoding: 'utf8' });
+    expect([rep.status, rep.stderr]).toEqual([0, '']);
+    const repData = JSON.parse(rep.stdout);
+    expect(repData).toMatchObject({
+      v: 1,
+      modes: ['orchestrated', 'user-directed', 'unknown', 'unrecorded'],
+      files: { read: 3, unreadable: 2 }, // legacy + 2 host files read; symlink + FIFO unreadable
+      rows: { counted: 5, routed: 1, malformed: 2, invalid: 1, unsupported: 1 },
+    });
+    expect(repData.skills.map((s: { skill: string }) => s.skill)).toEqual([
+      ...EXPECTED_SETUP_SKILLS,
+      'custom-extra-skill',
+    ]);
+    const roadmapEntry = repData.skills.find((s: { skill: string }) => s.skill === 'roadmap');
+    expect(roadmapEntry.installed).toBe(true);
+    expect(roadmapEntry.cells['user-directed']).toMatchObject({
+      runs: 1,
+      outcomes: { success: 0, abort: 0, error: 0, blocked: 1, unknown: 0 },
+    });
+    expect(roadmapEntry.cells.orchestrated).toMatchObject({
+      runs: 1,
+      outcomes: { success: 1, abort: 0, error: 0, blocked: 0, unknown: 0 },
+    });
+    expect(roadmapEntry.cells.unknown).toMatchObject({
+      runs: 1,
+      outcomes: { success: 0, abort: 0, error: 1, blocked: 0, unknown: 0 },
+    });
+    // roadmap has all 3 primary modes populated, so none of its cells are in empty_cells
+    expect(repData.empty_cells.filter(([skill]: [string, string]) => skill === 'roadmap')).toEqual([]);
+
+    const implementEntry = repData.skills.find((s: { skill: string }) => s.skill === 'implement');
+    expect(implementEntry.cells.unrecorded).toMatchObject({
+      runs: 1,
+      outcomes: { success: 1, abort: 0, error: 0, blocked: 0, unknown: 0 },
+      last_seen: '2026-11-01T12:00:00Z',
+    });
+
+    const extraEntry = repData.skills.find((s: { skill: string }) => s.skill === 'custom-extra-skill');
+    expect(extraEntry.installed).toBe(false);
+    expect(extraEntry.cells.orchestrated.runs).toBe(1);
+
+    // Human-readable table output
+    const repText = spawnSync(telBin, ['report'], { env: fix.env, encoding: 'utf8' });
+    expect([repText.status, repText.stderr]).toEqual([0, '']);
+    expect(repText.stdout).toContain('Skill                   Mode           Runs  Success  Blocked  Error  Abort  Unknown  Last seen');
+    expect(repText.stdout).toContain('roadmap');
+    expect(repText.stdout).toContain('implement');
+    expect(repText.stdout).toContain('custom-extra-skill');
+    expect(repText.stdout).toContain('Empty cells (');
+
+    // Neither JSON nor text output leaks paths, session IDs, repos, branches, work items, or host_agent_id
+    for (const out of [rep.stdout, repText.stdout]) {
+      for (const forbidden of [
+        fix.home,
+        'sid-secret-legacy-123',
+        'secret-owner/secret-repo',
+        'secret-branch',
+        'secret-work-item-456',
+        'secret-agent-789',
+        'host-two',
+      ]) {
+        expect(out).not.toContain(forbidden);
+      }
+    }
+
+    // Help and invalid argument handling
+    const helpRep = spawnSync(telBin, ['report', '--help'], { env: fix.env, encoding: 'utf8' });
+    expect([helpRep.status, helpRep.stderr]).toEqual([0, '']);
+    expect(helpRep.stdout).toContain('Usage: gstack-extend-telemetry report [--json]');
+
+    const badArg = spawnSync(telBin, ['report', '--bad-arg'], { env: fix.env, encoding: 'utf8' });
+    expect(badArg.status).toBe(0);
+    expect(badArg.stderr).toContain("telemetry report: invalid arguments; use 'gstack-extend-telemetry report [--json]'");
   });
 });

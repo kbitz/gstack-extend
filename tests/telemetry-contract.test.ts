@@ -270,12 +270,16 @@ function allowedConstants(env: Record<string, string>) {
   const result = spawnSync('python3', ['-B', '-I', '-c',
     'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps({"harnesses": list(telemetry.HARNESSES), '
       + '"outcomes": list(telemetry.OUTCOMES), "routes": list(telemetry.ROUTES), "sources": list(telemetry.SOURCES), '
+      + '"run_modes": list(telemetry.RUN_MODES), "run_mode_sources": list(telemetry.RUN_MODE_SOURCES), '
+      + '"user_signals_sources": list(telemetry.USER_SIGNALS_SOURCES), "blocked_reason_sources": list(telemetry.BLOCKED_REASON_SOURCES), '
       + '"schema_version": telemetry.SCHEMA_VERSION, "release": telemetry.RELEASE_RE.pattern}))',
     LIB,
   ], { env, encoding: 'utf8' });
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout) as {
-    harnesses: string[]; outcomes: string[]; routes: string[]; sources: string[]; schema_version: number; release: string;
+    harnesses: string[]; outcomes: string[]; routes: string[]; sources: string[];
+    run_modes: string[]; run_mode_sources: string[]; user_signals_sources: string[]; blocked_reason_sources: string[];
+    schema_version: number; release: string;
   };
 }
 
@@ -291,12 +295,17 @@ const V1_FIELDS = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'star
   'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw', 'schema_version', 'producer_version',
   'agent_source', 'model_source', 'effort_source'];
 const V2_FIELDS = [...V1_FIELDS, 'workspace_host', 'host_agent_id'];
-// Immutable historical fixture, independent of current docs, schema and writer constants.
+const V3_FIELDS = [...V2_FIELDS, 'run_mode', 'run_mode_source', 'questions', 'user_wait_s', 'resumes',
+  'user_signals_source', 'blocked_reason', 'blocked_reason_source'];
+// Immutable historical fixtures, independent of current docs, schema and writer constants.
 function historicalRow(): Record<string, unknown> {
   return { stage: 'roadmap', agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', rung: 0,
     outcome: 'success', started_at: '2026-09-20T12:00:00Z', duration_s: 3, session_id: 'extend-example',
     repo: 'acme/widget', branch: 'main', work_item: null, source: 'gstack-extend', route: 'cli', entrypoint_raw: 'cli',
     schema_version: 1, producer_version: '1.2.3.4', agent_source: 'detected', model_source: 'detected', effort_source: 'detected' };
+}
+function historicalV2Row(): Record<string, unknown> {
+  return { ...historicalRow(), schema_version: 2, workspace_host: 'paseo', host_agent_id: 'example-agent' };
 }
 const METADATA = V1_FIELDS.slice(15);
 
@@ -474,9 +483,9 @@ function runValidation(input?: string | Buffer, options: { cwd?: string; file?: 
     summary: result.stdout.split('\n').find(line => line.startsWith('summary: ')) ?? '' };
 }
 
-function summaryOf(counts: Partial<Record<'rows' | 'v2' | 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank', number>>) {
+function summaryOf(counts: Partial<Record<'rows' | 'v3' | 'v2' | 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank', number>>) {
   const value = (name: keyof typeof counts) => counts[name] ?? 0;
-  return `summary: rows=${value('rows')} valid=${value('v2') + value('v1') + value('legacy')} v2=${value('v2')} v1=${value('v1')} legacy=${value('legacy')} `
+  return `summary: rows=${value('rows')} valid=${value('v3') + value('v2') + value('v1') + value('legacy')} v3=${value('v3')} v2=${value('v2')} v1=${value('v1')} legacy=${value('legacy')} `
     + `invalid=${value('invalid')} unsupported=${value('unsupported')} routed=${value('routed')} blank=${value('blank')}`;
 }
 
@@ -497,9 +506,17 @@ describe('docs/telemetry.md join contract', () => {
     const agents = backtickedValues(valueCell(doc, 'agent'));
     const outcomes = backtickedValues(valueCell(doc, 'outcome'));
     const routes = backtickedValues(valueCell(doc, 'route'));
+    const runModes = backtickedValues(valueCell(doc, 'run_mode'));
+    const runModeSources = backtickedValues(valueCell(doc, 'run_mode_source'));
+    const userSignalsSources = backtickedValues(valueCell(doc, 'user_signals_source'));
+    const blockedReasonSources = backtickedValues(valueCell(doc, 'blocked_reason_source'));
     if (!same(agents, constants.harnesses)) mismatch('agent values differ from HARNESSES', agents, constants.harnesses);
     if (!same(outcomes, constants.outcomes)) mismatch('outcome values differ from v2 vocabulary', outcomes, constants.outcomes);
     if (!same(routes, constants.routes)) mismatch('route values differ from ROUTES', routes, constants.routes);
+    if (!same(runModes, constants.run_modes)) mismatch('run_mode values differ from RUN_MODES', runModes, constants.run_modes);
+    if (!same(runModeSources, constants.run_mode_sources)) mismatch('run_mode_source values differ from RUN_MODE_SOURCES', runModeSources, constants.run_mode_sources);
+    if (!same(userSignalsSources, constants.user_signals_sources)) mismatch('user_signals_source values differ from USER_SIGNALS_SOURCES', userSignalsSources, constants.user_signals_sources);
+    if (!same(blockedReasonSources, constants.blocked_reason_sources)) mismatch('blocked_reason_source values differ from BLOCKED_REASON_SOURCES', blockedReasonSources, constants.blocked_reason_sources);
     for (const field of ['agent_source', 'model_source', 'effort_source']) {
       const values = backtickedValues(valueCell(doc, field));
       const expected = field === "agent_source" ? constants.sources : [...constants.sources, "requested"];
@@ -720,7 +737,7 @@ print(json.dumps(sorted(labels)))
     expect(joined.status).toBe(0);
     expect(joined.stdout.trim().split(' ').slice(0, 3)).toEqual(['roadmap', sid, 'success']);
     expect(fix.readLedger()[0].work_item).toBe('issue-1234');
-    const ledger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    const ledger = fix.ledgerFiles()[0];
     writeFileSync(ledger, Buffer.concat([Buffer.from([0xff, 0x0a]),
       Buffer.from('{torn\nnull\n[]\n{"work_item":"issue-1234"}\n'), readFileSync(ledger)]));
     const damagedJoin = shell(recipe('row.get("work_item")'));
@@ -751,21 +768,28 @@ describe('docs/stage-runs.schema.json', () => {
     if (!same(defs.outcome_2.enum, constants.outcomes)) mismatch('schema v2 outcome enum differs from OUTCOMES', defs.outcome_2.enum, constants.outcomes);
     if (!same(defs.route.enum, constants.routes)) mismatch('schema route enum differs from ROUTES', defs.route.enum, constants.routes);
     if (!same(defs.evidence_source.enum, constants.sources)) mismatch('schema evidence_source enum differs from SOURCES', defs.evidence_source.enum, constants.sources);
+    if (!same(defs.run_mode.enum, constants.run_modes)) mismatch('schema run_mode enum differs from RUN_MODES', defs.run_mode.enum, constants.run_modes);
+    if (!same(defs.run_mode_source.enum, constants.run_mode_sources)) mismatch('schema run_mode_source enum differs from RUN_MODE_SOURCES', defs.run_mode_source.enum, constants.run_mode_sources);
+    if (!same(defs.user_signals_source.enum, constants.user_signals_sources)) mismatch('schema user_signals_source enum differs from USER_SIGNALS_SOURCES', defs.user_signals_source.enum, constants.user_signals_sources);
+    if (!same(defs.blocked_reason_source.enum, constants.blocked_reason_sources)) mismatch('schema blocked_reason_source enum differs from BLOCKED_REASON_SOURCES', defs.blocked_reason_source.enum, constants.blocked_reason_sources);
     expect(defs.schema_version.const).toBe(1);
-    expect(defs.schema_version_2.const).toBe(constants.schema_version);
+    expect(defs.schema_version_2.const).toBe(2);
+    expect(defs.schema_version_3.const).toBe(constants.schema_version);
     // One release grammar: what the writer accepts from VERSION is exactly what the schema accepts.
     expect(defs.producer_version.pattern).toBe('^[0-9]+(\\.[0-9]+){3}$');
     expect(defs.producer_version_2.pattern).toBe('^' + constants.release + '$');
-    expect(Object.keys(schema.properties)).toEqual(V2_FIELDS);
-    expect(Object.keys(defs.v2.properties)).toEqual(V2_FIELDS);
+    expect(Object.keys(schema.properties)).toEqual(V3_FIELDS);
+    expect(Object.keys(defs.v3.properties)).toEqual(V3_FIELDS);
+    expect(defs.v3.required).toEqual(V3_FIELDS);
+    expect(Object.keys(defs.v2.properties)).toEqual(V3_FIELDS);
     expect(defs.v2.required).toEqual(V2_FIELDS);
-    expect(Object.keys(defs.v1.properties)).toEqual(V2_FIELDS);
+    expect(Object.keys(defs.v1.properties)).toEqual(V3_FIELDS);
     expect(defs.v1.required).toEqual(V1_FIELDS);
     expect(defs.legacy.required).toEqual(V1_FIELDS.slice(0, 13));
-    expect(Object.keys(defs.legacy.properties)).toEqual([...V1_FIELDS.slice(0, 15), ...METADATA.slice(1), ...V2_FIELDS.slice(20)]);
+    expect(Object.keys(defs.legacy.properties)).toEqual([...V1_FIELDS.slice(0, 15), ...METADATA.slice(1), ...V3_FIELDS.slice(20)]);
   });
 
-  test('wrapper-emitted rows are v2, name this checkout as producer, and validate', () => {
+  test('wrapper-emitted rows are v3, name this checkout as producer, and validate', () => {
     const fix = makeTelemetryFixture('off');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const sid = '0c7f2e29-0000-4000-8000-0000000000c1';
@@ -787,8 +811,8 @@ describe('docs/stage-runs.schema.json', () => {
       [run(claude, ['--agent', 'codex']), ['flag', 'unknown', 'unknown']],
     ];
     for (const [row, sources] of cases) {
-      expect(Object.keys(row)).toEqual(V2_FIELDS);
-      expect(row).toMatchObject({ schema_version: 2, producer_version: RELEASE });
+      expect(Object.keys(row)).toEqual(V3_FIELDS);
+      expect(row).toMatchObject({ schema_version: 3, producer_version: RELEASE });
       expect([row.agent_source, row.model_source, row.effort_source]).toEqual(sources);
       expect(verdict(row)).toEqual({ ok: true, errors: [] });
     }
@@ -801,14 +825,14 @@ describe('docs/stage-runs.schema.json', () => {
     expect(runTelemetry(requestedEnv, repo, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runTelemetry(requestedEnv, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     const requestedRow = fix.readLedger().at(-1)!;
-    expect(Object.keys(requestedRow)).toEqual(V2_FIELDS);
+    expect(Object.keys(requestedRow)).toEqual(V3_FIELDS);
     expect(requestedRow).toMatchObject({ model: 'requested-model', effort: 'high' });
     expect([requestedRow.agent_source, requestedRow.model_source, requestedRow.effort_source]).toEqual([
       'unknown', 'requested', 'requested',
     ]);
     expect(verdict(requestedRow)).toEqual({ ok: true, errors: [] });
     const validated = runValidation(JSON.stringify(requestedRow));
-    expect([validated.status, validated.summary]).toEqual([0, summaryOf({ rows: 1, v2: 1 })]);
+    expect([validated.status, validated.summary]).toEqual([0, summaryOf({ rows: 1, v3: 1 })]);
 
     const sid = '0c7f2e29-0000-4000-8000-0000000000c2';
     const claudeEnv = { ...requestedEnv, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid };
@@ -829,15 +853,17 @@ describe('docs/stage-runs.schema.json', () => {
     expect(verdict(detectedRow)).toEqual({ ok: true, errors: [] });
   }, 30_000);
 
-  test('v2 three-part producers pass schema and documented reader; malformed widths fail', () => {
+  test('v2 and v3 three-part producers pass schema and documented reader; malformed widths fail', () => {
     for (const producer_version of ['0.47.0', '1.0.0', '0.47', '0.47.0.0.0']) {
-      const row = { ...quickstartRow(), producer_version };
-      const valid = ['0.47.0', '1.0.0'].includes(producer_version);
-      expect(verdict(row).ok).toBe(valid);
-      const result = runValidation(JSON.stringify(row));
-      expect(result.status).toBe(valid ? 0 : 1);
-      expect(result.summary).toBe(summaryOf(valid ? { rows: 1, v2: 1 } : { rows: 1, invalid: 1 }));
-      if (!valid) expect(result.stderr).toContain('/producer_version pattern');
+      for (const [base, kind] of [[historicalV2Row(), 'v2'], [quickstartRow(), 'v3']] as const) {
+        const row = { ...base, producer_version };
+        const valid = ['0.47.0', '1.0.0'].includes(producer_version);
+        expect(verdict(row).ok).toBe(valid);
+        const result = runValidation(JSON.stringify(row));
+        expect(result.status).toBe(valid ? 0 : 1);
+        expect(result.summary).toBe(summaryOf(valid ? { rows: 1, [kind]: 1 } : { rows: 1, invalid: 1 }));
+        if (!valid) expect(result.stderr).toContain('/producer_version pattern');
+      }
     }
   });
 
@@ -881,7 +907,7 @@ describe('docs/stage-runs.schema.json', () => {
       [{ schema_version: 0 }, ['/schema_version const']],
       [{ schema_version: -1 }, ['/schema_version const']],
       [{ schema_version: 1.5 }, ['/schema_version type', '/schema_version const']],
-      [{ schema_version: 3 }, ['/schema_version const']],
+      [{ schema_version: 4 }, ['/schema_version const']],
       [{ schema_version: true }, ['/schema_version type', '/schema_version const']],
       [{ stage: 7 }, ['/stage type']],
       [{ agent: 'gpt' }, ['/agent enum']],
@@ -923,20 +949,25 @@ describe('docs/stage-runs.schema.json', () => {
     }
   });
 
-  test('quota runs enrichment is unchanged by v1 metadata, and the metadata never reaches skill-usage', () => {
+  test('quota runs enrichment is unchanged by v1/v2/v3 metadata and per-host files, and the metadata never reaches skill-usage', () => {
     const quota = quotaFixture();
     try {
       const attribution = { agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor', agent_source: 'flag' };
       const v1 = { ...historicalRow(), ...attribution };
-      const v2 = { ...quickstartRow(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
+      const v2 = { ...historicalV2Row(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
+      const v3 = { ...quickstartRow(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
       expect(v1.schema_version).toBe(1);
       expect(v2.schema_version).toBe(2);
+      expect(v3.schema_version).toBe(3);
       const ledger = join(quota.env.GSTACK_EXTEND_STATE_DIR, 'analytics/stage-runs.jsonl');
-      mkdirSync(dirname(ledger), { recursive: true });
+      const hostDir = join(quota.env.GSTACK_EXTEND_STATE_DIR, 'analytics/stage-runs');
+      mkdirSync(hostDir, { recursive: true });
       writeFileSync(ledger, [{ ...v1, session_id: 'run-v1' }, { ...legacyOf(v1), session_id: 'run-legacy' },
         { ...v2, producer_version: '0.47.0', session_id: 'run-v2' },
-        { ...v2, producer_version: '1.0.0', session_id: 'run-v2-stable' }]
+        { ...v2, producer_version: '1.0.0', session_id: 'run-v2-stable' },
+        { ...v2, model: 'stale-model', session_id: 'run-v3' }]
         .map(row => JSON.stringify(row)).join('\n') + '\n');
+      writeFileSync(join(hostDir, 'host-a.jsonl'), JSON.stringify({ ...v3, session_id: 'run-v3' }) + '\n');
       const enriched = (sid: string) => {
         for (const [phase, at] of [['start', '2026-09-23T12:00:00Z'], ['finish', '2026-09-23T12:01:00Z']]) {
           const sample = quota.run(['sample', '--session-id', sid, '--phase', phase, '--json'], { GSTACK_EXTEND_QUOTA_NOW: at });
@@ -946,13 +977,14 @@ describe('docs/stage-runs.schema.json', () => {
         expect(runs.status).toBe(0);
         const rows = JSON.parse(runs.stdout).runs as Array<Record<string, unknown>>;
         expect(rows.length).toBeGreaterThan(0);
-        for (const row of rows) for (const field of [...METADATA, ...V2_FIELDS.slice(20)]) expect(row).not.toHaveProperty(field);
+        for (const row of rows) for (const field of [...METADATA, ...V3_FIELDS.slice(20)]) expect(row).not.toHaveProperty(field);
         return rows.map(row => ({ stage: row.stage, agent: row.agent, model: row.model, effort: row.effort, route: row.route }));
       };
       const expected = { stage: 'roadmap', agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor' };
       expect(enriched('run-v1')).toEqual([expected]);
       expect(enriched('run-v2')).toEqual([expected]);
       expect(enriched('run-v2-stable')).toEqual([expected]);
+      expect(enriched('run-v3')).toEqual([expected]);
       expect(enriched('run-legacy')).toEqual([expected]);
     } finally {
       quota.cleanup();
@@ -960,9 +992,9 @@ describe('docs/stage-runs.schema.json', () => {
     const fix = makeTelemetryFixture('community');
     expect(runTelemetry(fix.env, ROOT, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runTelemetry(fix.env, ROOT, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(Object.keys(fix.readLedger()[0])).toEqual(V2_FIELDS);
+    expect(Object.keys(fix.readLedger()[0])).toEqual(V3_FIELDS);
     const usage = JSON.stringify(fix.readJsonl()) + fix.readStubArgs().join('\n');
-    for (const field of [...METADATA, ...V2_FIELDS.slice(20), 'producer', 'schema-version', 'detected']) expect(usage).not.toContain(field);
+    for (const field of [...METADATA, ...V3_FIELDS.slice(20), 'producer', 'schema-version', 'detected']) expect(usage).not.toContain(field);
   }, 60_000);
 
   test('schema-only and VERSION-only diffs reach their suites; any lockfile change runs everything', () => {
@@ -997,7 +1029,7 @@ describe('docs/telemetry.md schema validation command', () => {
     const result = runValidation();
     expect([result.status, result.stdout.trimEnd(), result.stderr]).toEqual([0, success, '']);
     const v1 = quickstartRow();
-    const shown = runValidation([{ ...v1, model: null, model_source: 'flag' }, { ...v1, schema_version: 3 }]
+    const shown = runValidation([{ ...v1, model: null, model_source: 'flag' }, { ...v1, schema_version: 4 }]
       .map(row => JSON.stringify(row)).join('\n') + '\n');
     expect([shown.status, (shown.stderr + shown.stdout).trimEnd()]).toEqual([1, failure]);
     expect(shown.stdout).toBe(shown.summary + '\n');
@@ -1028,7 +1060,7 @@ describe('docs/telemetry.md schema validation command', () => {
     [JSON.stringify({ ...v1(), schema_version: 1.5 }), 'invalid'],
     [JSON.stringify({ ...v1(), schema_version: 0 }), 'invalid'],
     [JSON.stringify({ ...v1(), schema_version: -3 }), 'invalid'],
-    [JSON.stringify({ ...v1(), schema_version: 3 }), 'unsupported'],
+    [JSON.stringify({ ...v1(), schema_version: 4 }), 'unsupported'],
     [JSON.stringify({ ...v1(), schema_version: 7 }), 'unsupported'],
     ['{"stage": "roadmap",', 'invalid'],
     ['null', 'invalid'],
@@ -1637,7 +1669,7 @@ describe('workflow metrics contract (Track 24A)', () => {
     const row = fix.readLedger()[0];
     expect(verdict(row)).toEqual({ ok: true, errors: [] });
     expect(row.session_id).toBe(sid);
-    expect(row.schema_version).toBe(2);
+    expect(row.schema_version).toBe(3);
     expect(fix.readJsonl().map(r => r.event_type)).toEqual(['skill_start', 'skill_run']);
     const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
     expect(JSON.parse(read.stdout).status).toBe('ok');
@@ -1738,7 +1770,8 @@ describe('workflow metrics contract (Track 24A)', () => {
       const rows = join(upstream, 'analytics', 'skill-usage.jsonl');
       expect(existsSync(rows), `${mode} logger wrote its sink under the isolated upstream directory`).toBe(true);
       expect(readFileSync(rows, 'utf8')).toContain('review-and-prep');
-      expect(existsSync(join(extendState, 'analytics', 'stage-runs.jsonl'))).toBe(true);
+      const hostFiles = readdirSync(join(extendState, 'analytics', 'stage-runs')).filter(f => f.endsWith('.jsonl'));
+      expect(hostFiles).toHaveLength(1);
       // Nothing reached the runner's HOME stores (the fixture HOME stands in for the real one).
       expect(existsSync(join(fix.home, '.gstack', 'analytics', 'skill-usage.jsonl'))).toBe(false);
       expect(existsSync(join(fix.home, '.gstack-extend'))).toBe(false);
@@ -2126,31 +2159,65 @@ describe('workflow metrics contract (Track 24A)', () => {
 
 
 describe('Track 26A v2 regression bundles G1–G5/G8', () => {
-  test('G4 historical branches remain closed; v2 reserves vocabulary without widening history', () => {
+  test('G4 historical branches remain closed; v2 and v3 reserve vocabulary without widening history', () => {
     const v1 = historicalRow();
-    const v2 = quickstartRow();
+    const v2 = historicalV2Row();
+    const v3 = quickstartRow();
     const legacy = legacyOf(v1);
     expect(verdict(v1).ok).toBe(true);
     expect(verdict(v2).ok).toBe(true);
+    expect(verdict(v3).ok).toBe(true);
     for (const old of [legacy, v1]) {
-      for (const field of ['workspace_host', 'host_agent_id']) {
-        expect(verdict({ ...old, [field]: v2[field] }).ok).toBe(false);
+      for (const field of ['workspace_host', 'host_agent_id', ...V3_FIELDS.slice(22)]) {
+        expect(verdict({ ...old, [field]: v3[field] }).ok).toBe(false);
       }
       for (const patch of [{ outcome: 'blocked' }, { model_source: 'requested' }, { effort_source: 'requested' }]) {
         expect(verdict({ ...old, ...patch }).ok).toBe(false);
       }
     }
+    for (const field of V3_FIELDS.slice(22)) {
+      expect(verdict({ ...v2, [field]: v3[field] }).ok).toBe(false);
+    }
     for (const field of V2_FIELDS) {
       const { [field]: _gone, ...row } = v2;
       expect([field, verdict(row).ok]).toEqual([field, false]);
     }
+    for (const field of V3_FIELDS) {
+      const { [field]: _gone, ...row } = v3;
+      expect([field, verdict(row).ok]).toEqual([field, false]);
+    }
     for (const patch of [
-      { schema_version: 1 }, { schema_version: 3 }, { extra: true },
+      { schema_version: 1 }, { schema_version: 3 }, { schema_version: 4 }, { extra: true },
       { workspace_host: 'unknown', host_agent_id: 'invented' }, { workspace_host: 'other' },
       { host_agent_id: 3 }, { agent_source: 'requested' },
       { model: null, model_source: 'requested' }, { effort: null, effort_source: 'requested' },
       { model_source: 'unknown' }, { effort_source: 'unknown' },
     ]) expect([patch, verdict({ ...v2, ...patch }).ok]).toEqual([patch, false]);
+    for (const patch of [
+      { run_mode: 'user-directed', run_mode_source: 'session-kind' },
+      { run_mode: 'orchestrated', run_mode_source: 'cli' },
+      { run_mode: 'orchestrated', run_mode_source: 'Paseo' },
+      { run_mode: 'unknown', run_mode_source: 'work-item' },
+      { run_mode: 'unknown', run_mode_source: 'run-mode-env' },
+      { run_mode: 'orchestrated', run_mode_source: 'session-kind', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason_source: 'orchestrated' },
+      { run_mode: 'user-directed', run_mode_source: 'cli', user_signals_source: 'orchestrated', blocked_reason_source: 'not-blocked' },
+      { run_mode: 'user-directed', run_mode_source: 'cli', user_signals_source: 'session-log-unavailable', blocked_reason_source: 'orchestrated' },
+      { user_signals_source: 'session-log', questions: null, user_wait_s: 0, resumes: 0 },
+      { user_signals_source: 'session-log-unavailable', questions: 0 },
+      { outcome: 'blocked', blocked_reason: null, blocked_reason_source: 'flag' },
+      { outcome: 'blocked', blocked_reason: 'missing-env', blocked_reason_source: 'not-supplied' },
+      { outcome: 'blocked', blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { outcome: 'success', blocked_reason: 'missing-env', blocked_reason_source: 'flag' },
+      { outcome: 'success', blocked_reason: null, blocked_reason_source: 'not-supplied' },
+    ]) expect([patch, verdict({ ...v3, ...patch }).ok]).toEqual([patch, false]);
+    for (const validPatch of [
+      { run_mode: 'orchestrated', run_mode_source: 'session-kind', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
+      { run_mode: 'orchestrated', run_mode_source: 'work-item', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
+      { run_mode: 'orchestrated', run_mode_source: 'run-mode-env', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
+      { run_mode: 'user-directed', run_mode_source: 'cli', user_signals_source: 'session-log', questions: 1, user_wait_s: 12, resumes: 1, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { run_mode: 'user-directed', run_mode_source: 'Paseo', outcome: 'blocked', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason: 'awaiting-user', blocked_reason_source: 'flag' },
+      { run_mode: 'unknown', run_mode_source: 'launcher-state-root', outcome: 'blocked', user_signals_source: 'no-harness', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-supplied' },
+    ]) expect([validPatch, verdict({ ...v3, ...validPatch }).ok]).toEqual([validPatch, true]);
     for (const source of ['flag', 'detected', 'requested']) {
       const row = { ...v2, model_source: source, effort_source: source, outcome: 'blocked' };
       expect(verdict(row).ok).toBe(true);
@@ -2175,9 +2242,9 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
         '--model', 'fixture-model', '--effort', 'high']);
       expect([result.status, result.stdout, result.stderr]).toEqual([0, '', '']);
       const row = fix.readLedger().at(-1)!;
-      expect(row).toMatchObject({ schema_version: 2, workspace_host: host, host_agent_id: id, agent, route,
+      expect(row).toMatchObject({ schema_version: 3, workspace_host: host, host_agent_id: id, agent, route,
         model: 'fixture-model', effort: 'high', model_source: 'flag', effort_source: 'flag', outcome: 'blocked' });
-      expect(Object.keys(row)).toEqual(V2_FIELDS);
+      expect(Object.keys(row)).toEqual(V3_FIELDS);
       expect(verdict(row).ok).toBe(true);
       rows.push(row);
     };
@@ -2229,7 +2296,7 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     expect(rows.at(-1)).toMatchObject({ workspace_host: 'paseo', host_agent_id: null });
     expect(verdict({ ...quickstartRow(), host_agent_id: 'bad\ud800id' }).ok).toBe(false);
     const result = runValidation(rows.map(row => JSON.stringify(row)).join('\n'));
-    expect([result.status, result.stderr, result.summary]).toEqual([0, '', summaryOf({ rows: rows.length, v2: rows.length })]);
+    expect([result.status, result.stderr, result.summary]).toEqual([0, '', summaryOf({ rows: rows.length, v3: rows.length })]);
     const rejected = ids.filter(([, accepted]) => accepted === null).map(([id]) => ({ ...quickstartRow(), host_agent_id: id }));
     rejected.push({ ...quickstartRow(), host_agent_id: 'bad\ud800id' });
     const invalid = runValidation(rejected.map(row => JSON.stringify(row)).join('\n'));
@@ -2246,7 +2313,7 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     for (const ending of ['\n', '\r', '\r\n']) {
       const input = [padded, unicode, invalid, routed].map(row => JSON.stringify(row)).join(ending) + ending;
       const result = runValidation(input);
-      expect([result.status, result.summary]).toEqual([1, summaryOf({ rows: 4, v2: 2, invalid: 1, routed: 1 })]);
+      expect([result.status, result.summary]).toEqual([1, summaryOf({ rows: 4, v3: 2, invalid: 1, routed: 1 })]);
       expect(readFileSync(result.file!, 'utf8')).toBe(input);
       expect(result.stderr).not.toMatch(/a\u2028b|a\u2029b/);
     }
@@ -2254,38 +2321,42 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
 
   test('G5 positive safe integer dispatch, mixed versions and frozen old-reader rollback are read-only', () => {
     const base = JSON.stringify(historicalRow());
-    const versions: Array<[string, 'v1' | 'v2' | 'unsupported' | 'invalid']> = [
-      ['1', 'v1'], ['2', 'v2'], ['3', 'unsupported'], ['9007199254740991', 'unsupported'],
+    const versions: Array<[string, 'v1' | 'v2' | 'v3' | 'unsupported' | 'invalid']> = [
+      ['1', 'v1'], ['2', 'v2'], ['3', 'v3'], ['4', 'unsupported'], ['9007199254740991', 'unsupported'],
       ['9007199254740992', 'invalid'], ['9007199254740993', 'invalid'], ['1e400', 'invalid'],
       ['0', 'invalid'], ['-1', 'invalid'], ['1.5', 'invalid'], ['"1"', 'invalid'], ['null', 'invalid'], ['true', 'invalid'],
     ];
     for (const [version, kind] of versions) {
-      const row = kind === 'v2' ? JSON.stringify(quickstartRow()) : base.replace('"schema_version":1', '"schema_version":' + version);
+      const row = kind === 'v2'
+        ? JSON.stringify(historicalV2Row())
+        : kind === 'v3'
+          ? JSON.stringify(quickstartRow())
+          : base.replace('"schema_version":1', '"schema_version":' + version);
       const result = runValidation(row);
-      expect([version, result.status, result.summary]).toEqual([version, ['v1', 'v2'].includes(kind) ? 0 : 1,
+      expect([version, result.status, result.summary]).toEqual([version, ['v1', 'v2', 'v3'].includes(kind) ? 0 : 1,
         summaryOf({ rows: 1, [kind]: 1 })]);
       expect(readFileSync(result.file!, 'utf8')).toBe(row);
-      if (kind === 'unsupported') expect(result.stderr).toContain(`version ${version} is newer than supported versions 1/2`);
+      if (kind === 'unsupported') expect(result.stderr).toContain(`version ${version} is newer than supported versions 1/2/3`);
       if (kind === 'invalid') {
         expect(result.stderr).toContain('not a positive safe integer');
         expect(result.stderr).not.toContain('version ' + version);
       }
     }
-    const text = [legacyOf(historicalRow()), historicalRow(), quickstartRow()].map(row => JSON.stringify(row)).join('\n');
-    expect(runValidation(text).summary).toBe(summaryOf({ rows: 3, legacy: 1, v1: 1, v2: 1 }));
+    const text = [legacyOf(historicalRow()), historicalRow(), historicalV2Row(), quickstartRow()].map(row => JSON.stringify(row)).join('\n');
+    expect(runValidation(text).summary).toBe(summaryOf({ rows: 4, legacy: 1, v1: 1, v2: 1, v3: 1 }));
     const fix = makeTelemetryFixture('off');
     const file = join(fix.home, 'old-reader.jsonl');
     writeFileSync(file, text);
     const old = spawnSync('bash', ['-c', V1_READER_COMMAND], { cwd: ROOT,
       env: { HOME: fix.home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', STAGE_RUNS_FILE: file }, encoding: 'utf8' });
     expect([old.status, old.stderr]).toEqual([1, '']);
-    expect(old.stdout).toContain('summary: rows=3 valid=2 v1=1 legacy=1 invalid=0 unsupported=1');
+    expect(old.stdout).toContain('summary: rows=4 valid=2 v1=1 legacy=1 invalid=0 unsupported=2');
     expect(old.stdout).toContain('newer than this contract');
     expect(readFileSync(file, 'utf8')).toBe(text);
   }, 30_000);
 
   test('G8 all actual remediation targets the producer/reader and preserves cross-version input', () => {
-    const v2 = quickstartRow();
+    const v2 = historicalV2Row();
     const rows = [
       { ...v2, schema_version: 1 }, { ...v2, workspace_host: 'unknown' },
       { ...v2, host_agent_id: 'bad\nPRIVATE-ID' }, { ...v2, extra: 'PRIVATE-EXTRA' },
@@ -2333,7 +2404,7 @@ describe('paused and resumed segments', () => {
     expect(new Set(rows.map(row => row.session_id)).size).toBe(2);
     expect(rows.map(row => row.work_item)).toEqual(['item-53a', 'item-53a']);
     for (const row of rows) {
-      expect(row.schema_version).toBe(2);
+      expect(row.schema_version).toBe(3);
       expect(verdict(row)).toEqual({ ok: true, errors: [] });
     }
 
@@ -2341,12 +2412,12 @@ describe('paused and resumed segments', () => {
     const all = [legacyOf(v1), v1, ...rows];
     const result = runValidation(all.map(row => JSON.stringify(row)).join('\n') + '\n');
     expect(result.status).toBe(0);
-    expect(result.summary).toBe(summaryOf({ rows: 4, v2: 2, v1: 1, legacy: 1 }));
+    expect(result.summary).toBe(summaryOf({ rows: 4, v3: 2, v1: 1, legacy: 1 }));
   }, 60_000);
 });
 
 describe('Track 67A usage capture and workflow-metrics v2 schema contract', () => {
-  test('review-and-prep finish with capture preserves stage-runs v2 key order and saved-row retry byte identity, while legacy and v1 fixtures still validate', () => {
+  test('review-and-prep finish with capture preserves stage-runs v3 key order and saved-row retry byte identity, while legacy, v1, and v2 fixtures still validate', () => {
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-67a', 'git@github.com:acme/widget.git');
     const started = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']);
@@ -2378,10 +2449,11 @@ describe('Track 67A usage capture and workflow-metrics v2 schema contract', () =
     });
     expect(JSON.parse(begin.stdout).status).toBe('recorded');
 
-    // First attempt fails stage-runs append by blocking the analytics dir, saving the constructed row in the handoff.
+    // First attempt fails stage-runs append by blocking the stage-runs directory, saving the constructed row in the handoff.
     const analyticsDir = join(fix.home, '.gstack-extend/analytics');
-    const stageRunsPath = join(analyticsDir, 'stage-runs.jsonl');
-    mkdirSync(stageRunsPath, { recursive: true }); // directory at file path causes append to fail
+    const stageRunsDir = join(analyticsDir, 'stage-runs');
+    mkdirSync(analyticsDir, { recursive: true });
+    writeFileSync(stageRunsDir, 'block'); // regular file at directory path causes append to fail
     expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
 
     // Inspect the saved row inside the handoff file before retrying.
@@ -2395,19 +2467,22 @@ describe('Track 67A usage capture and workflow-metrics v2 schema contract', () =
     const expectedLine = JSON.stringify(savedRow) + '\n';
 
     // Remove the obstacle and retry finish with capture enabled: appended bytes must equal the saved row byte-for-byte.
-    rmSync(stageRunsPath, { recursive: true, force: true });
+    rmSync(stageRunsDir, { recursive: true, force: true });
     expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
-    const rawStageRuns = readFileSync(stageRunsPath, 'utf8');
+    const ledgerFile = fix.ledgerFiles()[0]!;
+    const rawStageRuns = readFileSync(ledgerFile, 'utf8');
     expect(rawStageRuns).toBe(expectedLine);
 
     const row = fix.readLedger()[0]!;
     expect(Object.keys(row)).toEqual(Object.keys(quickstartRow()));
     expect(verdict(row)).toEqual({ ok: true, errors: [] });
 
-    // Existing legacy and v1 fixtures still validate alongside the new v2 row.
+    // Existing legacy, v1, and v2 fixtures still validate alongside the new v3 row.
     const v1 = historicalRow();
+    const v2 = historicalV2Row();
     const leg = legacyOf(v1);
     expect(verdict(v1)).toEqual({ ok: true, errors: [] });
+    expect(verdict(v2)).toEqual({ ok: true, errors: [] });
     expect(verdict(leg)).toEqual({ ok: true, errors: [] });
   }, 60_000);
 
@@ -2498,5 +2573,172 @@ describe('Track 67A usage capture and workflow-metrics v2 schema contract', () =
       ...v2Usage,
       request: { ...v2Usage.request, extra_key: true },
     })).toBe(false);
+  });
+});
+
+describe('stage-runs v3: run_mode, usability signals, per-host files, migration, and report', () => {
+  test('run_mode branches follow the amended rule and validate against stage-runs.schema.json', () => {
+    const fix = makeTelemetryFixture('off');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-v3-mode', 'git@github.com:acme/widget.git');
+    const customGstackHome = join(fix.home, 'custom-gstack-home');
+    mkdirSync(customGstackHome, { recursive: true });
+
+    const cases: Array<{
+      name: string;
+      env: Record<string, string>;
+      finishArgs?: string[];
+      expectedMode: string;
+      expectedSource: string;
+    }> = [
+      {
+        name: 'GSTACK_EXTEND_RUN_MODE=orchestrated',
+        env: { GSTACK_EXTEND_RUN_MODE: 'orchestrated', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'orchestrated',
+        expectedSource: 'run-mode-env',
+      },
+      {
+        name: 'unrecognized GSTACK_EXTEND_RUN_MODE',
+        env: { GSTACK_EXTEND_RUN_MODE: 'user-directed', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'unknown',
+        expectedSource: 'unrecognized-run-mode-env',
+      },
+      {
+        name: 'GSTACK_SESSION_KIND=spawned',
+        env: { GSTACK_SESSION_KIND: 'spawned', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'orchestrated',
+        expectedSource: 'session-kind',
+      },
+      {
+        name: 'GSTACK_SESSION_KIND=unattended',
+        env: { GSTACK_SESSION_KIND: 'unattended', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'orchestrated',
+        expectedSource: 'session-kind',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORK_ITEM primary signal',
+        env: { GSTACK_EXTEND_WORK_ITEM: 'item-primary', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'orchestrated',
+        expectedSource: 'work-item',
+      },
+      {
+        name: '--work-item flag alone does not classify as orchestrated',
+        env: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        finishArgs: ['--work-item', 'manual-flag-item'],
+        expectedMode: 'user-directed',
+        expectedSource: 'cli',
+      },
+      {
+        name: 'non-default GSTACK_HOME blocks user-directed',
+        env: { GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'unknown',
+        expectedSource: 'launcher-state-root',
+      },
+      {
+        name: 'Claude cli interactive entrypoint',
+        env: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'user-directed',
+        expectedSource: 'cli',
+      },
+      {
+        name: 'Paseo entrypoint Paseo',
+        env: { PASEO_AGENT_ID: 'paseo-1', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' },
+        expectedMode: 'user-directed',
+        expectedSource: 'Paseo',
+      },
+      {
+        name: 'Paseo SDK entrypoint sdk-cli',
+        env: { PASEO_AGENT_ID: 'paseo-2', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' },
+        expectedMode: 'user-directed',
+        expectedSource: 'sdk-cli',
+      },
+      {
+        name: 'Paseo SDK entrypoint sdk-ts',
+        env: { PASEO_AGENT_ID: 'paseo-3', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' },
+        expectedMode: 'user-directed',
+        expectedSource: 'sdk-ts',
+      },
+      {
+        name: 'Paseo ACP entrypoint acp',
+        env: { PASEO_AGENT_ID: 'paseo-4', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'acp' },
+        expectedMode: 'user-directed',
+        expectedSource: 'acp',
+      },
+      {
+        name: 'unreadable/missing entrypoint yields unknown',
+        env: { CLAUDECODE: '1' },
+        expectedMode: 'unknown',
+        expectedSource: 'none',
+      },
+    ];
+
+    for (const tc of cases) {
+      const env = { ...fix.env, ...tc.env };
+      expect(runTelemetry(env, repo, ['start', '--skill', 'extend:roadmap']).status, tc.name).toBe(0);
+      expect(runTelemetry(env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', ...(tc.finishArgs ?? [])]).status, tc.name).toBe(0);
+      const row = fix.readLedger().at(-1)!;
+      expect(row.run_mode, tc.name).toBe(tc.expectedMode);
+      expect(row.run_mode_source, tc.name).toBe(tc.expectedSource);
+      expect(verdict(row), tc.name).toEqual({ ok: true, errors: [] });
+    }
+  }, 60_000);
+
+  test('documented per-host migration command moves legacy stage-runs.jsonl without clobbering, preserves the row multiset, and leaves report totals unchanged', () => {
+    const fix = makeTelemetryFixture('off');
+    const body = section(docText(), '### Per-host files and migration');
+    const migrationCmd = /~~~sh\n([\s\S]*?)~~~/.exec(body)![1];
+    const analyticsDir = join(fix.home, '.gstack-extend/analytics');
+    const stageRunsDir = join(analyticsDir, 'stage-runs');
+    mkdirSync(stageRunsDir, { recursive: true });
+    const legacyFile = join(analyticsDir, 'stage-runs.jsonl');
+
+    const r1 = { ...legacyOf(historicalRow()), session_id: 'mig-leg' };
+    const r2 = { ...historicalRow(), session_id: 'mig-v1' };
+    const r3 = { ...historicalV2Row(), session_id: 'mig-v2' };
+    const r4 = {
+      ...quickstartRow(),
+      session_id: 'mig-v3-blocked',
+      outcome: 'blocked',
+      run_mode: 'orchestrated',
+      run_mode_source: 'run-mode-env',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'orchestrated',
+      blocked_reason: null,
+      blocked_reason_source: 'orchestrated',
+    };
+    writeFileSync(legacyFile, [r1, r2, r3].map(r => JSON.stringify(r)).join('\n') + '\n');
+    writeFileSync(join(stageRunsDir, 'other-host.jsonl'), JSON.stringify(r4) + '\n');
+
+    const beforeMultiset = fix.readLedger().map(r => JSON.stringify(r)).sort();
+    const beforeReport = JSON.parse(runTelemetry(fix.env, ROOT, ['report', '--json']).stdout);
+
+    // Run 1: target <host>.legacy.jsonl does not exist yet -> moves legacyFile to stage-runs/<host>.legacy.jsonl.
+    const first = spawnSync('bash', ['-c', migrationCmd], {
+      cwd: ROOT,
+      env: { ...fix.env, PATH: join(ROOT, 'bin') + ':/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    expect([first.status, first.stderr]).toEqual([0, '']);
+    expect(first.stdout).toContain('migrated rows: before=3 after=3');
+    expect(existsSync(legacyFile)).toBe(false);
+    expect(fix.ledgerFiles().some(f => f.endsWith('.legacy.jsonl'))).toBe(true);
+
+    const afterMultiset = fix.readLedger().map(r => JSON.stringify(r)).sort();
+    expect(afterMultiset).toEqual(beforeMultiset);
+    const afterReport = JSON.parse(runTelemetry(fix.env, ROOT, ['report', '--json']).stdout);
+    expect(afterReport.rows).toEqual(beforeReport.rows);
+    expect(afterReport.skills).toEqual(beforeReport.skills);
+    expect(afterReport.empty_cells).toEqual(beforeReport.empty_cells);
+
+    // Run 2: if legacyFile is recreated while <host>.legacy.jsonl already exists -> refuses without clobbering.
+    writeFileSync(legacyFile, JSON.stringify(r1) + '\n');
+    const second = spawnSync('bash', ['-c', migrationCmd], {
+      cwd: ROOT,
+      env: { ...fix.env, PATH: join(ROOT, 'bin') + ':/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    expect(second.status).not.toBe(0);
+    expect(second.stderr).toContain('refused: target already exists');
   });
 });

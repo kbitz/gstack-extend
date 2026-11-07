@@ -263,7 +263,7 @@ detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
 This leaves detached HEAD. It refreshes the skills that tag's setup knows; a
 skill added after that tag stays installed and may fail until you resume
 upgrades. It does not undo install migrations or rewrite saved telemetry/ledgers. Retain readers capable of every
-emitted schema (including stage-runs v2). Inspect warnings and preserve user-owned
+emitted schema (including stage-runs v2 and v3). Inspect warnings and preserve user-owned
 files. To resume upgrades, return to the install's main branch, re-enable checks
 and rerun its updater: `git checkout main`, `./bin/config set update_check true`,
 then `./bin/update-run "$PWD"`. If setup failed, follow the reported setup

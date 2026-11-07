@@ -4,7 +4,7 @@ import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
@@ -77,7 +77,7 @@ describe('shipped blocks and installation lookup', () => {
       // The installed copy resolves to this checkout, so the provenance row names its release.
       const ledger = fix.readLedger();
       expect(ledger).toHaveLength(1);
-      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 2, producer_version: RELEASE });
+      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 3, producer_version: RELEASE });
       expect(validRow(ledger[0])).toBe(true);
     }, 30_000);
   }
@@ -1457,11 +1457,13 @@ describe('concurrent sessions', () => {
   }, 30_000);
 });
 
-// ─── Execution provenance: the local-only stage-runs.jsonl row ───
+// ─── Execution provenance: the local-only stage-runs/<host>.jsonl row ───
 
+const HOST_LEDGER_FILE = ((hostname().split('.')[0] ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63).replace(/-+$/g, '') || 'unknown-host') + '.jsonl';
 const SCHEMA = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
   'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw', 'schema_version', 'producer_version',
-  'agent_source', 'model_source', 'effort_source', 'workspace_host', 'host_agent_id'];
+  'agent_source', 'model_source', 'effort_source', 'workspace_host', 'host_agent_id', 'run_mode', 'run_mode_source',
+  'questions', 'user_wait_s', 'resumes', 'user_signals_source', 'blocked_reason', 'blocked_reason_source'];
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const writeJsonl = (file: string, records: object[]) => {
   mkdirSync(dirname(file), { recursive: true });
@@ -1512,7 +1514,7 @@ describe('execution provenance', () => {
     expect(Object.keys(row)).toEqual(SCHEMA);
     expect(row).toMatchObject({ stage: 'roadmap', agent: null, model: null, effort: null, rung: 0, outcome: 'success',
       session_id: sid, repo: 'acme/widget', branch: 'feature/x', work_item: null, source: 'gstack-extend',
-      schema_version: 2, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
+      schema_version: 3, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
     expect(validRow(row)).toBe(true);
     expect(row.started_at).toBe(iso(epoch).replace(/\.\d{3}Z$/, 'Z'));
     expect(Number.isInteger(row.duration_s) && row.duration_s >= 0).toBe(true);
@@ -1804,9 +1806,9 @@ describe('execution provenance', () => {
 
   test('a FIFO at the provenance sink does not block finish', () => {
     const fix = makeTelemetryFixture('off');
-    const dir = join(fix.home, '.gstack-extend/analytics');
+    const dir = join(fix.home, '.gstack-extend/analytics/stage-runs');
     mkdirSync(dir, { recursive: true });
-    expect(spawnSync('mkfifo', [join(dir, 'stage-runs.jsonl')]).status).toBe(0);
+    expect(spawnSync('mkfifo', [join(dir, HOST_LEDGER_FILE)]).status).toBe(0);
     const finish = spawnSync(HELPER_BIN, ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'sid-sinkfifo',
       '--outcome', 'success'], { env: fix.env, encoding: 'utf8', timeout: 5_000 });
     expect([finish.status, finish.stdout]).toEqual([0, '']);
@@ -1838,9 +1840,9 @@ describe('execution provenance', () => {
 
     const linked = makeTelemetryFixture('off');
     const uploaded = join(linked.home, '.gstack/analytics/skill-usage.jsonl');
-    const ledger = join(linked.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    const ledger = join(linked.home, '.gstack-extend/analytics/stage-runs', HOST_LEDGER_FILE);
     mkdirSync(join(linked.home, '.gstack/analytics'), { recursive: true });
-    mkdirSync(join(linked.home, '.gstack-extend/analytics'), { recursive: true });
+    mkdirSync(join(linked.home, '.gstack-extend/analytics/stage-runs'), { recursive: true });
     writeFileSync(uploaded, '');
     linkSync(uploaded, ledger);
     expect(finishOf(linked.env).status).toBe(0);
@@ -3178,7 +3180,7 @@ describe('Conductor Cursor store', () => {
     expect([happy.finish.status, happy.finish.stdout, happy.finish.stderr]).toEqual([0, '', '']);
     expect(Object.keys(happy.row)).toEqual(SCHEMA);
     expect(happy.row).toMatchObject({
-      agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 2,
+      agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 3,
       agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
     });
     expect(validRow(happy.row)).toBe(true);
@@ -3701,7 +3703,7 @@ describe('Conductor Cursor store', () => {
       expect([finished.finish.status, finished.finish.stdout]).toEqual([0, '']);
       expect(Object.keys(finished.row)).toEqual(SCHEMA);
       expect(finished.row).toMatchObject({
-        agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 2,
+        agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 3,
         agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
       });
       expect(validRow(finished.row)).toBe(true);
@@ -3792,7 +3794,7 @@ describe('row version, producer and sources', () => {
     const finish = spawnSync(join(installed, 'bin/gstack-extend-telemetry'), ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], options);
     expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
     expect(fix.readLedger()).toHaveLength(1);
-    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 2, producer_version: RELEASE });
+    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 3, producer_version: RELEASE });
     // Release and sources stay local: the completion the logger receives carries none of them.
     const forwarded = fix.readStubArgs().join('\n') + JSON.stringify(fix.readJsonl());
     for (const text of [RELEASE, 'schema', 'producer', '_source']) expect(forwarded).not.toContain(text);
@@ -3843,7 +3845,7 @@ describe('row version, producer and sources', () => {
     const install = copiedInstall(usage, 'install-missing', null);
     expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(install.run(['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 2 }]);
+    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 3 }]);
     expect(usage.readJsonl().map(entry => entry.event_type)).toEqual(['skill_start', 'skill_run']);
   }, 60_000);
 
@@ -3912,7 +3914,7 @@ describe('row version, producer and sources', () => {
       expect([name, Object.keys(row), stderr]).toEqual([name, SCHEMA, '']);
       expect([name, row.agent, row.model, row.effort, row.agent_source, row.model_source, row.effort_source])
         .toEqual([name, ...expected]);
-      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 2, RELEASE, true]);
+      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 3, RELEASE, true]);
     });
     // A read the operating system refuses (no portable chmod needed) costs only the release.
     const denied = rows.at(-1)!;
@@ -3927,8 +3929,10 @@ describe('row version, producer and sources', () => {
     const newer = copiedInstall(fix, 'install-newer', '0.41.0.0\n');
     const start = ['start', '--skill', 'extend:roadmap'];
     const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
-    const ledger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
-    const lines = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').split('\n').filter(Boolean) : [];
+    const lines = () => {
+      const files = fix.ledgerFiles();
+      return files.length ? readFileSync(files[0]!, 'utf8').split('\n').filter(Boolean) : [];
+    };
     // A plain file where analytics/ belongs makes the first append fail, so the handoff saves the row.
     const blocker = join(fix.home, '.gstack-extend/analytics');
     const failFirstAppend = (install: ReturnType<typeof copiedInstall>, env: Record<string, string> = {}) => {
@@ -3942,9 +3946,9 @@ describe('row version, producer and sources', () => {
       return readHandoff(fix).row as Record<string, unknown>;
     };
 
-    // A current v2 row built by the older installation is appended by the newer one exactly as built, whatever the retry passes.
+    // A current v3 row built by the older installation is appended by the newer one exactly as built, whatever the retry passes.
     const saved = failFirstAppend(older, { CLAUDECODE: '1', PASEO_AGENT_ID: 'original-agent' });
-    expect(saved).toMatchObject({ agent: 'claude', schema_version: 2, producer_version: '0.40.0.0',
+    expect(saved).toMatchObject({ agent: 'claude', schema_version: 3, producer_version: '0.40.0.0',
       agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown', workspace_host: 'paseo', host_agent_id: 'original-agent' });
     expect(newer.run([...finish, '--agent', 'codex', '--model', 'gpt-6-astra'], { CODEX_THREAD_ID: 'later-thread', CONDUCTOR_SESSION_ID: 'later-session' }).status).toBe(0);
     expect(lines()).toEqual([JSON.stringify(saved)]);
@@ -5991,11 +5995,12 @@ describe('the launcher\'s work item', () => {
   test('a saved retry row keeps its first construction\'s work item after the environment changes', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     startFull(fix);
-    const ledger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
-    mkdirSync(ledger, { recursive: true }); // an unwritable ledger: the row is built, not appended
+    const stageRunsDir = join(fix.home, '.gstack-extend/analytics/stage-runs');
+    mkdirSync(dirname(stageRunsDir), { recursive: true });
+    writeFileSync(stageRunsDir, 'block'); // an unwritable ledger directory: the row is built, not appended
     expect(finishRun(fix, 'success', 'extend:roadmap', { [ITEM]: 'first' }).status).toBe(0);
     expect(openHandoffs(fix)[0].state.row.work_item).toBe('first');
-    rmSync(ledger, { recursive: true });
+    rmSync(stageRunsDir, { force: true });
     expect(finishRun(fix, 'success', 'extend:roadmap', { [ITEM]: 'second' }).status).toBe(0);
     expect(items(fix)).toEqual(['first']);
   }, 30_000);
@@ -6065,7 +6070,7 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     const failed = install.run(args, { CONDUCTOR_SESSION_ID: 'first-finish-session', CLAUDECODE: '1' });
     expect([failed.status, failed.stdout, failed.stderr]).toEqual([0, '', '']);
     const saved = readHandoff(fix).row as Record<string, unknown>;
-    expect(saved).toMatchObject({ schema_version: 2, producer_version: '1.0.0', workspace_host: 'conductor',
+    expect(saved).toMatchObject({ schema_version: 3, producer_version: '1.0.0', workspace_host: 'conductor',
       host_agent_id: 'first-finish-session', work_item: 'original-work', agent: 'claude' });
     expect(Object.keys(saved)).toEqual(SCHEMA);
     rmSync(blocker);
@@ -6075,7 +6080,7 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     const retry = install.run([...args, '--agent', 'codex', '--model', 'later-model', '--work-item', 'later-work'], changed);
     expect([retry.status, retry.stdout]).toEqual([0, '']);
     expect(retry.stderr).not.toMatch(/HOST_|PRODUCER_VERSION_UNKNOWN|SENTINEL/);
-    const ledger = join(blocker, 'stage-runs.jsonl');
+    const ledger = fix.ledgerFiles()[0]!;
     const exact = JSON.stringify(saved) + '\n';
     expect(readFileSync(ledger, 'utf8')).toBe(exact);
     const usageCount = fix.readJsonl().length;
@@ -6107,7 +6112,7 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
       const result = install.run([...args, '--model', 'later-model', '--work-item', 'later-work'], changed);
       expect(result.status).toBe(0);
       expect(result.stderr).not.toMatch(/HOST_|PRODUCER_VERSION_UNKNOWN/);
-      const file = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+      const file = fix.ledgerFiles()[0]!;
       const bytes = readFileSync(file, 'utf8');
       expect(bytes.trimEnd().split('\n').at(-1)).toBe(exact);
       expect(validRow(row)).toBe(true);
@@ -6227,16 +6232,17 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
       const cwdB = cursorWork(fixB);
       const envB1 = { ...fixB.env, GSTACK_EXTEND_MODEL: 'first-req-model', GSTACK_EXTEND_EFFORT: 'medium' };
       expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: envB1, cwd: cwdB, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
-      const stageRunsPathB = join(fixB.home, '.gstack-extend/analytics/stage-runs.jsonl');
-      mkdirSync(stageRunsPathB, { recursive: true }); // block append so first finish saves the constructed row
+      const stageRunsDirB = join(fixB.home, '.gstack-extend/analytics/stage-runs');
+      mkdirSync(dirname(stageRunsDirB), { recursive: true });
+      writeFileSync(stageRunsDirB, 'block'); // block append so first finish saves the constructed row
       expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: envB1, cwd: cwdB, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
       const savedHandoffs = openHandoffs(fixB);
       expect(savedHandoffs).toHaveLength(1);
       const savedLine = JSON.stringify(savedHandoffs[0]!.state.row) + '\n';
-      rmSync(stageRunsPathB, { recursive: true, force: true });
+      rmSync(stageRunsDirB, { force: true });
       const envB2 = { ...fixB.env, GSTACK_EXTEND_MODEL: 'retry-req-model', GSTACK_EXTEND_EFFORT: 'max' };
       expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: envB2, cwd: cwdB, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
-      expect(readFileSync(stageRunsPathB, 'utf8')).toBe(savedLine);
+      expect(readFileSync(fixB.ledgerFiles()[0]!, 'utf8')).toBe(savedLine);
 
       // (c) A valid --agent that differs from the detected agent, with requests set: agent flag, model and effort requested.
       const fixC = makeTelemetryFixture('off');
@@ -6345,7 +6351,7 @@ describe('deliberate pauses finish as blocked, and each resume is its own segmen
       expect(finishRun(fix, 'blocked', skill).status).toBe(0);
       const rows = fix.readLedger();
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ stage: name, outcome: 'blocked', schema_version: 2, session_id: sid });
+      expect(rows[0]).toMatchObject({ stage: name, outcome: 'blocked', schema_version: 3, session_id: sid });
       expect(fix.readStubArgs().some(line => line.split('\t').join(' ').includes('--outcome blocked'))).toBe(true);
       const runs = skillRuns(fix);
       expect(runs).toHaveLength(1);
@@ -6407,4 +6413,623 @@ describe('deliberate pauses finish as blocked, and each resume is its own segmen
       });
     }
   }, 60_000);
+});
+
+describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per-host files, and report', () => {
+  test('run_mode and run_mode_source cover every amended branch without reading ~/.mmm or spawning process-inspection utilities', () => {
+    const sourceText = readFileSync(HELPER_SOURCE, 'utf8');
+    expect(sourceText.toLowerCase()).not.toContain('.mmm');
+
+    const fix = makeTelemetryFixture('off');
+    const customGstackHome = join(fix.home, 'custom-gstack-root');
+    mkdirSync(customGstackHome, { recursive: true });
+
+    const cases: Array<{
+      name: string;
+      startEnv?: Record<string, string>;
+      finishEnv?: Record<string, string>;
+      finishArgs?: string[];
+      mode: string;
+      source: string;
+    }> = [
+      {
+        name: 'GSTACK_EXTEND_RUN_MODE=orchestrated',
+        finishEnv: { GSTACK_EXTEND_RUN_MODE: 'orchestrated', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'orchestrated',
+        source: 'run-mode-env',
+      },
+      {
+        name: 'GSTACK_EXTEND_RUN_MODE unrecognized value',
+        finishEnv: { GSTACK_EXTEND_RUN_MODE: 'user-directed', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'unrecognized-run-mode-env',
+      },
+      {
+        name: 'GSTACK_SESSION_KIND=spawned primary signal',
+        finishEnv: { GSTACK_SESSION_KIND: 'spawned', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'orchestrated',
+        source: 'session-kind',
+      },
+      {
+        name: 'GSTACK_SESSION_KIND=unattended primary signal',
+        finishEnv: { GSTACK_SESSION_KIND: 'unattended', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'orchestrated',
+        source: 'session-kind',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORK_ITEM at start primary signal',
+        startEnv: { GSTACK_EXTEND_WORK_ITEM: 'item-from-start' },
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'orchestrated',
+        source: 'work-item',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORK_ITEM at finish primary signal',
+        finishEnv: { GSTACK_EXTEND_WORK_ITEM: 'item-from-finish', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'orchestrated',
+        source: 'work-item',
+      },
+      {
+        name: 'precedence: session-kind beats work-item and run-mode-env',
+        finishEnv: {
+          GSTACK_SESSION_KIND: 'spawned',
+          GSTACK_EXTEND_WORK_ITEM: 'item-both',
+          GSTACK_EXTEND_RUN_MODE: 'orchestrated',
+        },
+        mode: 'orchestrated',
+        source: 'session-kind',
+      },
+      {
+        name: 'precedence: work-item beats run-mode-env',
+        finishEnv: {
+          GSTACK_EXTEND_WORK_ITEM: 'item-wins',
+          GSTACK_EXTEND_RUN_MODE: 'orchestrated',
+        },
+        mode: 'orchestrated',
+        source: 'work-item',
+      },
+      {
+        name: '--work-item CLI flag alone does not set orchestrated',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        finishArgs: ['--work-item', 'manual-item'],
+        mode: 'user-directed',
+        source: 'cli',
+      },
+      {
+        name: 'non-default GSTACK_HOME blocks user-directed',
+        finishEnv: { GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'launcher-state-root',
+      },
+      {
+        name: 'default ~/.gstack GSTACK_HOME allows user-directed',
+        finishEnv: { GSTACK_HOME: join(fix.home, '.gstack') + '/', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'user-directed',
+        source: 'cli',
+      },
+      {
+        name: 'malformed GSTACK_SESSION_KIND blocks user-directed',
+        finishEnv: { GSTACK_SESSION_KIND: 'bogus', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'none',
+      },
+      {
+        name: 'malformed GSTACK_EXTEND_WORK_ITEM blocks user-directed',
+        finishEnv: { GSTACK_EXTEND_WORK_ITEM: '   ', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'none',
+      },
+      {
+        name: 'Claude cli entrypoint gives user-directed',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'user-directed',
+        source: 'cli',
+      },
+      {
+        name: 'Paseo entrypoint Paseo gives user-directed',
+        finishEnv: { PASEO_AGENT_ID: 'p-1', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' },
+        mode: 'user-directed',
+        source: 'Paseo',
+      },
+      {
+        name: 'Paseo entrypoint sdk-cli gives user-directed',
+        finishEnv: { PASEO_AGENT_ID: 'p-2', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' },
+        mode: 'user-directed',
+        source: 'sdk-cli',
+      },
+      {
+        name: 'Paseo entrypoint sdk-ts gives user-directed',
+        finishEnv: { PASEO_AGENT_ID: 'p-3', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' },
+        mode: 'user-directed',
+        source: 'sdk-ts',
+      },
+      {
+        name: 'Paseo entrypoint acp gives user-directed',
+        finishEnv: { PASEO_AGENT_ID: 'p-4', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'acp' },
+        mode: 'user-directed',
+        source: 'acp',
+      },
+      {
+        name: 'sdk-cli outside Paseo host gives unknown',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' },
+        mode: 'unknown',
+        source: 'none',
+      },
+      {
+        name: 'unreadable/missing entrypoint gives unknown',
+        finishEnv: { CLAUDECODE: '1' },
+        mode: 'unknown',
+        source: 'none',
+      },
+      {
+        name: 'non-interactive entrypoint gives unknown',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'remote-daemon' },
+        mode: 'unknown',
+        source: 'none',
+      },
+      {
+        name: 'codex markers only gives unknown',
+        finishEnv: { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349' },
+        mode: 'unknown',
+        source: 'none',
+      },
+      {
+        name: 'no markers at all gives unknown',
+        finishEnv: {},
+        mode: 'unknown',
+        source: 'none',
+      },
+    ];
+
+    for (const tc of cases) {
+      const start = runHelper({ ...fix.env, ...(tc.startEnv ?? tc.finishEnv ?? {}) }, ['start', '--skill', 'extend:roadmap']);
+      expect(start.status, tc.name).toBe(0);
+      const finish = runHelper(
+        { ...fix.env, ...(tc.finishEnv ?? {}) },
+        ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', ...(tc.finishArgs ?? [])],
+      );
+      expect(finish.status, tc.name).toBe(0);
+      const row = fix.readLedger().at(-1)!;
+      expect(row.run_mode, tc.name).toBe(tc.mode);
+      expect(row.run_mode_source, tc.name).toBe(tc.source);
+      expect(validRow(row), tc.name).toBe(true);
+    }
+
+    // Criterion 6: Verify via Python sys.addaudithook and inspect.getsource that run_mode,
+    // claude_user_signals, host_file_name, stage_run_files, and run_report never use network,
+    // subprocess, sqlite3, or credential paths.
+    const auditScript = [
+      'import inspect, io, json, pathlib, sys',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'for fn in (telemetry.run_mode, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      '    src = inspect.getsource(fn)',
+      '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl"):',
+      '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
+      'bad = []',
+      'def hook(event, args):',
+      '    if event.startswith("socket.") or event in ("subprocess.Popen", "os.system", "sqlite3.connect"):',
+      '        bad.append((event, str(args[:1])))',
+      '    elif event in ("os.listdir", "os.scandir", "open", "os.stat"):',
+      '        target = str(args[0]) if args else ""',
+      '        for cred in (".mmm", ".ssh", "jev.json", "hosts.yml", "cli-config.json", ".env"):',
+      '            if cred in target:',
+      '                bad.append((event, target))',
+      'sys.addaudithook(hook)',
+      'state = pathlib.Path(sys.argv[2])',
+      'telemetry.run_mode("claude", "claude", None)',
+      'telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000099", 1790000000, 1790000010)',
+      'telemetry.host_file_name(state, "My.Host_01.local")',
+      'telemetry.stage_run_files(state)',
+      'buf = io.StringIO()',
+      'old_stdout = sys.stdout',
+      'sys.stdout = buf',
+      'try:',
+      '    rc = telemetry.run_report(["--json"])',
+      'finally:',
+      '    sys.stdout = old_stdout',
+      'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
+      'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 3}))',
+    ].join('\n');
+    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend')], {
+      env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+      encoding: 'utf8',
+    });
+    expect([audit.status, audit.stderr]).toEqual([0, '']);
+    expect(JSON.parse(audit.stdout)).toEqual({ bad: [], rc: 0, ok: true });
+  }, 60_000);
+
+  test('claude_user_signals extracts questions, user_wait_s, and resumes without leaking prompt or answer text, and records null reasons', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const sid = '0c7f2e29-0000-4000-8000-000000000099';
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ID: sid };
+    const transcript = join(fix.home, '.claude/projects/project', `${sid}.jsonl`);
+
+    // Case 1: 2 AskUserQuestion blocks (one split across 2 entries with the same id), their tool_result waits,
+    // an end_turn followed by a human prompt, a sidechain ask ignored, records outside window ignored,
+    // and canary strings in question input, answer, toolUseResult, and prompt never appearing anywhere.
+    const begin1 = epochNow() - 60;
+    const res1 = provenanceRun(fix, env, () => {
+      writeJsonl(transcript, [
+        // Outside window (before begin1 - 5) -> ignored
+        {
+          type: 'assistant',
+          timestamp: iso(begin1 - 20),
+          effort: 'high',
+          message: {
+            id: 'msg-early',
+            model: 'claude-opus-4-6',
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [
+              { type: 'tool_use', id: 'toolu_early', name: 'AskUserQuestion', input: { question: 'EARLY_CANARY' } },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          timestamp: iso(begin1 - 15),
+          message: { role: 'user', content: 'EARLY_PROMPT_CANARY' },
+        },
+        {
+          type: 'assistant',
+          timestamp: iso(begin1 + 1),
+          effort: 'high',
+          message: {
+            id: 'msg-turn-1',
+            model: 'claude-opus-4-6',
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              { type: 'tool_use', id: 'toolu_q1', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_1' } },
+            ],
+          },
+        },
+        // Duplicate streaming record for the same assistant message.id and tool_use.id
+        {
+          type: 'assistant',
+          timestamp: iso(begin1 + 2),
+          effort: 'high',
+          message: {
+            id: 'msg-turn-1',
+            model: 'claude-opus-4-6',
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              { type: 'tool_use', id: 'toolu_q1', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_1' } },
+            ],
+          },
+        },
+        // Sidechain AskUserQuestion must be ignored
+        {
+          type: 'assistant',
+          isSidechain: true,
+          timestamp: iso(begin1 + 3),
+          message: {
+            id: 'msg-sidechain',
+            model: 'claude-opus-4-6',
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'toolu_side', name: 'AskUserQuestion', input: { question: 'SIDECHAIN_QUESTION' } },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          timestamp: iso(begin1 + 16),
+          toolUseResult: { answers: { q: 'TOOL_USE_RESULT_CANARY_SECRET' } },
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'toolu_q1', content: 'ANSWER_CANARY_SECRET_1' },
+            ],
+          },
+        },
+        {
+          type: 'assistant',
+          timestamp: iso(begin1 + 20),
+          effort: 'high',
+          message: {
+            id: 'msg-turn-2',
+            model: 'claude-opus-4-6',
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              { type: 'tool_use', id: 'toolu_q2', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_2' } },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          timestamp: iso(begin1 + 40),
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'toolu_q2', content: 'ANSWER_CANARY_SECRET_2' },
+            ],
+          },
+        },
+        // Assistant finishes turn with end_turn at begin1 + 42, then human prompt restarts at begin1 + 47 -> 1 resume (+5s wait)
+        {
+          type: 'assistant',
+          timestamp: iso(begin1 + 42),
+          effort: 'high',
+          message: {
+            id: 'msg-turn-3',
+            model: 'claude-opus-4-6',
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'Done with phase 1.' }],
+          },
+        },
+        {
+          type: 'user',
+          timestamp: iso(begin1 + 47),
+          message: { role: 'user', content: 'USER_PROMPT_CANARY_SECRET' },
+        },
+      ]);
+    }, ['--start', String(begin1), '--outcome', 'success']);
+
+    expect(res1.row).toMatchObject({
+      agent: 'claude',
+      model: 'claude-opus-4-6',
+      effort: 'high',
+      run_mode: 'user-directed',
+      run_mode_source: 'cli',
+      questions: 2,
+      user_wait_s: 40, // (16 - 1) + (40 - 20) + (47 - 42)
+      resumes: 1, // 1 human prompt after end_turn
+      user_signals_source: 'session-log',
+    });
+    expect(validRow(res1.row)).toBe(true);
+    const leakedCorpus = JSON.stringify({
+      row: res1.row,
+      usage: fix.readJsonl(),
+      handoffs: handoffs(fix),
+    });
+    for (const secret of [
+      'USER_PROMPT_CANARY_SECRET',
+      'QUESTION_CANARY_SECRET_1',
+      'QUESTION_CANARY_SECRET_2',
+      'ANSWER_CANARY_SECRET_1',
+      'ANSWER_CANARY_SECRET_2',
+      'TOOL_USE_RESULT_CANARY_SECRET',
+    ]) {
+      expect(leakedCorpus).not.toContain(secret);
+    }
+
+    // Null reason: orchestrated
+    const orch = provenanceRun(fix, { ...env, GSTACK_SESSION_KIND: 'spawned' }, () => {}, ['--outcome', 'success']);
+    expect(orch.row).toMatchObject({
+      run_mode: 'orchestrated',
+      run_mode_source: 'session-kind',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'orchestrated',
+    });
+    expect(validRow(orch.row)).toBe(true);
+
+    // Null reason: no-harness
+    const noHarness = provenanceRun(fix, {}, () => {}, ['--outcome', 'success']);
+    expect(noHarness.row).toMatchObject({
+      agent: null,
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'no-harness',
+    });
+    expect(validRow(noHarness.row)).toBe(true);
+
+    // Null reason: harness-unsupported (codex detected, and --agent override on claude)
+    const codexUnsupported = provenanceRun(fix, { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349' }, () => {}, ['--outcome', 'success']);
+    expect(codexUnsupported.row).toMatchObject({
+      agent: 'codex',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'harness-unsupported',
+    });
+    const flagOverride = provenanceRun(fix, env, () => {}, ['--outcome', 'success', '--agent', 'codex']);
+    expect(flagOverride.row).toMatchObject({
+      agent: 'codex',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'harness-unsupported',
+    });
+
+    // Null reason: session-log-unavailable (missing log, idle window, oversized >8 MiB log whose tail starts after begin)
+    const sidMissing = '0c7f2e29-0000-4000-8000-000000000097';
+    const resMissing = provenanceRun(fix, { ...env, CLAUDE_CODE_SESSION_ID: sidMissing }, () => {}, ['--outcome', 'success']);
+    expect(resMissing.row).toMatchObject({
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'session-log-unavailable',
+    });
+    expect(validRow(resMissing.row)).toBe(true);
+
+    const sidIdle = '0c7f2e29-0000-4000-8000-000000000096';
+    const transcriptIdle = join(fix.home, '.claude/projects/project', `${sidIdle}.jsonl`);
+    const resIdle = provenanceRun(fix, { ...env, CLAUDE_CODE_SESSION_ID: sidIdle }, start => {
+      writeJsonl(transcriptIdle, [claudeTurn(start - 60, 'old-msg', 'claude-opus-4-6', 'high')]);
+    }, ['--outcome', 'success']);
+    expect(resIdle.row).toMatchObject({
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'session-log-unavailable',
+    });
+
+    const sidBig = '0c7f2e29-0000-4000-8000-000000000095';
+    const transcriptBig = join(fix.home, '.claude/projects/project', `${sidBig}.jsonl`);
+    const resBig = provenanceRun(fix, { ...env, CLAUDE_CODE_SESSION_ID: sidBig }, start => {
+      mkdirSync(dirname(transcriptBig), { recursive: true });
+      const line = JSON.stringify(claudeTurn(start + 10, 'late-msg', 'claude-opus-4-6', 'high', { pad: 'x'.repeat(4096) })) + '\n';
+      const count = Math.ceil((8 * 1024 * 1024 + 65536) / line.length);
+      writeFileSync(transcriptBig, line.repeat(count));
+    }, ['--outcome', 'success']);
+    expect(resBig.row).toMatchObject({
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'session-log-unavailable',
+    });
+  }, 60_000);
+
+  test('--blocked-reason covers all four sources, validates token format without echoing bad input, and never forwards to gstack logger', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const cliEnv = { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' };
+
+    // 1. flag source
+    const okBlocked = provenanceRun(fix, cliEnv, undefined, ['--outcome', 'blocked', '--blocked-reason', 'missing-deploy-creds']);
+    expect(okBlocked.row).toMatchObject({
+      outcome: 'blocked',
+      blocked_reason: 'missing-deploy-creds',
+      blocked_reason_source: 'flag',
+    });
+    expect(validRow(okBlocked.row)).toBe(true);
+    const forwarded = fix.readStubArgs().join('\n');
+    expect(forwarded).not.toContain('--blocked-reason');
+    expect(forwarded).not.toContain('missing-deploy-creds');
+
+    // 2. not-supplied source
+    const noFlagBlocked = provenanceRun(fix, cliEnv, undefined, ['--outcome', 'blocked']);
+    expect(noFlagBlocked.row).toMatchObject({
+      outcome: 'blocked',
+      blocked_reason: null,
+      blocked_reason_source: 'not-supplied',
+    });
+    expect(validRow(noFlagBlocked.row)).toBe(true);
+
+    // 3. orchestrated source (even when outcome is blocked and flag is supplied)
+    const orchBlocked = provenanceRun(
+      fix,
+      { ...cliEnv, GSTACK_SESSION_KIND: 'spawned' },
+      undefined,
+      ['--outcome', 'blocked', '--blocked-reason', 'missing-deploy-creds'],
+    );
+    expect(orchBlocked.row).toMatchObject({
+      run_mode: 'orchestrated',
+      outcome: 'blocked',
+      blocked_reason: null,
+      blocked_reason_source: 'orchestrated',
+    });
+    expect(validRow(orchBlocked.row)).toBe(true);
+
+    // 4. not-blocked source
+    const onSuccess = runHelper({ ...fix.env, ...cliEnv, ...DEBUG }, [
+      'finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 2), '--session-id', 'sid-br-1',
+      '--outcome', 'success', '--blocked-reason', 'NON_BLOCKED_SECRET_REASON',
+    ]);
+    expect(onSuccess.status).toBe(0);
+    expect(onSuccess.stderr).toContain('ignored --blocked-reason flag (outcome is not blocked');
+    expect(onSuccess.stderr).not.toContain('NON_BLOCKED_SECRET_REASON');
+    expect(fix.readLedger().find(r => r.session_id === 'sid-br-1')).toMatchObject({
+      outcome: 'success',
+      blocked_reason: null,
+      blocked_reason_source: 'not-blocked',
+    });
+
+    // Invalid token on blocked outcome -> null + not-supplied, value never echoed in debug
+    const badToken = runHelper({ ...fix.env, ...cliEnv, ...DEBUG }, [
+      'finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 2), '--session-id', 'sid-br-2',
+      '--outcome', 'blocked', '--blocked-reason', 'BAD TOKEN WITH SPACES SECRET',
+    ]);
+    expect(badToken.status).toBe(0);
+    expect(badToken.stderr).toContain('ignored --blocked-reason flag (invalid token');
+    expect(badToken.stderr).not.toContain('BAD TOKEN WITH SPACES SECRET');
+    expect(fix.readLedger().find(r => r.session_id === 'sid-br-2')).toMatchObject({
+      outcome: 'blocked',
+      blocked_reason: null,
+      blocked_reason_source: 'not-supplied',
+    });
+  }, 30_000);
+
+  test('per-host files: host_id config override, nodename sanitization, symlink refusal + handoff retry, v2 retry, and byte-identical legacy file', () => {
+    const fix = makeTelemetryFixture('off');
+    mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
+
+    // 1. Valid host_id config override writes to analytics/stage-runs/<host_id>.jsonl
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'host_id=desk-01\n');
+    const r1 = provenanceRun(fix, { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }, undefined, ['--outcome', 'success']);
+    expect(r1.row.session_id).toBeDefined();
+    expect(existsSync(join(fix.home, '.gstack-extend/analytics/stage-runs/desk-01.jsonl'))).toBe(true);
+
+    // 2. Invalid host_id config value is ignored with value-free debug trace and falls back to sanitized hostname
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'host_id=BAD_HOST_SECRET!\n');
+    const r2 = runHelper({ ...fix.env, ...DEBUG }, [
+      'finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 2), '--session-id', 'sid-fallback-host', '--outcome', 'success',
+    ]);
+    expect(r2.status).toBe(0);
+    expect(r2.stderr).toContain('ignored invalid host_id config value');
+    expect(r2.stderr).not.toContain('BAD_HOST_SECRET!');
+    expect(existsSync(join(fix.home, '.gstack-extend/analytics/stage-runs', HOST_LEDGER_FILE))).toBe(true);
+
+    // 3. In-process nodename sanitization checks
+    const sanitizeCheck = spawnSync('python3', [
+      '-B', '-I', '-c',
+      'import sys; sys.path.insert(0, sys.argv[1]); import telemetry; print(telemetry.host_file_name(None, "My_Host_01.local"), telemetry.host_file_name(None, "---"), len(telemetry.host_file_name(None, "a" * 70)))',
+      join(ROOT, 'bin/lib'),
+    ], { env: fix.env, encoding: 'utf8' });
+    expect([sanitizeCheck.status, sanitizeCheck.stderr]).toEqual([0, '']);
+    expect(sanitizeCheck.stdout.trim()).toBe('my-host-01 unknown-host 63');
+
+    // 4. Symlinked analytics/stage-runs directory is refused, row is saved in handoff, and retried cleanly when repaired;
+    //    also a saved v2 row in a handoff lands unchanged in the per-host file when retried after upgrade;
+    //    and legacy analytics/stage-runs.jsonl stays byte-identical.
+    const fix2 = makeTelemetryFixture('off');
+    const legacyPath = join(fix2.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    mkdirSync(dirname(legacyPath), { recursive: true });
+    const legacyContent = JSON.stringify({
+      stage: 'roadmap', agent: 'claude', model: 'claude-opus-4-6', effort: 'high', rung: 0,
+      outcome: 'success', started_at: '2026-11-01T00:00:00Z', duration_s: 12, session_id: 'sid-legacy-v2',
+      repo: 'acme/widget', branch: 'main', work_item: null, source: 'gstack-extend',
+      route: 'cli', entrypoint_raw: 'cli', schema_version: 2, producer_version: '0.2.0.0',
+      agent_source: 'detected', model_source: 'detected', effort_source: 'detected',
+      workspace_host: null, host_agent_id: null,
+    }) + '\n';
+    writeFileSync(legacyPath, legacyContent);
+
+    const targetDir = join(fix2.home, 'elsewhere-runs');
+    mkdirSync(targetDir, { recursive: true });
+    const stageRunsDir = join(fix2.home, '.gstack-extend/analytics/stage-runs');
+    symlinkSync(targetDir, stageRunsDir);
+
+    expect(runHelper(fix2.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const blockedFinish = runHelper({ ...fix2.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(blockedFinish.status).toBe(0);
+    expect(blockedFinish.stderr).toContain('provenance sink directory is a symlink');
+    expect(handoffs(fix2)).toHaveLength(1);
+
+    // Repair symlinked directory and retry finish -> saved row lands in per-host file
+    rmSync(stageRunsDir, { recursive: true, force: true });
+    expect(runHelper(fix2.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(handoffs(fix2)).toHaveLength(0);
+
+    // Also plant a handoff carrying a pre-built v2 row (state["row"]) and verify retry writes it unchanged to per-host file
+    expect(runHelper(fix2.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(handoffs(fix2)).toHaveLength(1);
+    const handoffFile = join(fix2.home, '.gstack-extend/telemetry', handoffs(fix2)[0]!);
+    const handoffState = JSON.parse(readFileSync(handoffFile, 'utf8'));
+    const v2Row = JSON.parse(legacyContent.trim());
+    v2Row.session_id = handoffState.session_id;
+    handoffState.row = v2Row;
+    handoffState.done = [];
+    writeFileSync(handoffFile, JSON.stringify(handoffState));
+    expect(runHelper(fix2.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(handoffs(fix2)).toHaveLength(0);
+
+    // Legacy file stayed byte-identical!
+    expect(readFileSync(legacyPath, 'utf8')).toBe(legacyContent);
+    // Per-host file has both rows (the v3 retried row and the v2 retried row unchanged)
+    const hostRows = readFileSync(join(stageRunsDir, HOST_LEDGER_FILE), 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    expect(hostRows).toHaveLength(2);
+    expect(hostRows[0].schema_version).toBe(3);
+    expect(hostRows[1]).toEqual(v2Row);
+  }, 30_000);
 });

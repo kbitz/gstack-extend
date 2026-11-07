@@ -174,7 +174,7 @@ its separation from transcript-derived skill counts produced by other tools. `du
 session wall-clock, not model/token spend; skill-usage values above 86400 seconds
 become null. Finish also appends a local-only provenance row (agent, model, effort
 read from the harness's own session log; documented schema for external consumers) to
-`~/.gstack-extend/analytics/stage-runs.jsonl`, gated by the `provenance` config key,
+`~/.gstack-extend/analytics/stage-runs/<host>.jsonl` (historical rows in `stage-runs.jsonl`), gated by the `provenance` config key,
 not gstack's tier.
 
 Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`. New `PACKING` fixtures are top-level `tests/roadmap-audit/packing-*/` directories, such as `packing-ok/`.

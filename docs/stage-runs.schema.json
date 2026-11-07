@@ -1,22 +1,30 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "gstack-extend stage-runs row",
-  "description": "One line of the local-only stage-runs.jsonl ledger that gstack-extend writes for a hand-run skill (source gstack-extend, rung 0). A row with schema_version must match its v1 or v2 definition; a row without it is a legacy row from a writer older than the version field. Rows from other producers follow their own contracts. See docs/telemetry.md#schema-validation.",
-  "$comment": "The root names every allowed key; each version branch closes its own keys. Row-shape or meaning changes add a schema_version branch and keep historical branches. Readers pin a release or commit, or vendor this file. V2 host_agent_id patterns require Unicode property escapes and Unicode-mode ECMA-262 regex evaluation, as provided by the pinned Ajv with its default unicodeRegExp: true.",
+  "description": "One line of the local-only stage-runs/<host>.jsonl (or historical stage-runs.jsonl) ledger that gstack-extend writes for a hand-run skill (source gstack-extend, rung 0). A row with schema_version must match its v1, v2 or v3 definition; a row without it is a legacy row from a writer older than the version field. Rows from other producers follow their own contracts. See docs/telemetry.md#schema-validation.",
+  "$comment": "The root names every allowed key; each version branch closes its own keys. Row-shape or meaning changes add a schema_version branch and keep historical branches. Readers pin a release or commit, or vendor this file. V2/v3 host_agent_id patterns require Unicode property escapes and Unicode-mode ECMA-262 regex evaluation, as provided by the pinned Ajv with its default unicodeRegExp: true.",
   "type": "object",
   "properties": {
     "stage": true, "agent": true, "model": true, "effort": true, "rung": true, "outcome": true,
     "started_at": true, "duration_s": true, "session_id": true, "repo": true, "branch": true,
     "work_item": true, "source": true, "route": true, "entrypoint_raw": true,
     "schema_version": true, "producer_version": true, "agent_source": true, "model_source": true,
-    "effort_source": true, "workspace_host": true, "host_agent_id": true
+    "effort_source": true, "workspace_host": true, "host_agent_id": true,
+    "run_mode": true, "run_mode_source": true, "questions": true, "user_wait_s": true,
+    "resumes": true, "user_signals_source": true, "blocked_reason": true, "blocked_reason_source": true
   },
   "additionalProperties": false,
   "if": { "type": "object", "properties": { "schema_version": true }, "required": ["schema_version"] },
   "then": {
-    "if": { "type": "object", "properties": { "schema_version": { "const": 2 } }, "required": ["schema_version"] },
-    "then": { "$ref": "#/definitions/v2" },
-    "else": { "$ref": "#/definitions/v1" }
+    "type": "object",
+    "if": { "type": "object", "properties": { "schema_version": { "const": 3 } }, "required": ["schema_version"] },
+    "then": { "$ref": "#/definitions/v3" },
+    "else": {
+      "type": "object",
+      "if": { "type": "object", "properties": { "schema_version": { "const": 2 } }, "required": ["schema_version"] },
+      "then": { "$ref": "#/definitions/v2" },
+      "else": { "$ref": "#/definitions/v1" }
+    }
   },
   "else": { "$ref": "#/definitions/legacy" },
   "definitions": {
@@ -85,7 +93,9 @@
         "agent_source": { "$ref": "#/definitions/evidence_source" },
         "model_source": { "$ref": "#/definitions/evidence_source" },
         "effort_source": { "$ref": "#/definitions/evidence_source" },
-        "workspace_host": false, "host_agent_id": false
+        "workspace_host": false, "host_agent_id": false,
+        "run_mode": false, "run_mode_source": false, "questions": false, "user_wait_s": false,
+        "resumes": false, "user_signals_source": false, "blocked_reason": false, "blocked_reason_source": false
       },
       "required": [
         "stage", "agent", "model", "effort", "rung", "outcome", "started_at", "duration_s", "session_id",
@@ -120,7 +130,7 @@
       "else": { "type": "object", "properties": { "effort_source": { "enum": ["flag", "detected"] } } }
     },
     "legacy": {
-      "description": "Rows from writers older than schema_version. route and entrypoint_raw are each optional and the v1 metadata fields are not allowed. Never fill defaults for them: an absent key is unknown and proves no particular older release.",
+      "description": "Rows from writers older than schema_version. route and entrypoint_raw are each optional and the v1/v2/v3 metadata fields are not allowed. Never fill defaults for them: an absent key is unknown and proves no particular older release.",
       "type": "object",
       "properties": {
         "stage": { "$ref": "#/definitions/stage" },
@@ -142,7 +152,9 @@
         "agent_source": false,
         "model_source": false,
         "effort_source": false,
-        "workspace_host": false, "host_agent_id": false
+        "workspace_host": false, "host_agent_id": false,
+        "run_mode": false, "run_mode_source": false, "questions": false, "user_wait_s": false,
+        "resumes": false, "user_signals_source": false, "blocked_reason": false, "blocked_reason_source": false
       },
       "required": [
         "stage", "agent", "model", "effort", "rung", "outcome", "started_at", "duration_s", "session_id",
@@ -224,7 +236,9 @@
         "model_source": {"$ref": "#/definitions/evidence_source_2"},
         "effort_source": {"$ref": "#/definitions/evidence_source_2"},
         "workspace_host": {"$ref": "#/definitions/workspace_host"},
-        "host_agent_id": {"$ref": "#/definitions/host_agent_id"}
+        "host_agent_id": {"$ref": "#/definitions/host_agent_id"},
+        "run_mode": false, "run_mode_source": false, "questions": false, "user_wait_s": false,
+        "resumes": false, "user_signals_source": false, "blocked_reason": false, "blocked_reason_source": false
       },
       "required": [
         "stage",
@@ -264,6 +278,241 @@
           "then": {
             "type": "object",
             "properties": {"host_agent_id": {"type": "null"}}
+          }
+        }
+      ]
+    },
+    "schema_version_3": {"type": "integer", "const": 3},
+    "run_mode": {"type": "string", "enum": ["orchestrated", "user-directed", "unknown"]},
+    "run_mode_source": {
+      "type": "string",
+      "enum": [
+        "session-kind",
+        "work-item",
+        "run-mode-env",
+        "unrecognized-run-mode-env",
+        "launcher-state-root",
+        "cli",
+        "Paseo",
+        "sdk-cli",
+        "sdk-ts",
+        "acp",
+        "none"
+      ]
+    },
+    "signal_count": {"type": ["integer", "null"], "minimum": 0},
+    "user_signals_source": {
+      "type": "string",
+      "enum": ["session-log", "orchestrated", "no-harness", "harness-unsupported", "session-log-unavailable"]
+    },
+    "blocked_reason": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "blocked_reason_source": {
+      "type": "string",
+      "enum": ["flag", "not-blocked", "not-supplied", "orchestrated"]
+    },
+    "v3": {
+      "type": "object",
+      "properties": {
+        "stage": {"$ref": "#/definitions/stage"},
+        "agent": {"$ref": "#/definitions/agent"},
+        "model": {"$ref": "#/definitions/model"},
+        "effort": {"$ref": "#/definitions/effort"},
+        "rung": {"$ref": "#/definitions/rung"},
+        "outcome": {"$ref": "#/definitions/outcome_2"},
+        "started_at": {"$ref": "#/definitions/started_at"},
+        "duration_s": {"$ref": "#/definitions/duration_s"},
+        "session_id": {"$ref": "#/definitions/session_id"},
+        "repo": {"$ref": "#/definitions/repo"},
+        "branch": {"$ref": "#/definitions/branch"},
+        "work_item": {"$ref": "#/definitions/work_item"},
+        "source": {"$ref": "#/definitions/source"},
+        "route": {"$ref": "#/definitions/route"},
+        "entrypoint_raw": {"$ref": "#/definitions/entrypoint_raw"},
+        "schema_version": {"$ref": "#/definitions/schema_version_3"},
+        "producer_version": {"$ref": "#/definitions/producer_version_2"},
+        "agent_source": {"$ref": "#/definitions/evidence_source"},
+        "model_source": {"$ref": "#/definitions/evidence_source_2"},
+        "effort_source": {"$ref": "#/definitions/evidence_source_2"},
+        "workspace_host": {"$ref": "#/definitions/workspace_host"},
+        "host_agent_id": {"$ref": "#/definitions/host_agent_id"},
+        "run_mode": {"$ref": "#/definitions/run_mode"},
+        "run_mode_source": {"$ref": "#/definitions/run_mode_source"},
+        "questions": {"$ref": "#/definitions/signal_count"},
+        "user_wait_s": {"$ref": "#/definitions/signal_count"},
+        "resumes": {"$ref": "#/definitions/signal_count"},
+        "user_signals_source": {"$ref": "#/definitions/user_signals_source"},
+        "blocked_reason": {"$ref": "#/definitions/blocked_reason"},
+        "blocked_reason_source": {"$ref": "#/definitions/blocked_reason_source"}
+      },
+      "required": [
+        "stage",
+        "agent",
+        "model",
+        "effort",
+        "rung",
+        "outcome",
+        "started_at",
+        "duration_s",
+        "session_id",
+        "repo",
+        "branch",
+        "work_item",
+        "source",
+        "route",
+        "entrypoint_raw",
+        "schema_version",
+        "producer_version",
+        "agent_source",
+        "model_source",
+        "effort_source",
+        "workspace_host",
+        "host_agent_id",
+        "run_mode",
+        "run_mode_source",
+        "questions",
+        "user_wait_s",
+        "resumes",
+        "user_signals_source",
+        "blocked_reason",
+        "blocked_reason_source"
+      ],
+      "allOf": [
+        {"$ref": "#/definitions/agent_evidence"},
+        {"$ref": "#/definitions/model_evidence_2"},
+        {"$ref": "#/definitions/effort_evidence_2"},
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"workspace_host": {"const": "unknown"}},
+            "required": ["workspace_host"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {"host_agent_id": {"type": "null"}}
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"run_mode": {"const": "orchestrated"}},
+            "required": ["run_mode"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "run_mode_source": {"enum": ["session-kind", "work-item", "run-mode-env"]},
+              "user_signals_source": {"const": "orchestrated"},
+              "blocked_reason_source": {"const": "orchestrated"}
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "user_signals_source": {"enum": ["session-log", "no-harness", "harness-unsupported", "session-log-unavailable"]},
+              "blocked_reason_source": {"enum": ["flag", "not-blocked", "not-supplied"]}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"run_mode": {"const": "user-directed"}},
+            "required": ["run_mode"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "run_mode_source": {"enum": ["cli", "Paseo", "sdk-cli", "sdk-ts", "acp"]}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"run_mode": {"const": "unknown"}},
+            "required": ["run_mode"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "run_mode_source": {"enum": ["unrecognized-run-mode-env", "launcher-state-root", "none"]}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"user_signals_source": {"const": "session-log"}},
+            "required": ["user_signals_source"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "questions": {"type": "integer"},
+              "user_wait_s": {"type": "integer"},
+              "resumes": {"type": "integer"}
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "questions": {"type": "null"},
+              "user_wait_s": {"type": "null"},
+              "resumes": {"type": "null"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"blocked_reason": {"type": "null"}},
+            "required": ["blocked_reason"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "blocked_reason_source": {"enum": ["not-blocked", "not-supplied", "orchestrated"]}
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "blocked_reason_source": {"const": "flag"},
+              "outcome": {"const": "blocked"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"blocked_reason_source": {"enum": ["flag", "not-supplied"]}},
+            "required": ["blocked_reason_source"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {"outcome": {"const": "blocked"}}
+          }
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {"blocked_reason_source": {"const": "not-blocked"}},
+            "required": ["blocked_reason_source"]
+          },
+          "then": {
+            "type": "object",
+            "properties": {"outcome": {"enum": ["success", "error", "abort", "unknown"]}}
           }
         }
       ]
