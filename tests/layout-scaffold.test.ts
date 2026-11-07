@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { chmodSync, constants, copyFileSync, lstatSync, linkSync, readdirSync, readlinkSync, renameSync, rmdirSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import type { Stats } from 'node:fs';
 import { main, help, BUN_FLOOR, EXIT_CODES, type CliIo } from '../src/layout-scaffold/cli.ts';
@@ -15,6 +15,23 @@ import { walkMdFiles } from '../src/audit/lib/md-walk.ts';
 
 const EXTEND_ROOT = resolve(import.meta.dir, '..');
 const DRAFT = '## Current Plan\n#### Group 101: Example\n##### Track 101A: Example\n_touches: src/example.ts_\n- **Build example** -- fixture (S)\n';
+// bindRoot (src/layout-scaffold/root.ts) refuses a plain root while any ancestor holds a .git entry.
+// A shared tmpdir such as /tmp can gain one for a moment from another process, and every plain-root
+// test that runs in that window then fails at id(). Root the suite in the private per-user runtime
+// directory when the platform provides one (owned by this user, mode 0700); otherwise use tmpdir().
+function suiteBase(): string {
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  if (runtime && isAbsolute(runtime)) {
+    try {
+      const st = statSync(runtime);
+      if (st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o077) === 0) return runtime;
+    } catch { /* fall back to tmpdir() */ }
+  }
+  return tmpdir();
+}
+const SUITE_PARENT = realpathSync(mkdtempSync(join(suiteBase(), 'layout-scaffold-suite-')));
+chmodSync(SUITE_PARENT, 0o700);
+afterAll(() => rmSync(SUITE_PARENT, { recursive: true, force: true }));
 
 describe('Process: hardened launchers', () => {
   let temp: string;
@@ -22,7 +39,8 @@ describe('Process: hardened launchers', () => {
   let env: Record<string, string>;
 
   beforeEach(() => {
-    temp = realpathSync(mkdtempSync(join(tmpdir(), 'layout-process-')));
+    temp = realpathSync(mkdtempSync(join(SUITE_PARENT, 'layout-process-')));
+    chmodSync(temp, 0o700);
     root = join(temp, 'repo');
     mkdirSync(join(root, 'docs'), { recursive: true });
     mkdirSync(join(temp, 'home'));
@@ -76,7 +94,8 @@ let temp: string;
 let root: string;
 let testEnv: NodeJS.ProcessEnv;
 beforeEach(() => {
-  temp = realpathSync(mkdtempSync(join(tmpdir(), 'layout-scaffold-')));
+  temp = realpathSync(mkdtempSync(join(SUITE_PARENT, 'layout-scaffold-')));
+  chmodSync(temp, 0o700);
   root = join(temp, 'root'); mkdirSync(root); mkdirSync(join(temp, 'home'));
   // Bun 1.4 writes its runtime transpiler cache under HOME (~/Library/Caches/bun on macOS), and tree() snapshots HOME.
   testEnv = {
