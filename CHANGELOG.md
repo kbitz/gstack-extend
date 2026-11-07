@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.71.0] - 2026-11-07
+
+### Added
+
+- Telemetry records run modes and per-host usability.
+
+### Fixed
+
+- Symlinked usage sinks are preserved.
+- Telemetry reports complete the privacy contract and record coverage gaps.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. Telemetry now records run modes and per-host usability; reports follow the privacy contract.
+
 ## [0.70.0] - 2026-11-06
 
 ### Added
