@@ -835,11 +835,13 @@ def append_row(path, row, name):
     # 0600 and O_NOFOLLOW: the ledger holds branch and work item. A symlink planted at the
     # destination must not append those fields into a file gstack may upload.
     try:
-        if path.parent.is_symlink():
+        # Only the per-host provenance directory must be real. Upstream usage supports
+        # an analytics-directory symlink; the destination file itself remains protected.
+        if name == "provenance sink" and path.parent.is_symlink():
             debug(f"{name} directory is a symlink at {path.parent}", "remove the symlink and retry")
             return False
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.parent.is_dir() or path.parent.is_symlink():
+        if not path.parent.is_dir() or (name == "provenance sink" and path.parent.is_symlink()):
             debug(f"{name} directory is not a directory at {path.parent}", "remove the non-directory and retry")
             return False
         # O_NONBLOCK: a FIFO with no reader would otherwise block in open(). A FIFO that does open

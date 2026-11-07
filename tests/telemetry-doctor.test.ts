@@ -731,6 +731,27 @@ describe('gstack helper warning', () => {
 
 describe('stage-runs report regressions', () => {
   const telBin = join(ROOT, 'bin/gstack-extend-telemetry');
+  // Value: protects=upstream start/finish pairing through a symlinked analytics directory;
+  // fails_when=the provenance directory guard rejects the shared usage sink;
+  // why_new=the existing symlink case covers only the separate provenance analytics root;
+  // seam=none; no_claim=upstream uploads (the logger is an isolated fixture).
+  test('upstream analytics symlink preserves the start and finish usage pair', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const target = join(fix.home, 'synced-upstream-analytics');
+    mkdirSync(target);
+    symlinkSync(target, join(fix.home, '.gstack/analytics'));
+    for (const args of [['start', '--skill', 'extend:roadmap'],
+      ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']]) {
+      const result = spawnSync(telBin, args, { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+      expect([result.status, result.stderr]).toEqual([0, '']);
+    }
+    const usage = fix.readJsonl();
+    expect(usage.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+    expect(usage[1]).toMatchObject({ session_id: usage[0].session_id, skill: 'extend:roadmap', outcome: 'success' });
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readLedger()[0].session_id).toBe(usage[0].session_id);
+  });
+
   test('classifies invalid source and unsafe versions without counting unrelated directory entries', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const directory = join(fix.home, '.gstack-extend/analytics/stage-runs');
