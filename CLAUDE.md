@@ -113,14 +113,17 @@ is the same mistake. Two cases count as mechanics: a lookup on a structured
 value (`bin/roadmap-route`'s default for a source tag) and a configured limit a
 tool enforces (the packer's `parallelism_cap`).
 
-`docs/SPEC.md` supports one workspace host, Paseo; Conductor is no longer
-supported. A rule about workspace lifecycle or storage (branches, worktrees,
-archival, temporary files) names Paseo, as in "in a host-managed workspace
-(Paseo)". Paseo has no `.context/` directory, so durable or temporary storage
-uses the state-root project directory, then `~/scratch/`. Existing skill and
-helper text that still names Conductor or its `.context/` is legacy until the
-Future entry "Remove Conductor support from the code" removes it; add no new
-Conductor branch.
+`docs/SPEC.md` requires no particular workspace host or orchestrator: one that
+provides the orchestration contract's signals (SPEC O4) is supported through
+that contract, and support claims name only the combinations actually
+exercised. A rule about workspace lifecycle or storage (branches, worktrees,
+archival, temporary files) is written against the contract, as in "in a
+host-managed workspace (one the host or orchestrator marks as its own)", never
+against a named host. Durable or temporary storage uses the state-root project
+directory, then `~/scratch/`; no host-private directory is assumed. Existing
+skill and helper text that names Paseo or Conductor, or Conductor's
+`.context/`, is legacy until the ROADMAP Tracks that replace host-specific
+branches with the generic contract land; add no new host-specific branch.
 
 ## Testing
 
