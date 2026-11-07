@@ -26,10 +26,10 @@ Pass the root of the installed upstream the stage will use. The checker never
 guesses a root.
 
 ```sh
-# Claude Code layout: review and autoplan live under the root.
+# Claude Code layout: review and ship live under the root.
 bin/upstream-check --gstack-root "$HOME/.claude/skills/gstack"
 
-# Codex-style layout: gstack-review and gstack-autoplan are siblings of the root
+# Codex-style layout: gstack-review and gstack-ship are siblings of the root
 # (review/checklist.md stays under the root in both layouts).
 bin/upstream-check --gstack-root "$HOME/.codex/skills/gstack"
 # Sibling skills somewhere else:
@@ -93,14 +93,14 @@ user-wide root and present that result as coverage of the selected install.
 These are upstream host rules, not automatic discovery by this command.
 
 The layout is chosen once per run. It is **nested** when `<root>/review/SKILL.md`
-exists: review is `<root>/review/SKILL.md`, autoplan is
-`<root>/autoplan/SKILL.md` and each phase section is
-`<root>/autoplan/sections/<phase>-phase.md` (or the autoplan file for every
-phase when that directory is absent). Otherwise it is **sibling**:
-`<skills dir>/gstack-review/SKILL.md` and `<skills dir>/gstack-autoplan/SKILL.md`,
-which inlines the phase sections. In both layouts the snapshot tool is
-`<root>/bin/gstack-autoplan-snapshot.ts` and helper modules are
-`<root>/lib/<name>.ts`. No run mixes layouts, and an `INFO file` line names the
+exists: review is that file, its adversarial section is
+`<root>/review/sections/adversarial.md`, and test coverage is
+`<root>/ship/sections/test-coverage.md`. Otherwise it is **sibling**:
+`<skills dir>/gstack-review/SKILL.md` inlines the adversarial section, and
+test coverage is `<skills dir>/gstack-ship/sections/test-coverage.md`.
+In both layouts the review checklists stay under `<root>/review/`, pregate is
+`<root>/bin/gstack-pregate` with modules under `<root>/lib/pregate/`, and
+helper modules are `<root>/lib/<name>.ts`. No run mixes layouts, and an `INFO file` line names the
 real path of each checked contract file, inventory source, VERSION and helper
 module (not every transitive module import; symlinks are followed, so a symlinked layout
 reports OK).
