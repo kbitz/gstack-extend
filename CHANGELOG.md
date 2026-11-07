@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.72.0] - 2026-11-07
+
+### Removed
+
+- The autoplan-lean planning workflow is retired.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. The autoplan-lean planning workflow is retired.
+
 ## [0.71.0] - 2026-11-07
 
 ### Added

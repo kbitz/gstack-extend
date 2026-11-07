@@ -156,15 +156,15 @@ true
 Turn one approved card into a plan that `/implement` can run, in one session
 that works alone.
 
-## Beside /autoplan-lean
+## Beside upstream /autoplan
 
-This skill runs no review pipeline. `/autoplan-lean` stays the default planner:
-two blind comparisons of this approach scored its risk handling lower, and that
-is the recorded reason (see the
+This skill runs no review pipeline. A card that needs the full review pipeline
+goes to upstream `/autoplan`: two blind comparisons against a planner that ran
+the review pipeline scored this approach's risk handling lower, and that is the
+recorded reason (see the
 [workflow efficiency program](https://github.com/kbitz/gstack-extend/blob/main/docs/designs/workflow-efficiency-program.md)).
 Use `/plan-track` for a small, well-specified card whose risk you accept
-without that review. Both skills write a `Verify command:` line and end with
-the same stage handoff line, so `/implement` takes a plan from either.
+without that review.
 
 ## Inputs
 
@@ -273,8 +273,7 @@ none
 source; the base log result; declined scope; the single self-review>
 ```
 
-`Verify command:` has the same label and meaning as the `Verify command:` line
-in a `/autoplan-lean` plan. Fill it from `VERIFY_COMMAND`, else the card's own,
+Fill `Verify command:` from `VERIFY_COMMAND`, else the card's own,
 else the project's documented test command (record that choice as an
 auto-decision), else write `Verify command: none — <how the plan is verified>`.
 `/implement` reads it as intent and never runs it.

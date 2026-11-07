@@ -15,7 +15,6 @@ export const ROOT_RESOLVER_SKILLS = [
   'roadmap',
   'gstack-extend-upgrade',
   'gstack-extend-init',
-  'autoplan-lean',
   'docs-ship',
   'implement',
   'review-and-prep',
@@ -118,7 +117,6 @@ export const INIT_TAIL = [
 const helperTail = (helper: string) => INIT_TAIL
   .replace('"$_EXTEND_ROOT/bin/gstack-extend" ] || [ ! -x "$_EXTEND_ROOT/bin/gstack-extend"', `"$_EXTEND_ROOT/bin/${helper}" ] || [ ! -x "$_EXTEND_ROOT/bin/${helper}"`)
   .replace('$_EXTEND_ROOT/bin/gstack-extend is missing or not executable. Fix: git -C \\"$_EXTEND_ROOT\\" checkout -- bin/gstack-extend', `$_EXTEND_ROOT/bin/${helper} is missing or not executable. Fix: git -C \\"$_EXTEND_ROOT\\" checkout -- bin/${helper}`);
-export const AUTOPLAN_LEAN_TAIL = helperTail('autoplan-lean');
 export const DOCS_SHIP_TAIL = helperTail('docs-ship');
 
 export const GUARD_LINE =

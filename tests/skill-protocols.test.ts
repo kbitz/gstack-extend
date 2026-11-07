@@ -26,7 +26,6 @@ import {
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  AUTOPLAN_LEAN_TAIL,
   DOCS_SHIP_TAIL,
   CANONICAL_SPAN,
   CMD_BIN_RE,
@@ -67,10 +66,10 @@ import { resolverSkillText } from './helpers/skill-protocols.ts';
 const ROOT = join(import.meta.dir, '..');
 
 // Orthogonal memberships: SHARED protocol, upgrade preamble, and telemetry.
-// Do not derive protocol membership from setup's install list — the eight
+// Do not derive protocol membership from setup's install list — the seven
 // utility/workflow skills carry the upgrade-flow and telemetry SHARED blocks
 // without the legacy SHARED protocol or Conductor blocks. PREAMBLE_SKILLS
-// covers all 12 setup skills.
+// covers all 11 setup skills.
 // 16A–D: do not touch <!-- SHARED:… --> blocks. Item 2/3 of the Conductor
 // rule stay per-skill. Keep "Action receipt format".
 // 17A: SHARED:conductor-visibility-head is a Conductor host workaround,
@@ -91,7 +90,6 @@ const PREAMBLE_SKILLS = [
   'review-and-prep',
   'implement',
   'ship-and-land',
-  'autoplan-lean',
   'docs-ship',
   'plan-track',
 ] as const;
@@ -102,7 +100,6 @@ const UTILITY_SKILLS = [
   'review-and-prep',
   'implement',
   'ship-and-land',
-  'autoplan-lean',
   'docs-ship',
   'plan-track',
 ] as const;
@@ -487,14 +484,15 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
 
 describe('Track 49A recorded block sizes', () => {
   // The table records before-and-after bytes at base a74abf4. /plan-track came later with the same blocks and
-  // has no before figure, so it has no row (docs/telemetry.md says so).
+  // has no before figure, so it has no row; /autoplan-lean was retired after the measurement and keeps its row.
   const MEASURED_SKILLS = TELEMETRY_SKILLS.filter(skill => skill !== 'plan-track');
+  const RETIRED_MEASURED_SKILLS = ['autoplan-lean'] as const;
   const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
   const rows = [...docs.matchAll(/^\| `([a-z-]+)` \| (\d+) \| (\d+) \| (\d+) \|$/gm)]
     .map(m => ({ skill: m[1], before: Number(m[2]), after: Number(m[3]), saved: Number(m[4]) }));
 
   test('the table has one row per telemetry skill', () => {
-    expect(rows.map(r => r.skill).sort()).toEqual([...MEASURED_SKILLS].sort());
+    expect(rows.map(r => r.skill).sort()).toEqual([...MEASURED_SKILLS, ...RETIRED_MEASURED_SKILLS].sort());
     expect(rows).toHaveLength(11);
   });
   for (const skill of MEASURED_SKILLS) {
@@ -516,7 +514,7 @@ describe('Track 49A state root', () => {
   const NARROW = '${GSTACK_STATE_ROOT:-$HOME/.gstack}';
   // /implement's start block tests whether a variable was set, which has to name both of them.
   const SET_TEST = '[ -n "${GSTACK_STATE_ROOT:-}${GSTACK_HOME:-}" ]';
-  const STAGE_SKILLS = ['implement', 'autoplan-lean', 'plan-track', 'review-and-prep', 'ship-and-land', 'docs-ship'] as const;
+  const STAGE_SKILLS = ['implement', 'plan-track', 'review-and-prep', 'ship-and-land', 'docs-ship'] as const;
   const skillNames = readdirSync(join(ROOT, 'skills')).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3));
   const read = (skill: string) => readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
   const stripped = (skill: string) => read(skill).replaceAll(EXPRESSION, '').replaceAll(SET_TEST, '');
@@ -534,7 +532,7 @@ describe('Track 49A state root', () => {
   test('the set test is /implement\'s alone', () => {
     for (const skill of skillNames) expect(read(skill).includes(SET_TEST), skill).toBe(skill === 'implement');
   });
-  test('each of the six stage skills carries the expression and defines its state root', () => {
+  test('each of the five stage skills carries the expression and defines its state root', () => {
     for (const skill of STAGE_SKILLS) {
       expect(read(skill), skill).toContain(EXPRESSION);
       expect(read(skill), skill).toContain('<state-root>/projects/<slug>/');
@@ -647,7 +645,7 @@ describe('Track 10A SHARED:upgrade-flow block', () => {
     });
   }
 
-  // Byte identity above carries the spawned-session behavior to all twelve skills.
+  // Byte identity above carries the spawned-session behavior to all eleven skills.
   test('spawned-session gate classifies GSTACK_SESSION_KIND and skips update-run even under auto_upgrade=true', () => {
     const fences = extractFences(CANONICAL_UPGRADE_FLOW);
     const gateFence = fences.find((f) => f.body.includes('UPGRADE_SESSION='))?.body;
@@ -1086,9 +1084,6 @@ describe('Track 16D extend-root resolver locks', () => {
     expect(extractPreambleFence(resolverSkillText('gstack-extend-init'))).toBe(
       skillPreamble('gstack-extend-init', INIT_TAIL),
     );
-    expect(extractPreambleFence(resolverSkillText('autoplan-lean'))).toBe(
-      skillPreamble('autoplan-lean', AUTOPLAN_LEAN_TAIL),
-    );
     expect(extractPreambleFence(resolverSkillText('docs-ship'))).toBe(
       skillPreamble('docs-ship', DOCS_SHIP_TAIL),
     );
@@ -1102,7 +1097,6 @@ describe('Track 16D extend-root resolver locks', () => {
     }
     expect(resolverSkillText('gstack-extend-upgrade')).toContain(UPGRADE_NO_ROOT);
     expect(resolverSkillText('gstack-extend-init')).toContain(INIT_ERROR_STOP);
-    expect(resolverSkillText('autoplan-lean')).toContain(INIT_ERROR_STOP);
     expect(resolverSkillText('docs-ship')).toContain(INIT_ERROR_STOP);
     expect(resolverSkillText('roadmap')).toContain(RENAMES_ER_LINE);
   });
@@ -1222,7 +1216,7 @@ function runPreamble(skill: string, home: string, cwd: string, extra: Record<str
 }
 
 // Helper-tail skills exit 1 without a verified root and run update-check only after printing it.
-const INIT_LIKE = new Set<string>(['gstack-extend-init', 'autoplan-lean', 'docs-ship']);
+const INIT_LIKE = new Set<string>(['gstack-extend-init', 'docs-ship']);
 
 describe('Track 16D preamble representatives', () => {
   const cohorts = ['pair-review', 'gstack-extend-upgrade', 'gstack-extend-init'] as const;
