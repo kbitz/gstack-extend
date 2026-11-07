@@ -22,7 +22,6 @@ const norm = (text: string) => text.replace(/\s+/g, ' ');
 
 const skill = read('skills/plan-track.md');
 const skillN = norm(skill);
-const lean = read('skills/autoplan-lean.md');
 const readme = read('README.md');
 const claude = read('CLAUDE.md');
 const installation = read('docs/installation.md');
@@ -34,22 +33,6 @@ const frontmatter = (text: string) => /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ??
 const fences = (text: string) => [...text.matchAll(/^```(\w*)\n([\s\S]*?)\n```$/gm)].map(m => ({ lang: m[1]!, body: m[2]!, start: m.index!, end: m.index! + m[0].length }));
 
 const STAGE_LINE = 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>';
-
-// Copied from the skill as it stood when this Track shipped; a change to /autoplan-lean's description or routing fails here.
-const LEAN_DESCRIPTION = `description: |
-  Run upstream /autoplan's review pipeline (CEO, design, DX and eng phases
-  with both review voices and auto-decisions) from the installed phase skills,
-  keeping the plan small, and finish with a copyable /implement prompt for a
-  fresh session. The plan holds criteria, Tier, the verify command, accepted
-  settlements, one task list and the GSTACK REVIEW REPORT, within a budget set
-  by the card's size. The full review record goes to a hashed sidecar file.
-  Reviewers get only their phase's criteria and the plan, a phase's two voices
-  run at the same time, and their prompt sizes are recorded. Use when asked to
-  "autoplan lean", "run autoplan with a small plan", or when a caller launches
-  /autoplan-lean by name.
-allowed-tools:`;
-const LEAN_ROUTE = "- Autoplan with a small plan, autoplan lean → invoke autoplan-lean (upstream /autoplan's review; review record in a sidecar, then a fresh-session implement handoff)";
-const LEAN_README_ROW = "| [`/autoplan-lean`](skills/autoplan-lean.md) | Runs upstream `/autoplan`'s full review from the installed phase skills, keeps the plan within a size budget set by its card using a hashed review-record sidecar and bounded reviewer prompts, and finishes with a copyable `/implement` handoff. | New |";
 
 describe('plan-track works alone and hands off to /implement', () => {
   // Value: protects=the skill cannot spawn helpers, call another model or ask a question; fails_when=a tool beyond the five is granted or the working-alone rule is edited out; why_new=no other suite reads this skill; seam=none; no_claim=what an installed agent does
@@ -82,13 +65,19 @@ describe('plan-track works alone and hands off to /implement', () => {
   });
 });
 
-describe('plan-track sits beside /autoplan-lean and changes nothing about it', () => {
-  // Value: protects=criterion 2, the two planners stay separate and the default does not move; fails_when=/autoplan-lean names this skill, or its description, routing line or README row changes; why_new=the lean suites do not lock its description or routing; seam=none; no_claim=routing in a live host
-  test('/autoplan-lean never names /plan-track and keeps its description, routing line and README row', () => {
-    expect(lean).not.toContain('plan-track');
-    expect(lean).toContain(LEAN_DESCRIPTION);
-    expect(claude).toContain(`${LEAN_ROUTE}\n`);
-    expect(readme).toContain(LEAN_README_ROW);
+describe('plan-track sits beside upstream /autoplan after /autoplan-lean retirement', () => {
+  // Value: protects=criteria 2 and 3, no live skill, doc or setup list names /autoplan-lean; fails_when=autoplan-lean returns to plan-track, README, CLAUDE.md, installation, workflow-handoffs or setup SKILLS; why_new=replaces the pre-retirement coexistence lock; seam=none; no_claim=routing in a live host
+  test('plan-track, entry docs, handoff contract and setup SKILLS exclude autoplan-lean', () => {
+    for (const [label, text] of [
+      ['skills/plan-track.md', skill],
+      ['README.md', readme],
+      ['CLAUDE.md', claude],
+      ['docs/installation.md', installation],
+      ['docs/workflow-handoffs.md', handoffs],
+    ] as const) {
+      expect(text, label).not.toContain('autoplan-lean');
+    }
+    expect(parseSetupSkills(setup)).not.toContain('autoplan-lean');
   });
 
   // Value: protects=neither skill claims to replace the other; fails_when=the words replace, supersede or deprecate enter the skill; why_new=no other suite reads this skill; seam=none; no_claim=none
@@ -96,16 +85,16 @@ describe('plan-track sits beside /autoplan-lean and changes nothing about it', (
     expect(skill).not.toMatch(/replac|supersed|deprecat/i);
   });
 
-  // Value: protects=the recorded reason for keeping the default; fails_when=the skill or the design doc drops the two blind comparisons or the risk-handling figures; why_new=the card is the only other record and moves to shipped; seam=none; no_claim=the figures are measured here
-  test('the skill and the design doc record the two blind comparisons and why /autoplan-lean stays the default', () => {
-    expect(skillN).toContain('`/autoplan-lean` stays the default planner');
+  // Value: protects=the recorded comparison figures and the 2026-11-07 retirement record; fails_when=the skill or the design doc drops the two blind comparisons, the risk-handling figures, upstream /autoplan or the 2026-11-07 retirement; why_new=locks the retirement decision alongside the preserved comparison data; seam=none; no_claim=the figures are measured here
+  test('the skill and the design doc record the two blind comparisons, upstream /autoplan and the 2026-11-07 retirement', () => {
+    expect(skillN).toContain('upstream `/autoplan`');
     expect(skillN).toContain('two blind comparisons');
     expect(skillN).toContain('risk handling lower');
     expect(skillN).toContain('workflow-efficiency-program.md');
     const section = design.slice(design.indexOf('## A planning skill that works alone'), design.indexOf('## Deferred experiments'));
     expect(section.length).toBeGreaterThan(0);
     const sectionN = norm(section);
-    for (const phrase of ['30 vs 31 and 31 vs 32 of 50 overall', 'risk handling scored 5 vs 6 and 5 vs 7', '`/autoplan-lean` stays the default', 'source observations']) {
+    for (const phrase of ['30 vs 31 and 31 vs 32 of 50 overall', 'risk handling scored 5 vs 6 and 5 vs 7', '2026-11-07', 'source observations']) {
       expect(sectionN, phrase).toContain(phrase);
     }
   });
@@ -180,15 +169,14 @@ describe('plan-track ends with the stage line', () => {
 });
 
 describe('plan-track uses one verify-command label', () => {
-  // Value: protects=criterion 5, one label across both planners; fails_when=the template or the docs use a bare Verify: label or drop the stated relation; why_new=the label differs in the private source and must stay settled; seam=none; no_claim=a caller gate reads the label
-  test('the plan carries Verify command: and the skill and the contract state its relation to /autoplan-lean', () => {
+  // Value: protects=criterion 5, one verify-command label that /implement reads as intent; fails_when=the template or the docs use a bare Verify: label or drop the intent rule; why_new=the label differs in the private source and must stay settled; seam=none; no_claim=a caller gate reads the label
+  test('the plan carries Verify command: and the skill and the contract state that /implement reads it as intent', () => {
     const template = fences(skill).find(f => f.lang === 'markdown')!;
     expect(template.body.split('\n')).toContain('Verify command: <command, or none — how the plan is verified>');
     expect(skill).not.toMatch(/^Verify:/m);
     expect(template.body).not.toMatch(/^Verify:/m);
-    expect(skillN).toContain('`Verify command:` has the same label and meaning as the `Verify command:` line in a `/autoplan-lean` plan.');
     expect(skillN).toContain('`/implement` reads it as intent and never runs it.');
-    expect(norm(handoffs)).toContain('Its plan\'s `Verify command:` line has the same label and meaning as `/autoplan-lean`\'s');
+    expect(norm(handoffs)).toContain('`/implement` reads its plan\'s `Verify command:` line as intent and never runs it');
   });
 });
 

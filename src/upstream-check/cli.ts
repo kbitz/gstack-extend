@@ -9,7 +9,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { accessSync, closeSync, constants, existsSync, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { Phase } from '../autoplan-lean/plan.ts';
 import type { ClassifierResult, ExportResult, GoldenCase, ProbeResult } from './probe.ts';
 
 export const FORMAT = 'upstream-check/v1';
@@ -118,7 +117,7 @@ const OVERLAP_ADVERSARIAL_MARK = 'and its adversarial instructions (`review/sect
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
-type Kind = 'root' | 'inventory' | 'anchor' | 'export' | 'classifier' | 'criteria';
+type Kind = 'root' | 'inventory' | 'anchor' | 'export' | 'classifier';
 interface Check { kind: Kind; id: string; ok: boolean; reason: string; effect?: string; fix?: string }
 
 class UsageError extends Error {
@@ -352,7 +351,6 @@ const STAGE = {
   overlap: '/review-and-prep: first-cycle=overlap is inactive, so cycle 1 runs in today\'s order and the receipt says so',
   overlapList: '/review-and-prep: the overlap anchors cannot be listed, so first-cycle=overlap is unverified and stays inactive',
   findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
-  outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
   notReady: 'bin/outside-review: a reviewer\'s own not-ready verdict with only advisory findings is credited clean, so the stage may proceed past it',
@@ -369,13 +367,11 @@ function describe(check: Check): { effect: string; fix: string } {
     case 'inventory':
       return { effect: 'the anchors /review-and-prep gates on cannot be listed, so its in-cap gate is unverified', fix: withDocs('this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun') };
     case 'anchor':
-      return { effect: check.id.startsWith('autoplan-lean') ? STAGE.outline : STAGE.review, fix: withDocs(UPGRADE_FIX) };
+      return { effect: STAGE.review, fix: withDocs(UPGRADE_FIX) };
     case 'export':
       return { effect: STAGE.outside, fix: withDocs(UPGRADE_FIX) };
     case 'classifier':
       return { effect: STAGE.classifier, fix: withDocs(UPGRADE_FIX) };
-    case 'criteria':
-      return { effect: `/autoplan-lean: the ${check.id.split('.').slice(1).join(' ')} voice is not upstream-identical for this run`, fix: withDocs(UPGRADE_FIX) };
   }
 }
 
@@ -398,13 +394,9 @@ interface Layout {
   pregateIndex: string;
   pregateLanes: string;
   pregateSecrets: string;
-  autoplan: string;
-  snapshot: string;
-  section(phase: Phase): string;
 }
 
 function chooseLayout(root: string, skillsDir: string): Layout {
-  const snapshot = join(root, 'bin', 'gstack-autoplan-snapshot.ts');
   // The fold's extra checklists live under the gstack root in both layouts, as the delegable specialists do.
   const fold = { security: join(root, 'review', 'specialists', 'security.md'), dataMigration: join(root, 'review', 'specialists', 'data-migration.md'),
     apiContract: join(root, 'review', 'specialists', 'api-contract.md'), stateMachines: join(root, 'review', 'specialists', 'state-machines.md'),
@@ -412,21 +404,17 @@ function chooseLayout(root: string, skillsDir: string): Layout {
   // The pregate lives under the gstack root in both layouts.
   const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts'), pregateSecrets: join(root, 'lib', 'pregate', 'checks', 'secrets.ts') };
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
-    const autoplan = join(root, 'autoplan', 'SKILL.md');
-    const sections = existsSync(join(root, 'autoplan', 'sections'));
     return { name: 'nested', review: join(root, 'review', 'SKILL.md'), adversarial: join(root, 'review', 'sections', 'adversarial.md'),
       checklist: join(root, 'review', 'checklist.md'),
       testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
       performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
-      ...fold, coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
-      section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
+      ...fold, coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate };
   }
-  const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
   return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), adversarial: join(skillsDir, 'gstack-review', 'SKILL.md'),
     checklist: join(root, 'review', 'checklist.md'),
     testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
     performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
-    ...fold, coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
+    ...fold, coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate };
 }
 
 interface Options { root: string; skillsDir: string; timeoutMs: number }
@@ -580,8 +568,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const layout = chooseLayout(options.root, options.skillsDir);
   if (layout.name === 'sibling') rejectRootInsideRepo(options.skillsDir, io.cwd, '--skills-dir');
   // Keep extension-owned loader failures inside main's internal-error boundary.
-  const [{ driftReport, UPSTREAM }, { skipList }, { PHASES }, { INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }, { UPSTREAM_FINDING_ANCHORS }] = await Promise.all([
-    import('../autoplan-lean/criteria.ts'), import('../autoplan-lean/outline.ts'), import('../autoplan-lean/plan.ts'),
+  const [{ INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }, { UPSTREAM_FINDING_ANCHORS }] = await Promise.all([
     import('../outside-review/cli.ts'), import('./probe.ts'), import('../secret-dispositions/evaluate.ts'),
   ]);
 
@@ -603,9 +590,8 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
   info('inspected', `fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`);
   info('inspected', `overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`);
-  info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
-  info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
+  info('scope', 'OK means only that the listed anchors, exports and classifier cases matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
 
   // Root.
   let rootOk = false;
@@ -754,11 +740,6 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     const refused = { effect: STAGE.findingLocation, fix: UPGRADE_FIX };
     UPSTREAM_FINDING_ANCHORS.forEach((anchor, i) => checkAnchor(`secret-dispositions.location.${i + 1}`, secrets, anchor, undefined, refused));
   }
-  const autoplan = rootOk ? readOnce(layout.autoplan, 'autoplan skill', 'autoplan') : undefined;
-  if (!autoplan) drift('anchor', 'autoplan-lean.skip-list', notRun!);
-  else if (!autoplan.ok) drift('anchor', 'autoplan-lean.skip-list', autoplan.reason);
-  else if (skipList(autoplan.bytes.toString('utf8')).length) ok('anchor', 'autoplan-lean.skip-list');
-  else drift('anchor', 'autoplan-lean.skip-list', `**Section skip list label or its bullets not found in ${autoplan.real}`);
 
   // Exports and classifier cases, in one bounded child process.
   if (rootOk) for (const { module } of UPSTREAM_HELPERS) {
@@ -798,26 +779,6 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     }
   }
 
-  // Criteria, through the same comparison code `autoplan-lean drift` uses.
-  const failures = new Map<string, string>();
-  const text = (read: Read | undefined, key: string) => {
-    if (!read) return undefined;
-    if (!read.ok) { failures.set(key, read.reason); return undefined; }
-    return read.bytes.toString('utf8');
-  };
-  const snapshot = text(rootOk ? readOnce(layout.snapshot, 'snapshot tool', 'snapshot') : undefined, 'snapshot');
-  const sections: Partial<Record<Phase, string>> = {};
-  for (const phase of PHASES) {
-    const section = text(rootOk ? readOnce(layout.section(phase), `${phase} phase section`, `section.${phase}`) : undefined, phase);
-    if (section !== undefined) sections[phase] = section;
-  }
-  for (const item of driftReport(snapshot, sections, PHASES)) {
-    const id = `criteria.${item.phase}.${item.voice}`;
-    if (item.status === 'match') { ok('criteria', id); continue; }
-    const cause = failures.get(item.voice === 'native' ? 'snapshot' : item.phase) ?? notRun;
-    drift('criteria', id, `${item.status}${item.detail ? ` (${item.detail})` : ''}${cause ? `: ${cause}` : ''}`);
-  }
-
   const bad = checks.filter((c) => !c.ok);
   const lines = [FORMAT, ...infos];
   for (const check of checks) {
@@ -846,7 +807,7 @@ Output (stdout; a report without a final RESULT line is incomplete, treat it as 
   OK <kind> <id>
   DRIFT <kind> <id> <reason>, then "  effect:" and "  fix:" lines
   RESULT ok|drift checks=<n> drift=<m>
-Kinds: root, inventory, anchor, export, classifier, criteria.
+Kinds: root, inventory, anchor, export, classifier.
 
 Exit: 0 every check OK; 4 any check drifted or an input is missing or malformed; 2 usage error;
       1 internal failure; 5 Bun missing. Errors go to stderr as "ERROR <CODE>: ..." and "FIX: ...".

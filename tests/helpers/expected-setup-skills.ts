@@ -10,7 +10,6 @@ export const EXPECTED_SETUP_SKILLS = [
   'review-and-prep',
   'implement',
   'ship-and-land',
-  'autoplan-lean',
   'docs-ship',
   'plan-track',
 ] as const;

@@ -92,13 +92,13 @@ describe('setup --host flags', () => {
       const home = join(baseTmp, `retired-plain-file-${host}`);
       const root = hostDir(home, host);
       mkdirSync(root, { recursive: true });
-      for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
+      for (const skill of ['review-apparatus', 'test-plan', 'plan-card', 'autoplan-lean']) {
         writeFileSync(join(root, skill), 'PERSONAL FILE\n');
       }
       for (const uninstall of [false, true]) {
         const result = runSetup(['--host', host, ...(uninstall ? ['--uninstall'] : [])], home);
         expect(result.exitCode).toBe(0);
-        for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
+        for (const skill of ['review-apparatus', 'test-plan', 'plan-card', 'autoplan-lean']) {
           expect(result.stdout).toContain(`Skipped ${skill} (target exists but is not a directory)`);
           expect(readFileSync(join(root, skill), 'utf8')).toBe('PERSONAL FILE\n');
         }
@@ -155,11 +155,41 @@ describe('setup --host flags', () => {
       }
     });
 
+    // Value: protects=an upgrade from 0.70.x removes the owned autoplan-lean directory and leaves no autoplan-lean install or launcher on the host;
+    //   fails_when=autoplan-lean remains in SKILLS or is missing from LEGACY_SKILLS, or bin/autoplan-lean still exists;
+    //   why_new=locks the retirement of autoplan-lean across all four hosts; seam=none
+    test(`${host} upgrade from an autoplan-lean install removes it and leaves plan-track`, () => {
+      const home = join(baseTmp, `retired-autoplan-lean-${host}`);
+      const root = hostDir(home, host);
+      const dir = join(root, 'autoplan-lean');
+      mkdirSync(dir, { recursive: true });
+      if (host === 'claude') {
+        // autoplan-lean.md no longer exists in this checkout; the link dangles.
+        symlinkSync(join(realpathSync(ROOT), 'skills', 'autoplan-lean.md'), join(dir, 'SKILL.md'));
+      } else {
+        writeFileSync(join(dir, 'SKILL.md'), 'old autoplan-lean\n');
+      }
+      writeFileSync(join(dir, '.extend-root'), `${realpathSync(ROOT)}\n`);
+      const args = ['--host', host, '--quiet'];
+      for (const _run of [1, 2]) {
+        expect(runSetup(args, home).exitCode).toBe(0);
+        expect(existsSync(dir)).toBe(false);
+        expect(existsSync(join(home, '.local', 'bin', 'autoplan-lean'))).toBe(false);
+        expect(readFileSync(join(root, 'plan-track', 'SKILL.md'), 'utf8')).toContain('name: plan-track');
+      }
+      const freshHome = join(baseTmp, `fresh-no-autoplan-lean-${host}`);
+      mkdirSync(freshHome, { recursive: true });
+      expect(runSetup(args, freshHome).exitCode).toBe(0);
+      expect(existsSync(join(hostDir(freshHome, host), 'autoplan-lean'))).toBe(false);
+      expect(existsSync(join(freshHome, '.local', 'bin', 'autoplan-lean'))).toBe(false);
+      expect(existsSync(join(ROOT, 'bin', 'autoplan-lean'))).toBe(false);
+    });
+
     for (const kind of ['regular', 'file-link', 'directory-link', 'foreign-pointer'] as const) {
       test(`${host} retirement preserves personal skills (${kind})`, () => {
         const home = join(baseTmp, `retired-personal-${host}-${kind}`);
         const root = hostDir(home, host);
-        for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
+        for (const skill of ['review-apparatus', 'test-plan', 'plan-card', 'autoplan-lean']) {
           const dir = join(root, skill);
           const personal = join(home, 'dotfiles', skill);
           mkdirSync(personal, { recursive: true });
@@ -176,7 +206,7 @@ describe('setup --host flags', () => {
         }
         expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
         expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
-        for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
+        for (const skill of ['review-apparatus', 'test-plan', 'plan-card', 'autoplan-lean']) {
           const dir = join(root, skill);
           expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('PERSONAL\n');
           expect(readFileSync(join(home, 'dotfiles', skill, 'SKILL.md'), 'utf8')).toBe('PERSONAL\n');
@@ -1584,17 +1614,19 @@ exec /usr/bin/mktemp "$@"
   }, 20000);
 
   test('O5 a retired regular copy is kept and reported source-unavailable', () => {
-    const home = join(baseTmp, 'o5-retired');
-    const body = 'RETIRED COPY\n';
-    const dir = plantRegularSkill(home, 'review-apparatus', body);
-    const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
-    expect(r.exitCode).toBe(0);
-    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe(body);
-    const warned = checkFacts(home).stdout;
-    expect(warned).toContain('skill=review-apparatus');
-    expect(warned).toContain('reason=preserved_regular');
-    expect(warned).toContain('compare=source_unavailable');
-    expect(warned).toContain('variant=not_applicable');
+    for (const retired of ['review-apparatus', 'autoplan-lean'] as const) {
+      const home = join(baseTmp, `o5-retired-${retired}`);
+      const body = 'RETIRED COPY\n';
+      const dir = plantRegularSkill(home, retired, body);
+      const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+      expect(r.exitCode).toBe(0);
+      expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe(body);
+      const warned = checkFacts(home).stdout;
+      expect(warned).toContain(`skill=${retired}`);
+      expect(warned).toContain('reason=preserved_regular');
+      expect(warned).toContain('compare=source_unavailable');
+      expect(warned).toContain('variant=not_applicable');
+    }
   });
 
   test('O6 foreign, marker-only and non-regular files are not claimed or changed', () => {

@@ -95,7 +95,7 @@ describe('no-findings line the review prompt asks for', () => {
 
   // Value: protects=an outside review that follows POLICY's no-findings instruction is credited on both
   //   gates, and the instruction keeps its place before the Recommendation line; fails_when=POLICY drops or
-  //   reorders the line, or the sentence drifts from /autoplan-lean's wording; why_new=a paid review was
+  //   reorders the line; why_new=a paid review was
   //   discarded as untagged_review after a bold NO_FINDINGS opening; seam=none;
   //   no_claim=that a model follows the prompt; the classifier here is the strict stub
   test('no-findings line: POLICY asks for it and the stub credits a reply that follows it', () => {

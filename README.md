@@ -23,8 +23,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 |-------|-------------|--------|
 | [`/project-spec`](skills/project-spec.md) | Establishes users, MVP outcomes, audience limits and release policy for a new or existing project, then runs roadmap. | New |
 | [`/roadmap`](skills/roadmap.md) | Admits work against the selected product target and produces an execution plan with visible outcomes, audits and dependency-aware grouping. | Stable |
-| [`/autoplan-lean`](skills/autoplan-lean.md) | Runs upstream `/autoplan`'s full review from the installed phase skills, keeps the plan within a size budget set by its card using a hashed review-record sidecar and bounded reviewer prompts, and finishes with a copyable `/implement` handoff. | New |
-| [`/plan-track`](skills/plan-track.md) | Turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline. `/autoplan-lean` stays the default because two blind comparisons scored this approach's risk handling lower; use `/plan-track` for a small, well-specified card. | New |
+| [`/plan-track`](skills/plan-track.md) | Turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline. Use upstream `/autoplan` for a card that needs the full review pipeline, or `/plan-track` for a small, well-specified card. | New |
 | [`/implement`](skills/implement.md) | Executes an approved plan, checks completeness, runs targeted tests, and hands off for review. | Stable |
 | [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks and `/ship`'s pre-release gates, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
@@ -40,8 +39,7 @@ Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
 agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
 `--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
 `/roadmap` audit tools, `gstack-extend init`, the merge gate,
-`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps`, `/autoplan-lean`'s
-`bin/autoplan-lean` helper and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
+`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps` and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
 version. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
@@ -69,8 +67,8 @@ install ownership, and recovery steps.
 
 ## Typical workflow
 
-Start with an approved plan (upstream `/autoplan`, or `/autoplan-lean` for a
-smaller reviewed plan), then use a fresh session for each handoff:
+Start with an approved plan (upstream `/autoplan`, or `/plan-track` for a
+small, well-specified card), then use a fresh session for each handoff:
 
 ```text
 /implement          # Build the plan and check completeness

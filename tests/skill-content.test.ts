@@ -93,6 +93,14 @@ describe('skill sources', () => {
     }
   });
 
+  // Value: protects=criterion 2, no live skill file names the retired /autoplan-lean skill; fails_when=any skills/*.md file contains autoplan-lean; why_new=retirement lock across every skill source; seam=none
+  test('no skill source names the retired autoplan-lean skill', () => {
+    for (const file of readdirSync(join(ROOT, 'skills'))) {
+      if (!file.endsWith('.md')) continue;
+      expect(readFileSync(join(ROOT, 'skills', file), 'utf8'), file).not.toContain('autoplan-lean');
+    }
+  });
+
   test('--host cursor preserves skill bodies and strips allowed-tools from all skills', () => {
     const home = join(baseTmp, 'cursor-explicit');
     mkdirSync(home, { recursive: true });

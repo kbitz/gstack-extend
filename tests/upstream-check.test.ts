@@ -3,9 +3,6 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, UPSTREAM } from '../src/autoplan-lean/criteria';
-import { skipList } from '../src/autoplan-lean/outline';
-import { PHASES } from '../src/autoplan-lean/plan';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
 import { ANCHORS_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
@@ -14,7 +11,7 @@ import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 107; // root, 7 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 21 delegate + 18 fold + 8 overlap + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 98; // root, 7 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 21 delegate + 18 fold + 8 overlap + 2 finding-location anchors, 3 exports, 4 classifier cases
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 // Each check builds a fixture tree under `scratch`; cleanup took 17.4 s under load, so allow 30 s for removal.
 afterAll(() => rmSync(scratch, { recursive: true, force: true }), 30000);
@@ -56,9 +53,6 @@ const MODULES = {
   'claude-bin': 'export function resolveClaudeCommand() { return null; }\n',
   'outside-review-result': CLASSIFIER(true),
 };
-const snapshotText = () => PHASES.map((p) => `  ${p}: \`${NATIVE_CRITERIA[p]}\`,`).join('\n') + '\n';
-const sectionText = (p: (typeof PHASES)[number]) => [BOUNDARY, OUTSIDE_RESULT_CONTRACT, ...OUTSIDE_CRITERIA[p]].join('\n\n') + '\n';
-const SKIP = '**Section skip list (apply these):**\n\n- Preamble\n- Telemetry\n';
 const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${DELEGATE.dispatchItem.join('\n')}\n${FOLD.review.join('\n')}\n${OVERLAP.review.join('\n')}\n`;
 const adversarialText = () => `# adversarial\n\n${OVERLAP.adversarial.join('\n')}\n`;
 const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n${TEST_GAP.checklist.join('\n')}\n`;
@@ -80,8 +74,8 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   const root = join(skills, 'gstack');
   const files: Record<string, string> = {};
   put(join(root, 'VERSION'), '1.2.3.4\n');
-  put(join(root, 'bin', 'gstack-autoplan-snapshot.ts'), snapshotText());
-  put(join(root, 'review', 'checklist.md'), checklistText());
+  files.checklist = join(root, 'review', 'checklist.md');
+  put(files.checklist, checklistText());
   files.testing = join(root, 'review', 'specialists', 'testing.md');
   put(files.testing, testingText());
   for (const part of DELEGATE_PARTS.filter((p) => p !== 'testing')) {
@@ -106,21 +100,16 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
     files.adversarial = join(root, 'review', 'sections', 'adversarial.md');
-    files.autoplan = join(root, 'autoplan', 'SKILL.md');
     files.coverage = join(root, 'ship', 'sections', 'test-coverage.md');
     put(files.review, reviewText());
     put(files.adversarial, adversarialText());
     put(files.coverage, coverageText());
-    put(files.autoplan, SKIP);
-    for (const p of PHASES) put(join(root, 'autoplan', 'sections', `${p}-phase.md`), sectionText(p));
   } else {
     files.review = join(skills, 'gstack-review', 'SKILL.md');
     files.adversarial = files.review;
-    files.autoplan = join(skills, 'gstack-autoplan', 'SKILL.md');
     files.coverage = join(skills, 'gstack-ship', 'sections', 'test-coverage.md');
     put(files.review, reviewText() + adversarialText());
     put(files.coverage, coverageText());
-    put(files.autoplan, SKIP + PHASES.map(sectionText).join('\n'));
   }
   return { root, skills, files };
 }
@@ -368,7 +357,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, twenty-one delegate anchors, eighteen fold anchors, eight overlap anchors, two finding-location anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + UPSTREAM_FINDING_ANCHORS.length); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, twenty-one delegate anchors, eighteen fold anchors, eight overlap anchors, two finding-location anchors
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -383,7 +372,6 @@ describe('a healthy installation', () => {
       `INFO inspected delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`,
       `INFO inspected fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`,
       `INFO inspected overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`,
-      `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
   }, 30000);
@@ -432,8 +420,6 @@ describe('a healthy installation', () => {
 
   test('nested inlined autoplan and CRLF anchors retain byte matches', async () => {
     const f = upstream('nested');
-    rmSync(join(f.root, 'autoplan', 'sections'), { recursive: true });
-    writeFileSync(f.files.autoplan!, SKIP + PHASES.map(sectionText).join('\n'));
     writeFileSync(f.files.review!, reviewText().replaceAll('\n', '\r\n'));
     expect((await check(rootArgs(f))).code).toBe(0);
   }, 30000);
@@ -441,15 +427,15 @@ describe('a healthy installation', () => {
   test('nested precedence never borrows healthy sibling files', async () => {
     const f = upstream('nested');
     put(join(f.skills, 'gstack-review', 'SKILL.md'), reviewText());
-    put(join(f.skills, 'gstack-autoplan', 'SKILL.md'), SKIP + PHASES.map(sectionText).join('\n'));
+    put(join(f.skills, 'gstack-ship', 'sections', 'test-coverage.md'), coverageText());
     writeFileSync(f.files.review!, '# changed nested review\n');
-    rmSync(join(f.root, 'autoplan', 'sections', 'eng-phase.md'));
+    rmSync(f.files.coverage!);
     const r = await check(rootArgs(f));
     expect(r.code).toBe(4);
     expect(r.lines).toContain('INFO layout nested');
     expect(drifts(r.lines).filter((line) => line.includes('review-and-prep.incap.'))).toHaveLength(3);
-    expect(drifts(r.lines).some((line) => line.includes('criteria.eng.outside'))).toBe(true);
-    expect(r.lines.filter((line) => line.startsWith('INFO file ')).join('\n')).not.toContain(`${realpathSync(f.skills)}/gstack-autoplan/`);
+    expect(drifts(r.lines).some((line) => line.includes('review-and-prep.test-gaps.coverage.1'))).toBe(true);
+    expect(r.lines.filter((line) => line.startsWith('INFO file ')).join('\n')).not.toContain(`${realpathSync(f.skills)}/gstack-ship/`);
   }, 30000);
 
   test('only an exact checkout root reports its own revision', async () => {
@@ -519,17 +505,6 @@ describe('drift', () => {
     writeFileSync(f.files.review!, reviewText().replace('Steps 3–5', 'Steps 3-5'));
     const r = await check(rootArgs(f));
     expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(['review-and-prep.incap.1']);
-  }, 30000);
-
-  test('a missing skip list is tied to skipList() returning nothing and says the heading fallback', async () => {
-    const f = upstream('nested');
-    writeFileSync(f.files.autoplan!, '# autoplan\n\nSection skip list: none here\n');
-    expect(skipList(readFileSync(f.files.autoplan!, 'utf8'))).toEqual([]);
-    const r = await check(rootArgs(f));
-    const at = r.lines.findIndex((l) => l.startsWith('DRIFT anchor autoplan-lean.skip-list '));
-    expect(at).toBeGreaterThan(-1);
-    expect(r.lines[at + 1]).toContain('marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself');
-    expect(skipList(readFileSync(upstream('nested').files.autoplan!, 'utf8')).length).toBeGreaterThan(0);
   }, 30000);
 
   test('missing review file in sibling layout names the nested path too', async () => {
@@ -720,14 +695,14 @@ describe('drift', () => {
       ...TEST_GAP.coverage.map((_, i) => `anchor review-and-prep.test-gaps.coverage.${i + 1}`),
     ]);
     expect(ids.indexOf('anchor review-and-prep.fix-first.checklist.4')).toBeLessThan(ids.indexOf('anchor review-and-prep.test-gaps.review.1'));
-    // The pregate-narrowing anchors follow the test-gap checks, and the skip list follows them.
+    // The pregate-narrowing anchors follow the test-gap checks, and the export checks follow the anchors.
     expect(ids.filter((id) => id.startsWith('anchor review-and-prep.pregate-narrowing.'))).toEqual([
       ...PREGATE_NARROW.bin.map((_, i) => `anchor review-and-prep.pregate-narrowing.bin.${i + 1}`),
       ...PREGATE_NARROW.index.map((_, i) => `anchor review-and-prep.pregate-narrowing.index.${i + 1}`),
       ...PREGATE_NARROW.lanes.map((_, i) => `anchor review-and-prep.pregate-narrowing.lanes.${i + 1}`),
     ]);
     expect(ids.indexOf('anchor review-and-prep.test-gaps.coverage.4')).toBeLessThan(ids.indexOf('anchor review-and-prep.pregate-narrowing.bin.1'));
-    expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('anchor autoplan-lean.skip-list'));
+    expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('export outside-review.runClaudeCode'));
     expect(ids.filter((id) => id.startsWith('anchor review-and-prep.delegate.'))).toEqual([
       ...DELEGATE.review.map((_, i) => `anchor review-and-prep.delegate.review.${i + 1}`),
       ...DELEGATE.dispatchItem.map((_, i) => `anchor review-and-prep.delegate.dispatch-item.${i + 1}`),
@@ -1275,13 +1250,13 @@ describe('drift', () => {
     for (const line of anchors) expect(line).toContain('not run: gstack root unavailable');
   }, 30000);
 
-  // Value: protects=the finding-location anchors report after the pregate-narrowing anchors and before the skip list; fails_when=a gate moves in the report; why_new=fifth anchor group; seam=none
-  test('the finding-location anchors report after the pregate-narrowing anchors and before the skip list', async () => {
+  // Value: protects=the finding-location anchors report after the pregate-narrowing anchors and before the export checks; fails_when=a gate moves in the report; why_new=fifth anchor group; seam=none
+  test('the finding-location anchors report after the pregate-narrowing anchors and before the export checks', async () => {
     const r = await check(rootArgs(upstream('nested')));
     const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
     expect(ids.filter((id) => id.startsWith('anchor secret-dispositions.'))).toEqual(UPSTREAM_FINDING_ANCHORS.map((_, i) => `anchor secret-dispositions.location.${i + 1}`));
     expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
-    expect(ids.indexOf('anchor secret-dispositions.location.2')).toBeLessThan(ids.indexOf('anchor autoplan-lean.skip-list'));
+    expect(ids.indexOf('anchor secret-dispositions.location.2')).toBeLessThan(ids.indexOf('export outside-review.runClaudeCode'));
   }, 30000);
 
   // Value: protects=the check stays read-only on a healthy and on a drifted secrets.ts; fails_when=a run adds, removes or rewrites a file under the root; why_new=the check reads one more installed file; seam=none
@@ -1326,55 +1301,6 @@ describe('drift', () => {
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
     expect(r.out).not.toContain('is credited clean');
   }, 30000);
-
-  // Value: protects=the requalified dx native copy reports OK on the installed wording and DRIFT on the 1.91.176.0 wording, in both layouts; fails_when=the copy keeps the old wording or the old wording passes; why_new=upstream trimmed the dx error-contract item in 1.92.50.0; seam=none
-  test.each(['nested', 'sibling'] as const)('criteria: the dx native copy is OK on the installed text and drift on the 1.91.176.0 text in the %s layout', async (layout) => {
-    const ok = await check(rootArgs(upstream(layout)));
-    expect(ok.lines).toContain('OK criteria criteria.dx.native');
-    const substitutions: [string, string, number][] = [
-      ['or what a human must provide', 'or the precise thing a human must provide', 1],
-      ['failure naming no non-interactive', 'failure that names no non-interactive', 1],
-      ['caps Error Messages at 4/10', 'caps the Error Messages score at 4/10', 1],
-      [':<item> <what fails>"', ':<item>"', 2],
-    ];
-    let old = NATIVE_CRITERIA.dx;
-    for (const [from, to, count] of substitutions) {
-      expect(old.split(from).length - 1).toBe(count);
-      old = old.split(from).join(to);
-    }
-    const f = upstream(layout);
-    const path = join(f.root, 'bin', 'gstack-autoplan-snapshot.ts');
-    const before = readFileSync(path, 'utf8');
-    expect(before.split(NATIVE_CRITERIA.dx)).toHaveLength(2);
-    writeFileSync(path, before.replace(NATIVE_CRITERIA.dx, old));
-    const r = await check(rootArgs(f));
-    expectAgreement(r);
-    expect(r.code).toBe(4);
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
-    expect(drifts(r.lines).map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual(['criteria criteria.dx.native']);
-  }, 30000);
-
-  test('criteria: a changed native criterion, a missing paragraph and a missing section are drift', async () => {
-    const f = upstream('nested');
-    writeFileSync(join(f.root, 'bin', 'gstack-autoplan-snapshot.ts'), snapshotText().replace('Is this the right problem to solve?', 'Is this the right problem?'));
-    writeFileSync(join(f.root, 'autoplan', 'sections', 'eng-phase.md'), `${BOUNDARY}\n`);
-    rmSync(join(f.root, 'autoplan', 'sections', 'dx-phase.md'));
-    const r = await check(rootArgs(f));
-    expectAgreement(r);
-    expect(r.code).toBe(4);
-    expect(drifts(r.lines).map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual([
-      'criteria criteria.ceo.native', 'criteria criteria.dx.outside', 'criteria criteria.eng.outside',
-    ]);
-    expect(drifts(r.lines).find((l) => l.includes('criteria.dx.outside'))).toContain('unreadable');
-    expect(r.lines).toContain('  effect: /autoplan-lean: the ceo native voice is not upstream-identical for this run');
-  }, 30000);
-
-  test('an unreadable snapshot tool makes every native criterion drift', async () => {
-    const f = upstream('nested');
-    rmSync(join(f.root, 'bin', 'gstack-autoplan-snapshot.ts'));
-    const r = await check(rootArgs(f));
-    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(PHASES.map((p) => `criteria.${p}.native`));
-  }, 30000);
 });
 
 describe('bounded reads', () => {
@@ -1382,16 +1308,16 @@ describe('bounded reads', () => {
     const f = upstream('nested');
     rmSync(f.files.review!);
     mkdirSync(f.files.review!);
-    rmSync(f.files.autoplan!);
-    expect(spawnSync('mkfifo', [f.files.autoplan!]).status).toBe(0);
-    writeFileSync(join(f.root, 'bin', 'gstack-autoplan-snapshot.ts'), Buffer.alloc(4 * 1024 * 1024 + 1, 0x61));
+    rmSync(f.files.checklist!);
+    expect(spawnSync('mkfifo', [f.files.checklist!]).status).toBe(0);
+    writeFileSync(f.files.coverage!, Buffer.alloc(4 * 1024 * 1024 + 1, 0x61));
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.code).toBe(4);
     const text = r.out;
     expect(text).toContain(`review skill is not a regular file: ${realpathSync(f.files.review!)}`);
-    expect(text).toContain(`autoplan skill is not a regular file: ${realpathSync(f.files.autoplan!)}`);
-    expect(text).toContain('snapshot tool is larger than 4 MiB');
+    expect(text).toContain(`review checklist is not a regular file: ${realpathSync(f.files.checklist!)}`);
+    expect(text).toContain('coverage audit section is larger than 4 MiB');
   }, 30000);
 });
 
@@ -1856,7 +1782,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
     put(join(copy, 'VERSION'), '9.9.9\n');
-    rmSync(join(copy, 'src', 'autoplan-lean', 'criteria.ts'));
+    rmSync(join(copy, 'src', 'secret-dispositions', 'evaluate.ts'));
     for (const args of [[], ['--bogus']]) {
       const usage = launch(args, {}, cwd, join(copy, 'bin', 'upstream-check'));
       expect(usage.status).toBe(2);
@@ -2095,7 +2021,7 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Delegation anchors|Fold anchors|Overlap anchors|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Delegation anchors|Fold anchors|Overlap anchors|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
@@ -2106,7 +2032,6 @@ describe('docs and wiring', () => {
     ['Delegation anchors', DELEGATE_QUALIFIED.revision, DELEGATE_QUALIFIED.version],
     ['Fold anchors', FOLD_QUALIFIED.revision, FOLD_QUALIFIED.version],
     ['Overlap anchors', OVERLAP_QUALIFIED.revision, OVERLAP_QUALIFIED.version],
-    ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];
   // Value: protects=the documents no longer leave the delegation and fold review anchors unqualified, and state the specialist-dispatch settlement; fails_when=the old unqualified section returns or the settlement subsection drops its core terms; why_new=criterion 5; seam=none
@@ -2154,8 +2079,8 @@ describe('docs and wiring', () => {
   });
 
   test('the docs define OK narrowly, list every drift kind and record a timing profile', () => {
-    expect(docs).toContain('`OK` means only that the listed anchors, exports, classifier cases and known\ncriteria paragraphs matched');
-    for (const kind of ['root', 'inventory', 'anchor', 'export', 'classifier', 'criteria']) expect(docs).toContain(`id="drift-${kind}"`);
+    expect(docs).toContain('`OK` means only that the listed anchors, exports and classifier cases matched');
+    for (const kind of ['root', 'inventory', 'anchor', 'export', 'classifier']) expect(docs).toContain(`id="drift-${kind}"`);
     expect(docs).toContain('## Measured startup profile');
     expect(docs).toMatch(/Bun \d+\.\d+\.\d+/);
     expect(docs).toMatch(/observed maximum/i);
