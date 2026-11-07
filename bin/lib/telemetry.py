@@ -1198,9 +1198,9 @@ def claude_user_signals(session_id, begin, end):
                                 ask_times[block_id] = ts
                                 questions += 1
                         else:
-                            pos_key = (record_idx, block_idx)
-                            if pos_key not in seen_pos_asks:
-                                seen_pos_asks.add(pos_key)
+                            position = (record_idx, block_idx)
+                            if position not in seen_pos_asks:
+                                seen_pos_asks.add(position)
                                 questions += 1
             elif rtype == "user":
                 if isinstance(content, list):
