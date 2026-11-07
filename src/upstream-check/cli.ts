@@ -30,11 +30,11 @@ export const PREGATE_NARROW_QUALIFIED = { revision: 'f8085aa0e499085c411f712d6d5
 /** Upstream revision at which the anchors behind the secret-finding location grammar were qualified in both layouts. */
 export const FINDING_LOCATION_QUALIFIED = { revision: '2512dd7624a474fee036326989ea0c6bb8470e69', version: '1.92.55.0' } as const;
 
-/** Upstream revision at which the anchors behind `delegate=<part>` were qualified in both layouts. */
-export const DELEGATE_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b682890175a8c', version: '1.93.3.0' } as const;
+/** Upstream revision at which the anchors behind `delegate=<part>` were qualified in the nested checkout and the Cursor and Codex sibling copies generated from it; the sibling copies' own revision is unknown. */
+export const DELEGATE_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
 
-/** Upstream revision at which the anchors behind `specialists=fold` were qualified; the sibling layout's revision is unknown. */
-export const FOLD_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b682890175a8c', version: '1.93.3.0' } as const;
+/** Upstream revision at which the anchors behind `specialists=fold` were qualified in the nested checkout and the Cursor and Codex sibling copies generated from it; the sibling copies' own revision is unknown. */
+export const FOLD_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
 
 /** Upstream revision at which the anchors behind `first-cycle=overlap` were qualified; the sibling layout's revision is unknown. */
 export const OVERLAP_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
@@ -94,6 +94,7 @@ const PREGATE_NARROW_HEADING = '**Activation (narrowed pregate).**';
 const PREGATE_NARROW_INDEX_MARK = 'its `lib/pregate/index.ts` still contains,';
 const PREGATE_NARROW_LANES_MARK = 'and its `lib/pregate/checks/lanes.ts` still contains,';
 const DELEGATE_HEADING = '**Activation (`delegate`).**';
+const DISPATCH_ITEM_MARK = 'and, where that `/review` contains any line of the next list, it still contains every line of it,';
 const DELEGATE_TESTING_MARK = 'its `review/specialists/testing.md` still contains,';
 const DELEGATE_MAINTAINABILITY_MARK = 'its `review/specialists/maintainability.md` still contains,';
 const DELEGATE_PERFORMANCE_MARK = 'its `review/specialists/performance.md` still contains,';
@@ -169,8 +170,8 @@ export type Inventory = { ok: true; file: string; anchors: string[] } | { ok: fa
 export type FixFirstInventory = { ok: true; file: string; review: string[]; checklist: string[] } | { ok: false; file: string; reason: string };
 export type TestGapInventory = { ok: true; file: string; review: string[]; testing: string[]; checklist: string[]; coverage: string[] } | { ok: false; file: string; reason: string };
 export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; index: string[]; lanes: string[] } | { ok: false; file: string; reason: string };
-export type DelegateInventory = { ok: true; file: string; review: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
-export type FoldInventory = { ok: true; file: string; review: string[]; checklists: Record<FoldName, string[]> } | { ok: false; file: string; reason: string };
+export type DelegateInventory = { ok: true; file: string; review: string[]; dispatchItem: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
+export type FoldInventory = { ok: true; file: string; review: string[]; dispatchItem: string[]; checklists: Record<FoldName, string[]> } | { ok: false; file: string; reason: string };
 export type OverlapInventory = { ok: true; file: string; review: string[]; adversarial: string[] } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
@@ -291,30 +292,32 @@ export function pregateNarrowInventory(extendRootPath: string): PregateNarrowInv
 
 /**
  * The anchors behind `delegate=<part>`: the backtick spans of its activation
- * paragraph, five lists (`/review` and the four delegable specialist
- * checklists), each opened by "byte for byte,".
+ * paragraph, six lists (`/review`, its all-or-none `specialists-dispatched`
+ * item list, and the four delegable specialist checklists), each opened by
+ * "byte for byte,".
  */
 export function delegateInventory(extendRootPath: string): DelegateInventory {
   const found = activationLists(extendRootPath, DELEGATE_HEADING,
-    [DELEGATE_TESTING_MARK, DELEGATE_MAINTAINABILITY_MARK, DELEGATE_PERFORMANCE_MARK, DELEGATE_SIMPLIFICATION_MARK, ANCHOR_LIST_TO],
-    ['review', 'testing', 'maintainability', 'performance', 'simplification']);
+    [DISPATCH_ITEM_MARK, DELEGATE_TESTING_MARK, DELEGATE_MAINTAINABILITY_MARK, DELEGATE_PERFORMANCE_MARK, DELEGATE_SIMPLIFICATION_MARK, ANCHOR_LIST_TO],
+    ['review', 'dispatch-item', 'testing', 'maintainability', 'performance', 'simplification']);
   if (!found.ok) return found;
-  const [review, testing, maintainability, performance, simplification] = found.lists as [string[], string[], string[], string[], string[]];
-  return { ok: true, file: found.file, review, testing, maintainability, performance, simplification };
+  const [review, dispatchItem, testing, maintainability, performance, simplification] = found.lists as [string[], string[], string[], string[], string[], string[]];
+  return { ok: true, file: found.file, review, dispatchItem, testing, maintainability, performance, simplification };
 }
 
 /**
  * The anchors behind `specialists=fold`: the backtick spans of its activation
- * paragraph, ten lists (`/review` and the nine checklists the main pass reads),
- * each opened by "byte for byte,".
+ * paragraph, eleven lists (`/review`, its all-or-none `specialists-dispatched`
+ * item list, and the nine checklists the main pass reads), each opened by
+ * "byte for byte,".
  */
 export function foldInventory(extendRootPath: string): FoldInventory {
   const found = activationLists(extendRootPath, FOLD_HEADING,
-    [...FOLD_CHECKLISTS.map((c) => c.mark), ANCHOR_LIST_TO], ['review', ...FOLD_CHECKLISTS.map((c) => c.name)]);
+    [DISPATCH_ITEM_MARK, ...FOLD_CHECKLISTS.map((c) => c.mark), ANCHOR_LIST_TO], ['review', 'dispatch-item', ...FOLD_CHECKLISTS.map((c) => c.name)]);
   if (!found.ok) return found;
-  const [review, ...rest] = found.lists as [string[], ...string[][]];
+  const [review, dispatchItem, ...rest] = found.lists as [string[], string[], ...string[][]];
   const checklists = Object.fromEntries(FOLD_CHECKLISTS.map((c, i) => [c.name, rest[i]!])) as Record<FoldName, string[]>;
-  return { ok: true, file: found.file, review, checklists };
+  return { ok: true, file: found.file, review, dispatchItem, checklists };
 }
 
 /**
@@ -330,8 +333,12 @@ export function overlapInventory(extendRootPath: string): OverlapInventory {
   return { ok: true, file: found.file, review, adversarial };
 }
 
+/** The repair-review activation paragraph also requires the in-cap paragraph's "first two anchors". */
+const REPAIR_REVIEW_INCAP_ANCHORS = 2;
+
 const STAGE = {
   review: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified',
+  reviewRepair: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified; repair-review=behavior-changing is also inactive, so every edited pass repeats as today and the receipt says so',
   fixFirst: '/review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so',
   fixFirstList: '/review-and-prep: the Fix-First anchors cannot be listed, so repair-review=behavior-changing is unverified and stays inactive',
   testGap: '/review-and-prep: test-gaps=record is inactive, so the review writes tests as today and the receipt says so',
@@ -670,18 +677,26 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     else if (read.bytes.includes(Buffer.from(anchor, 'utf8'))) ok('anchor', id);
     else drift('anchor', id, `anchor not found byte for byte in ${read.real}: "${oneLine(anchor, 70)}"`, extra);
   };
+  const checkDispatchItem = (prefix: string, read: Read | undefined, anchors: readonly string[], reason: (cause: string) => string, extra: Partial<Check>) => {
+    if (read?.ok && anchors.every((anchor) => !read.bytes.includes(Buffer.from(anchor, 'utf8')))) {
+      info('not-declared', `${prefix} ${read.real}`);
+      anchors.forEach((_, i) => ok('anchor', `${prefix}.${i + 1}`));
+      return;
+    }
+    anchors.forEach((anchor, i) => checkAnchor(`${prefix}.${i + 1}`, read, anchor, reason, extra));
+  };
   const reviewRead = () => rootOk ? readOnce(layout.review, 'review skill', 'review') : undefined;
+  const reviewReason = (cause: string) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause;
   if (inv.ok) {
     const review = reviewRead();
-    inv.anchors.forEach((anchor, i) => checkAnchor(`review-and-prep.incap.${i + 1}`, review, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause));
+    inv.anchors.forEach((anchor, i) => checkAnchor(`review-and-prep.incap.${i + 1}`, review, anchor, reviewReason,
+      i < REPAIR_REVIEW_INCAP_ANCHORS ? { effect: STAGE.reviewRepair, fix: UPGRADE_FIX } : {}));
   }
   if (fixFirst.ok) {
     const inactive = { effect: STAGE.fixFirst, fix: UPGRADE_FIX };
     const review = reviewRead();
     const checklist = rootOk ? readOnce(layout.checklist, 'review checklist', 'checklist') : undefined;
-    fixFirst.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.review.${i + 1}`, review, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    fixFirst.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.review.${i + 1}`, review, anchor, reviewReason, inactive));
     fixFirst.checklist.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.checklist.${i + 1}`, checklist, anchor, undefined, inactive));
   }
   if (testGaps.ok) {
@@ -690,8 +705,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     const testing = rootOk ? readOnce(layout.testing, 'review testing specialist', 'testing') : undefined;
     const checklist = rootOk ? readOnce(layout.checklist, 'review checklist', 'checklist') : undefined;
     const coverage = rootOk ? readOnce(layout.coverage, 'coverage audit section', 'coverage') : undefined;
-    testGaps.review.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.review.${i + 1}`, review, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    testGaps.review.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.review.${i + 1}`, review, anchor, reviewReason, inactive));
     testGaps.testing.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.testing.${i + 1}`, testing, anchor, undefined, inactive));
     testGaps.checklist.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.checklist.${i + 1}`, checklist, anchor, undefined, inactive));
     testGaps.coverage.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.coverage.${i + 1}`, coverage, anchor, undefined, inactive));
@@ -708,8 +722,8 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   if (delegate.ok) {
     const inactive = { effect: STAGE.delegate, fix: UPGRADE_FIX };
     const review = reviewRead();
-    delegate.review.forEach((anchor, i) => checkAnchor(`review-and-prep.delegate.review.${i + 1}`, review, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    delegate.review.forEach((anchor, i) => checkAnchor(`review-and-prep.delegate.review.${i + 1}`, review, anchor, reviewReason, inactive));
+    checkDispatchItem('review-and-prep.delegate.dispatch-item', review, delegate.dispatchItem, reviewReason, inactive);
     for (const part of ['testing', 'maintainability', 'performance', 'simplification'] as const) {
       const read = rootOk ? readOnce(layout[part], `review ${part} specialist`, part) : undefined;
       delegate[part].forEach((anchor, i) => checkAnchor(`review-and-prep.delegate.${part}.${i + 1}`, read, anchor, undefined, inactive));
@@ -718,8 +732,8 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   if (fold.ok) {
     const inactive = { effect: STAGE.fold, fix: UPGRADE_FIX };
     const review = reviewRead();
-    fold.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fold.review.${i + 1}`, review, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    fold.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fold.review.${i + 1}`, review, anchor, reviewReason, inactive));
+    checkDispatchItem('review-and-prep.fold.dispatch-item', review, fold.dispatchItem, reviewReason, inactive);
     const files: Record<FoldName, string> = { testing: layout.testing, maintainability: layout.maintainability, security: layout.security,
       performance: layout.performance, 'data-migration': layout.dataMigration, 'api-contract': layout.apiContract,
       simplification: layout.simplification, 'state-machines': layout.stateMachines, design: layout.design };
@@ -732,10 +746,8 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     const inactive = { effect: STAGE.overlap, fix: UPGRADE_FIX };
     const review = reviewRead();
     const adversarial = rootOk ? readOnce(layout.adversarial, 'review adversarial section', 'adversarial') : undefined;
-    overlap.review.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.review.${i + 1}`, review, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
-    overlap.adversarial.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.adversarial.${i + 1}`, adversarial, anchor,
-      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    overlap.review.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.review.${i + 1}`, review, anchor, reviewReason, inactive));
+    overlap.adversarial.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.adversarial.${i + 1}`, adversarial, anchor, reviewReason, inactive));
   }
   {
     const secrets = rootOk ? readOnce(layout.pregateSecrets, 'pregate secrets check', 'pregate.secrets') : undefined;

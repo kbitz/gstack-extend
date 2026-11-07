@@ -210,11 +210,13 @@ text, reply prose or standard error.
 ## Layouts
 
 The option works on both installed layouts, the nested (Claude Code) install and
-the sibling (Codex) install. Its anchors are text both carry: four lines of the
-installed `/review` file and, for each delegated part, three lines of its
-`review/specialists/<part>.md` checklist, which the Codex root links to the
-nested copy. Nothing is anchored in a section only one layout installs, and
-drift is reported by [`upstream-check`](upstream-check.md#what-it-checks) (the
+the sibling (Codex and Cursor) installs. Most of its anchors are text every copy
+carries: six lines of the installed `/review` file and, for each delegated part,
+three lines of its `review/specialists/<part>.md` checklist, which the sibling
+root links to the nested copy. Three more lines anchor upstream's
+`specialists-dispatched` contract item all-or-none, because the Codex sibling
+copy declares no item while the nested and Cursor copies do. Drift is reported by
+[`upstream-check`](upstream-check.md#what-it-checks) (the
 `review-and-prep.delegate` IDs). When the anchors match, a delegated part runs
 through its delegate whichever model hosts the review.
 
@@ -245,10 +247,17 @@ effect together. A `Review delegates:` line beside a policy that carries only
 ## Receipts and metrics
 
 - The receipt records `delegation: active (parts=<list>; config=<sha256>)` or
-  `delegation: inactive — <reason>`, and one `Delegated part:` line per part with
+  `delegation: inactive — <reason>`, one `specialists-dispatched:` line when the
+  section is active (`waived`, `met`, `not declared` or `unmet`), and one
+  `Delegated part:` line per part with
   `provider`, `model`, `outcome`, `reason`, `wall_ms`, the four token counts,
   `findings` and `call` (the call id). Unknown values read `unknown`. The PAUSED
   and STOPPED receipts carry the same lines.
+- The `specialists-dispatched:` status describes the current upstream item
+  result; a met selection outranks an earlier waiver. Mixed cycle outcomes
+  append `; history=<cycle>:<outcome>[,...]` to that line, retaining successful
+  waivers' parts and failed calls' causes even when the current result is met
+  or waived. A later failed call does not erase an earlier successful waiver.
 - Findings enter the review as that specialist's findings and keep the
   `specialist:<part>` attribution; the provider and model are recorded on the
   part, not inside a finding.
