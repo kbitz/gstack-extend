@@ -1,16 +1,26 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import {
+  COLLISION_CONTRACT,
+  SHARED_DOC_PATHS,
+  collisionKind,
+  collisionMatches,
   fillCap,
+  folderOnlyCollisions,
   formatPackOutput,
   identCollisions,
   isSharedDoc,
   packIdent,
   packTracks,
   packingDrift,
+  sharedDocsMarker,
   touchesIntersect,
   unorderedCollisions,
   type PackTrack,
 } from '../src/audit/lib/pack.ts';
+
+const REPO_ROOT = join(import.meta.dir, '..');
 
 function t(
   id: string,
@@ -397,5 +407,218 @@ describe('packingDrift', () => {
     const packed = packTracks([t('1A', ['a.ts']), t('1B', ['b.ts'])]);
     const drift = packingDrift([['1A'], ['1B']], packed);
     expect(drift.length).toBeGreaterThan(0);
+  });
+});
+
+describe('collision-contract conformance vectors and doc lock', () => {
+  type Vector = {
+    name: string;
+    case: string;
+    a: string[];
+    b: string[];
+    shared_docs: string[];
+    collide: boolean;
+    folder_only: boolean;
+  };
+  type VectorFile = {
+    schema: string;
+    contract: string;
+    vectors: Vector[];
+  };
+
+  const raw = readFileSync(join(REPO_ROOT, 'tests/fixtures/collision-vectors.json'), 'utf8');
+  const parsed = JSON.parse(raw) as VectorFile;
+
+  test('vector file schema, contract version, and case coverage', () => {
+    expect(parsed.schema).toBe('collision-vectors/v1');
+    expect(parsed.contract).toBe(COLLISION_CONTRACT);
+    const cases = new Set(parsed.vectors.map((v) => v.case));
+    expect([...cases].sort()).toEqual(['exact', 'folder', 'folder-only', 'new', 'shared-doc']);
+  });
+
+  for (const v of parsed.vectors) {
+    test(`vector [${v.case}] ${v.name}`, () => {
+      const wantKind = !v.collide ? 'none' : v.folder_only ? 'folder-only' : 'file';
+      const rules = { sharedDocs: v.shared_docs };
+      for (const [left, right] of [
+        [v.a, v.b],
+        [v.b, v.a],
+      ] as const) {
+        expect(collisionKind(left, right, rules)).toBe(wantKind);
+        expect(touchesIntersect(left, right, rules)).toBe(v.collide);
+        const packed = packTracks([t('1A', left), t('1B', right)], rules);
+        expect(packed.bins).toHaveLength(v.collide ? 2 : 1);
+      }
+    });
+  }
+
+  test('docs/collision-contract.md locks COLLISION_CONTRACT, SHARED_DOC_PATHS, and marker syntax', () => {
+    const doc = readFileSync(join(REPO_ROOT, 'docs/collision-contract.md'), 'utf8');
+    expect(doc).toContain(COLLISION_CONTRACT);
+    expect(doc).toContain('roadmap:shared_docs=');
+    for (const p of SHARED_DOC_PATHS) {
+      expect(doc).toContain(p);
+    }
+  });
+});
+
+describe('sharedDocsMarker', () => {
+  test('parses comma-separated list, ends at whitespace or -->, first marker wins, empty gives []', () => {
+    expect(sharedDocsMarker('')).toEqual([]);
+    expect(sharedDocsMarker('# CLAUDE.md\nNo markers here.\n')).toEqual([]);
+    expect(sharedDocsMarker('<!-- roadmap:shared_docs= -->')).toEqual([]);
+    expect(sharedDocsMarker('<!-- roadmap:shared_docs=AGENTS.md,docs/runbook.md -->')).toEqual([
+      'AGENTS.md',
+      'docs/runbook.md',
+    ]);
+    expect(sharedDocsMarker('<!-- roadmap:shared_docs=AGENTS.md,docs/runbook.md-->')).toEqual([
+      'AGENTS.md',
+      'docs/runbook.md',
+    ]);
+    expect(sharedDocsMarker('<!-- roadmap:shared_docs=a.md,,b.md, extra -->')).toEqual([
+      'a.md',
+      'b.md',
+    ]);
+    expect(
+      sharedDocsMarker(
+        '<!-- roadmap:shared_docs=first.md -->\n<!-- roadmap:shared_docs=second.md -->',
+      ),
+    ).toEqual(['first.md']);
+  });
+
+  test('only an HTML comment is a marker: a prose or inline-code mention before it is ignored', () => {
+    expect(
+      sharedDocsMarker(
+        'Declare `roadmap:shared_docs=` in a comment.\n<!-- roadmap:shared_docs=docs/runbook.md -->\n',
+      ),
+    ).toEqual(['docs/runbook.md']);
+    expect(sharedDocsMarker('roadmap:shared_docs=docs/runbook.md\n')).toEqual([]);
+  });
+});
+
+describe('collision matching with repeated touches', () => {
+  test('duplicate entries produce one match per distinct pair', () => {
+    expect(collisionMatches(['src/a.ts', 'src/a.ts'], ['src/a.ts', ' src/a.ts '])).toHaveLength(1);
+    expect(collisionMatches(['src/', 'src/'], ['src/a.ts', 'src/a.ts'])).toHaveLength(1);
+    expect(collisionMatches(['src/a.ts (new)', 'src/a.ts'], ['src/a.ts'])).toHaveLength(2);
+  });
+
+  test('many duplicates still give the same kind and verdict', () => {
+    const many = Array.from({ length: 2000 }, () => 'src/a.ts');
+    expect(collisionKind(many, many)).toBe('file');
+    expect(touchesIntersect(many, many)).toBe(true);
+    expect(collisionKind(Array.from({ length: 2000 }, () => 'src/'), many)).toBe('folder-only');
+  });
+});
+
+describe('packing stability with (new), folders, and sharedDocs', () => {
+  const sampleTracks = [
+    t('95A', ['src/audit/'], [], 'alpha'),
+    t('93A', ['src/audit/new-check.ts (new)', 'docs/runbook.md'], [], 'bravo'),
+    t('95B', ['src/audit/existing.ts', 'docs/runbook.md'], [], 'charlie'),
+    t('93B', ['src/other/ (new)'], [], 'delta'),
+    t('95C', ['src/other/file.ts (new)'], [], 'echo'),
+    t('93C', ['docs/runbook.md', 'src/z.ts'], [], 'foxtrot'),
+  ];
+  const opts = { target: 3, maxPerBin: 3, sharedDocs: ['docs/runbook.md'] };
+
+  test('invariant under bijective ID rename with (new), folders, and sharedDocs', () => {
+    const map: Record<string, string> = {
+      '95A': 'A1',
+      '93A': 'Z9',
+      '95B': 'A2',
+      '93B': 'Z8',
+      '95C': 'A3',
+      '93C': 'Z7',
+    };
+    const renamed = sampleTracks.map((x) => ({
+      ...x,
+      id: map[x.id]!,
+      blockedBy: x.blockedBy.map((id) => map[id] ?? id),
+    }));
+    const before = packTracks(sampleTracks, opts);
+    const after = packTracks(renamed, opts);
+    const norm = (bins: { trackIds: string[] }[], remap?: Record<string, string>) =>
+      bins
+        .map((bin) =>
+          bin.trackIds
+            .map((id) => remap?.[id] ?? id)
+            .sort()
+            .join(','),
+        )
+        .sort();
+    expect(norm(after.bins)).toEqual(norm(before.bins, map));
+  });
+
+  test('invariant under document reorder with (new), folders, and sharedDocs', () => {
+    const shuffled = [
+      sampleTracks[4]!,
+      sampleTracks[1]!,
+      sampleTracks[5]!,
+      sampleTracks[0]!,
+      sampleTracks[3]!,
+      sampleTracks[2]!,
+    ];
+    const norm = (bins: { trackIds: string[] }[]) =>
+      bins
+        .map((bin) => [...bin.trackIds].sort().join(','))
+        .sort();
+    expect(norm(packTracks(shuffled, opts).bins)).toEqual(norm(packTracks(sampleTracks, opts).bins));
+  });
+});
+
+describe('folderOnlyCollisions and FOLDER_ONLY output section', () => {
+  test('lists folder-only pairs (including blocked-by ordered), omits same-file and non-colliding (new) pairs', () => {
+    const tracks = [
+      t('90A', ['src/audit/'], [], 'zebra'),
+      t('10A', ['src/audit/cli.ts'], ['90A'], 'alpha'),
+      t('20A', ['src/audit/new-check.ts (new)'], [], 'beta'),
+      t('30A', ['src/audit/', 'src/shared.ts'], [], 'gamma'),
+      t('40A', ['src/audit/cli.ts', 'src/shared.ts'], [], 'delta'),
+    ];
+    const lines = folderOnlyCollisions(tracks);
+    // 90A ∥ 10A is folder-only (even though 10A is blocked-by 90A).
+    // 90A ∥ 30A is folder-only (same folder src/audit/).
+    // 90A ∥ 40A and 30A ∥ 10A are folder-only.
+    // 20A does not collide with 90A or 30A (new file under existing folder).
+    // 10A ∥ 40A and 30A ∥ 40A share a file (cli.ts or shared.ts), so they are file collisions, not folder-only.
+    expect(lines).toEqual([
+      '- 90A ∥ 30A: src/audit/ ⊇ src/audit/',
+      '- 90A ∥ 10A: src/audit/ ⊇ src/audit/cli.ts',
+      '- 90A ∥ 40A: src/audit/ ⊇ src/audit/cli.ts',
+      '- 30A ∥ 10A: src/audit/ ⊇ src/audit/cli.ts',
+    ]);
+  });
+
+  test('formatPackOutput prints FOLDER_ONLY after DEPENDS and omits it on CYCLE or EMPTY', () => {
+    const tracks = [t('1A', ['src/audit/']), t('1B', ['src/audit/cli.ts'])];
+    const packed = packTracks(tracks);
+    const withFolder = formatPackOutput(packed, {
+      folderOnly: folderOnlyCollisions(tracks),
+    });
+    const depIdx = withFolder.indexOf('DEPENDS (write on the later Group after you name the bins):');
+    const folderIdx = withFolder.indexOf(
+      'FOLDER_ONLY (collide only through a folder entry; name files where the code shows them, then re-pack):',
+    );
+    expect(depIdx).toBeGreaterThanOrEqual(0);
+    expect(folderIdx).toBeGreaterThan(depIdx);
+    expect(withFolder).toContain('- 1A ∥ 1B: src/audit/ ⊇ src/audit/cli.ts');
+
+    const withNone = formatPackOutput(packTracks([t('1A', ['src/a.ts']), t('1B', ['src/b.ts'])]), {
+      folderOnly: [],
+    });
+    expect(withNone).toContain(
+      'FOLDER_ONLY (collide only through a folder entry; name files where the code shows them, then re-pack):\n- (none)\n',
+    );
+
+    const emptyOut = formatPackOutput(packTracks([]), { folderOnly: ['- 1A ∥ 1B: src/ ⊇ src/a.ts'] });
+    expect(emptyOut).toBe('BINS: EMPTY (no unshipped Tracks)\n');
+
+    const cycleOut = formatPackOutput(
+      packTracks([t('1A', ['src/a.ts'], ['1B']), t('1B', ['src/b.ts'], ['1A'])]),
+      { folderOnly: ['- 1A ∥ 1B: src/ ⊇ src/a.ts'] },
+    );
+    expect(cycleOut).toContain('BINS: CYCLE');
+    expect(cycleOut).not.toContain('FOLDER_ONLY');
   });
 });

@@ -22,7 +22,13 @@
  *   SHARED_INFRA_STATUS: missing | loaded
  */
 
-import { fillCap, isSharedDoc, normalizeTouch, touchesIntersect } from '../lib/pack.ts';
+import {
+  fillCap,
+  isSharedDoc,
+  normalizeTouch,
+  sharedDocsMarker,
+  touchesIntersect,
+} from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckCollisions(ctx: AuditCtx): CheckResult {
@@ -37,6 +43,7 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
   const maxTracksPerGroup = fillCap(ctx.parallelismCap);
   const sharedSet = ctx.sharedInfra.status === 'loaded' ? ctx.sharedInfra.files : new Set<string>();
   const trackById = new Map(ctx.roadmap.value.tracks.map((t) => [t.id, t]));
+  const rules = { sharedDocs: sharedDocsMarker(ctx.claudeMd) };
 
   const findings: string[] = [];
   const groupSizeWarnings: string[] = [];
@@ -84,13 +91,13 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
         const bT = trackById.get(b);
         if (aT === undefined || bT === undefined) continue;
         if (aT.touches.length === 0 || bT.touches.length === 0) continue;
-        if (!touchesIntersect(aT.touches, bT.touches)) continue;
+        if (!touchesIntersect(aT.touches, bT.touches, rules)) continue;
 
         const aNorm = aT.touches.map((t) => normalizeTouch(t).path);
         const bNorm = new Set(bT.touches.map((t) => normalizeTouch(t).path));
         const intersection: string[] = [];
         for (const x of [...new Set(aNorm)].sort((p, q) => (p < q ? -1 : p > q ? 1 : 0))) {
-          if (isSharedDoc(x)) continue;
+          if (isSharedDoc(x, rules)) continue;
           if (bNorm.has(x)) intersection.push(x);
         }
         // Directory-prefix hits may not share an identical token.

@@ -349,3 +349,39 @@ describe('Track 51A recorded test gaps at drain', () => {
     expect(roadmap.indexOf('**A recorded test gap is not a defect claim.**')).toBeLessThan(roadmap.indexOf('### Unobserved defects wait for manifestation'));
   });
 });
+
+describe('collision-driven grouping prose and shared_docs marker', () => {
+  const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+  const section = roadmap.slice(
+    roadmap.indexOf('### Collision-driven grouping'),
+    roadmap.indexOf('### Renumbering'),
+  );
+  const flat = section.replace(/\s+/g, ' ');
+
+  // Value: protects=Collision-driven grouping instructs regeneration to resolve modules to files and keep bare folders only when the code does not show which files change, explains the (new) collision rule, tells the author to narrow FOLDER_ONLY pairs and re-pack, and documents the roadmap:shared_docs marker and contract link; fails_when=any of the three _touches: rules or the shared_docs marker guidance is dropped or moved out of Collision-driven grouping; why_new=criteria 2 and 3; seam=none
+  test('Collision-driven grouping locks file-naming judgment, (new) rule, FOLDER_ONLY, and roadmap:shared_docs marker', () => {
+    expect(section.length).toBeGreaterThan(0);
+    expect(flat).toContain('bins + `DEPENDS` lines + `CRITICAL_PATH` + `FOLDER_ONLY`');
+    expect(flat).toContain(
+      '<!-- roadmap:shared_docs=AGENTS.md,docs/runbook.md -->',
+    );
+    expect(flat).toContain(
+      'folder entries and `CLAUDE.md` are ignored, and conflicts in listed docs are left to the base merge',
+    );
+    expect(flat).toContain(
+      'https://github.com/kbitz/gstack-extend/blob/main/docs/collision-contract.md',
+    );
+    expect(flat).toContain(
+      'Never list the file a symlinked `CLAUDE.md` points to (such as `AGENTS.md`): the guard below matches the literal name only.',
+    );
+    expect(flat).toContain(
+      "Resolving a card's named functions or modules to files is the regeneration's judgment: read the code and name each file the work changes, keeping a bare folder entry (ending in `/`) only when the code does not show which files change.",
+    );
+    expect(flat).toContain(
+      'Mark each file the Track creates `path (new)`; a new path collides only with the same path or a folder entry itself marked `(new)`.',
+    );
+    expect(flat).toContain(
+      '`bin/roadmap-pack` lists under `FOLDER_ONLY` each pair that collides only through a folder entry — narrow those entries where the code allows, then re-pack.',
+    );
+  });
+});

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.70.0] - 2026-11-06
+
+### Added
+
+- Roadmap packing follows collision-contract/v1. Shared docs packing uses a CLAUDE.md marker and the contract's scan-scope and CLAUDE.md limits.
+
+### Fixed
+
+- roadmap-pack reads the audit's CLAUDE.md and bounds collision matching.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. Packing collisions now follow collision-contract/v1; shared docs packing uses the CLAUDE.md marker.
+
 ## [0.69.1] - 2026-11-06
 
 ### Fixed

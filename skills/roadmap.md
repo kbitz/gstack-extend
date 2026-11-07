@@ -922,7 +922,7 @@ Hard-fail is **weight ≥ 6**. Weight 5 warns (SIZE `WEIGHT_WARN`) unless you ra
 
 **Deletions are cheap.** A task tagged `~N lines (del)` (or `(deletion)` / `(deletions)`) is weight S regardless of N. Title verbs are not enough — "Trim pair-review.md" without `(del)` is a write-task. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
 
-**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A directory touch (`src/`) is scan-scope: it cannot room with anything under that prefix. It still rooms with disjoint files. It is a singleton only when it collides with every other unpacked Track in the layer.
+**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A directory touch (`src/`) is scan-scope: it cannot room with anything under that prefix except a path marked `(new)`. It still rooms with disjoint files. It is a singleton only when it collides with every other unpacked Track in the layer.
 
 **The card is the scope.** Do not pre-shrink a Track so `/autoplan` can fill it. Overflow discovered in review goes to `TODOS.md` with its source, target impact and any approved scope amendment; the next regeneration re-evaluates admission before packing. Filing a TODO alone never defers an approved obligation. **No "Ship as N PRs" language ever** (`STRUCTURE: fail`).
 
@@ -938,7 +938,7 @@ Group assignment is **the packer's job**, not a theme judgment.
    # First paste both resolved root assignments from Common path.
    "$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from /tmp/draft-tracks.md
    ```
-   Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
+   Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH` + `FOLDER_ONLY`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
    On the first regen after the v3 cutover, also run `--materialize` and write any implicit previous-Group edges the author still wants. After that, unspecified = none. Group-level `_Depends on:` is **output**, not packer input — do not expect writing those lines to change the bins.
 3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
 4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
@@ -955,9 +955,9 @@ not only the old Group's siblings; see [Shipped-Track reconciliation](#shipped-t
 
 Do not hand-sequence Groups "to cap concurrent WIP." The packer already fills to `parallelism_cap`. A Group may launch when every Group in its `←` set has landed, regardless of document order; document order is priority, not a gate.
 
-Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`, `roadmap-future.md`) are not collisions. `CLAUDE.md` is — only one Track per Group may declare it.
+Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`, `roadmap-future.md`) are not collisions. A project may opt in additional shared docs in `CLAUDE.md` with `<!-- roadmap:shared_docs=AGENTS.md,docs/runbook.md -->` (like `parallelism_cap`, default none); folder entries and `CLAUDE.md` are ignored, and conflicts in listed docs are left to the base merge (see [docs/collision-contract.md](https://github.com/kbitz/gstack-extend/blob/main/docs/collision-contract.md)). Never list the file a symlinked `CLAUDE.md` points to (such as `AGENTS.md`): the guard below matches the literal name only. `CLAUDE.md` is never shared: only one Track per Group may declare it.
 
-`_touches:` is load-bearing. After a Track ships, `"$_EXTEND_ROOT/bin/roadmap-touches" drift --track <id>` must pass (union of committed/staged/unstaged/untracked vs the declaration). Undeclared path → revert, file a new inbox Track, or widen `_touches:` and re-pack. Directory entries end in `/`. Created files are `path (new)`.
+`_touches:` is load-bearing. Resolving a card's named functions or modules to files is the regeneration's judgment: read the code and name each file the work changes, keeping a bare folder entry (ending in `/`) only when the code does not show which files change. Mark each file the Track creates `path (new)`; a new path collides only with the same path or a folder entry itself marked `(new)`. `bin/roadmap-pack` lists under `FOLDER_ONLY` each pair that collides only through a folder entry — narrow those entries where the code allows, then re-pack. After a Track ships, `"$_EXTEND_ROOT/bin/roadmap-touches" drift --track <id>` must pass (union of committed/staged/unstaged/untracked vs the declaration). Undeclared path → revert, file a new inbox Track, or widen `_touches:` and re-pack.
 
 ### Renumbering
 

@@ -13,6 +13,60 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** The next Track touches these waiver or receipt instructions.
 
+### [review:files=src/audit/lib/pack.ts|tests/lib-pack.test.ts] Test gap: collision-contract rule edges without vectors
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Four collision-contract/v1 edges have no test: `docs/CLAUDE.md` stays a collision when listed in `shared_docs` (only root `CLAUDE.md` has a vector); an uppercase `(NEW)` marker still exempts a new file under a bare folder; `folderOnlyCollisions` honors the `shared_docs` rules; `identCollisions` and `packIdent` drop a marker-listed doc.
+- **Hypothesis (untested):** Add vector rows to `tests/fixtures/collision-vectors.json` for the first two and assertions in `tests/lib-pack.test.ts` for the rules arguments; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/audit/lib/pack.ts:104
+- **Evidence:** The /ship coverage audit traced 16 of 20 changed paths to star-2 or star-3 tests (80% value-weighted, gate PASS); these four had none. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/4b0e03c5` at `fe91171` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches the collision contract or its vectors.
+
+### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: drift lock for the CLAUDE.md never-shared sentence
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The /roadmap sentence that `CLAUDE.md` is never shared and only one Track per Group may declare it has no drift lock, while the sentence before it (which points at it) is locked.
+- **Hypothesis (untested):** Add one `toContain` assertion to the collision-driven grouping describe in `tests/skill-protocols-roadmap.test.ts`.
+- **Upstream severity:** CRITICAL (native adversarial FIXABLE classification; Low impact, does not block)
+- **Found in:** skills/roadmap.md:958
+- **Evidence:** Cycle 3 delta review of the reworded sentence; all existing locks still match. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/4b0e03c5` at `fe91171` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track edits Collision-driven grouping in skills/roadmap.md.
+
+### [review:files=src/audit/lib/pack.ts|src/audit/touches-cli.ts] Flag a (new) marker on a path that already exists
+- **Description:** collision-contract/v1 trusts the `(new)` marker: a `(new)` entry on an existing file removes its collision with another Track's folder entry, and `roadmap-touches drift` accepts it. The approved plan accepted this risk; nothing checks it mechanically.
+- **Proposal:** Report a declared `(new)` path that exists at the merge base (drift) or in the base tree for unshipped Current Plan Tracks (audit), not the Track's own branch.
+- **Evidence:** Red Team and native adversarial review of PR branch `mmm/4b0e03c5`; `collisionKind(['src/audit/'], ['src/audit/index.ts (new)'])` returns `none`.
+- **Context:** Filed by /review-and-prep on branch `mmm/4b0e03c5` at `fe91171` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A merge conflict appears between Tracks the packer ran in parallel because of a `(new)` marker.
+
+### [review:files=src/audit/touches-cli.ts] roadmap-touches does not apply the shared_docs marker or the (new) rule
+- **Description:** `drift` and `report-cross-group` call `isSharedDoc` and `schedulingTouches` without rules, so an undeclared edit to a marker-listed doc fails drift and cross-group reports still list pairs the packer treats as disjoint. The plan declined this scope.
+- **Proposal:** Read the marker with the same CLAUDE.md resolver and pass the rules, or document that listed shared docs must still be declared in `_touches:`.
+- **Evidence:** Red Team and native adversarial review of PR branch `mmm/4b0e03c5`.
+- **Context:** Filed by /review-and-prep on branch `mmm/4b0e03c5` at `fe91171` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A user or orchestrator reports the cross-group report or drift disagreeing with the packer.
+
+### [review:files=src/audit/lib/pack.ts|src/audit/lib/parallelism-cap.ts|docs/collision-contract.md] Tighten roadmap marker recognition
+- **Description:** A partial `<!-- roadmap:shared_docs=` opener in prose, or a full-form example in a code span or fenced block, still counts as the marker and hides the real one below it (fails safe: listed docs stay serialized). The contract states the code-span case but not the partial opener; the `sharedDocsMarker` JSDoc and one lib-pack test title still say only an HTML comment counts. `parallelism_cap` matches plain prose, unlike docs-ship markers, which skip fences and inline code.
+- **Proposal:** Reuse docs-ship's fenced-line and inline-code masking for roadmap markers, or state each limit precisely and fix the stale comment and test title.
+- **Evidence:** Cycle 3 native adversarial probes against `sharedDocsMarker` and `parallelismCap`.
+- **Context:** Filed by /review-and-prep on branch `mmm/4b0e03c5` at `fe91171` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A project reports a marker read from an example or a prose mention.
+
+### [review:files=src/audit/lib/pack.ts|src/audit/checks/collisions.ts|src/audit/pack-cli.ts] Protect the project instructions file by identity, not literal name
+- **Description:** The shared_docs guard and the COLLISIONS one-owner rule compare literal `CLAUDE.md` and `docs/CLAUDE.md`. Listing the target of a symlinked `CLAUDE.md` (the documented example uses `AGENTS.md`) makes the instructions file shared; the one-owner rule treats `CLAUDE.md` and `docs/CLAUDE.md` as one claim while the packer treats them as unrelated paths (pre-existing on main), so a project with both files can get a Group that COLLISIONS fails.
+- **Proposal:** Resolve the instructions file's repository-relative target in the CLI layer and pass it as a protected path; give `CLAUDE.md` and `docs/CLAUDE.md` one rule; consider a neutral marker example.
+- **Evidence:** Red Team and native adversarial review of PR branch `mmm/4b0e03c5`; documented as a caveat in docs/collision-contract.md for now.
+- **Context:** Filed by /review-and-prep on branch `mmm/4b0e03c5` at `fe91171` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A project uses the shared_docs marker with a symlinked or docs/ CLAUDE.md.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

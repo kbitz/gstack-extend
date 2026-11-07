@@ -398,4 +398,26 @@ describe('packing hotfix contract', () => {
     expect(writtenUnshippedGroups(ctx)).toEqual([]);
     expect(runCheckPacking(ctx).status).toBe('skip');
   });
+
+  test('roadmap:shared_docs marker in claudeMd allows Tracks sharing listed doc in one Group', () => {
+    const parsedRoadmap = {
+      groups: [group('1', 'Parallel with shared runbook', ['1A', '1B'])],
+      tracks: [
+        track('1A', '1', { touches: ['src/a.ts', 'docs/runbook.md'] }),
+        track('1B', '1', { touches: ['src/b.ts', 'docs/runbook.md'] }),
+      ],
+    };
+    const unmarked = makeCtx({ parsedRoadmap, claudeMd: '# CLAUDE.md\n' });
+    expect(runCheckPacking(unmarked).status).toBe('fail');
+
+    const marked = makeCtx({
+      parsedRoadmap,
+      claudeMd: '# CLAUDE.md\n<!-- roadmap:shared_docs=docs/runbook.md -->\n',
+    });
+    expect(runCheckPacking(marked)).toEqual({
+      section: 'PACKING',
+      status: 'pass',
+      body: ['FINDINGS:', '- (none)', 'BINS: 1'],
+    });
+  });
 });
