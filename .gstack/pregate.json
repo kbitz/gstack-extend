@@ -16,6 +16,7 @@
       "tests/release-manifest.test.ts"
     ],
     "CLAUDE.md": [
+      "tests/full-suite-script.test.ts",
       "tests/release-manifest.test.ts",
       "tests/skill-protocols-plan-track.test.ts",
       "tests/skill-protocols-review-and-prep.test.ts"
@@ -289,6 +290,9 @@
     ],
     "scripts/extract-changelog-section.sh": [
       "tests/release-manifest.test.ts"
+    ],
+    "scripts/full-suite.sh": [
+      "tests/full-suite-script.test.ts"
     ],
     "scripts/init-templates/**": [
       "tests/init-bin.test.ts",

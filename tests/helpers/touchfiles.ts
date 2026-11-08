@@ -395,6 +395,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // The selection suite checks the pregate copy of this map and each split
   // protocol suite's declared skill reads against its source.
   'tests/touchfiles.test.ts': ['.gstack/pregate.json', 'tests/skill-protocols*.test.ts', 'docs/acceptance/skill-test-selection.md'],
+  // Runs the one-command full-run script against a stub bun and reads CLAUDE.md's Testing line that names it.
+  'tests/full-suite-script.test.ts': ['scripts/full-suite.sh', 'CLAUDE.md'],
   // Live ROADMAP + shipped archive are loaded at runtime (not imported).
   'tests/parsers-phases.test.ts': [
     'docs/ROADMAP.md',
