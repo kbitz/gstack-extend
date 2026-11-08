@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
-  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, REFUSAL_REASONS, SPECIALIST_PARTS,
+  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SPECIALIST_PARTS,
   buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
 } from '../src/review-delegate/delegate';
 
@@ -532,14 +532,35 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
     expect(seen.prompt).not.toContain('already_caught');
   });
 
-  test('drifted or duplicated framing or criteria lines in --adversarial refuse with checklist-anchor', () => {
+  // Value: protects=a sibling review file that inlines Review Army's defensive framing ahead of the adversarial prompt (the Cursor rendering) still extracts the prompt's own framing; fails_when=the extractor refuses a repeated framing line elsewhere in the file or picks the Review Army copy; why_new=the Cursor sibling copy repeats the framing line, so delegate=adversarial refused there; seam=none
+  test('a sibling file that inlines Review Army\'s defensive framing before the adversarial prompt still extracts the prompt\'s framing', () => {
+    const s = setup('sibling', { alpha: { mode: 'inspect' } }, { adversarial: 'alpha' });
+    const adv = adversarialPath(s);
+    put(adv, `# review\n\n4. **Defensive framing.** Begin the prompt with:\n${ATTACKER.adversarial[1]} REVIEW-ARMY-COPY."\n\n${ADVERSARIAL_BODY}`);
+    expect(cli([...checkArgs(s, 'adversarial'), '--adversarial', adv]).status).toBe(0);
+    const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adv]);
+    expect(r.status).toBe(0);
+    const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
+    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!);
+    expect(payload.checklist).toContain('Focus on concrete failure modes.');
+    expect(payload.checklist).not.toContain('REVIEW-ARMY-COPY');
+  });
+
+  test('drifted, misplaced or repeated prompt, framing or criteria lines in --adversarial refuse with checklist-anchor', () => {
     const s = setup('nested', { alpha: { mode: 'clean' } }, { adversarial: 'alpha' });
     const adv = adversarialPath(s);
+    const [promptLine, framingAnchor, criteriaAnchor] = ATTACKER.adversarial as [string, string, string];
+    const criteriaLine = ADVERSARIAL_BODY.split('\n').find((line) => line.startsWith(criteriaAnchor))!;
     for (const bad of [
-      ADVERSARIAL_BODY.replace(ATTACKER.adversarial[1], '"A rewritten framing line.'),
-      ADVERSARIAL_BODY.replace(ATTACKER.adversarial[2], 'A rewritten criteria line.'),
-      `${ADVERSARIAL_BODY}${ATTACKER.adversarial[1]} duplicate\n`,
-      `${ADVERSARIAL_BODY}${ATTACKER.adversarial[2]} duplicate"\n`,
+      ADVERSARIAL_BODY.replace(framingAnchor, '"A rewritten framing line.'),
+      ADVERSARIAL_BODY.replace(criteriaAnchor, 'A rewritten criteria line.'),
+      // the framing line no longer directly follows the prompt line
+      ADVERSARIAL_BODY.replace(`${promptLine}\n`, `${promptLine}\n\n`),
+      // a second prompt line
+      `${ADVERSARIAL_BODY}${promptLine}\n${framingAnchor} again\n`,
+      `${ADVERSARIAL_BODY}${criteriaAnchor} duplicate"\n`,
+      // the criteria line comes before the prompt block
+      `${criteriaLine}\n${ADVERSARIAL_BODY.replace(`${criteriaLine}\n`, '')}`,
       ADVERSARIAL_BODY.replace('Classify each finding as FIXABLE or INVESTIGATE."', 'Classify each finding without a closing quote.'),
     ]) {
       put(adv, bad);
@@ -557,6 +578,9 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
     expect(first.status).toBe(0);
     const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
     expect(seen.prompt).toContain('"already_caught":"finding-one\\n"');
+    // The red-team checklist opens with the defensive framing upstream gives its Red Team dispatch, then red-team.md.
+    const redTeamChecklist = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!).checklist as string;
+    expect(redTeamChecklist.startsWith(`${RED_TEAM_FRAMING}\n\n${ATTACKER['red-team'][0]}`)).toBe(true);
     const firstId = row(first.json, 'red-team').call_id;
 
     put(caught, 'finding-one\nfinding-two\n');

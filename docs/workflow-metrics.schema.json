@@ -215,7 +215,7 @@
         "context": { "$ref": "#/definitions/context_override" }
       },
       "required": ["pass_id", "scope", "state"],
-      "description": "v=1 findings are the closed finding shape (found_by or attribution_reason on one is invalid); v=2 and v=3 findings are finding_v2. Only a v=3 attempt may carry delegate (the provider a delegated specialist part ran through). Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
+      "description": "v=1 findings are the closed finding shape (found_by or attribution_reason on one is invalid); v=2 and v=3 findings are finding_v2. Only a v=3 attempt may carry delegate (the provider a delegated part ran through). Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
     },
     "correction_request": {
       "type": "object", "additionalProperties": false,

@@ -1473,12 +1473,15 @@ has none**. The sibling rule "every named part runs through its delegate" never
 removes the red team's gate.
 
 **Run.** Make one runner call per review stage that runs named parts:
-`"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <list> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<evidence-directory>/delegate-calls"`
+`"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <the parts this stage runs> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<evidence-directory>/delegate-calls"`
 on that cycle's frozen scope: the merge base (or B) to S, from the snapshot
 procedure in **Scope a re-review to its delta**, as **Bound Claude Code outside
 calls** uses them. Specialist parts run at Step 4.5, as today. `red-team` runs
-at the Red Team point, with `--caught "<private file outside the repository>"`
-holding the findings the Red Team is given, one line each. `adversarial` runs at
+at the Red Team point, with `--caught "<calls directory>/caught-<cycle>-<S>.txt"`
+holding the findings the Red Team is given, one line each. Write that file once
+per cycle, mode 0600, before the cycle's first red-team call, never rewrite it,
+and reuse it unchanged on a resume, so the call id and the runner's claim against
+a second paid call stay stable. `adversarial` runs at
 Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
 directory is branch-scoped under the evidence root
 and kept across invocations of the branch; never choose a fresh one to retry.
@@ -1486,13 +1489,18 @@ Use an owned execution session and poll it rather than killing it at a short
 shell-tool timeout; the longest configured provider timeout bounds it. Exit 0
 means every part was credited, 4 means a part fell back, and 1 means a refusal
 before any call (run every part on the host and record the refusal's reason)
-or a `worktree-changed` result.
+or a `worktree-changed` result. Exit 2 is a usage error decided before any call:
+run that stage's parts on the host and record the usage error as the reason.
 
 - **Credited parts** enter Step 4.6 stage 1 as that specialist's output
   (nested), or the Step 5 combine as specialist findings (sibling). Their
   findings keep `specialist:<name>` attribution, and the receipt adds the
   provider label and model that produced them. An empty result is `NO
   FINDINGS`, and the `specialists` entry records the part as dispatched.
+  Those three sentences describe the four specialist parts; the attacker parts
+  follow the rules below instead, so a credited adversarial part adds no
+  `specialists` entry and its findings are never `specialist:adversarial`, and a
+  credited red-team part's findings are `red-team`, never `specialist:red-team`.
   Credited adversarial findings stand in for the native subagent's result
   (`found_by: native-adversarial`): they are presented under the `ADVERSARIAL
   REVIEW` header naming the provider label and model, and CRITICAL findings are
@@ -1558,7 +1566,8 @@ delegated `adversarial` part was credited, waive once with
 `gstack-skill-contract waive adversarial-pass --reason "<why>"` (with no
 `--skill` flag and a reason naming `delegate=adversarial` and the provider
 label); a fallback pass meets the item through its host dispatch, and when list
-(c) is not declared, waive nothing. While `delegate=adversarial` is active,
+(c) is not declared, waive nothing. If upstream's opt-in contract hook blocks on
+the item, answer with the recorded waiver, never a late dispatch. While `delegate=adversarial` is active,
 record one line in the receipt under the same current-result and history rule:
 `adversarial-pass: waived (delegate; cycles=<n>[,<n>...])`,
 `adversarial-pass: met (delegate; <reason>)`,
@@ -1576,9 +1585,11 @@ attempt that names it as its predecessor, then a `fallback` correction.
 
 1. The review policy carries `red-team=ensure` or `delegate=` names `red-team`.
 2. The review text the host will execute contains neither `Red Team` nor
-   `red-team`: the review file Step 1 resolved, plus every section it loaded for
-   it, including sections resolved from its source installation. The condition
-   is this text check, never a host name.
+   `red-team`: the review file Step 1 resolved, plus every review section it
+   loaded for it, including sections resolved from its source installation. The
+   checklists it reads (`review/checklist.md` and `review/specialists/*.md`) are
+   not part of that text, because they name the Red Team whether or not the host
+   runs one. The condition is this text check, never a host name.
 3. List (a) in **Activation (attacker parts)** matches.
 
 When condition 1 holds and condition 2 does not, record
@@ -1628,7 +1639,8 @@ is edited.
 `red-team`, record one line at all three receipt sites:
 `Red team: wrapper (source=<red-team=ensure|delegate=red-team>; cycles=<n>:<ran|not activated|skipped — <reason>>[,...])`,
 `Red team: upstream — installed /review carries one` or
-`Red team: inactive — <reason>`.
+`Red team: inactive — <reason>`. A policy carrying both triggers records
+`source=red-team=ensure`.
 
 ### Fold specialist checklists into cycle 1
 

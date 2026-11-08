@@ -258,7 +258,10 @@ The inventory comes from this extension's own source, never a second copy:
   (`review-and-prep.attacker`). Anchor IDs read
   `review-and-prep.attacker.<red-team|adversarial|adversarial-item>.<n>`, nine in
   all. `bin/review-delegate` repeats the `red-team` or `adversarial` anchors when
-  asked to check or run those parts.
+  asked to check or run those parts, and also checks a shape this checker does
+  not: the adversarial framing line must directly follow the one `Subagent
+  prompt:` line, with one criteria line after it. An `OK` here is therefore
+  necessary, not sufficient, for `delegate=adversarial`.
 - **Fold anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation (`specialists=fold`).**`),
   in eleven lists each opened by "byte for byte,": the first list, six lines, is

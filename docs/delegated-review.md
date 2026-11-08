@@ -101,16 +101,25 @@ A delegated part is one bounded, read-only call:
   `{"diff": ..., "checklist": ...}` for the four specialists and `adversarial`,
   or `{"diff": ..., "checklist": ..., "already_caught": ...}` for `red-team`
   (where `already_caught` is the UTF-8 text of `--caught`): the frozen diff and
-  that part's checklist. For the four specialists and `red-team`, the checklist
-  is `<gstack-root>/review/specialists/<part>.md`. For `adversarial`, the
-  checklist is extracted mechanically from `--adversarial`: the framing line
-  (without its opening `"`) and the criteria line (without its closing `"`),
-  followed by the extension-owned `ADVERSARIAL_SCHEMA` (the JSON-line schema
+  that part's checklist. For the four specialists, the checklist is
+  `<gstack-root>/review/specialists/<part>.md`. For `red-team`, it is
+  `<gstack-root>/review/specialists/red-team.md` after the extension-owned
+  `RED_TEAM_FRAMING`, the defensive framing upstream gives its Red Team dispatch
+  (red-team.md does not carry it). For `adversarial`, the checklist is extracted
+  mechanically from `--adversarial`: the framing line that directly follows the
+  one `Subagent prompt:` line (without its opening `"`) and the one criteria
+  line after it (without its closing `"`), followed by the extension-owned
+  `ADVERSARIAL_SCHEMA` (the JSON-line schema
   `{"severity":"CRITICAL|INFORMATIONAL","confidence":N,"path":"file","line":N,"category":"adversarial","summary":"...","fix":"..."}`,
-  the rule that `severity` is `CRITICAL` when `FIXABLE` or blocking and
-  `INFORMATIONAL` otherwise, and "write nothing after the JSON object"); the
-  upstream line that starts `Read the diff for this branch` is not sent. Nothing
-  else: no learnings, stack notes, repository files, skill text or plan.
+  the rule that `confidence` is an integer from 1 to 10, the rule that
+  `severity` is `CRITICAL` when `FIXABLE` or blocking and `INFORMATIONAL`
+  otherwise, that the JSON severity replaces the criteria's FIXABLE or
+  INVESTIGATE label and Severity and Blocks suffix, and "write nothing after the
+  JSON object"); the upstream line that starts `Read the diff for this branch`
+  is not sent. The framing line is found by its position because a sibling
+  rendering that inlines Review Army (the Cursor copy) repeats the framing text
+  for the Security specialist and the Red Team. Nothing else: no learnings,
+  stack notes, repository files, skill text or plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
   TZ`, and only those that are set. No key or credential is passed; a command
   keeps its own login under `HOME`.
@@ -206,7 +215,10 @@ review-delegate run --config FILE --gstack-root DIR --parts P[,P...] [--adversar
 `--adversarial FILE` (check and run; absolute path) is required when `--parts`
 names `adversarial`, and is a usage error otherwise. `--caught FILE` (run only;
 absolute path; outside `--repo`) is required when `--parts` names `red-team`,
-and is a usage error otherwise.
+and is a usage error otherwise. Its text is part of the red-team prompt, so a
+changed list is a new call id: `/review-and-prep` writes it once per cycle under
+the branch-scoped calls directory, mode 0600, and reuses it unchanged on a
+resume.
 
 `check` validates without any call. Exit 0 prints
 `{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`.
@@ -214,7 +226,8 @@ Exit 1 prints `{"v":1,"status":"refused","reason":...}` with `config-missing`,
 `config-malformed`, `part-unmapped`, `helper-missing` (the installed classifier
 cannot be loaded) or `checklist-anchor` (a named part's checklist or
 `--adversarial` file no longer matches the anchors, or its adversarial framing
-or criteria line does not occur once). Exit 2 is a usage error decided before
+line does not directly follow the one `Subagent prompt:` line, or the prompt or
+criteria line does not occur once). Exit 2 is a usage error decided before
 any work (an unknown flag, a part outside the six, a repeated part, a missing or
 extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
 inside `--repo`): standard output is empty and standard error has

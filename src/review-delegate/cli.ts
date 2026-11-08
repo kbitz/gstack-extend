@@ -15,7 +15,7 @@ import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
 import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, validateConfig,
+  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, validateConfig,
   type DelegateConfig, type Part, type PartResult, type RefusalReason, type SpecialistPart, type Spawned,
 } from './delegate';
 
@@ -162,13 +162,15 @@ async function prepare(options: Options): Promise<Preparation> {
       if (!file.ok || !attackerInv || !attackerInv.ok || !attackerInv['red-team'].every((anchor) => file.bytes.includes(Buffer.from(anchor, 'utf8')))) {
         return refuse('checklist-anchor');
       }
-      checklists[part] = file.bytes.toString('utf8');
+      checklists[part] = `${RED_TEAM_FRAMING}\n\n${file.bytes.toString('utf8')}`;
     } else if (part === 'adversarial') {
       const file = readTrusted(options.adversarial, 'adversarial instructions');
       if (!file.ok || !attackerInv || !attackerInv.ok || !attackerInv.adversarial.every((anchor) => file.bytes.includes(Buffer.from(anchor, 'utf8')))) {
         return refuse('checklist-anchor');
       }
-      const extracted = extractAdversarialChecklist(file.bytes.toString('utf8'), attackerInv.adversarial[1]!, attackerInv.adversarial[2]!);
+      // List (b) in the skill's attacker paragraph: the prompt line, the framing line after it, then the criteria line.
+      const [promptAnchor, framingAnchor, criteriaAnchor] = attackerInv.adversarial as [string, string, string];
+      const extracted = extractAdversarialChecklist(file.bytes.toString('utf8'), promptAnchor, framingAnchor, criteriaAnchor);
       if (!extracted.ok) return refuse('checklist-anchor');
       checklists[part] = extracted.checklist;
     } else {

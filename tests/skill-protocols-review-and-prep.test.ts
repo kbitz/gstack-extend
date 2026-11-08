@@ -2442,7 +2442,14 @@ describe('review-and-prep delegate=<part>', () => {
   test('attacker parts route per stage, record source:"delegate:<provider label>" for adversarial, and record nothing without a policy value', () => {
     expect(section).toContain('`adversarial` replaces the native adversarial subagent in every pass that runs Step 4.8, and `red-team` replaces the Red Team dispatch whenever a red team runs: upstream\'s on its own gate, or **Run a red team where /review has none**.');
     expect(section).toContain('The sibling rule "every named part runs through its delegate" never removes the red team\'s gate.');
-    expect(section).toContain('`red-team` runs at the Red Team point, with `--caught "<private file outside the repository>"` holding the findings the Red Team is given, one line each.');
+    expect(section).toContain('`red-team` runs at the Red Team point, with `--caught "<calls directory>/caught-<cycle>-<S>.txt"` holding the findings the Red Team is given, one line each.');
+    expect(section).toContain('Write that file once per cycle, mode 0600, before the cycle\'s first red-team call, never rewrite it, and reuse it unchanged on a resume, so the call id and the runner\'s claim against a second paid call stay stable.');
+    // each stage names only its own parts, and a usage error is handled like a refusal
+    expect(section).toContain('--parts <the parts this stage runs> --repo "<checkout>"');
+    expect(section).toContain('Exit 2 is a usage error decided before any call: run that stage\'s parts on the host and record the usage error as the reason.');
+    // the specialist sentences of the credited-parts bullet are scoped away from the attacker parts
+    expect(section).toContain('Those three sentences describe the four specialist parts; the attacker parts follow the rules below instead, so a credited adversarial part adds no `specialists` entry and its findings are never `specialist:adversarial`, and a credited red-team part\'s findings are `red-team`, never `specialist:red-team`.');
+    expect(section).toContain('when list (c) is not declared, waive nothing. If upstream\'s opt-in contract hook blocks on the item, answer with the recorded waiver, never a late dispatch.');
     expect(section).toContain('`adversarial` runs at Step 4.8 with `--adversarial "<adversarial instructions file>"`.');
     expect(section).toContain('`source:"delegate:<provider label>"` and `completed` true only when the part was credited; a fallback\'s host attempt gets its own token and row, as upstream defines.');
     expect(section).toContain('A policy without the value records nothing here.');
@@ -2493,7 +2500,7 @@ describe('review-and-prep red-team=ensure and wrapper red-team step', () => {
   test('activation checks only the policy values, the resolved review text and list (a) without naming any host, and keeps upstream gate and skip strings', () => {
     const activation = section.slice(0, section.indexOf('**Gate.**'));
     expect(activation).toContain('1. The review policy carries `red-team=ensure` or `delegate=` names `red-team`.');
-    expect(activation).toContain('2. The review text the host will execute contains neither `Red Team` nor `red-team`: the review file Step 1 resolved, plus every section it loaded for it, including sections resolved from its source installation. The condition is this text check, never a host name.');
+    expect(activation).toContain('2. The review text the host will execute contains neither `Red Team` nor `red-team`: the review file Step 1 resolved, plus every review section it loaded for it, including sections resolved from its source installation. The checklists it reads (`review/checklist.md` and `review/specialists/*.md`) are not part of that text, because they name the Red Team whether or not the host runs one. The condition is this text check, never a host name.');
     expect(activation).toContain('3. List (a) in **Activation (attacker parts)** matches.');
     expect(activation).not.toMatch(/claude|codex|cursor|astra|antigravity/i);
 
@@ -2514,6 +2521,7 @@ describe('review-and-prep red-team=ensure and wrapper red-team step', () => {
       '`Red team: upstream — installed /review carries one`',
       '`Red team: inactive — <reason>`',
     ]) expect(section, template).toContain(template);
+    expect(section).toContain('A policy carrying both triggers records `source=red-team=ensure`.');
     expect(flat).toContain('Add the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`.');
     expect(flat).toContain('Record the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`.');
     expect(flat).toContain('the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`,');
