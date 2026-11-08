@@ -208,6 +208,26 @@
 - **Found in:** `src/review-delegate/delegate.ts` (`keyringSeccomp`).
 - **Evidence:** Continuation cycle-2 testing specialist; the security specialist independently confirmed native and x32 keyctl return EPERM under bwrap. No failure was reproduced.
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (2026-11-08).
+
+### [review:files=src/review-delegate/delegate.ts|tests/review-delegate.test.ts] Test gap: /proc/key-users mask in repo mode
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** `sandboxArgs` binds an empty file over both `/proc/keys` and `/proc/key-users`, but the repo-probe test reads back only `/proc/keys`, so dropping the `/proc/key-users` bind would pass.
+- **Hypothesis (untested):** Have the repo-probe fake also read `/proc/key-users` and assert it is empty; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/delegate.ts` (`sandboxArgs`).
+- **Evidence:** Continuation cycle-3 testing specialist. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (2026-11-08).
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: repo-mode cleanup chmod fallback
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** When the first removal of a part's disposable root fails, cleanup runs `chmod -R u+rwx` (10 s bound) and retries, marking `spawn_error` if the retry fails too. No test makes the first removal fail, so the fallback and its `spawn_error` marking are unexercised.
+- **Hypothesis (untested):** A fake that leaves a read-only directory in the copy would drive the fallback; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`spawnProvider` cleanup).
+- **Evidence:** Continuation cycle-3 testing specialist. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (2026-11-08).
 - **Effort:** ? (user triages in /roadmap)
 
 ## Completed
