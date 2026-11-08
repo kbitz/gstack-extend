@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.74.0] - 2026-11-08
+
+### Changed
+
+- `/pair-review`, `/ship-and-land`, `/full-review`, `/roadmap` and `/project-spec` now end their final message with a `Stage handoff: stage-handoff/v1` line; existing handoff prompts are unchanged.
+
 ## [0.73.0] - 2026-11-07
 
 ### Changed
