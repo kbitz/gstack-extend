@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.0] - 2026-11-08
+
+### Changed
+
+- `/review-and-prep` now accepts two opt-in review-policy additions: `red-team=ensure` runs a red team when the installed `/review` has none, and `delegate=` now also takes `adversarial` (the native adversarial pass) and `red-team`, each sent to the provider and model its `review-delegates/v1` file maps; a run with no `Review policy:` line is unchanged.
+
+### Upgrade notes
+
+- An older `/review-and-prep` install reads a policy line carrying either addition as `none supplied`, and an older H-E parser holds it as `policy-malformed`, so callers first check `grep -F 'red-team=ensure'` and `grep -F 'delegate=adversarial,red-team'` against the installed skill; `bin/review-delegate` gains `--adversarial` and `--caught` and the refusal `caught-unreadable`, while its existing flags, exits and output keys are unchanged.
+
 ## [0.74.0] - 2026-11-08
 
 ### Changed
