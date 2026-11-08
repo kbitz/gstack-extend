@@ -33,10 +33,12 @@ order: the skills and telemetry move onto the contract's signals, hand use
 becomes visible in telemetry, and install/upgrade and the two-driver workflow
 are qualified on that final behavior. The O6 measurement and decisions follow,
 beside the stable update channel the owner placed "right before 1.0" (Track
-77B). The install qualification (Track 72E) can run whenever the owner has
-time. Work that gates nothing comes last: the review-finding records (Tracks
-77C and 79A) and aligning install and upgrade with gstack (Track 78A), whose
-timing is the owner's "at some point".
+77B), then aligning install and upgrade with gstack (Track 78A). The install
+qualification (Track 72E) can run whenever the owner has time. Owner,
+2026-11-08: "A but keep 72c and 78a for 1.0", approving a proposal that moved
+the review-finding records to Future, kept docs-only test selection and the
+gstack alignment as 1.0 work, and merged the host-attribution and hand-use
+telemetry Tracks into one card (Track 73A).
 
 **Keep moving; park only what we should not do.** Owner rule (2026-11-05): "we
 never want to 'park' something -- we always want to find a way to keep moving
@@ -131,11 +133,11 @@ _read-first: docs/delegated-review.md, docs/workflow-metrics.schema.json_
 ##### Track 72C: Use pregate to select docs-only tests and explain long runs
 _2 tasks . ~280 LOC incl. tests . medium risk_
 **Outcome:** Docs-only shipping has one policy map for selected tests and attributable work/wait timing.
-**Supports:** [SPEC](SPEC.md) O6, a non-gating candidate optimization (P1, selected efficiency program item E8, 2026-10-25), kept in the plan by the owner on 2026-11-07 ("70a ok") because `/docs-ship` ships every roadmap and spec PR.
+**Supports:** [SPEC](SPEC.md) O6, a candidate optimization (P1, selected efficiency program item E8, 2026-10-25), kept in the plan by the owner on 2026-11-07 ("70a ok") because `/docs-ship` ships every roadmap and spec PR, and included in 1.0 by the owner on 2026-11-08: "A but keep 72c and 78a for 1.0".
 **Done when:** With a usable base policy the nonexecuting pregate explanation owns selected tests and reasons for the exact delta; missing/invalid policy and legacy marker handling are explicit and conservative. Same-tree evidence reuse survives. The reported 211-minute outlier has an evidenced explanation; any unavailable intervals remain open unless the owner explicitly defers that obligation.
 _touches: src/docs-ship/pinning.ts, src/docs-ship/cli.ts, src/docs-ship/config.ts, skills/docs-ship.md, docs/docs-ship.md, tests/docs-ship.test.ts, tests/skill-protocols-docs-ship.test.ts_
 _blocked-by: Track 31A, Track 29A, Track 69A_
-**Scheduling:** Its before/after evidence feeds the O6 decision for item E8; the change itself is not a 1.0 gate.
+**Scheduling:** Its before/after evidence feeds the O6 decision for item E8. The owner scheduled it as 1.0 work on 2026-11-08; [SPEC](SPEC.md) O6.4 still says individual optimizations do not gate 1.0, so its acceptance under O6 is that measured decision unless SPEC is amended.
 _Source: program E8 / research R8_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Adopt the policy map compatibly** -- Consume exact-delta/base-policy explanation, preserve no-lane and error semantics, and cover policy-backed, policy-less, configured-marker and bump-delta cases without silently losing coverage. _~210 lines._ (M)
@@ -167,24 +169,25 @@ _read-first: docs/installation.md, docs/acceptance/release-compatibility.md_
 - **Fresh install, onboarding, upgrade and recovery** -- Run them on the owner's machine from the published instructions and record each step, intervention and result. _~90 lines._ (M)
 - **Published three-part upgrade from a legacy install** -- Upgrade a real four-part install through the default remote and record offered and installed identity, reader compatibility, recovery and unchanged state beside `docs/acceptance/release-compatibility.md`. _~70 lines._ (M)
 
-### Group 73: Contract host attribution ∥ release-note labels
+### Group 73: Contract host attribution and hand use in telemetry ∥ release-note labels
 
 _Depends on: Group 72_
 
-**This group delivers:** Host attribution through the contract in telemetry, and labelled release-note disclosures and the exact `_release:` line in plans and review handoffs.
+**This group delivers:** Host attribution and run mode through the contract in telemetry, with the owner's hand use recorded correctly across machines, and labelled release-note disclosures and the exact `_release:` line in plans and review handoffs.
 
-##### Track 73A: Attribute workspace hosts through the contract in telemetry
-_3 tasks . ~260 LOC incl. tests . medium risk_
-**Outcome:** Provenance rows record the workspace host from the contract's signal, Conductor-only reading code is gone, and every existing row stays readable.
-**Supports:** [SPEC](SPEC.md) O4.2 and O4.4 (host evidence distinguishable, public provenance schemas readable); owner, 2026-11-07 (host-specific markers replaced by the generic contract).
-**Done when:** `bin/lib/telemetry.py` takes host attribution from the contract's signal instead of the `PASEO_AGENT_ID`/`CONDUCTOR_SESSION_ID` pair, and its Conductor Cursor-store reader and `conductor` route are removed; the schema and `docs/telemetry.md` keep accepting old rows' `conductor` route and `workspace_host` values; the four recorded report test gaps from Track 69D's review have tests; the release notes disclose the incompatible change under the 0.x policy.
-_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/stage-runs.schema.json_
+##### Track 73A: Attribute hosts and record hand use through the contract in telemetry
+_4 tasks . ~520 LOC incl. tests . medium risk_
+**Outcome:** Provenance rows record the workspace host and the run mode from the contract's signals, Conductor-only reading code is gone, and every existing row stays readable; the owner can see in telemetry how often they run each stage by hand, on every machine they use, and an orchestrated run is never counted as hand use.
+**Supports:** [SPEC](SPEC.md) O4.2 and O4.4 (host evidence distinguishable, public provenance schemas readable); owner, 2026-11-07 (host-specific markers replaced by the generic contract). [SPEC](SPEC.md) O6.1 and O3.3 (the by-hand driver's evidence); owner, 2026-11-07: "we need to make sure telemetry captures my use by hand, because I use it by hand often enough but you don't seem to be aware of it".
+**Done when:** `bin/lib/telemetry.py` takes host attribution from the contract's signal instead of the `PASEO_AGENT_ID`/`CONDUCTOR_SESSION_ID` pair, and its Conductor Cursor-store reader and `conductor` route are removed; the schema and `docs/telemetry.md` keep accepting old rows' `conductor` route and `workspace_host` values; the four recorded report test gaps from Track 69D's review have tests; the release notes disclose the incompatible change under the 0.x policy. A stage the owner runs by hand is recorded `user-directed` in each harness the owner uses by hand, or `unknown` with the reason where no signal can show it, never a guess; a stage an orchestrator launches, interactive or not, is never recorded `user-directed` when it carries the orchestration contract's run-mode signal, and an interactive session in a host-managed workspace without that signal is not assumed to be hand use; `gstack-extend-telemetry report` can read per-host files synced from the owner's other machines (no hosted service) and shows hand use per machine; a dated record holds real by-hand runs on each of the owner's machines read back as `user-directed`, and an orchestrated interactive run read back as `orchestrated`; until that record exists, nothing claims hand use is captured.
+_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/stage-runs.schema.json, docs/acceptance/hand-use-telemetry.md (new)_
 _blocked-by: Track 71C, Track 70A, Track 72D_
-**Scheduling:** Technical edge on Track 71C (shipped; the contract names the host-attribution signal as `GSTACK_EXTEND_WORKSPACE_OWNER`); the edge on Track 70A (shipped, v0.72.0) is satisfied. The edge on Track 72D is a priority choice: both edit `tests/telemetry.test.ts`, and the sandbox fix goes first so a Codex worker's checks on this Track pass. The quota ledger's Conductor store reader stays in Future: quota is experimental and not a host guard or marker.
+**Scheduling:** One card from the host-attribution and hand-use Tracks, merged by the owner's decision on 2026-11-08 under the card-size rule's same-files exception: both edit `bin/lib/telemetry.py`, its two test suites and `docs/telemetry.md` and would run one after the other anyway. Combined size ~520 lines including tests, session weight 6 (the configured `roadmap_max_session_weight`). Technical edge on Track 71C (shipped; the contract names the host-attribution signal `GSTACK_EXTEND_WORKSPACE_OWNER` and the run-mode signal an orchestrator sets for every stage it launches); the edge on Track 70A (shipped, v0.72.0) is satisfied. The edge on Track 72D is a priority choice: both edit `tests/telemetry.test.ts`, and the sandbox fix goes first so a Codex worker's checks on this Track pass. The quota ledger's Conductor store reader stays in Future: quota is experimental and not a host guard or marker. Facts at 0.71.0 (`bin/lib/telemetry.py` `run_mode()`, checked 2026-11-07): with no `GSTACK_SESSION_KIND`, work item or `GSTACK_EXTEND_RUN_MODE`, a Claude session whose entrypoint is `cli` or `Paseo` reads `user-directed`, so an orchestrator-launched interactive worker that sets none of them is counted as hand use (this machine's report showed exactly that for two `project-spec` runs on 2026-11-07); Codex and Cursor sessions always read `unknown`; rows are written per host under each machine's own state directory; and only gstack-extend's own skills write rows, so hand use of upstream gstack skills is not counted (out of scope here). Setting the signal inside an orchestrator is that consumer's work, not this repository's.
 _read-first: docs/orchestration-contract.md, docs/telemetry.md_
-- **Attribute the host from the contract and drop the Conductor reader** -- Replace the marker pair, remove the Conductor store reader and route, keep old rows valid. _~170 lines incl. tests._ (M)
-- **Keep the schema and documentation readable for old rows** -- Document the change, keep historical enum values, and disclose it. _~40 lines._ (S)
+- **Attribute the host from the contract, drop the Conductor reader and keep old rows readable** -- Replace the marker pair, remove the Conductor store reader and route, keep old rows valid, and document the change in the schema and `docs/telemetry.md` with historical enum values kept and the change disclosed. _~210 lines incl. tests._ (M)
+- **Classify hand runs correctly and report them across machines** -- Read the contract's run-mode signal for interactive workers, stop inferring hand use from a host entrypoint alone, and cover the harnesses the owner uses by hand, with `unknown` plus a reason where no signal decides; let the report read synced per-host files from more than one state directory and show runs per machine and mode, keeping today's single-machine output. _~230 lines incl. tests._ (M)
 - **Cover the recorded report test gaps** -- Structured transcript resume forms, signal-reader exception isolation, missing installed-skill metadata and report filesystem error diagnostics (`[review:files=bin/lib/telemetry.py]`, recorded 2026-11-07). _~50 lines._ (S)
+- **Record real by-hand and orchestrated runs** -- Run stages by hand on each of the owner's machines and one orchestrated interactive stage, read them back through the report and record the result. _~30 lines._ (S)
 
 ##### Track 73B: Carry release-note disclosures from the plan through the review handoff
 _4 tasks . ~210 LOC incl. tests . low risk_
@@ -199,26 +202,13 @@ _blocked-by: Track 70A, Track 71D, Track 72A, Track 72B_
 - **Document and lock the label grammar** -- Add the grammar to the handoff contract with fixtures. _~70 lines incl. tests._ (S)
 - **Document the exact `_release:` line in /plan-track** -- One line, `_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_`, with disclosure text on the separate labelled lines above. Evidence: Track 71D's plan wrote `_release: minor — <paragraph>`, and the caller's scripted release refused it as `level_invalid`, so v0.73.0 was released by hand. No code in this repository or in installed gstack reads `_release:` today (checked 2026-11-08); the caller's release step does. _~30 lines incl. tests._ (S)
 
-### Group 74: Hand use in telemetry ∥ human-judgment pair-review
+### Group 74: Human-judgment pair-review
 
 _Depends on: Group 73_
 
-**This group delivers:** Telemetry that records the owner's hand use correctly across machines, and a `/pair-review` that carries only human-judgment items.
+**This group delivers:** A `/pair-review` that carries only human-judgment items.
 
-##### Track 74A: Record hand use accurately across the owner's machines
-_3 tasks . ~260 LOC incl. tests . medium risk_
-**Outcome:** The owner can see in telemetry how often they run each stage by hand, on every machine they use, and an orchestrated run is never counted as hand use.
-**Supports:** [SPEC](SPEC.md) O6.1 and O3.3 (the by-hand driver's evidence); owner, 2026-11-07: "we need to make sure telemetry captures my use by hand, because I use it by hand often enough but you don't seem to be aware of it".
-**Done when:** A stage the owner runs by hand is recorded `user-directed` in each harness the owner uses by hand, or `unknown` with the reason where no signal can show it, never a guess; a stage an orchestrator launches, interactive or not, is never recorded `user-directed` when it carries the orchestration contract's run-mode signal, and an interactive session in a host-managed workspace without that signal is not assumed to be hand use; `gstack-extend-telemetry report` can read per-host files synced from the owner's other machines (no hosted service) and shows hand use per machine; a dated record holds real by-hand runs on each of the owner's machines read back as `user-directed`, and an orchestrated interactive run read back as `orchestrated`; until that record exists, nothing claims hand use is captured.
-_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/acceptance/hand-use-telemetry.md (new)_
-_blocked-by: Track 71C, Track 73A_
-**Scheduling:** Technical edge on Track 71C (the contract names the run-mode signal an orchestrator sets for every stage it launches). The edge on Track 73A orders edits to the same telemetry files. Facts at 0.71.0 (`bin/lib/telemetry.py` `run_mode()`, checked 2026-11-07): with no `GSTACK_SESSION_KIND`, work item or `GSTACK_EXTEND_RUN_MODE`, a Claude session whose entrypoint is `cli` or `Paseo` reads `user-directed`, so an orchestrator-launched interactive worker that sets none of them is counted as hand use (this machine's report showed exactly that for two `project-spec` runs on 2026-11-07); Codex and Cursor sessions always read `unknown`; rows are written per host under each machine's own state directory; and only gstack-extend's own skills write rows, so hand use of upstream gstack skills is not counted (out of scope here). Setting the signal inside an orchestrator is that consumer's work, not this repository's.
-_read-first: docs/telemetry.md, docs/orchestration-contract.md_
-- **Classify interactive orchestrated runs and hand runs correctly** -- Read the contract's run-mode signal for interactive workers, stop inferring hand use from a host entrypoint alone, and cover the harnesses the owner uses by hand, with `unknown` plus a reason where no signal decides. _~140 lines incl. tests._ (M)
-- **Report hand use across the owner's machines** -- Let the report read synced per-host files from more than one state directory and show runs per machine and mode, keeping today's single-machine output. _~90 lines incl. tests._ (M)
-- **Record real by-hand and orchestrated runs** -- Run stages by hand on each of the owner's machines and one orchestrated interactive stage, read them back through the report and record the result. _~30 lines._ (S)
-
-##### Track 74B: Keep /pair-review to human-judgment items
+##### Track 74A: Keep /pair-review to human-judgment items
 _3 tasks . ~260 LOC incl. tests, plus deletions . medium risk_
 **Outcome:** A person running `/pair-review` sees only items that need their judgment or access, with state prepared and evidence attached by the agent, and is asked to retest only after the agent has reproduced and re-verified a fix.
 **Supports:** [SPEC](SPEC.md) O3 manual-testing pause/resume; owner, 2026-11-07 ("pair-review design: yes … it isn't supposed to be [autonomous QA]").
@@ -243,8 +233,8 @@ _2 tasks . ~220 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) O3.2 stop preservation and O4.3–O4.4 provenance (efficiency program E10–E11); confirmed by the owner, 2026-11-07 ("72d confirmed as well").
 **Done when:** A supporting design maps review facts to a portable evidence-bundle reference and independently checks review-log full-scope/completion/convergence/binding predicates. Documentation walks stopped draft → authorized exact repair-only continuation → prepared readiness → ship with all unavailable evidence and continuation counts preserved, including a stop after a first cycle that reproduced defects; it cites the already recorded rule that `/ship-and-land` keeps refusing a stopped draft, including one whose receipt says `Unresolved: none recorded` (`B-STOPPED-NONE-RECORDED`). No envelope runtime or stop bypass is introduced.
 _touches: docs/designs/review-evidence-envelope.md (new), docs/workflow-handoffs.md_
-_blocked-by: Track 29A, Track 30A, Track 32A, Track 74B_
-**Scheduling:** The capped-review repair and baseline-repair edges are technical: the documented recovery path must describe the shipped repair-only continuation. The edge on Track 74B is a priority choice ordering edits to `docs/workflow-handoffs.md` behind the pair-review Tracks. This Track specifies and checks the cycle 1 baseline record and does not write it.
+_blocked-by: Track 29A, Track 30A, Track 32A, Track 74A_
+**Scheduling:** The capped-review repair and baseline-repair edges are technical: the documented recovery path must describe the shipped repair-only continuation. The edge on Track 74A is a priority choice ordering edits to `docs/workflow-handoffs.md` behind the pair-review Tracks. This Track specifies and checks the cycle 1 baseline record and does not write it.
 _Source: program E10–E11 / research R11 and observed capped-review stops_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Map the existing upstream proof** -- Compare commit_full/tree/scope/completed/converged/cycles plus review_binding and verified/imported lane semantics; specify missing/stale/unavailable cases and identify gaps without claiming nonconverged full scope is a completed baseline. _~150 lines._ (M)
@@ -256,8 +246,8 @@ _3 tasks . ~220 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) O4.2 and O3.2 (host ownership of branches and worktrees); owner, 2026-11-07, approving that the Future entry "Remove Conductor support from the code" become a 1.0 Track.
 **Done when:** The host-managed-workspace guards in `/implement`, `/review-and-prep` and `/ship-and-land` read the contract's worktree-ownership signal, with Paseo documented as one provider if the contract keeps it; the `SHARED:conductor-visibility-head` block, its `CONDUCTOR_SKILLS` cohort and the Conductor `.context/` storage fallbacks are gone from `/full-review`, `/pair-review` and `/roadmap`, which store under the state root, then `~/scratch/`; protocol tests lock the new guards and the removal; the release notes disclose the incompatible change under the 0.x policy.
 _touches: skills/implement.md, skills/review-and-prep.md, skills/ship-and-land.md, skills/full-review.md, skills/pair-review.md, skills/roadmap.md, tests/skill-protocols.test.ts, tests/skill-protocols-implement.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols-ship-and-land.test.ts, tests/skill-protocols-roadmap.test.ts, tests/skill-protocols-plan-track.test.ts, tests/helpers/parse-setup-skills.ts_
-_blocked-by: Track 71C, Track 74B, Track 70A_
-**Scheduling:** Technical edge on Track 71C (it implements the contract's signal). The edge on Track 74B is a priority choice that orders same-file edits with the pair-review Tracks; the edge on Track 70A (shipped, v0.72.0) is satisfied.
+_blocked-by: Track 71C, Track 74A, Track 70A_
+**Scheduling:** Technical edge on Track 71C (it implements the contract's signal). The edge on Track 74A is a priority choice that orders same-file edits with the pair-review Tracks; the edge on Track 70A (shipped, v0.72.0) is satisfied.
 _read-first: docs/orchestration-contract.md_
 - **Read the contract's signal in the workspace guards** -- Replace the Paseo- and Conductor-named guards in the three stage skills. _~90 lines._ (M)
 - **Remove the Conductor visibility block and `.context/` fallbacks** -- Remove the shared block, its cohort and the fallbacks, keeping each cohort's other members exact. _~110 lines incl. tests._ (M)
@@ -287,16 +277,16 @@ _2 tasks . ~240 LOC . medium risk_
 **Supports:** [SPEC](SPEC.md) O3.3 and O4.5 (reshaped from the Paseo host Track by the owner, 2026-11-07: "72c ok").
 **Done when:** A dated record names host, harness and versions for real runs by both drivers (the owner by hand, and one real external orchestrator), each run read back in telemetry with the correct run mode, covering, between them, a complete plan-to-authorized-release workflow, interrupted resume, manual-testing pause/resume, `/full-review` finish/restart, an explicit negative hold, an external-consumer handoff consumed from artifacts, a cross-session handoff and stale/partial/held handoffs; it counts operator interventions and keeps pending approvals or failures as holds; it includes the installed `/docs-ship` acceptance below; no unexercised combination is claimed.
 _touches: docs/acceptance/workflow-drivers.md (new)_
-_blocked-by: Track 70A, Track 72C, Track 71E, Track 74B, Track 75B, Track 73A, Track 74A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 72B_
+_blocked-by: Track 70A, Track 72C, Track 71E, Track 74A, Track 75B, Track 73A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 72B_
 **Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changes them, including the exit-line and attacker-parts Tracks. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
 - **Exercise both drivers** -- Use real host-managed workspaces and approved accounts with the harnesses the owner uses for each stage; retain the bound PR and workspace, test stale/partial/held handoffs, confirm next-stage consumption from artifacts across sessions, include the host-attribution check deferred from Track 26A, and count operator interventions. _~200 documentation lines._ (L)
 - **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging; include one Sonnet-class run and one `/roadmap` handoff, and compare work/wait wall time with a recent docs PR shipped through the ordinary path. _~40 lines._ (S)
 
-### Group 77: Measured stage cost ∥ stable update channel ∥ review-finding identity
+### Group 77: Measured stage cost ∥ stable update channel
 
 _Depends on: Group 72, Group 75, Group 76_
 
-**This group delivers:** Expected cost per stage with an adopt, reject or insufficient-evidence decision for every candidate optimization, upgrades that follow a stable release channel with a non-interactive auto-upgrade switch, and review findings that keep one identity and state across cycles.
+**This group delivers:** Expected cost per stage with an adopt, reject or insufficient-evidence decision for every candidate optimization, and upgrades that follow a stable release channel with a non-interactive auto-upgrade switch.
 
 ##### Track 77A: Measure each stage's cost and decide each optimization
 _3 tasks . ~460 LOC incl. tests . medium risk_
@@ -326,20 +316,6 @@ _read-first: docs/installation.md, docs/acceptance/release-compatibility.md_
 - **Report a missing gstack at setup** -- An actionable result when installed gstack is absent. _~30 lines incl. tests._ (S)
 - **Record a real channel upgrade** -- Upgrade the owner's install through the stable channel and record offered and installed identity in the install qualification record; list the setting in the catalog. _~30 lines._ (S)
 
-##### Track 77C: Give review findings a stable identity and state across cycles
-_3 tasks . ~300 LOC incl. tests . medium risk_
-**Outcome:** A review finding keeps one identity and state (open, resolved or irrelevant, with who set it) across review cycles and re-reviews, and an orchestrator reads that state from the published workflow-metrics records instead of an invented file.
-**Supports:** [SPEC](SPEC.md) O6 and the optimization evidence rules (P1), and O4.4 (public records stay readable). Not a 1.0 gate unless O6 needs it. Owner, 2026-11-07: "sure".
-**Done when:** A cross-cycle finding key that survives line moves is recorded on each finding, with a test that moves the code and keeps the key; a finding state field (`open`, `resolved`, `irrelevant`) and who set it (model or owner) are written as a new version of the pass and correction records, while every existing record version stays readable; `docs/telemetry.md` and `docs/workflow-metrics.schema.json` document both; `/review-and-prep` writes them; the four recorded run-usage test gaps from Track 67A's review have tests.
-_touches: bin/lib/workflow_metrics.py, docs/workflow-metrics.schema.json, docs/telemetry.md, tests/workflow-metrics.test.ts, skills/review-and-prep.md_
-_blocked-by: Track 75B, Track 76B_
-**Scheduling:** The edges are priority choices: they keep this non-gating Track off the 1.0 path, after the workflow qualification runs on settled stage behavior, and order its `skills/review-and-prep.md` edit behind the 1.0 Tracks that edit it. Facts checked 2026-11-08: `finding_id` is unique only within an attempt and nothing links a finding across cycles; receipt fingerprints (`path:line:category`) shift when lines move; an orchestrator agreed to extend the workflow-metrics records rather than add a file. The key comes first because suppression keyed on an unstable identity would hide real regressions.
-_Source: owner-approved card (2026-11-07); Future entry "Recorded test gaps: run-usage capture and projection" (its trigger, a Track whose `_touches:` cover `tests/workflow-metrics.test.ts` and `bin/lib/workflow_metrics.py`, is met here)._
-_read-first: docs/telemetry.md, docs/workflow-metrics.schema.json_
-- **Cross-cycle finding key** -- Derive a key that survives line moves, record it beside `finding_id`, and prove it with a moved-code test. _~120 lines incl. tests._ (M)
-- **Finding state and who set it** -- A new pass/correction record version with `open`, `resolved` or `irrelevant` and its setter, written by `/review-and-prep`, with old versions still readable. _~130 lines incl. tests._ (M)
-- **Cover the recorded run-usage test gaps** -- Nested containing steps in `bin/lib/telemetry_usage.py` `collect`, the missing-usage projection, conflicting and dangling usage rows, and the 16-model and 32-pass projection limits, in `tests/workflow-metrics.test.ts` (`[review:files=bin/lib/telemetry_usage.py|tests/workflow-metrics.test.ts]` and three `[review:files=bin/lib/workflow_metrics.py|tests/workflow-metrics.test.ts]`, PR #206, 2026-11-05). _~50 lines._ (S)
-
 ### Group 78: Install and upgrade aligned with upstream gstack
 
 _Depends on: Group 77_
@@ -349,34 +325,16 @@ _Depends on: Group 77_
 ##### Track 78A: Align install and upgrade with upstream gstack
 _3 tasks . ~280 LOC incl. tests, plus byte-copied shared blocks . medium risk_
 **Outcome:** Installing and upgrading gstack-extend looks and behaves like upgrading upstream gstack: the same flow shape and output style, and a "What's new" summary shown after every upgrade.
-**Supports:** [SPEC](SPEC.md) O1 (install, update and recover a working skill set). Not a 1.0 gate. Owner, 2026-11-07: "One thing I want to do at some point is re-align our install and upgrade process with gstack. Both visually and functionally, including the nice release notes presented to the user".
+**Supports:** [SPEC](SPEC.md) O1 (install, update and recover a working skill set). Included in 1.0 by the owner on 2026-11-08: "A but keep 72c and 78a for 1.0". Owner, 2026-11-07: "One thing I want to do at some point is re-align our install and upgrade process with gstack. Both visually and functionally, including the nice release notes presented to the user".
 **Done when:** The upgrade flow's steps, prompts and output match upstream `/gstack-upgrade`'s shape, including snooze, auto-upgrade and just-upgraded handling; after every upgrade the user sees a What's-new summary drawn from `CHANGELOG.md` between the old and new versions (or the commit log on a main-tracking install) and a per-host upgrade summary; fresh-install onboarding is compared with gstack's and any gap recorded; install-safety rules, the `UPGRADE_OK`, `UPGRADE_FAILED`, `MIGRATION_WARN` and `INSTALL_WARN` tokens and `bin/update-check`'s published output stay compatible or migrate explicitly with disclosure; the two recorded update-check test gaps from Track 66A's review have tests.
 _touches: skills/gstack-extend-upgrade.md, skills/gstack-extend-init.md, skills/full-review.md, skills/implement.md, skills/plan-track.md, skills/project-spec.md, skills/pair-review.md, skills/ship-and-land.md, skills/roadmap.md, skills/review-and-prep.md, skills/docs-ship.md, bin/update-run, setup, docs/installation.md, tests/skill-protocols.test.ts, tests/update.test.ts, tests/setup-hosts.test.ts_
 _blocked-by: Track 77B_
-**Scheduling:** Owner timing: "at some point"; it gates nothing. The edge on the stable-channel Track orders edits to the same upgrade files behind the 1.0 change. It lists every skill file because the shared upgrade-flow block is byte-copied into each of them; those copies do not count toward the card size. Facts checked 2026-11-08: `skills/gstack-extend-upgrade.md` only points the user at `CHANGELOG.md` and shows no summary, while upstream `/gstack-upgrade` shows a grouped What's-new summary; release text from 0.68.0 to 0.72.0 is thin, so the summary is only as good as the CHANGELOG.
+**Scheduling:** The owner first said "at some point" (2026-11-07), then included it in 1.0 (2026-11-08). The edge on the stable-channel Track orders edits to the same upgrade files behind it. It lists every skill file because the shared upgrade-flow block is byte-copied into each of them; those copies do not count toward the card size. Facts checked 2026-11-08: `skills/gstack-extend-upgrade.md` only points the user at `CHANGELOG.md` and shows no summary, while upstream `/gstack-upgrade` shows a grouped What's-new summary; release text from 0.68.0 to 0.72.0 is thin, so the summary is only as good as the CHANGELOG.
 _Source: owner-approved card (2026-11-07); Future entry "Recorded test gaps: update-check wording, trigger lines and notice placement" (its trigger, a Track whose `_touches:` cover `tests/skill-protocols.test.ts` and `tests/update.test.ts`, is met here)._
 _read-first: skills/gstack-extend-upgrade.md, docs/installation.md_
 - **Match upstream's upgrade flow and output** -- Steps, prompts and output format across the shared upgrade flow and `/gstack-extend-upgrade`, keeping the result tokens and install-safety rules. _~150 lines incl. tests, plus shared copies._ (M)
 - **What's-new and per-host upgrade summaries** -- Summarize `CHANGELOG.md` (or the commit log) between versions and print one row per host install. _~100 lines incl. tests._ (M)
 - **Cover the recorded update-check test gaps** -- Pin the `UPGRADE_SKIPPED spawned-session` sentence and the installation guide's just-upgraded clauses, assert the per-skill `UPGRADE_AVAILABLE` and `JUST_UPGRADED` lines and the spawned branch's placement, and show `bin/update-check` output reaching stdout (`[review:files=tests/skill-protocols.test.ts|tests/update.test.ts]` and `[review:files=tests/skill-protocols.test.ts]`, Track 66A, 2026-11-04). _~30 lines._ (S)
-
-### Group 79: Review cycles scoped to open findings
-
-_Depends on: Group 77, Group 78_
-
-**This group delivers:** Opt-in later review cycles scoped to the delta plus open findings, with dismissed findings kept out unless their code changed.
-
-##### Track 79A: Scope later review cycles to open findings and keep dismissals out
-_2 tasks . ~220 LOC incl. tests . medium risk_
-**Outcome:** A caller can scope a later review cycle to the changed code plus the still-open findings, and a finding dismissed as irrelevant is not raised again unless the code it cited changed.
-**Supports:** [SPEC](SPEC.md) O6 and the optimization evidence rules (P1: opt-in through a versioned review-policy value, today's default kept). Not a 1.0 gate. Owner, 2026-11-07: "sure".
-**Done when:** An opt-in `review-and-prep-policy/v1` value scopes a later cycle to the delta plus the open findings from Track 77C's records, and its interaction with the cycle cap, repair-only continuation and the opt-in `in-cap=delta` is documented; a dismissed finding is suppressed only while its key and cited code are unchanged, with a regression test proving a changed defect is raised again; the plan decides whether each finding's Confirmed or Investigate label is worth adopting; the default, every gate and the stop conditions are unchanged; the delta-default decision stays with its Future entry.
-_touches: skills/review-and-prep.md, tests/skill-protocols-review-and-prep.test.ts, docs/workflow-handoffs.md_
-_blocked-by: Track 77C_
-**Scheduling:** Technical edge on Track 77C: it reads the cross-cycle key and state. Making delta-scoped review the default stays in Future ("Decide whether delta-scoped review becomes the wrapper default"), which waits on paired evidence; suppression may need the same evidence before any default.
-_Source: owner-approved card (2026-11-07), split under the card-size rule (records first, then scoping and suppression)._
-- **Scope a later cycle to the delta plus open findings** -- The policy value, its scope rules and its interaction with the cycle cap and continuations. _~110 lines incl. tests._ (M)
-- **Suppress dismissed findings with a regression guard** -- Suppress only while key and cited code are unchanged; a changed defect is raised again. _~110 lines incl. tests._ (M)
 
 ### Execution Map
 
@@ -393,17 +351,16 @@ DEPENDS output with bin numbers replaced by the assigned Group numbers.
 - Group 76 ← {72, 73, 74, 75}
 - Group 77 ← {72, 75, 76}
 - Group 78 ← {77}
-- Group 79 ← {77, 78}
 ```
 
-**8 Groups / 18 Tracks remaining**, all in the Current Plan.
+**7 Groups / 15 Tracks remaining**, all in the Current Plan.
 
 Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
 
 ## Future
 
-Deferred: docs/roadmap-future.md (84 items)
+Deferred: docs/roadmap-future.md (86 items)
 
 ## Shipped
 
