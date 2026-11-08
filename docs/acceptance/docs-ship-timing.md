@@ -36,16 +36,16 @@ Searching the local analytics stores, evidence logs and harness session logs for
 | #169 | 2026-10-25 | `/docs-ship` | First commit `13:28:13Z`; PR created `13:43:52Z`; saved PR JSON `13:43:55Z`; `docs-ship-tests` finished `13:48:02Z` (`59.0 s`, `811` tests, exit `0`); bump commit `13:49:59Z`; `docs-ship-release-tests` finished `14:01:45Z` (`687.8 s`, `1,717` tests, exit `1`); `ready_for_review` `15:27:12Z`; merged `15:27:15Z` (`6,203 s` = `103.4 min` PR open-to-merge; `5,127 s` between failed release test and ready is `unknown`). |
 | #170 | 2026-10-25 | `/docs-ship` | First commit `19:44:21Z`; PR created `19:45:33Z`; saved PR JSON `19:45:37Z` and `19:47:51Z`; `docs-ship-tests` finished `19:47:09Z` (`48.8 s`, `576` tests, exit `0`); `ready_for_review` `19:47:58Z`; merged `20:14:12Z` (`1,719 s` = `28.7 min` PR open-to-merge, including `1,574 s` = `26.2 min` post-ready merge wait). |
 
-### Outlier Disposition (Open)
+### Outlier Disposition (Deferred by Owner)
 
-Because no local record binds the reported `211`-minute (`12,660 s`) figure to a `/docs-ship` invocation with verified start and finish timestamps, its four interval classes remain **open**:
+No local record binds the reported `211`-minute (`12,660 s`) figure to a `/docs-ship` invocation with verified start and finish timestamps. On **2026-11-08**, the owner explicitly deferred the obligation to explain its intervals: **"Defer it."** The four interval classes remain unknown; the deferral does not verify their values:
 
-- **Active review/test work:** `unknown` (open)
-- **Host/tool stalls:** `unknown` (open)
-- **Human waits:** `unknown` (open)
-- **Unattributed remainder:** `unknown` (open)
+- **Active review/test work:** `unknown` (deferred by owner, 2026-11-08)
+- **Host/tool stalls:** `unknown` (deferred by owner, 2026-11-08)
+- **Human waits:** `unknown` (deferred by owner, 2026-11-08)
+- **Unattributed remainder:** `unknown` (deferred by owner, 2026-11-08)
 
-**Evidence required to close:** either the owner's synced telemetry and session records from other machines used between `2026-10-22` and `2026-10-25` ([`docs/SPEC.md`](../SPEC.md#o6-bounded-measured-stage-effort) O6.1), or the originating private research notes identifying which PR and clock boundaries produced the `211`-minute and `34.5`-minute numbers. No owner deferral has been recorded.
+**Evidence needed if revisited:** either the owner's synced telemetry and session records from other machines used between `2026-10-22` and `2026-10-25` ([`docs/SPEC.md`](../SPEC.md#o6-bounded-measured-stage-effort) O6.1), or the originating private research notes identifying which PR and clock boundaries produced the `211`-minute and `34.5`-minute numbers. AC4 is **deferred by the owner, not verified**. Track 76B remains the next measurement, as described below.
 
 ## Local Baseline (`2026-11-06` to `2026-11-08`, `n = 6` Stage-Run Rows)
 
