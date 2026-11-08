@@ -838,7 +838,7 @@ token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs sep
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
 `first-cycle` (`overlap`), `documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`), `final-gate-repair`
 (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
-`performance`, `simplification`, comma-separated, each once), `repair-review` (`behavior-changing`),
+`performance`, `simplification`, `adversarial`, `red-team`, comma-separated, each once), `red-team` (`ensure`), `repair-review` (`behavior-changing`),
 `repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
@@ -931,14 +931,24 @@ means supported). An installation without it reads the whole line as `none
 supplied`, an older H-E parser holds a returned policy that carries it as
 `policy-malformed`, and a caller omits it when the check fails and keeps its other
 keys. It is independent of every other value except `specialists=fold`, which
-excludes it, and is never set by the light review default. It names only the four delegable parts, each once; a value naming any
+excludes it, and is never set by the light review default. It names only the six delegable parts, each once; a value naming any
 other part is an unknown value and voids the line. A caller also sends one
 `Review delegates: <absolute path>` line beside the policy; it is not part of the
 relayed H-E prompt, so a caller supplies it again beside a relayed prompt (the same
 rule as the provenance instruction), and without it every part runs on the host
 model. The value waives no gate and never authorizes a continuation. While the
 anchors it relies on drift, every part runs on the host model and the receipt says
-so. See [delegated review](delegated-review.md).
+so. The attacker values in `delegate=` (`adversarial`, `red-team`) and
+`red-team=ensure` follow the same rollout order and rule: an installation without
+them reads the whole line as `none supplied`, and an older H-E parser holds a
+returned policy that carries them as `policy-malformed`. Each has its own
+capability check against the loaded copy, distinct from `delegate=<part>` (which
+older installs also match): `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
+for the attacker values in `delegate=` (when it fails, a caller drops
+`adversarial` and `red-team` from `delegate=` and keeps its other parts and keys)
+and `grep -F 'red-team=ensure' "<installed skill dir>/SKILL.md"` for
+`red-team=ensure` (when it fails, a caller omits `red-team=ensure` and keeps its
+other keys). See [delegated review](delegated-review.md).
 
 A prepared receipt that records delegated parts still emits `review: COMPLETE` in
 its H-B handoff: the `delegation:` status and `Delegated part:` lines are receipt
@@ -1375,6 +1385,8 @@ or input it says is needed is for the user.
 | `delegation:` status and `Delegated part:` lines | receipt-present | published in the receipt under `delegate=<part>`, one `Delegated part:` line per delegated part with its provider label, model, outcome, fallback reason, wall time, token counts, finding count and call ID; the configuration's path never appears, and the lines never authorize a stage or merge (`B-DELEGATED-HEAD`) |
 | `Review arm:` and `Folded checklist:` lines | receipt-present | published in the receipt under `specialists=fold`: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per checklist the main pass read with its name, file path under the gstack root, SHA-256 and finding count; no local path outside the gstack root appears, and the lines never authorize a stage or merge (`B-FOLDED-HEAD`) |
 | `specialists-dispatched:` line | receipt-present | published in the receipt under `delegate=<part>` or `specialists=fold` while that section is active; records the current upstream item result (`waived`, `met`, `not declared` or `unmet`), with `; history=<cycle>:<outcome>[,...]` for mixed cycle outcomes preserving successful waivers' parts and failed calls' causes; never authorizes a stage or merge |
+| `adversarial-pass:` line | receipt-present | published in the receipt under `delegate=adversarial` while active; records the current upstream item result (`waived`, `met`, `not declared` or `unmet`), with `; history=<cycle>:<outcome>[,...]` for mixed cycle outcomes; never authorizes a stage or merge |
+| `Red team:` line | receipt-present | published in the receipt when the policy carries `red-team=ensure` or `delegate=` names `red-team`; never authorizes a stage or merge |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 | `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |

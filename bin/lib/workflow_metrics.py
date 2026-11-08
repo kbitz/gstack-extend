@@ -83,7 +83,7 @@ PART_RE = re.compile(r"(?:specialist:[a-z][a-z0-9-]{0,63}|red-team|native-advers
 ATTRIBUTION_REASONS = ("not-reported", "unlisted-part", "unsupported")  # producer-sendable; the read adds v1-record
 MAX_FOUND_BY = 8
 MAX_PARTS = 24  # distinct part labels per scope in a read; the full label list is 16 with every upstream specialist
-# v=3 delegated attempts (docs/telemetry.md#workflow-metrics-delegated): the provider a specialist part ran through.
+# v=3 delegated attempts (docs/telemetry.md#workflow-metrics-delegated): the provider a delegated part ran through.
 DELEGATE_LABEL_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
 DELEGATE_OUTCOMES = ("credited", "fell-back")
 FALLBACK_REASONS = ("unresolved-claim", "timeout", "failed", "refused", "needs-context", "uncredited",
@@ -447,7 +447,7 @@ def _finding(value, version=1):
 
 
 def _delegate(value, attempt_outcome):
-    """v3: the provider a delegated specialist part ran through. credited <=> completed <=> no fallback reason."""
+    """v3: the provider a delegated part ran through. credited <=> completed <=> no fallback reason."""
     if not isinstance(value, dict):
         raise _bad("delegate", "object")
     _keys(value, ("provider", "model", "outcome", "fallback_reason", "replay") + DELEGATE_COUNTS, (), "delegate")
