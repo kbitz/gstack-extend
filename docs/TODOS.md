@@ -34,6 +34,30 @@
 - **Revisit when:** The next change to delegation failure handling or the caught file, a `PM2` run in `docs/acceptance/attacker-parts.md` shows a killed runner or a refused red-team call, or a receipt shows a delegate exit other than 0, 1, 2 or 4.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: runner refusal when red-team.md drifts or is missing
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** `prepare()` refuses `checklist-anchor` when `<gstack-root>/review/specialists/red-team.md` is missing or no longer carries the red-team anchors, but no test drives that branch; the existing anchor-drift test covers the specialist checklists and `--adversarial` only.
+- **Hypothesis (untested):** Add a red-team row to the anchor-drift test in `tests/review-delegate.test.ts` (rewrite an anchor in the fixture `red-team.md`, and remove the file) for `check` and `run` in both layouts; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepare`, red-team branch), `tests/review-delegate.test.ts` (anchor-drift test).
+- **Evidence:** The `/ship` coverage audit (audit-only) traced the branch and found no test; `bun test tests/review-delegate.test.ts tests/upstream-check.test.ts` passed (383 pass, 0 fail); no failure was reproduced.
+- **Context:** Filed by `/review-and-prep` (Track 72B) at `7948a6b` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or the red-team checklist anchors.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/review-delegate/delegate.ts|tests/review-delegate.test.ts] Test gap: adversarial extraction when the prompt line is the file's last line
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** `extractAdversarialChecklist` refuses when no line follows the one `Subagent prompt:` line (the framing line is undefined), but the drift table has no row where the prompt line is last.
+- **Hypothesis (untested):** Add that row to the extractor drift table in `tests/review-delegate.test.ts`; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/delegate.ts` (`extractAdversarialChecklist`), `tests/review-delegate.test.ts` (adversarial drift test).
+- **Evidence:** The `/ship` coverage audit (audit-only) found every existing row has a line after the prompt line; no failure was reproduced.
+- **Context:** Filed by `/review-and-prep` (Track 72B) at `7948a6b` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or the adversarial extraction rule.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
