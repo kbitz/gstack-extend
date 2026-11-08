@@ -5,8 +5,8 @@
 Each `/docs-ship` run is decomposed into four interval classes under E1's boundary rules ([`docs/telemetry.md`](../telemetry.md#recording-a-span-at-its-boundary)):
 
 - **Active review/test work:** model classification, scope, claim/link/rule verification, release bump and receipt binding, separated from recorded test execution spans (`gstack-evidence` labels `docs-ship-tests` and `docs-ship-release-tests`).
-- **Host/tool stalls:** bounded tool or CI waits between recorded timestamps (for example `ready_for_review` to receipt completion during `gh pr checks`).
-- **Human waits:** interactive pauses, the gap between a `blocked` segment finish and the resumed start, and the interval after `/docs-ship` finishes (or prints its step-11 result line) until the PR merges.
+- **Host/tool stalls:** tool or CI waits with recorded start and finish boundaries identifying the wait. Timeline gaps alone do not establish this cause.
+- **Human waits:** interactive pauses with recorded boundaries or an explicit measured `user_wait_s`. Gaps between segments or before merge remain unattributed unless the source identifies their cause.
 - **Unknown:** any interval missing a start or end timestamp, or any sub-span whose internal boundary was not recorded.
 
 E1 rules enforced throughout:
@@ -56,14 +56,22 @@ Because no local record binds the reported `211`-minute (`12,660 s`) figure to a
 
 ### Per-Run Interval Breakdown
 
-| Date / PR | Mode & versions | Stage wall (`duration_s`) | Active test work (`gstack-evidence`) | Active non-test work | Host/tool stalls | Human waits (in-stage & between/post-stage) | Unknown sub-spans |
-|---|---|---|---|---|---|---|---|
-| `2026-11-06` PR #209 seg 1 (`19:54:00Z`–`19:55:35Z`) | `unknown`; extend `0.68.0`, gstack `unknown` | `95 s` (`blocked`) | `33.2 s` (`docs-ship-tests` at `19:55:32Z`, `2,317` tests, exit `0`) | `<= 61.8 s` (PR snapshot `19:54:07Z`) | `unknown` | `43 s` between seg 1 end (`19:55:35Z`) and seg 2 start (`19:56:18Z`) | In-stage `user_wait_s` `unknown` (schema v2) |
-| `2026-11-06` PR #209 seg 2 (`19:56:18Z`–`19:58:47Z`) | `unknown`; extend `0.68.0`, gstack `unknown` | `149 s` (`success`) | `66.8 s` (`33.3 s` exit `1` at `19:57:03Z` + `33.5 s` exit `0` at `19:57:52Z`, `2,317` tests) | `<= 82.2 s` | `unknown` | `3,004 s` post-stage wait until merge (`20:48:51Z`) | In-stage `user_wait_s` `unknown` (schema v2) |
-| `2026-11-07` PR #214 seg 1 (`16:19:55Z`–`16:20:03Z`) | `user-directed`; extend `0.72.0`, gstack `1.97.0.0` | `8 s` (`blocked`) | `0 s` (no test record) | `8.0 s` | `0 s` | `0 s` in-stage (`user_wait_s: 0`); `171 s` between seg 1 end and seg 2 start (`16:22:54Z`) | None |
-| `2026-11-07` PR #214 seg 2 (`16:22:54Z`–`16:34:46Z`) | `user-directed`; extend `0.72.0`, gstack `1.97.0.0` | `712 s` (`success`) | `457.8 s` (`37.2 s` `docs-ship-tests` at `16:25:18Z`, `2,227` tests + `420.6 s` `docs-ship-release-tests` at `16:33:59Z`, `2,244` tests) | `206.9 s` pre-release-test review & bump (`16:26:47Z` commit) | `<= 47.3 s` (`16:33:59Z`–`16:34:46Z` CI check + receipt) | `0 s` in-stage (`user_wait_s: 0`); `170 s` post-stage wait until merge (`16:37:36Z`) | Exact CI poll share inside final `47.3 s` |
-| `2026-11-08` PR #219 run 1 (`02:38:36Z`–`02:41:45Z`) | `orchestrated`; extend `0.73.0`, gstack `1.97.0.0` | `189 s` (`success`) | `10.4 s` (`docs-ship-tests` at `02:40:44Z`, `663` tests, exit `0`) | `135.6 s` (PR snapshot `02:39:36Z`, ready `02:41:02Z`) | `<= 43.0 s` (`02:41:02Z` ready to `02:41:45Z` finish) | `0 s` in-stage (orchestrated) | Exact CI poll vs. receipt edit split in final `43.0 s` |
-| `2026-11-08` PR #219 run 2 (`03:21:09Z`–`03:22:04Z`) | `orchestrated`; extend `0.73.0`, gstack `1.97.0.0` | `55 s` (`success`) | `10.4 s` (`docs-ship-tests` at `03:21:41Z`, `663` tests, exit `0`) | `44.6 s` | `unknown` | `0 s` in-stage; `653 s` post-stage wait until merge (`03:32:57Z`) | None |
+| Date / PR | Mode & versions | Stage wall (`duration_s`) | Recorded test execution (`gstack-evidence`) | Unattributed stage remainder | Recorded gaps outside the stage | In-stage human wait |
+|---|---|---|---|---|---|---|
+| `2026-11-06` PR #209 seg 1 (`19:54:00Z`–`19:55:35Z`) | `unknown`; extend `0.68.0`, gstack `unknown` | `95 s` (`blocked`) | `33.2 s` (`docs-ship-tests` at `19:55:32Z`, `2,317` tests, exit `0`) | `61.8 s`; attribution unknown | `43 s` until seg 2 (`19:56:18Z`); cause unknown | `unknown` (schema v2) |
+| `2026-11-06` PR #209 seg 2 (`19:56:18Z`–`19:58:47Z`) | `unknown`; extend `0.68.0`, gstack `unknown` | `149 s` (`success`) | `66.8 s` (`33.3 s` exit `1` at `19:57:03Z` + `33.5 s` exit `0` at `19:57:52Z`, `2,317` tests) | `82.2 s`; attribution unknown | `3,004 s` until merge (`20:48:51Z`); cause unknown | `unknown` (schema v2) |
+| `2026-11-07` PR #214 seg 1 (`16:19:55Z`–`16:20:03Z`) | `user-directed`; extend `0.72.0`, gstack `1.97.0.0` | `8 s` (`blocked`) | `unknown` (no test record) | Entire `8 s` unattributed | `171 s` until seg 2 (`16:22:54Z`); cause unknown | Recorded `0 s` (`user_wait_s: 0`, session-log) |
+| `2026-11-07` PR #214 seg 2 (`16:22:54Z`–`16:34:46Z`) | `user-directed`; extend `0.72.0`, gstack `1.97.0.0` | `712 s` (`success`) | `457.8 s` (`37.2 s` `docs-ship-tests` at `16:25:18Z`, `2,227` tests + `420.6 s` `docs-ship-release-tests` at `16:33:59Z`, `2,244` tests) | `254.2 s`; attribution unknown, including final approximately `47 s` after the recorded test finish | `170 s` until merge (`16:37:36Z`); cause unknown | Recorded `0 s` (`user_wait_s: 0`, session-log) |
+| `2026-11-08` PR #219 run 1 (`02:38:36Z`–`02:41:45Z`) | `orchestrated`; extend `0.73.0`, gstack `1.97.0.0` | `189 s` (`success`) | `10.4 s` (`docs-ship-tests` at `02:40:44Z`, `663` tests, exit `0`) | `178.6 s`; attribution unknown, including `43 s` from ready (`02:41:02Z`) to finish | `unknown` (no paired merge for this run) | `unknown` (`user_wait_s: null`) |
+| `2026-11-08` PR #219 run 2 (`03:21:09Z`–`03:22:04Z`) | `orchestrated`; extend `0.73.0`, gstack `1.97.0.0` | `55 s` (`success`) | `10.4 s` (`docs-ship-tests` at `03:21:41Z`, `663` tests, exit `0`) | `44.6 s`; attribution unknown | `653 s` until merge (`03:32:57Z`); cause unknown | `unknown` (`user_wait_s: null`) |
+
+Remainders are arithmetic differences between stage wall time and recorded test
+spans, not measured active non-test work. Active non-test work and host/tool stall
+sub-spans are `unknown` in every row. Test records do not establish that no other
+test execution occurred. Timeline gaps are measured durations with unknown causes;
+none is assigned to human waiting solely because it followed a blocked or finished
+stage. The two explicit zero human-wait measurements retain their source; missing
+measurements remain `unknown`.
 
 In the longest recorded local run (`712 s` on `2026-11-07`, PR #214), `457.8 s` (`64.3%`) was active test execution — primarily `420.6 s` in `docs-ship-release-tests` when legacy filename scanning matched `2,244` tests on the release bump.
 

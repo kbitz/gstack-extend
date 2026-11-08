@@ -158,7 +158,7 @@ modes mechanically from the `--config-ref` commit's tree:
   JSON, bad schema/fields or missing `explain`), `PREGATE_REFUSED` (pregate's
   own refusal, such as `PREGATE_CONFIG_INVALID` or `POLICY_SOURCE_UNAVAILABLE`),
   `PREGATE_BINDING` (any bound field mismatch), `PREGATE_EXECUTED`
-  (`inputs.command` present because lanes ran), `PREGATE_INCOMPLETE` (any other
+  (`inputs.command` present, including null), `PREGATE_INCOMPLETE` (any other
   lanes status/code, such as a thrown check or environment failure) and
   `PREGATE_EXPLAIN_MISMATCH` (parsed provenance test set SHA-256 differs from
   `inputs.selection`). Pregate owns the selected tests (with `pregate:` reasons)
@@ -330,7 +330,13 @@ line. It is not a full HTML parser.
 For pregate-backed test selection: the base is bound by a 12-hex prefix, which
 is all upstream pregate records; parsing depends on upstream's explain text,
 guarded by the selection hash (`inputs.selection`), so an upstream explain
-format change refuses with `PREGATE_EXPLAIN_MISMATCH`; removed-path waivers
+format change refuses with `PREGATE_EXPLAIN_MISMATCH`. Upstream omits always-run
+provenance for tests already selected by another seed, so the helper supplements
+membership from `.gstack/always-run.json` at the verified head and its merge base
+with the config commit, using upstream's union and glob rules. These pins only
+annotate tests already proven by the selection hash; they cannot add tests.
+Unreadable frozen head pins or malformed pins refuse `PREGATE_INVALID`.
+Removed-path waivers
 refuse because their suite tests emit no per-test provenance line; pregate's
 `requires-remote` and CI-carry routing do not apply because `/docs-ship` runs
 the selected tests itself (`--no-ci-carry`); without `gstack-pregate` installed,

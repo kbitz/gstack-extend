@@ -539,13 +539,13 @@ describe('pregate selection', () => {
       provenance: [
         'tests/version.test.ts ← VERSION (dependencies) [touched]',
         'tests/app.test.ts ← docs/guide.md (dependencies) [touched]',
-        'tests/always.test.ts (always_run, .gstack/pregate-always-run)',
+        'tests/always.test.ts (always_run, .gstack/always-run.json)',
       ],
     });
     const out = cli(r.dir, 'tests', '--base', preBump, '--config-ref', 'main', '--pregate', withVersionSeed);
     expect(out.code).toBe(0);
     expect(lines(out.stdout, 'TEST')).toEqual([
-      ['tests/always.test.ts', 'pregate: (always_run, .gstack/pregate-always-run)'],
+      ['tests/always.test.ts', 'pregate: (always_run, .gstack/always-run.json)'],
       ['tests/version.test.ts', 'pregate: ← VERSION (dependencies) [touched]'],
     ]);
 
@@ -553,7 +553,7 @@ describe('pregate selection', () => {
       tests: ['tests/always.test.ts', 'tests/app.test.ts'],
       provenance: [
         'tests/app.test.ts ← docs/guide.md (dependencies) [touched]',
-        'tests/always.test.ts (always_run, .gstack/pregate-always-run)',
+        'tests/always.test.ts (always_run, .gstack/always-run.json)',
       ],
     });
     const emptyOut = cli(r.dir, 'tests', '--base', preBump, '--config-ref', 'main', '--pregate', withoutBumpSeed);
@@ -584,6 +584,45 @@ describe('pregate selection', () => {
     expect(out2.code).toBe(0);
     expect(field(out1.stdout, 'COMMAND')).toBe('bun test tests/app.test.ts tests/guide.test.ts');
     expect(field(out2.stdout, 'COMMAND')).toBe(field(out1.stdout, 'COMMAND'));
+  });
+
+  test('review regression: any command field refuses, including null', () => {
+    const r = repo({ 'docs/guide.md': '# Changed\n' }, { '.gstack/pregate.json': '{}\n' });
+    const f = pregateJson(r.dir, { lanes: { inputs: { command: null } } });
+    const out = cli(r.dir, 'tests', '--base', r.base, '--pregate', f);
+    expect(out.code).toBe(3);
+    expect(out.stderr).toContain('PREGATE_EXECUTED');
+  });
+
+  test('review regression: bump retains overlapping head and merge-base always-run pins without adding unselected tests', () => {
+    const r = repo({ 'docs/guide.md': '# Changed\n' }, {
+      '.gstack/pregate.json': '{}\n',
+      '.gstack/always-run.json': JSON.stringify({ tests: ['tests/**/app.test.ts', 'tests/unselected.test.ts'] }),
+      'tests/version.test.ts': 'export const ok = true;\n',
+      'tests/unselected.test.ts': 'export const ok = true;\n',
+    });
+    write(r.dir, { '.gstack/always-run.json': JSON.stringify({ tests: ['tests/gu?de.test.ts'] }) });
+    git(r.dir, 'add', '-A');
+    git(r.dir, 'commit', '--quiet', '-m', 'change own pins');
+    const preBump = git(r.dir, 'rev-parse', 'HEAD');
+    write(r.dir, { 'VERSION': '1.2.1\n' });
+    git(r.dir, 'add', '-A');
+    git(r.dir, 'commit', '--quiet', '-m', 'bump');
+    const f = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts', 'tests/guide.test.ts', 'tests/version.test.ts'],
+      provenance: [
+        'tests/app.test.ts ← docs/guide.md (declared) [touched]',
+        'tests/guide.test.ts ← docs/guide.md (declared) [touched]',
+        'tests/version.test.ts ← VERSION (declared) [touched]',
+      ],
+    });
+    const out = cli(r.dir, 'tests', '--base', preBump, '--config-ref', 'main', '--pregate', f);
+    expect(out.code).toBe(0);
+    expect(lines(out.stdout, 'TEST')).toEqual([
+      ['tests/app.test.ts', 'pregate: (always_run, merge base .gstack/always-run.json)'],
+      ['tests/guide.test.ts', 'pregate: (always_run, .gstack/always-run.json)'],
+      ['tests/version.test.ts', 'pregate: ← VERSION (declared) [touched]'],
+    ]);
   });
 
   test.skipIf(!process.env.GSTACK_PREGATE_BIN)(

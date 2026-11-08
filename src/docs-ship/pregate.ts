@@ -13,7 +13,7 @@
  */
 import { createHash } from 'node:crypto';
 import { PREGATE_POLICY } from './config.ts';
-import { Refusal, type Git } from './git.ts';
+import { mergeBase, readAt, Refusal, type Git } from './git.ts';
 import type { Selected } from './pinning.ts';
 
 export const PREGATE_CODES = [
@@ -58,6 +58,52 @@ function bindMismatch(field: string, expected: string, actual: string): never {
     `pregate ${field} mismatch: expected ${expected}, got ${actual}`,
     'rerun gstack-pregate on the current checkout and base branch',
   );
+}
+
+// Upstream omits an always_run line when a seed already selected the test.
+// Recover membership from the same two frozen pin copies upstream unions,
+// restricted to the test set already authenticated by inputs.selection.
+function pinnedAlwaysRun(git: Git, head: string, base: string, selected: Set<string>): AlwaysEntry[] {
+  const path = '.gstack/always-run.json';
+  const patterns = (rev: string, own: boolean): RegExp[] => {
+    const entry = git(['ls-tree', '-z', rev, '--', path]).stdout;
+    if (!entry) return [];
+    if (!own && !/^(100644|100755) /.test(entry)) return [];
+    const text = readAt(git, rev, path);
+    if (text === undefined) invalid(`cannot read frozen ${path} at ${rev}`);
+    let value: unknown;
+    try { value = JSON.parse(text); } catch { invalid(`invalid ${path} at ${rev}`); }
+    const globs = (value as { tests?: unknown } | null)?.tests;
+    if (!Array.isArray(globs) || globs.some(g => typeof g !== 'string' || !g)) {
+      invalid(`${path} at ${rev} must contain a tests array of non-empty glob strings`);
+    }
+    // Match gstack lib/ship-policy.ts globToRegExp (including literal []/{}).
+    return (globs as string[]).map(glob => {
+      let out = '^';
+      for (let i = 0; i < glob.length; i++) {
+        const ch = glob[i]!;
+        if (ch === '*') {
+          if (glob[i + 1] === '*') {
+            i++;
+            if (glob[i + 1] === '/') { i++; out += '(?:.*/)?'; } else out += '.*';
+          } else out += '[^/]*';
+        } else if (ch === '?') out += '[^/]';
+        else out += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      }
+      out += '$';
+      if (out.length > 512) invalid(`${path} pattern expands past 512 characters`);
+      return new RegExp(out);
+    });
+  };
+  const own = patterns(head, true);
+  const inherited = patterns(mergeBase(git, base, head), false);
+  return [...selected].flatMap(test => {
+    const normalized = test.replace(/\\/g, '/').replace(/^\.\//, '');
+    const ownMatch = own.some(re => re.test(normalized));
+    return ownMatch || inherited.some(re => re.test(normalized))
+      ? [{ test, suffix: `(always_run, ${ownMatch ? '' : 'merge base '}${path})` }]
+      : [];
+  });
 }
 
 export function parseAndBindPregate(
@@ -138,7 +184,7 @@ export function parseAndBindPregate(
   }
 
   // Nonexecution check.
-  if (inputs && 'command' in inputs && inputs.command !== undefined && inputs.command !== null) {
+  if (inputs && 'command' in inputs) {
     throw new Refusal('PREGATE_EXECUTED', 'pregate lanes check recorded inputs.command (runner executed)', 'rerun without --allow-repo-commands');
   }
 
@@ -199,6 +245,11 @@ export function parseAndBindPregate(
       `explain selection hash ${computedSelection} does not match inputs.selection ${selectionHash}`,
       'rerun gstack-pregate --stage tests --explain --json or resolve removed-path waivers',
     );
+  }
+
+  const explainedAlways = new Set(alwaysRun.map(entry => entry.test));
+  for (const entry of pinnedAlwaysRun(git, head, configCommit, allTests)) {
+    if (!explainedAlways.has(entry.test)) alwaysRun.push(entry);
   }
 
   // No-lane lines.
