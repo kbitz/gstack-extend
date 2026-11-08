@@ -200,17 +200,20 @@ runs every part on the host.
   (across both lists), `path.normalize`-stable absolute path without trailing
   slashes, NUL or control characters. An entry may lie inside a directory the
   sandbox hides, never at it or above it: an entry that is `/`, `HOME`, the
-  account's passwd home, `/tmp`, `/var`, `/run`, the runner's temporary
-  directory or an ancestor of any of them is `config-malformed`, compared both as
-  written and with its symlinks resolved. At run time each listed path is
+  account's passwd home (read from the passwd database, since Bun's
+  `os.userInfo()` follows `HOME`), `/tmp`, `/var`, `/run`, the runner's
+  temporary directory, `XDG_RUNTIME_DIR` or an ancestor of any of them is
+  `config-malformed`, compared both as written and with its symlinks resolved. At run time each listed path is
   checked with `lstat`: an `expose` directory becomes a throwaway overlay, an
   `expose` regular file is staged into `<tmp>/staged/<n>` and bound read-write
   at its path, and a `keep` directory or regular file is bound read-write.
   Missing paths, symlinks, sockets or other file types fail that part (`failed`).
 - **The command must be visible.** The sandbox hides `HOME`, the passwd home,
-  `/tmp`, `/var` and `/run`. When `argv[0]` lies under one of them (as written or
-  resolved), an `expose` or `keep` entry must contain it, or the provider is
-  `config-malformed` at `check`. The runner cannot see the command's other
+  `/tmp`, `/var`, `/run` and the runner's temporary directory. bwrap mounts each
+  `expose` or `keep` entry at its written path, so when `argv[0]` lies under a
+  hidden directory, every hidden form of it (the path as written and, for a
+  symlink, its resolved target) must lie inside some entry's written path, or
+  the provider is `config-malformed` at `check`. The runner cannot see the command's other
   needs: an interpreter's script, a runtime under `HOME` (for example an
   `npm`, `bun` or `mise` install), its configuration and its login. List each in
   `expose` or `keep`, or the part fails on every call.
@@ -224,17 +227,20 @@ runs every part on the host.
   (`-c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false`).
   Every setup `git` call runs without the caller's `GIT_*` variables and with
   global and system configuration off (`GIT_CONFIG_GLOBAL=/dev/null`,
-  `GIT_CONFIG_NOSYSTEM=1`), so no filter, hook or clone setting from the host
-  runs on the candidate's files. The copy has no remote. Setup runs
+  `GIT_CONFIG_NOSYSTEM=1`, and an empty `HOME` and `XDG_CONFIG_HOME` for a git
+  older than 2.32), so no filter, hook or clone setting from the host runs on
+  the candidate's files. That also drops a `safe.directory` entry, so a
+  repository owned by another account fails setup (`failed`). The copy has no remote. Setup runs
   asynchronously, is bounded by the provider's `timeout_s` and counted in
   `wall_ms`, and never delays another part's deadline. It then spawns the
   provider through `bwrap` in this order:
   - `--unshare-all --share-net --die-with-parent --new-session`
   - `--ro-bind / /`, `--dev /dev`, `--proc /proc`
   - `--tmpfs` over `/tmp`, `/var` (with an empty `/var/tmp` and
-    `/var/run` linked to `../run`), `/run`, `$HOME` and the passwd home when it
-    differs, followed by a read-only `--ro-bind` of the DNS resolver directory
-    when `realpath('/etc/resolv.conf')` resolves under `/run/`
+    `/var/run` linked to `../run`), `/run`, `$HOME`, the passwd home when it
+    differs and the runner's temporary directory when it lies elsewhere,
+    followed by a read-only `--ro-bind` of the DNS resolver directory when
+    `realpath('/etc/resolv.conf')` resolves under `/run/` or `/var/`
   - the `expose` layers (`--overlay-src <dir> --tmp-overlay <dir>` for
     directories; `--bind <staged> <file>` for files) and the `keep` binds
     (`--bind <path> <path>`), a parent path before any listed path inside it,
@@ -243,8 +249,10 @@ runs every part on the host.
   - `--tmpfs` over each hidden path that exists: the real repository's
     `git rev-parse --show-toplevel`, `--absolute-git-dir` and
     `--git-common-dir` (made absolute), every worktree `git worktree list`
-    names (the main checkout and each linked worktree), the `--calls`
-    directory, and `XDG_RUNTIME_DIR` when set outside `/run`; these come after
+    names (the main checkout and each linked worktree; `--porcelain -z`, or the
+    newline form before git 2.36), the `--calls` directory, and
+    `XDG_RUNTIME_DIR` when it lies outside `/run` or an `expose` or `keep`
+    entry lies under `/run`; these come after
     the `expose` and `keep` mounts, so they also hide any repository path inside
     a listed directory
   - a read-write `--bind` of the disposable copy and `--chdir` into it, with
@@ -266,6 +274,11 @@ runs every part on the host.
   temporary directory, which may be a RAM-backed tmpfs (as on Arch or Fedora),
   and holds it until its call ends, so concurrent repo-mode parts hold one copy
   each.
+- **Hosts whose system files live under `/var`.** The `/var` tmpfs also hides
+  host files that `/etc` or `/usr` resolve into on some systems: a CA bundle
+  under `/var/lib/ca-certificates` (openSUSE), `/usr/local` or `/opt` linked into
+  `/var` (Fedora Atomic), snap or flatpak runtimes, and SSSD's `/var/lib/sss`.
+  A provider that needs one fails (`failed`); list that directory in `expose`.
 - **A failed setup.** A setup step that fails (a missing or unsupported
   `expose` or `keep` path, a `git` failure, the deadline) records `failed` or
   `timeout`, and the saved result's standard error names the step

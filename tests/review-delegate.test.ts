@@ -5,7 +5,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { recover } from '../src/outside-review/recovery';
@@ -145,12 +145,13 @@ else if (mode === 'inspect') {
   const tmpBack = readFileSync('/tmp/probe-tmp.txt', 'utf8');
   const snapshotOnly = existsSync(join(process.cwd(), 'snapshot-only.txt'));
   const varLib = existsSync('/var/lib');
-  const passwdHome = userInfo().homedir;
+  // Bun's userInfo().homedir follows $HOME, so read the passwd database by uid.
+  const passwdHome = spawnSync('getent', ['passwd', String(process.getuid())], { encoding: 'utf8' }).stdout.split('\\n')[0]?.split(':')[5] ?? '';
   const passwdHomeEntries = passwdHome && passwdHome !== process.env.HOME && existsSync(passwdHome) ? readdirSync(passwdHome) : [];
   writeFileSync(join(state, 'repo-probe.json'), JSON.stringify({
     cwd: process.cwd(), head, status, log, remotes, pushStatus, outside, realRepoEntries, callsEntries,
     secretInReal, secretInCopy, homeCred, sshExists, runUser, hostsLen, exposedBefore, tmpdir: process.env.TMPDIR, tmpBack,
-    snapshotOnly, varLib, passwdHome, passwdHomeEntries,
+    snapshotOnly, varLib, passwdHome, passwdHomeEntries, home: process.env.HOME,
     env: Object.keys(process.env), prompt,
   }));
   console.log('[P1] ' + JSON.stringify({
@@ -190,6 +191,11 @@ else if (mode === 'inspect') {
 
 interface Setup { layout: 'nested' | 'sibling'; root: string; repo: string; base: string; candidate: string; state: string; calls: string; config: string }
 type Provider = { mode: string; timeout_s?: number; model?: string; access?: Access; expose?: string[]; keep?: string[] };
+/** The bun runtime runs every fake delegate; when the sandbox would hide it (bun under a home, /tmp, /var or /run), repo-mode providers expose it. */
+const PASSWD_HOME = spawnSync('getent', ['passwd', String(process.getuid?.() ?? '')], { encoding: 'utf8' }).stdout.split('\n')[0]?.split(':')[5] ?? '';
+const RUNTIME_DIR = dirname(realpathSync(process.execPath));
+const RUNTIME_EXPOSE = [process.env.HOME ?? '', PASSWD_HOME, tmpdir(), '/tmp', '/var', '/run']
+  .some((root) => root && (RUNTIME_DIR === root || RUNTIME_DIR.startsWith(`${root}/`))) ? [RUNTIME_DIR] : [];
 /** A configuration whose providers are fake delegates; `parts` maps each part to a provider label. */
 function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>, parts: Record<string, string>): Setup {
   const { repo, base, candidate } = repository();
@@ -202,7 +208,7 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
       timeout_s: p.timeout_s ?? 30,
       model: p.model ?? `model-${label}`,
       ...(p.access !== undefined ? { access: p.access } : {}),
-      ...(p.expose !== undefined ? { expose: p.expose } : {}),
+      ...(p.access === 'repo' && RUNTIME_EXPOSE.length ? { expose: [...(p.expose ?? []), ...RUNTIME_EXPOSE] } : p.expose !== undefined ? { expose: p.expose } : {}),
       ...(p.keep !== undefined ? { keep: p.keep } : {}),
     }])) }));
   return { layout, root: upstream(layout), repo, base, candidate, state, calls: join(fresh('calls'), 'delegate-calls'), config };
@@ -903,6 +909,8 @@ describe('repository-mode sandbox and check', () => {
     expect(report.tmpBack).toBe('TMP-OK\n');
     // /var is a tmpfs (privileged daemons' path sockets live under it), and the passwd home is hidden even when HOME differs.
     expect(report.varLib).toBe(false);
+    expect(report.passwdHome).toBeTruthy();
+    expect(report.passwdHome).not.toBe(fakeHome);
     expect(report.passwdHomeEntries).toEqual([]);
     expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
     // Host state after the run: expose Dir/File untouched, keep file persisted, host repo has no clone-only.txt and still has origin, disposable root removed.
@@ -1060,6 +1068,10 @@ describe('repository-mode sandbox and check', () => {
     const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
     expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
     expect(report.cwd).not.toBe(s.repo);
+    // The launcher starts with a HOME override (cli() sets a fresh one), the case where Bun's userInfo() reports HOME, not the passwd home.
+    expect(report.passwdHome).toBeTruthy();
+    expect(report.passwdHome).not.toBe(report.home);
+    expect(report.passwdHomeEntries).toEqual([]);
   });
   test.if(!probe)('mixed call twin refuses with sandbox-unavailable when probe is false', () => {
     const s = setup(
@@ -1185,6 +1197,48 @@ describe('repository-mode sandbox and check', () => {
     const paths = parseWorktreeList(git(repo, 'worktree', 'list', '--porcelain', '-z').stdout).map((path) => realpathSync(path));
     expect(paths).toEqual([realpathSync(repo), realpathSync(linked)]);
     expect(parseWorktreeList('')).toEqual([]);
+  });
+
+  // Value: protects=a symlinked command needs every hidden form exposed, since bwrap mounts entries at their written paths; fails_when=one covered form passes; why_new=cycle-2 finding (security, adversarial); seam=none
+  test('a symlinked argv[0] refuses with config-malformed unless every hidden form lies inside a listed path', async () => {
+    const fakeHome = fresh('home-argv-link');
+    put(join(fakeHome, 'share', 'tool'), '#!/bin/sh\n');
+    chmodSync(join(fakeHome, 'share', 'tool'), 0o755);
+    mkdirSync(join(fakeHome, 'bin'), { recursive: true });
+    symlinkSync(join('..', 'share', 'tool'), join(fakeHome, 'bin', 'tool'));
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.p.argv = [join(fakeHome, 'bin', 'tool')];
+    cfg.providers.p.expose = [join(fakeHome, 'bin')];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: fakeHome })).json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    cfg.providers.p.expose = [join(fakeHome, 'bin'), join(fakeHome, 'share')];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: fakeHome })).json.reason).not.toBe('config-malformed');
+  });
+
+  // Value: protects=XDG_RUNTIME_DIR (session bus, agents) cannot be re-bound through another spelling; fails_when=the runtime dir is not a hidden root; why_new=cycle-2 finding (security, adversarial); seam=none
+  test('an expose or keep entry that resolves to XDG_RUNTIME_DIR or above refuses with config-malformed', async () => {
+    const xdg = fresh('xdg');
+    const link = join(fresh('xdg-alias'), 'runtime');
+    symlinkSync(xdg, link);
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', keep: [link] } }, { testing: 'p' });
+    const r = await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: xdg });
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+  });
+
+  // Value: protects=a TMPDIR outside /tmp is hidden like /tmp, so sibling parts' staged copies stay private; fails_when=the runner's temporary directory is not mounted over; why_new=cycle-2 finding (security, adversarial); seam=none
+  test('sandboxArgs puts a tmpfs over the private directories before any expose or keep mount', () => {
+    const args = sandboxArgs({ home: '/h', privateDirs: ['/scratch/tmp', '/home/someone'], hidden: [], resolvDir: null, expose: [{ kind: 'dir', path: '/scratch/tmp/x' }], keep: [], copy: '/scratch/tmp/c/repo' });
+    const joined = args.join(' ');
+    expect(joined).toContain('--tmpfs /scratch/tmp');
+    expect(joined).toContain('--tmpfs /home/someone');
+    expect(args.indexOf('/scratch/tmp')).toBeLessThan(args.indexOf('--overlay-src'));
+  });
+
+  test('parseWorktreeList also reads newline porcelain, the form git before 2.36 prints without -z', () => {
+    expect(parseWorktreeList('worktree /a/main\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\nworktree /b/linked\nHEAD 2222222222222222222222222222222222222222\ndetached\n'))
+      .toEqual(['/a/main', '/b/linked']);
   });
 
   // Value: protects=an earlier part's deadline and output handling while a later repo-mode part prepares its copy; fails_when=repository setup blocks the event loop; why_new=cycle-1 finding (Codex reproduced); seam=PATH git shim

@@ -140,8 +140,8 @@ export type SandboxExpose =
 
 export interface SandboxInput {
   home: string;
-  /** Further home directories to hide, such as the account's passwd home when it differs from HOME. */
-  otherHomes?: readonly string[];
+  /** Further private directories to hide before the expose and keep mounts: the passwd home when it differs from HOME, and the runner's temporary directory. */
+  privateDirs?: readonly string[];
   hidden: readonly string[];
   resolvDir: string | null;
   expose: readonly SandboxExpose[];
@@ -163,8 +163,8 @@ export function sandboxArgs(input: SandboxInput): string[] {
     '--tmpfs', '/var', '--tmpfs', '/var/tmp', '--symlink', '../run', '/var/run',
     '--tmpfs', '/run',
   ];
-  const homes = [...new Set([input.home, ...(input.otherHomes ?? [])])].sort((a, b) => pathDepth(a) - pathDepth(b));
-  for (const home of homes) args.push('--tmpfs', home);
+  const privateDirs = [...new Set([input.home, ...(input.privateDirs ?? [])])].sort((a, b) => pathDepth(a) - pathDepth(b));
+  for (const dir of privateDirs) args.push('--tmpfs', dir);
   if (input.resolvDir !== null) args.push('--ro-bind', input.resolvDir, input.resolvDir);
   // A parent mounts before any expose or keep path inside it (a stable sort by depth), so the more specific entry wins.
   const mounts = [
