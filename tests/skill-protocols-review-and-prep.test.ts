@@ -2922,3 +2922,152 @@ describe('review-and-prep first-cycle=overlap', () => {
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });
+
+// Track 71D: Verify agent-checkable items through an installed upstream QA skill before any manual-testing pause, and narrow required user testing to judgment or access.
+describe('review-and-prep agent-checkable verification before human testing', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const ship = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const shipFlat = ship.replace(/\s+/g, ' ');
+  const sectionRaw = skillSection(prep, '### Verify agent-checkable items before any pause');
+  const section = sectionRaw.replace(/\s+/g, ' ');
+  const enforce = skillSection(prep, "### Enforce completion, beyond `/review`'s informational audit").replace(/\s+/g, ' ');
+  const checkpointRaw = skillSection(prep, '### Manual testing checkpoint and resume');
+  const checkpoint = checkpointRaw.replace(/\s+/g, ' ');
+
+  // Value: protects=Step 1 required-user-testing definition narrowed to judgment or access, retained manual-testing-pending sentences, and the ship-and-land caller handoff rule; fails_when=exercising a flow returns to required user testing, a judgment/access category is dropped, or ship-and-land's unprepared-PR caller stops handing off pending agent checks; why_new=criteria 1, 6, 7, 9; seam=none; no_claim=installed-agent execution
+  test('narrows required user testing to judgment or access and preserves the ship-and-land caller handoff', () => {
+    const startAt = prep.indexOf('Identify required user testing from the scope');
+    const endAt = prep.indexOf('### Detect whether marking ready', startAt);
+    expect(startAt).toBeGreaterThan(-1);
+    expect(endAt).toBeGreaterThan(startAt);
+    const def = prep.slice(startAt, endAt).replace(/\s+/g, ' ').trim();
+    for (const phrase of [
+      "Identify required user testing from the scope, repository instructions, and acceptance criteria that need the user's judgment or access:",
+      'judging look and feel',
+      'testing on a physical device the agent cannot drive',
+      'using credentials or an account only the user holds',
+      'making a decision, including authorizing a destructive action against a shared environment',
+      'Exercising a flow in the app, observing an interaction or reading a visible result is not required user testing on its own: it is an agent check that Step 2 runs under **Verify agent-checkable items before any pause**, and it reaches the user only with the reason that section records.',
+      'Record the concrete action, expected result, the judgment or access it needs, and completion-matrix item for each check.',
+      'Reuse recorded user results that cover the current changes; do not invent a manual-testing requirement for every PR.',
+      'Missing required user evidence means `manual testing pending`, not an automatic deferral or a passing result.',
+      'A caller that applies this rule without running Step 2, as `/ship-and-land` does before ship opens a PR, counts a pending agent check as pending required user testing, so the check runs in this workflow first.',
+    ]) expect(def, phrase).toContain(phrase);
+    expect(flat).not.toContain('acceptance criteria that depend on human judgment or access: exercising a flow in the app');
+    expect(shipFlat).toContain(
+      "identify required user testing with review-and-prep's Step 1 rule before ship opens the PR; if any is pending, hand off to `/review-and-prep` instead",
+    );
+  });
+
+  // Value: protects=the pause trigger running Step 2's agent checks before the Step 3 checkpoint and carrying only judgment-or-access checks to Step 3; fails_when=the Manual testing rule omits Step 2's agent checks or Step 2 carries agent-checkable items to Step 3; why_new=criteria 1, 2, 7; seam=none; no_claim=installed-agent execution
+  test('the Manual testing rule and Step 2 run agent checks before carrying judgment-or-access checks to Step 3', () => {
+    expect(flat).toContain(
+      "Complete `/review`, available local checks and Step 2's agent checks first, save the pending checks in the PR, and recommend `/pair-review`.",
+    );
+    expect(flat).toContain(
+      "Run agent-checkable items under **Verify agent-checkable items before any pause**, and carry only checks that need the user's judgment or access to Step 3's manual testing checkpoint.",
+    );
+    expect(flat).not.toContain("Carry checks requiring the user to Step 3's manual testing checkpoint.");
+  });
+
+  // Value: protects=the byte-identical H-C pair-review fence, paused comment marker, resume instruction, stage line, and passed-status invariant complements to existing tests at :75-82 and :132-151; fails_when=the H-C fence or pause markers drift or UNVERIFIABLE/non-proof rules are weakened; why_new=criteria 6, 7; seam=none; no_claim=installed-agent execution
+  test('keeps the H-C pause handoff fence byte-identical and pins the passed-status invariant rules', () => {
+    const pairFence = checkpointRaw.split('```text\n')[1]?.split('\n```')[0] ?? '';
+    expect(pairFence).toBe(
+      [
+        'Run /pair-review for draft PR <URL> on <repository, head branch>, checkpointed at',
+        '<full HEAD SHA>; resume its existing matching session if present.',
+        'Review and local checks are recorded in the PR\'s "Review and prep" receipt.',
+        'Required user checks: <matrix IDs, concrete actions, expected results>.',
+        'Keep this PR draft and leave Greptile postponed while testing and fixing.',
+        'Save item-level results, tested build/commit, and fix/retest evidence.',
+        'When these checks are complete, return to /review-and-prep resume for this',
+        'same PR; its remaining preparation precedes /ship-and-land. Do not follow a',
+        'generic /pair-review completion suggestion to go directly to /ship.',
+      ].join('\n'),
+    );
+    expect(checkpointRaw).toContain('<!-- review-and-prep:paused:<full-sha> -->');
+    expect(checkpointRaw).toContain('Resume with /review-and-prep resume; do not run /ship on this draft.');
+    expect(checkpointRaw).toContain('`next: pair-review; status: paused`');
+    expect(enforce).toContain('absence of access is not a passing result');
+    expect(enforce).toContain('When only required user testing remains, retain those rows as UNVERIFIABLE with an `awaiting user testing` note');
+    expect(enforce).toContain('This exception does not waive implementation work or failed agent-run checks.');
+    expect(checkpoint).toContain(
+      'A completed report, `done` command, SKIPPED item, parked bug, or fix commit without retesting does not prove the required behavior.',
+    );
+  });
+
+  // Value: protects=the single placement of the new Step 2 subsection between cycle-cap stop and Enforce completion, and its single cross-call completion row in the phase-mapping table; fails_when=the heading or phase row is duplicated, moved, or loses its cross-call span; why_new=criteria 2, 7, 10; seam=none; no_claim=installed-agent execution
+  test('places the subsection between cycle-cap stop and Enforce completion and maps it once in the phase table', () => {
+    const heading = '### Verify agent-checkable items before any pause';
+    expect(prep.split(heading).length - 1).toBe(1);
+    expect(prep.indexOf('### When /review stops at its cycle cap')).toBeLessThan(prep.indexOf(heading));
+    expect(prep.indexOf(heading)).toBeLessThan(prep.indexOf("### Enforce completion, beyond `/review`'s informational audit"));
+    const phaseRow = '| `Verify agent-checkable items before any pause` | `completion` | `completion` (cross-call) |';
+    expect(prep.split(phaseRow).length - 1).toBe(1);
+    const rows = prep.split('\n').filter((line) => line.startsWith('| `'));
+    const anchors = rows.map((row) => row.split('|')[1]!.trim());
+    expect(anchors.indexOf('`Verify agent-checkable items before any pause`')).toBe(
+      anchors.indexOf("`Enforce completion, beyond /review's informational audit`") - 1,
+    );
+  });
+
+  // Value: protects=QA skill selection from the host catalog by reading each candidate's SKILL.md contract, the report-only execution boundary, and completion-matrix evidence fields; fails_when=selection hardcodes a skill without reading contracts, allows QA skills to edit/commit/install or write into the work tree, or omits matrix evidence; why_new=criteria 2, 7; seam=none; no_claim=installed-agent execution
+  test('selects QA skills from the host catalog by contract, runs them report-only, and records matrix evidence', () => {
+    expect(section).toContain(
+      'Choose the skill from what this host has installed. List the upstream QA skills in the host\'s skill catalog and read each candidate\'s SKILL.md before choosing.',
+    );
+    expect(section).toContain(
+      'Its contract decides the fit: the surfaces it drives, its prerequisites, whether it only reports or also edits and commits, and what it asks.',
+    );
+    expect(section).toContain(
+      'For example, a web app fits `/qa-only` (report-only, browser and functional surfaces) or `/browse` (a page or flow in a browser); a CLI, API, job, worker or webhook fits `/qa-only`\'s functional surfaces; an iOS app fits `/ios-qa` when its prerequisites already hold. Record the choice and why.',
+    );
+    expect(section).toContain(
+      'This workflow owns fixes. Run the chosen skill to find and report only: tell it not to edit, commit or install anything (no test bootstrap, package install, cookie import or device bridge) and to write its reports to the evidence directory, never the work tree.',
+    );
+    expect(section).toContain('A defect it reports goes through this step\'s fixes like any review finding.');
+    expect(section).toContain(
+      'Record each check on its matrix row: the skill and its version or SKILL.md SHA-256, the surface and target, the head and tree it ran on, its result (passed, failed, blocked or not run), and the report\'s path and SHA-256 in the evidence directory, with a short sanitized excerpt for the receipt.',
+    );
+    expect(enforce).toContain(
+      'using source, tests, agent-check evidence from **Verify agent-checkable items before any pause**, and applicable manual/external evidence.',
+    );
+  });
+
+  // Value: protects=reusing a current passing /review Step 4.7 QA result and rerunning invalidated agent checks here on resume instead of as user retests; fails_when=a current Step 4.7 pass is rerun unnecessarily or an invalidated agent check on resume is sent to the user; why_new=criteria 2, 7, 11; seam=none; no_claim=installed-agent execution
+  test('reuses a passing /review Step 4.7 QA result on current content and reruns invalidated agent checks on resume', () => {
+    expect(section).toContain(
+      "A passing `/review` Step 4.7 QA result that covers an item's expected result on the current content is that item's evidence; do not rerun a current pass.",
+    );
+    expect(section).toContain(
+      'This applies on `/review-and-prep resume` too: an agent check that a fix or base change invalidates reruns here, never as a user retest.',
+    );
+  });
+
+  // Value: protects=recorded-reason fallback when the agent cannot drive the app, keeping destructive shared-environment actions with the user, and never re-marking a failed agent check passed; fails_when=an item falls back by default without a reason, a destructive or shared-session action runs or is granted on the user's behalf, or a failed check is edited to passed or handed to the user; why_new=criteria 3, 4, 5, 7 and placeholder check; seam=none; no_claim=installed-agent execution
+  test('locks recorded-reason fallback, destructive shared-environment guardrails, failed-check rules, and no host placeholders', () => {
+    expect(section).toContain(
+      'When the agent cannot drive the app, the item falls back to the user with the reason on its row: no installed skill fits, a prerequisite fails (for example `/ios-qa` off macOS, with no trusted device attached, or with no debug bridge already wired into the app), the app cannot run locally, or the check needs credentials or an account only the user holds.',
+    );
+    expect(section).toContain('Name the skills considered and what failed. Never fall back by default: an item reaches the user only with that recorded reason.');
+    expect(section).toContain(
+      'Destructive actions against shared environments stay with the user. Never run a check that deletes, overwrites, sends, pays, publishes or otherwise changes state others rely on (a shared staging or production service, a shared database, a real third-party account, or a browser carrying the user\'s real signed-in sessions), and never grant a QA skill\'s request for production access, destruction or external mutation on the user\'s behalf.',
+    );
+    expect(section).toContain(
+      'Such an item is required user testing, recorded with that reason; run its non-destructive parts against owned isolated fixtures.',
+    );
+    expect(section).toContain('A failed agent check is never re-marked passed.');
+    expect(section).toContain(
+      'Only a new run of the same check on the fixed content can verify the item, recorded beside the failure, never in its place.',
+    );
+    expect(section).toContain(
+      'Never edit a failed result to passed, move a failed check to the user, or count a skill\'s completed run as a pass.',
+    );
+    expect(section).toContain(
+      'A blocked, inconclusive or not-run check is not a pass either: rerun it once the agent clears the blocker, or move it to the user with the reason above when only the user can clear it.',
+    );
+    expect(sectionRaw).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+});
