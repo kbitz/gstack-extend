@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync as nativeSpawnSync } from 'node:child_process';
 import {
   closeSync,
   constants,
@@ -105,6 +105,20 @@ describe('child-stdio shared helper', () => {
       expect(ignored.stderr).toBeNull();
       expect(readdirSync(privTmp)).toEqual([]);
 
+      // An outer file-backed child makes the inner inherited streams observable.
+      const inherited = spawnSync(process.execPath, ['-e', `
+        import { spawnSync } from ${JSON.stringify(join(import.meta.dir, 'helpers/child-stdio.ts'))};
+        import { readdirSync } from 'node:fs';
+        const before = readdirSync(process.env.TMPDIR);
+        const result = spawnSync(process.execPath, ['-e', 'process.stdout.write("inherited-out"); process.stderr.write("inherited-err");'], { stdio: 'inherit' });
+        if (result.status !== 0 || result.stdout !== null || result.stderr !== null ||
+            JSON.stringify(readdirSync(process.env.TMPDIR)) !== JSON.stringify(before)) process.exit(42);
+      `], { encoding: 'utf8' });
+      expect(inherited.status).toBe(0);
+      expect(inherited.stdout).toBe('inherited-out');
+      expect(inherited.stderr).toBe('inherited-err');
+      expect(readdirSync(privTmp)).toEqual([]);
+
       const customOutPath = join(privTmp, 'custom-out.txt');
       const customFd = openSync(customOutPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600);
       try {
@@ -128,7 +142,7 @@ describe('child-stdio shared helper', () => {
     }
   });
 
-  // Value: protects=per-call child-stdio temp directories are removed after exit 0, nonzero exit, and failed spawn (ENOENT); fails_when=temp directories leak on any completion path; why_new=pins AC7 cleanup guarantee across success, failure, and spawn error; seam=TMPDIR scoped to a private directory
+  // Value: protects=per-call child-stdio temp directories are removed after exit 0, nonzero exit, and failed spawn (ENOENT), whose outputs match native spawnSync; fails_when=temp directories leak or a failed spawn fabricates empty output instead of preserving the native result; why_new=pins AC7 cleanup and failed-spawn output fidelity; seam=TMPDIR scoped to a private directory
   test('removes the per-call io directory after success, nonzero exit, and spawn error', () => {
     const privTmp = mkdtempSync(join(tmpdir(), 'child-stdio-clean-'));
     const prevTmp = process.env.TMPDIR;
@@ -143,7 +157,11 @@ describe('child-stdio shared helper', () => {
       expect(readdirSync(privTmp)).toEqual([]);
 
       const missing = spawnSync('/nonexistent-binary-child-stdio-test', [], { encoding: 'utf8' });
+      const nativeMissing = nativeSpawnSync('/nonexistent-binary-child-stdio-test', [], { encoding: 'utf8' });
       expect((missing.error as NodeJS.ErrnoException | undefined)?.code).toBe('ENOENT');
+      expect(missing.stdout).toBe(nativeMissing.stdout);
+      expect(missing.stderr).toBe(nativeMissing.stderr);
+      expect(missing.output).toEqual(nativeMissing.output);
       expect(readdirSync(privTmp)).toEqual([]);
     } finally {
       if (prevTmp === undefined) delete process.env.TMPDIR;

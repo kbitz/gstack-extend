@@ -123,6 +123,10 @@ export function spawnSync(
 
     const result = nodeSpawnSync(command, args, { ...options, stdio: stdio as SpawnSyncOptions['stdio'] });
 
+    // No child started, so preserve the native absent-output shape as well as
+    // its error. The pre-created capture files are not child output.
+    if (result.error && !result.pid) return result;
+
     if (outFd !== null) {
       try { closeSync(outFd); } catch {}
       outFd = null;
