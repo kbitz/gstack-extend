@@ -2,6 +2,18 @@
 
 ## Unprocessed
 
+### [review:files=skills/pair-review.md|tests/skill-protocols-pair-review.test.ts] Test gap: pair-review stage-line value bindings
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The template and exit hooks are locked, but the producer mapping clauses that derive status from the session rollup, give a BLOCKED rollup precedence, and bind head to current HEAD are not fully locked in the pair-review protocol suite.
+- **Hypothesis (untested):** Extend the existing stage-line test to protect those clauses; re-verify the gap first. Static assertions would protect instructions, not prove installed-agent behavior.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:1631`, `tests/skill-protocols-pair-review.test.ts:1039`.
+- **Evidence:** Coverage audit read the producer mappings, protocol assertions and shared handoff fixtures; no failure was reproduced. The approved Track 72A T8 assertions and AC4 template lock are present.
+- **Context:** Filed by `/review-and-prep` at `fed62ef` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or changes these stage-line bindings.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
