@@ -6,7 +6,7 @@ with upstream gstack qualified at
 the opt-in `"access": "repo"` provider mode (with optional `"expose"` and
 `"keep"` path lists) in `review-delegates/v1` (see
 [delegated review](../delegated-review.md#repository-access)), the bubblewrap
-sandbox and disposable clone in `bin/review-delegate`, and the `/review-and-prep`
+sandbox and disposable copy in `bin/review-delegate`, and the `/review-and-prep`
 receipt and capability-check rules. No real run backs it yet: a static prose or
 fake-delegate test is not installed-agent acceptance ([SPEC](../SPEC.md)). It
 establishes no saving and awards no checkpoint ([SPEC](../SPEC.md) selected
@@ -18,7 +18,7 @@ Repository access is **opt-in per provider**:
 
 - A provider in `review-delegates/v1` sets `"access": "repo"` (with optional
   `expose` and `keep` absolute path lists) to run inside a bubblewrap sandbox
-  whose working directory is a disposable clone of the repository at
+  whose working directory is a disposable copy of the repository at
   `--candidate`. Omitting `access` or setting `"access": "diff"` preserves
   v0.75.0 diff-only behavior byte-for-byte.
 - With no `Review policy:` or `Review delegates:` line, under the light review
@@ -50,23 +50,30 @@ for the complete contract:
 
 - **Enforced by `bin/review-delegate` (Linux + bubblewrap):** `--unshare-all
   --share-net --die-with-parent --new-session`, `--ro-bind / /`, `--tmpfs` over
-  `/tmp`, `/var/tmp`, `/run` (re-binding the DNS resolver directory read-only
-  when `realpath('/etc/resolv.conf')` is under `/run/`) and `$HOME`, throwaway
-  overlays or staged copies for `expose` paths, read-write binds for `keep`
-  paths, `--tmpfs` over the real repository's work tree, git directory, common
-  git directory, `--calls` directory and `XDG_RUNTIME_DIR`, and a read-write
-  bind of a detached `git clone --no-local --no-checkout --template=` copy at
-  `--candidate` with hooks and LFS filters disabled and `origin` removed. The
-  before-and-after `worktreeState` check on the real repository still holds and
-  discards every dispatched part on any change (`worktree-changed`).
+  `/tmp`, `/var` (with `/var/tmp` empty and `/var/run` linked to `../run`),
+  `/run` (re-binding the DNS resolver directory read-only when
+  `realpath('/etc/resolv.conf')` is under `/run/`), `$HOME` and the passwd home,
+  throwaway overlays or staged copies for `expose` paths and read-write binds
+  for `keep` paths (a parent before any listed path inside it), `--tmpfs` over
+  the real repository's work tree, git directory, common git directory, every
+  worktree `git worktree list` names, the `--calls` directory and
+  `XDG_RUNTIME_DIR`, and a read-write bind of a disposable copy: an empty
+  repository that fetches only `--candidate` (a frozen snapshot commit no ref
+  reaches included) and checks it out detached, with hooks, LFS filters and the
+  host's global and system git configuration off. `expose` and `keep` entries
+  at or above a hidden root, and an `argv[0]` the sandbox would hide without an
+  entry covering it, refuse as `config-malformed`. The before-and-after
+  `worktreeState` check on the real repository still holds and discards every
+  dispatched part on any change (`worktree-changed`).
 - **Configured by the caller's command (unobservable to the runner):** the
   network namespace remains shared (`--share-net`) so the provider command can
   reach its API; bounding tool network access to that API and starting no agents
-  belong to the command's own sandbox configuration. Abstract-namespace Unix
-  sockets, reads of non-hidden world-readable host paths (`/etc`, `/sys`), reads
-  of `expose`/`keep` paths, writes to `keep` paths, prompt injection inside the
-  sandbox, and findings carrying tool-read text into the receipt are documented
-  limits.
+  belong to the command's own sandbox configuration. Code from the reviewed head
+  can run when the model runs commands. Abstract-namespace Unix sockets and path
+  sockets outside the hidden paths, reads of non-hidden world-readable host paths
+  (`/etc`, `/sys`), reads of `expose`/`keep` paths, writes to `keep` paths,
+  unsized temporary mounts, prompt injection inside the sandbox, and findings
+  carrying tool-read text into the receipt are documented limits.
 
 ## Pending installed-agent run
 
@@ -85,8 +92,8 @@ written at the release step, not on the implementation branch:
 
 _release: minor (0.x compatible addition to a stable surface: optional `review-delegates/v1` provider keys, SPEC Release policy "During 0.x: compatible additions use MINOR")_
 
-- `User-facing change:` a `review-delegates/v1` provider can set `"access": "repo"` (with optional `expose` and `keep` paths); on Linux with bubblewrap, `bin/review-delegate` starts its command in a sandboxed, disposable clone of the repository at the reviewed head so a delegated review part can read repository files and use tools, and records `; repo=<part>[,<part>...]` on `delegation: active (...)`; providers without it are unchanged.
-- `Upgrade risk:` an older runner refuses a `review-delegates/v1` file carrying `access`, `expose` or `keep` as `config-malformed`, so delegation goes inactive and every part runs on the host; callers first check `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"`. Repo mode is Linux-only and requires bubblewrap (refusing with `sandbox-unavailable` elsewhere), and bounding tool network access is the caller's command configuration. Existing flags, exits and `run` output keys are unchanged, while `check` gains a conditional `access` key and the `sandbox-unavailable` refusal.
+- `User-facing change:` a `review-delegates/v1` provider can set `"access": "repo"` (with optional `expose` and `keep` paths); on Linux with bubblewrap, `bin/review-delegate` starts its command in a sandboxed, disposable copy of the repository at the reviewed head so a delegated review part can read repository files and use tools, and records `; repo=<part>[,<part>...]` on `delegation: active (...)`; providers without it are unchanged.
+- `Upgrade risk:` an older runner refuses a `review-delegates/v1` file carrying `access`, `expose` or `keep` as `config-malformed`, so delegation goes inactive and every part runs on the host; callers first check `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"`. Repo mode is Linux-only and requires bubblewrap (refusing with `sandbox-unavailable` elsewhere); a repo-mode provider's command and runtime must be visible in the sandbox or listed in `expose`/`keep` (an `argv[0]` under a hidden path refuses as `config-malformed`); the model's commands can run code from the reviewed head, so diff mode stays the choice for untrusted changes; and bounding tool network access is the caller's command configuration. Existing flags, exits and `run` output keys are unchanged, while `check` gains a conditional `access` key and the `sandbox-unavailable` refusal.
 
 ## What this Track does not claim
 

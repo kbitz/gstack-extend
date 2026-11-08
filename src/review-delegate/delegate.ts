@@ -45,7 +45,8 @@ const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
   Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const PROVIDER_REQUIRED = ['argv', 'timeout_s', 'model'] as const;
 const PROVIDER_ALLOWED = new Set<string>([...PROVIDER_REQUIRED, 'access', 'expose', 'keep']);
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
+/** C0 and C1 control characters, rejected in paths and flag values. */
+export const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** Closed key sets, absolute argv[0], bounded timeout; every named part still needs a mapping at `check`. */
 export function validateConfig(text: string): ConfigResult {
@@ -139,12 +140,16 @@ export type SandboxExpose =
 
 export interface SandboxInput {
   home: string;
+  /** Further home directories to hide, such as the account's passwd home when it differs from HOME. */
+  otherHomes?: readonly string[];
   hidden: readonly string[];
   resolvDir: string | null;
   expose: readonly SandboxExpose[];
   keep: readonly string[];
   copy: string;
 }
+
+const pathDepth = (path: string) => path.split('/').filter(Boolean).length;
 
 /** Build the bubblewrap argument list in the contract's mount order without performing I/O. */
 export function sandboxArgs(input: SandboxInput): string[] {
@@ -154,16 +159,20 @@ export function sandboxArgs(input: SandboxInput): string[] {
     '--dev', '/dev',
     '--proc', '/proc',
     '--tmpfs', '/tmp',
-    '--tmpfs', '/var/tmp',
+    // /var holds privileged daemons' path sockets (lxd, incus and the like); /var/tmp and /var/run come back empty and as a link.
+    '--tmpfs', '/var', '--tmpfs', '/var/tmp', '--symlink', '../run', '/var/run',
     '--tmpfs', '/run',
-    '--tmpfs', input.home,
   ];
+  const homes = [...new Set([input.home, ...(input.otherHomes ?? [])])].sort((a, b) => pathDepth(a) - pathDepth(b));
+  for (const home of homes) args.push('--tmpfs', home);
   if (input.resolvDir !== null) args.push('--ro-bind', input.resolvDir, input.resolvDir);
-  for (const entry of input.expose) {
-    if (entry.kind === 'dir') args.push('--overlay-src', entry.path, '--tmp-overlay', entry.path);
-    else args.push('--bind', entry.staged, entry.path);
-  }
-  for (const path of input.keep) args.push('--bind', path, path);
+  // A parent mounts before any expose or keep path inside it (a stable sort by depth), so the more specific entry wins.
+  const mounts = [
+    ...input.expose.map((entry) => ({ path: entry.path,
+      args: entry.kind === 'dir' ? ['--overlay-src', entry.path, '--tmp-overlay', entry.path] : ['--bind', entry.staged, entry.path] })),
+    ...input.keep.map((path) => ({ path, args: ['--bind', path, path] })),
+  ].sort((a, b) => pathDepth(a.path) - pathDepth(b.path));
+  for (const mount of mounts) args.push(...mount.args);
   for (const path of new Set(input.hidden)) args.push('--tmpfs', path);
   args.push('--bind', input.copy, input.copy, '--chdir', input.copy);
   return args;
@@ -197,8 +206,11 @@ export function extractAdversarialChecklist(text: string, promptAnchor: string, 
 export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string, access: Access = 'diff') =>
   `${access === 'repo' ? REPO_POLICY : DELEGATE_POLICY}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(part === 'red-team' ? { diff, checklist, already_caught: caught ?? '' } : { diff, checklist })}\n`;
 
+/** Diff mode keeps its v0.75.0 inputs; a repo-mode id also covers the mode and its paths, so fixing expose or keep dispatches again. */
 export const callId = (prompt: string, provider: Provider, label: string) =>
-  hash(JSON.stringify([prompt, provider.argv, provider.model, label]));
+  hash(JSON.stringify(provider.access === 'repo'
+    ? [prompt, provider.argv, provider.model, label, 'repo', provider.expose ?? [], provider.keep ?? []]
+    : [prompt, provider.argv, provider.model, label]));
 
 export interface Tokens { input_tokens: number | null; output_tokens: number | null; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null }
 export const NO_TOKENS: Tokens = { input_tokens: null, output_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null };

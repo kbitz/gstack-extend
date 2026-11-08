@@ -7,7 +7,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
@@ -15,15 +15,14 @@ import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
 import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, sandboxArgs, validateConfig,
-  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SandboxExpose, type SpecialistPart, type Spawned,
+  ATTACKER_PARTS, CONFIG_LIMIT, CONTROL_RE, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, sandboxArgs, validateConfig,
+  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SandboxExpose, type SandboxInput, type SpecialistPart, type Spawned,
 } from './delegate';
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
 export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'] as const;
 export interface Deps { platform?: string; bwrapPaths?: readonly string[] }
 const CHILD_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const;
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void }
 
@@ -60,6 +59,12 @@ function realpathBelow(path: string): string {
   }
 }
 
+/** True when `child` is `parent` itself or lies inside it. */
+function isWithin(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
 function parseArgs(argv: string[]): 'help' | Options {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h') return 'help';
@@ -74,7 +79,7 @@ function parseArgs(argv: string[]): 'help' | Options {
     if (seen.has(flag)) throw new UsageError(`duplicate ${flag}`, `pass ${flag} once`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new UsageError(`${flag} needs a value`, `pass ${flag} <value>`);
-    if (CONTROL.test(value)) throw new UsageError(`${flag} contains a control character`, `pass a plain value for ${flag}`);
+    if (CONTROL_RE.test(value)) throw new UsageError(`${flag} contains a control character`, `pass a plain value for ${flag}`);
     seen.set(flag, value);
   }
   for (const flag of required) if (!seen.has(flag)) throw new UsageError(`${flag} is required`, `pass ${flag} <value>`);
@@ -116,8 +121,7 @@ function parseArgs(argv: string[]): 'help' | Options {
     try { top = realpathSync(top); } catch { /* reported as repo-unreadable */ }
     for (const [flag, target, label] of [['--calls', calls, 'calls directory'], ['--caught', caught, 'caught file']] as const) {
       if (target === undefined) continue;
-      const rel = relative(top, realpathBelow(resolve(target)));
-      if (!rel || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
+      if (isWithin(top, realpathBelow(resolve(target)))) {
         throw new UsageError(`${flag} is inside --repo`, `pass a ${label} outside the repository under review`);
       }
     }
@@ -166,7 +170,7 @@ export function probeSandbox(deps: Deps = {}): boolean {
 
 interface Prepared {
   config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string;
-  bwrap?: string; home?: string;
+  bwrap?: string; home?: string; otherHomes?: string[];
 }
 type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason };
 
@@ -185,23 +189,32 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
     .map((part) => parsed.config.providers[parsed.config.parts[part]!]!)
     .filter((provider) => provider.access === 'repo');
   let home: string | undefined;
+  let otherHomes: string[] = [];
   if (repoProviders.length > 0) {
     const rawHome = process.env.HOME;
-    if (!rawHome || !isAbsolute(rawHome) || CONTROL.test(rawHome)) return refuse('config-malformed');
+    if (!rawHome || !isAbsolute(rawHome) || CONTROL_RE.test(rawHome)) return refuse('config-malformed');
     home = resolve(rawHome);
     if (home === '/') return refuse('config-malformed');
-    const isHomeOrAncestor = (entry: string, target: string) => {
-      const rel = relative(entry, target);
-      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-    };
-    let realHome = home;
-    try { realHome = realpathSync(home); } catch { /* use resolved home */ }
+    let passwdHome = '';
+    try { passwdHome = userInfo().homedir; } catch { /* no passwd entry */ }
+    // A path as written and with its symlinks resolved, so a symlinked ancestor cannot disguise a hidden path.
+    const forms = (path: string) => [...new Set([path, realpathBelow(path)])];
+    const homes = [home, ...(passwdHome && isAbsolute(passwdHome) && !CONTROL_RE.test(passwdHome) ? [resolve(passwdHome)] : [])]
+      .filter((path) => path !== '/').flatMap(forms);
+    otherHomes = [...new Set(homes)].filter((path) => path !== home);
+    // Every directory the sandbox puts a tmpfs over: HOME and the passwd home, the system roots and the runner's temporary directory.
+    const hiddenRoots = [...new Set([...homes, ...['/tmp', '/var', '/run', tmpdir()].flatMap((path) => forms(resolve(path)))])];
     for (const provider of repoProviders) {
-      for (const entry of [...(provider.expose ?? []), ...(provider.keep ?? [])]) {
-        if (entry === '/' || isHomeOrAncestor(entry, home) || isHomeOrAncestor(entry, realHome)) {
-          return refuse('config-malformed');
-        }
+      const entries = [...(provider.expose ?? []), ...(provider.keep ?? [])];
+      for (const entry of entries) {
+        // An entry may sit inside a hidden root, never at one or above one: that would re-bind the whole root.
+        if (forms(entry).some((form) => form === '/' || hiddenRoots.some((root) => isWithin(form, root)))) return refuse('config-malformed');
       }
+      // argv[0] under a hidden root would vanish inside the sandbox: an expose or keep entry has to cover it.
+      const command = forms(provider.argv[0]!);
+      const hiddenCommand = command.some((form) => hiddenRoots.some((root) => isWithin(root, form)));
+      const covered = entries.some((entry) => forms(entry).some((form) => command.some((path) => isWithin(form, path))));
+      if (hiddenCommand && !covered) return refuse('config-malformed');
     }
   }
 
@@ -263,7 +276,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       classify: classify as Classifier, checklists,
       ...(caught !== undefined ? { caught } : {}),
       ...(bwrap !== undefined ? { bwrap } : {}),
-      ...(home !== undefined ? { home } : {}),
+      ...(home !== undefined ? { home, otherHomes } : {}),
     },
   };
 }
@@ -309,6 +322,7 @@ function worktreeState(repo: string): string | undefined {
 interface RepoSandboxSpec {
   bwrap: string;
   home: string;
+  otherHomes: readonly string[];
   repo: string;
   candidate: string;
   calls: string;
@@ -316,10 +330,120 @@ interface RepoSandboxSpec {
   keep: readonly string[];
 }
 
-/** One process in its own group, an empty private cwd (or a bubblewrap-sandboxed clone), an allowlisted env and bounded output. */
+/** A repo-mode setup step that failed before the provider started; `timedOut` when the part's deadline ran out first. */
+class SetupFailure extends Error {
+  constructor(readonly step: string, readonly timedOut = false) { super(step); }
+}
+
+/** Setup git runs with no GIT_* from the caller and no global or system configuration, so no host filter, hook or clone setting applies. */
+function setupGitEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) if (value !== undefined && !name.startsWith('GIT_')) env[name] = value;
+  return { ...env, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
+}
+
+/** One asynchronous git step under the part's remaining time, so a slow setup never stalls another part's deadline or output. */
+function runSetupGit(args: string[], step: string, remainingMs: () => number, capture = false): Promise<string> {
+  return new Promise((resolveGit, rejectGit) => {
+    const rem = remainingMs();
+    if (rem <= 0) { rejectGit(new SetupFailure(step, true)); return; }
+    let proc: ReturnType<typeof spawn>;
+    try { proc = spawn('git', args, { env: setupGitEnv(), detached: true, stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'] }); }
+    catch { rejectGit(new SetupFailure(step)); return; }
+    let output = '';
+    let expired = false, tooLong = false;
+    const timer = setTimeout(() => { expired = true; try { if (proc.pid) process.kill(-proc.pid, 'SIGKILL'); } catch { /* already gone */ } }, rem);
+    proc.stdout?.setEncoding('utf8');
+    proc.stdout?.on('data', (chunk: string) => { if (output.length + chunk.length > STDOUT_LIMIT) tooLong = true; else output += chunk; });
+    proc.on('error', () => { clearTimeout(timer); rejectGit(new SetupFailure(step)); });
+    proc.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (expired || remainingMs() <= 0) rejectGit(new SetupFailure(step, true));
+      else if (code !== 0 || signal || tooLong) rejectGit(new SetupFailure(step));
+      else resolveGit(output);
+    });
+  });
+}
+
+/** Paths from `git worktree list --porcelain -z`: the main checkout and every linked worktree. */
+export function parseWorktreeList(output: string): string[] {
+  return output.split('\0').filter((field) => field.startsWith('worktree ')).map((field) => field.slice('worktree '.length)).filter(Boolean);
+}
+
+/**
+ * Hide the real repository, stage the expose and keep paths, and build the disposable copy: an empty repository that fetches only
+ * the candidate (a frozen snapshot commit no ref reaches included), then checks it out detached with hooks and LFS filters off.
+ */
+async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: () => number): Promise<SandboxInput> {
+  const git = (args: string[], step: string, capture = false) => runSetupGit(args, step, remainingMs, capture);
+  const rev = await git(['-C', spec.repo, 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], 'rev-parse', true);
+  const lines = rev.replace(/\r\n/g, '\n').trimEnd().split('\n');
+  if (lines.length !== 3 || lines.some((line) => !line)) throw new SetupFailure('rev-parse');
+  const [top, gitDir, commonDir] = lines as [string, string, string];
+  const worktrees = parseWorktreeList(await git(['-C', spec.repo, 'worktree', 'list', '--porcelain', '-z'], 'worktree-list', true));
+  const hidden: string[] = [];
+  const hide = (path: string) => {
+    // A path that does not exist holds nothing to hide, and the read-only root could not take its mount point.
+    if (!existsSync(path)) return;
+    hidden.push(path);
+    const real = realpathBelow(path);
+    if (real !== path) hidden.push(real);
+  };
+  for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
+  const rawXdg = process.env.XDG_RUNTIME_DIR;
+  if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg)) {
+    const xdg = resolve(rawXdg);
+    if (!xdg.startsWith('/run/') || [...spec.expose, ...spec.keep].some((path) => path === '/run' || path.startsWith('/run/'))) hide(xdg);
+  }
+  let resolvDir: string | null = null;
+  try {
+    const realResolv = realpathSync('/etc/resolv.conf');
+    if (realResolv.startsWith('/run/')) {
+      const dir = dirname(realResolv);
+      resolvDir = dir === '/run' ? realResolv : dir;
+    }
+  } catch { resolvDir = null; }
+
+  const expose: SandboxExpose[] = [];
+  const stagedDir = join(cwd, 'staged');
+  try {
+    for (let i = 0; i < spec.expose.length; i++) {
+      const entry = spec.expose[i]!;
+      const stat = lstatSync(entry);
+      if (stat.isSymbolicLink()) throw new SetupFailure('expose');
+      if (stat.isDirectory()) {
+        expose.push({ kind: 'dir', path: entry });
+      } else if (stat.isFile()) {
+        mkdirSync(stagedDir, { recursive: true, mode: 0o700 });
+        const staged = join(stagedDir, String(i));
+        copyFileSync(entry, staged);
+        expose.push({ kind: 'file', path: entry, staged });
+      } else {
+        throw new SetupFailure('expose');
+      }
+    }
+  } catch { throw new SetupFailure('expose'); }
+  try {
+    for (const entry of spec.keep) {
+      const stat = lstatSync(entry);
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new SetupFailure('keep');
+    }
+  } catch { throw new SetupFailure('keep'); }
+
+  const copy = join(cwd, 'repo');
+  await git(['init', '--quiet', '--template=', copy], 'init');
+  await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules',
+    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.repo, spec.candidate], 'fetch');
+  await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false',
+    'checkout', '--quiet', '--detach', spec.candidate], 'checkout');
+  return { home: spec.home, otherHomes: spec.otherHomes, hidden, resolvDir, expose, keep: spec.keep, copy };
+}
+
+/** One process in its own group, an empty private cwd (or a bubblewrap-sandboxed copy), an allowlisted env and bounded output. */
 function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpec?: RepoSandboxSpec): Promise<Spawned> {
   return new Promise((settle) => {
     const started = Date.now();
+    const remainingMs = () => timeoutS * 1000 - (Date.now() - started);
     let cwd: string;
     try { cwd = mkdtempSync(join(tmpdir(), 'extend-delegate-')); }
     catch {
@@ -333,6 +457,7 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
     const err: Buffer[] = [];
     let outSize = 0, errSize = 0;
     let timedOut = false, overflow = false, spawnError = false, finished = false;
+    let setupNote = '';
     let grace: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let child: ReturnType<typeof spawn> | undefined;
@@ -352,124 +477,54 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
         } catch { spawnError = true; }
       }
       settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
-        stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: Buffer.concat(err, errSize).toString('utf8'), wall_ms: Date.now() - started });
+        stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: setupNote + Buffer.concat(err, errSize).toString('utf8'), wall_ms: Date.now() - started });
     };
-
-    let spawnCmd = argv[0]!;
-    let spawnArgs = argv.slice(1);
-    if (repoSpec) {
-      const remainingMs = () => timeoutS * 1000 - (Date.now() - started);
-      const gitEnv = {
-        ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
-        GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C',
-      };
-      const runGit = (args: string[], encoding?: 'utf8') => {
-        const rem = remainingMs();
-        if (rem <= 0) { timedOut = true; throw new Error('timeout'); }
-        const res = spawnSync('git', args, { env: gitEnv, timeout: rem, ...(encoding ? { encoding } : { stdio: 'ignore' }) });
-        if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' || remainingMs() <= 0) {
-          timedOut = true;
-          throw new Error('timeout');
-        }
-        if (res.status !== 0 || res.error || res.signal) throw new Error('git failed');
-        return res;
-      };
-      try {
-        const rev = runGit(['-C', repoSpec.repo, 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], 'utf8');
-        const lines = (rev.stdout as string).replace(/\r\n/g, '\n').trimEnd().split('\n');
-        if (lines.length !== 3 || lines.some((line) => !line)) throw new Error('rev-parse');
-        const [top, gitDir, commonDir] = lines as [string, string, string];
-        const hidden: string[] = [];
-        for (const basePath of [resolve(top), resolve(gitDir), resolve(repoSpec.repo, commonDir), resolve(repoSpec.calls)]) {
-          hidden.push(basePath);
-          const real = realpathBelow(basePath);
-          if (real !== basePath) hidden.push(real);
-        }
-        const rawXdg = process.env.XDG_RUNTIME_DIR;
-        if (rawXdg && isAbsolute(rawXdg) && !CONTROL.test(rawXdg)) {
-          const xdg = resolve(rawXdg);
-          if (!xdg.startsWith('/run/') || [...repoSpec.expose, ...repoSpec.keep].some((p) => p === '/run' || p.startsWith('/run/'))) {
-            hidden.push(xdg);
-          }
-        }
-        let resolvDir: string | null = null;
-        try {
-          const realResolv = realpathSync('/etc/resolv.conf');
-          if (realResolv.startsWith('/run/')) {
-            const dir = dirname(realResolv);
-            resolvDir = dir === '/run' ? realResolv : dir;
-          }
-        } catch { resolvDir = null; }
-
-        const exposeEntries: SandboxExpose[] = [];
-        const stagedDir = join(cwd, 'staged');
-        for (let i = 0; i < repoSpec.expose.length; i++) {
-          const entry = repoSpec.expose[i]!;
-          const stat = lstatSync(entry);
-          if (stat.isSymbolicLink()) throw new Error('symlink expose');
-          if (stat.isDirectory()) {
-            exposeEntries.push({ kind: 'dir', path: entry });
-          } else if (stat.isFile()) {
-            mkdirSync(stagedDir, { recursive: true });
-            const staged = join(stagedDir, String(i));
-            copyFileSync(entry, staged);
-            exposeEntries.push({ kind: 'file', path: entry, staged });
-          } else {
-            throw new Error('unsupported expose');
-          }
-        }
-        for (const entry of repoSpec.keep) {
-          const stat = lstatSync(entry);
-          if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
-            throw new Error('unsupported keep');
-          }
-        }
-
-        const copyDir = join(cwd, 'repo');
-        runGit(['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--no-checkout', '--template=', '--quiet', repoSpec.repo, copyDir]);
-        runGit(['-C', copyDir, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false', 'checkout', '--quiet', '--detach', repoSpec.candidate]);
-        runGit(['-C', copyDir, '-c', 'core.hooksPath=/dev/null', 'remote', 'remove', 'origin']);
-
-        spawnCmd = repoSpec.bwrap;
-        spawnArgs = [...sandboxArgs({ home: repoSpec.home, hidden, resolvDir, expose: exposeEntries, keep: repoSpec.keep, copy: copyDir }), '--', ...argv];
-        env.TMPDIR = '/tmp';
-      } catch {
-        if (!timedOut) spawnError = true;
+    const launch = (command: string, args: string[]) => {
+      const rem = remainingMs();
+      if (rem <= 0) {
+        timedOut = true;
         finish(null, null);
         return;
       }
-    }
-
-    const rem = timeoutS * 1000 - (Date.now() - started);
-    if (rem <= 0) {
-      timedOut = true;
-      finish(null, null);
+      deadline = setTimeout(() => { timedOut = true; killGroup(); }, rem);
+      try {
+        child = spawn(command, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      } catch {
+        spawnError = true;
+        finish(null, null);
+        return;
+      }
+      child.stdout!.on('data', (chunk: Buffer) => {
+        if (outSize + chunk.length > STDOUT_LIMIT) { overflow = true; killGroup(); return; }
+        out.push(chunk);
+        outSize += chunk.length;
+      });
+      child.stderr!.on('data', (chunk: Buffer) => {
+        const room = STDERR_LIMIT - errSize;
+        if (room <= 0) return;
+        err.push(chunk.subarray(0, room));
+        errSize += Math.min(room, chunk.length);
+      });
+      child.stdin!.on('error', () => { /* the delegate may close stdin early */ });
+      child.stdin!.end(prompt);
+      child.on('error', () => { spawnError = true; finish(null, null); });
+      child.on('close', (code, signal) => finish(code, signal));
+      child.on('exit', (code, signal) => { grace = setTimeout(() => finish(code, signal), 250); });
+    };
+    if (!repoSpec) {
+      launch(argv[0]!, argv.slice(1));
       return;
     }
-    deadline = setTimeout(() => { timedOut = true; killGroup(); }, rem);
-    try {
-      child = spawn(spawnCmd, spawnArgs, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch {
-      spawnError = true;
+    prepareRepoCopy(repoSpec, cwd, remainingMs).then((input) => {
+      env.TMPDIR = '/tmp';
+      launch(repoSpec.bwrap, [...sandboxArgs(input), '--', ...argv]);
+    }, (error: unknown) => {
+      const failure = error instanceof SetupFailure ? error : new SetupFailure('setup');
+      if (failure.timedOut) timedOut = true;
+      else spawnError = true;
+      setupNote = `review-delegate: repo-mode setup failed (${failure.step}${failure.timedOut ? ': timeout' : ''})\n`;
       finish(null, null);
-      return;
-    }
-    child.stdout!.on('data', (chunk: Buffer) => {
-      if (outSize + chunk.length > STDOUT_LIMIT) { overflow = true; killGroup(); return; }
-      out.push(chunk);
-      outSize += chunk.length;
     });
-    child.stderr!.on('data', (chunk: Buffer) => {
-      const room = STDERR_LIMIT - errSize;
-      if (room <= 0) return;
-      err.push(chunk.subarray(0, room));
-      errSize += Math.min(room, chunk.length);
-    });
-    child.stdin!.on('error', () => { /* the delegate may close stdin early */ });
-    child.stdin!.end(prompt);
-    child.on('error', () => { spawnError = true; finish(null, null); });
-    child.on('close', (code, signal) => finish(code, signal));
-    child.on('exit', (code, signal) => { grace = setTimeout(() => finish(code, signal), 250); });
   });
 }
 
@@ -515,7 +570,8 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
     catch (error) { return fellBack((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'unresolved-claim' : 'failed'); }
     dispatchedAt = new Date().toISOString();
     const repoSpec: RepoSandboxSpec | undefined = access === 'repo'
-      ? { bwrap: prepared.bwrap!, home: prepared.home!, repo: options.repo, candidate: options.candidate, calls: options.calls, expose: provider.expose ?? [], keep: provider.keep ?? [] }
+      ? { bwrap: prepared.bwrap!, home: prepared.home!, otherHomes: prepared.otherHomes ?? [], repo: options.repo, candidate: options.candidate, calls: options.calls,
+        expose: provider.expose ?? [], keep: provider.keep ?? [] }
       : undefined;
     spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s, repoSpec);
     returnedAt = new Date().toISOString();

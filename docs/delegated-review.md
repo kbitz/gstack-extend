@@ -132,7 +132,7 @@ A delegated part is one bounded call:
 - **Where it runs.** In diff mode (the default), a fresh, empty, private
   temporary directory as its working directory, removed afterwards, in its own
   process group. In repo mode (`"access": "repo"`), a bubblewrap sandbox whose
-  working directory is a disposable clone of the repository at `--candidate`;
+  working directory is a disposable copy of the repository at `--candidate`;
   see [Repository access](#repository-access).
 - **Bounds.** Its configured timeout (the whole group gets SIGKILL, and the exit
   is recorded as the classifier's timeout code, 124), standard output capped at
@@ -153,7 +153,9 @@ spawns and a result after the shared work-tree check; a saved result replays
 with no spawn. A result discarded for `worktree-changed` stays discarded on
 every replay and still exits 1. A claim
 without a result is `unresolved-claim` with no spawn. Never delete a claim or pick
-a fresh directory to retry.
+a fresh directory to retry. A call id hashes the prompt, `argv`, `model` and the
+provider label; for a repo-mode provider it also covers `access`, `expose` and
+`keep`, so correcting either list after a failed call dispatches again.
 
 ## Repository access
 
@@ -196,33 +198,55 @@ runs every part on the host.
 - **Keys and path rules.** `expose` and `keep` are allowed only when `access` is
   `"repo"`. Each list holds 0 to 32 entries. Every entry must be a unique
   (across both lists), `path.normalize`-stable absolute path without trailing
-  slashes, NUL or control characters, and must not be `/`, `HOME` or an
-  ancestor of `HOME` (`config-malformed`). At run time each listed path is
+  slashes, NUL or control characters. An entry may lie inside a directory the
+  sandbox hides, never at it or above it: an entry that is `/`, `HOME`, the
+  account's passwd home, `/tmp`, `/var`, `/run`, the runner's temporary
+  directory or an ancestor of any of them is `config-malformed`, compared both as
+  written and with its symlinks resolved. At run time each listed path is
   checked with `lstat`: an `expose` directory becomes a throwaway overlay, an
   `expose` regular file is staged into `<tmp>/staged/<n>` and bound read-write
   at its path, and a `keep` directory or regular file is bound read-write.
   Missing paths, symlinks, sockets or other file types fail that part (`failed`).
+- **The command must be visible.** The sandbox hides `HOME`, the passwd home,
+  `/tmp`, `/var` and `/run`. When `argv[0]` lies under one of them (as written or
+  resolved), an `expose` or `keep` entry must contain it, or the provider is
+  `config-malformed` at `check`. The runner cannot see the command's other
+  needs: an interpreter's script, a runtime under `HOME` (for example an
+  `npm`, `bun` or `mise` install), its configuration and its login. List each in
+  `expose` or `keep`, or the part fails on every call.
 - **What the runner builds.** On Linux with bubblewrap (`bwrap`), the runner
-  creates a disposable copy with
-  `git -c core.hooksPath=/dev/null clone --no-local --no-checkout --template= --quiet <repo> <tmp>/repo`,
-  checks out `--candidate` detached with hooks and LFS smudge/process filters
-  disabled (`-c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false`),
-  and removes the `origin` remote. The clone is bounded by the provider's
-  `timeout_s` and counted in `wall_ms`. It then spawns the provider through
-  `bwrap` in this order:
+  first hides the real repository and stages the listed paths, then creates a
+  disposable copy: `git init --template=` of an empty repository, a
+  `git fetch --no-tags --no-recurse-submodules` of `--candidate` alone from the
+  real repository (through `upload-pack` with `uploadpack.allowAnySHA1InWant`,
+  so a frozen snapshot commit that no ref reaches is fetched too), and a detached
+  checkout with hooks and LFS smudge/process filters disabled
+  (`-c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false`).
+  Every setup `git` call runs without the caller's `GIT_*` variables and with
+  global and system configuration off (`GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`), so no filter, hook or clone setting from the host
+  runs on the candidate's files. The copy has no remote. Setup runs
+  asynchronously, is bounded by the provider's `timeout_s` and counted in
+  `wall_ms`, and never delays another part's deadline. It then spawns the
+  provider through `bwrap` in this order:
   - `--unshare-all --share-net --die-with-parent --new-session`
   - `--ro-bind / /`, `--dev /dev`, `--proc /proc`
-  - `--tmpfs` over `/tmp`, `/var/tmp`, `/run` and `$HOME`, followed by a
-    read-only `--ro-bind` of the DNS resolver directory when
-    `realpath('/etc/resolv.conf')` resolves under `/run/`
+  - `--tmpfs` over `/tmp`, `/var` (with an empty `/var/tmp` and
+    `/var/run` linked to `../run`), `/run`, `$HOME` and the passwd home when it
+    differs, followed by a read-only `--ro-bind` of the DNS resolver directory
+    when `realpath('/etc/resolv.conf')` resolves under `/run/`
   - the `expose` layers (`--overlay-src <dir> --tmp-overlay <dir>` for
-    directories; `--bind <staged> <file>` for files), then the `keep` binds
-    (`--bind <path> <path>`)
-  - `--tmpfs` over each hidden path: the real repository's
+    directories; `--bind <staged> <file>` for files) and the `keep` binds
+    (`--bind <path> <path>`), a parent path before any listed path inside it,
+    so the more specific entry wins: an `expose` file inside a `keep` directory
+    stays throwaway, and a `keep` file inside an `expose` directory persists
+  - `--tmpfs` over each hidden path that exists: the real repository's
     `git rev-parse --show-toplevel`, `--absolute-git-dir` and
-    `--git-common-dir` (made absolute), the `--calls` directory, and
-    `XDG_RUNTIME_DIR` when set (which also covers any repository path inside an
-    `expose` or `keep` directory)
+    `--git-common-dir` (made absolute), every worktree `git worktree list`
+    names (the main checkout and each linked worktree), the `--calls`
+    directory, and `XDG_RUNTIME_DIR` when set outside `/run`; these come after
+    the `expose` and `keep` mounts, so they also hide any repository path inside
+    a listed directory
   - a read-write `--bind` of the disposable copy and `--chdir` into it, with
     `TMPDIR=/tmp` in the child environment
 - **Platform rule and `sandbox-unavailable`.** When any named part maps to a
@@ -233,11 +257,19 @@ runs every part on the host.
   call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
   every part of that call (including diff-mode parts named in the same command)
   runs on the host model.
-- **Contents of the disposable copy and clone cost.** The copy holds committed
-  files at `--candidate` and git history. Ignored files (such as `.env` or
-  `node_modules`), untracked files, build outputs and submodules are absent, and
-  Git LFS files contain pointer text only. Each repo-mode part clones the
-  repository per call, which adds wall time and disk I/O on large repositories.
+- **Contents of the disposable copy and its cost.** The copy holds the files of
+  the `--candidate` commit (a `/review-and-prep` frozen snapshot includes the
+  untracked, nonignored files it captured) and that commit's history. Other
+  branches and tags, ignored files (such as `.env` or `node_modules`), build
+  outputs and submodule contents are absent, and Git LFS files contain pointer
+  text only. Each repo-mode part fetches its own copy into the runner's
+  temporary directory, which may be a RAM-backed tmpfs (as on Arch or Fedora),
+  and holds it until its call ends, so concurrent repo-mode parts hold one copy
+  each.
+- **A failed setup.** A setup step that fails (a missing or unsupported
+  `expose` or `keep` path, a `git` failure, the deadline) records `failed` or
+  `timeout`, and the saved result's standard error names the step
+  (`review-delegate: repo-mode setup failed (<step>)`).
 - **`keep` versus `expose` for rotating logins.** Writes to an `expose` path
   land in a throwaway layer and vanish when the call ends. If a provider CLI
   rotates its refresh token during a call, discarding that write under `expose`
@@ -245,14 +277,24 @@ runs every part on the host.
   established here). Use a dedicated delegate login under `keep` for credentials
   that rotate, and never list a directory in `expose` or `keep` that holds
   unrelated credentials or SSH keys.
+- **Code from the reviewed head runs.** `REPO_POLICY` lets the model run
+  commands in the copy to reproduce a defect, and those commands can execute
+  code from the reviewed head (its tests, build or install scripts). That code
+  runs with the shared network, the `expose` and `keep` paths and the Unix
+  sockets listed below. Use diff mode for changes from contributors you would
+  not let run code on this machine.
 - **What the runner cannot observe or enforce.**
   - Anything inside the provider command itself.
   - The tool network bound: the sandbox keeps `--share-net` because the
     provider command must reach its API, so the runner cannot tell API traffic
     from tool traffic. Keeping the model's tools off other network hosts and
     starting no agents is the provider command's own sandbox configuration.
-  - Abstract-namespace Unix domain sockets on Linux, which remain reachable
-    through the shared network namespace (`--share-net`).
+  - Unix sockets the sandbox can still connect to: abstract-namespace sockets,
+    reachable through the shared network namespace (`--share-net`), and path
+    sockets under paths that are not hidden. `connect()` needs no write access
+    on a read-only mount, and the sandbox keeps the account's supplementary
+    groups, so a group that grants a privileged daemon's socket outside the
+    hidden paths makes repo mode host access for that account.
   - Reads of world-readable host paths that are not hidden by a `--tmpfs`, such
     as `/etc`, `/usr`, `/sys` and other non-hidden mounts.
   - Reads of paths the caller listed in `expose` or `keep`, and writes to paths
@@ -261,6 +303,10 @@ runs every part on the host.
     inside the sandbox.
   - A finding's text (including `evidence`) carrying data read by tools inside
     the sandbox into the review receipt.
+  - Size: the `--tmpfs` mounts, the overlay layers and the copy are unsized,
+    so a runaway command can fill memory or disk within its timeout, and a
+    runner killed before its cleanup leaves its temporary directory, staged
+    `expose` copies included.
 
 ## The reply
 
@@ -489,8 +535,9 @@ repo-mode run is listed in
   lands outside the work tree is not detected. Ignored files are outside the
   check. A before-and-after snapshot also cannot detect a write that is restored
   before the second snapshot. In repo mode (`"access": "repo"`), bubblewrap
-  enforces the filesystem and PID-namespace bounds while the tool network bound
-  and no-agents rule remain the command's own configuration (see
+  enforces the mount and PID-namespace bounds listed there, within the socket
+  and unhidden-path limits it names, while the tool network bound and
+  no-agents rule remain the command's own configuration (see
   [Repository access](#repository-access)).
 - In diff mode, after a normal exit the runner does not signal the command's
   process group, so a command that leaves a background process behind must clean
@@ -501,7 +548,7 @@ repo-mode run is listed in
 - In diff mode, a delegated attacker part sees only the diff, never repository
   files, unlike the native subagent; fixture bytes go in full, as they already
   do to outside voices. In repo mode, a part mapped to an `"access": "repo"`
-  provider sees a disposable clone of committed files at `--candidate`.
+  provider sees a disposable copy of the `--candidate` commit's files and history.
 - The six parts are the only delegable ones, `/ship-and-land` and
   `/full-review` do not delegate, and routing by remaining quota is a non-goal.
 - An older helper answers `unsupported-version` to a v3 `pass` and reads a stored

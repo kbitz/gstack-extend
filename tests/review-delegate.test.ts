@@ -3,8 +3,8 @@
  * Every case uses a fake delegate (a Bun script) and a fake upstream root in each installed layout; no model is called.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +14,7 @@ import {
   ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, REPO_POLICY, SPECIALIST_PARTS,
   buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, sandboxArgs, validateConfig, type Access,
 } from '../src/review-delegate/delegate';
-import { BWRAP_PATHS, main, probeSandbox, type Deps } from '../src/review-delegate/cli';
+import { main, parseWorktreeList, probeSandbox, type Deps } from '../src/review-delegate/cli';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'review-delegate');
@@ -91,6 +91,7 @@ function repository() {
 const FAKE = join(fresh('fake'), 'delegate.ts');
 put(FAKE, `import { appendFileSync, existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 const [, , mode, state] = process.argv;
 const prompt = await Bun.stdin.text();
@@ -142,9 +143,14 @@ else if (mode === 'inspect') {
   writeFileSync(join(state, 'kept.txt'), 'KEPT-MARKER\\n');
   writeFileSync('/tmp/probe-tmp.txt', 'TMP-OK\\n');
   const tmpBack = readFileSync('/tmp/probe-tmp.txt', 'utf8');
+  const snapshotOnly = existsSync(join(process.cwd(), 'snapshot-only.txt'));
+  const varLib = existsSync('/var/lib');
+  const passwdHome = userInfo().homedir;
+  const passwdHomeEntries = passwdHome && passwdHome !== process.env.HOME && existsSync(passwdHome) ? readdirSync(passwdHome) : [];
   writeFileSync(join(state, 'repo-probe.json'), JSON.stringify({
     cwd: process.cwd(), head, status, log, remotes, pushStatus, outside, realRepoEntries, callsEntries,
     secretInReal, secretInCopy, homeCred, sshExists, runUser, hostsLen, exposedBefore, tmpdir: process.env.TMPDIR, tmpBack,
+    snapshotOnly, varLib, passwdHome, passwdHomeEntries,
     env: Object.keys(process.env), prompt,
   }));
   console.log('[P1] ' + JSON.stringify({
@@ -895,6 +901,9 @@ describe('repository-mode sandbox and check', () => {
     expect(report.exposedBefore).toBe('HOST-SKILL\n');
     expect(report.tmpdir).toBe('/tmp');
     expect(report.tmpBack).toBe('TMP-OK\n');
+    // /var is a tmpfs (privileged daemons' path sockets live under it), and the passwd home is hidden even when HOME differs.
+    expect(report.varLib).toBe(false);
+    expect(report.passwdHomeEntries).toEqual([]);
     expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
     // Host state after the run: expose Dir/File untouched, keep file persisted, host repo has no clone-only.txt and still has origin, disposable root removed.
     expect(readFileSync(join(exposeDir, 'info.txt'), 'utf8')).toBe('HOST-SKILL\n');
@@ -981,6 +990,9 @@ describe('repository-mode sandbox and check', () => {
     expect(row(first.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null, replay: false });
     expect(row(first.json, 'adversarial')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed', replay: false, dispatched: true });
     expect(readFileSync(join(s.state, 'spawns.log'), 'utf8').trim().split('\n')).toEqual(['clean']);
+    // The saved result names the setup step that failed, so a sandbox setup failure is distinguishable from a provider exit.
+    const savedSetup = JSON.parse(readFileSync(join(s.calls, `${row(first.json, 'adversarial').call_id}.json`), 'utf8'));
+    expect(savedSetup.spawned.stderr).toContain('review-delegate: repo-mode setup failed (expose)');
 
     const second = cli([...runArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)]);
     expect(second.status).toBe(4);
@@ -1059,6 +1071,133 @@ describe('repository-mode sandbox and check', () => {
     expect(r.status).toBe(1);
     expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
   });
+
+  // Value: protects=/review-and-prep's --candidate is a frozen snapshot commit no ref reaches; fails_when=the copy only carries ref-reachable objects; why_new=cycle-1 finding (QA reproduced); seam=none
+  test.if(probe)('repo mode checks out an unreferenced snapshot candidate, including the untracked file it captured', async () => {
+    const s = setup('nested', { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE, fresh('expose-snap')], keep: [fresh('keep-snap')] } }, { adversarial: 'repo-prov' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    const exposeDir = cfg.providers['repo-prov'].expose[1];
+    put(join(exposeDir, 'info.txt'), 'SNAP-SKILL\n');
+    cfg.providers['repo-prov'].keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
+    writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
+    put(join(s.repo, 'snapshot-only.txt'), 'UNTRACKED-IN-SNAPSHOT\n');
+    const env = { ...process.env, GIT_INDEX_FILE: join(fresh('snap-index'), 'index') };
+    spawnSync('git', ['-C', s.repo, 'read-tree', 'HEAD'], { env });
+    spawnSync('git', ['-C', s.repo, 'add', '-A'], { env });
+    const tree = spawnSync('git', ['-C', s.repo, 'write-tree'], { env, encoding: 'utf8' }).stdout.trim();
+    s.candidate = git(s.repo, 'commit-tree', tree, '-p', 'HEAD', '-m', 'snapshot').stdout.trim();
+    expect(s.candidate).toMatch(/^[0-9a-f]{40}$/);
+    expect(git(s.repo, 'for-each-ref', '--contains', s.candidate).stdout.trim()).toBe('');
+    const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
+    expect(report.head).toBe(s.candidate);
+    expect(report.snapshotOnly).toBe(true);
+    expect(report.status).toBe('');
+  });
+  test.if(!probe)('snapshot-candidate twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE] } }, { adversarial: 'repo-prov' });
+    const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  // Value: protects=repository setup on the host runs no filter or setting from global or system git config; fails_when=setup git inherits ~/.gitconfig; why_new=cycle-1 finding (Codex P1); seam=none
+  test.if(probe)('repo-mode setup ignores global git config, so a filter the candidate selects never runs on the host', async () => {
+    const fakeHome = fresh('home-filter');
+    const marker = join(fresh('filter-marker'), 'smudge-ran.txt');
+    put(join(fakeHome, '.gitconfig'), `[filter "evil"]\n\tsmudge = "sh -c 'echo ran > ${marker}; cat'"\n`);
+    const s = setup('nested', { f: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'f' });
+    put(join(s.repo, '.gitattributes'), '*.txt filter=evil\n');
+    git(s.repo, 'add', '.gitattributes');
+    git(s.repo, 'commit', '-q', '-m', 'attributes');
+    s.candidate = git(s.repo, 'rev-parse', 'HEAD').stdout.trim();
+    const r = await runInProcess(runArgs(s, 'testing'), undefined, { HOME: fakeHome });
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    expect(existsSync(marker)).toBe(false);
+  });
+  test.if(!probe)('global-git-config twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { f: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'f' });
+    expect(cli(runArgs(s, 'testing')).json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  // Value: protects=the HOME guard holds for symlinked spellings, the passwd home and the sandbox's own tmpfs roots; fails_when=entries are compared only as written; why_new=cycle-1 finding (security reproduced); seam=none
+  test('an expose or keep entry that resolves to HOME, the passwd home or an ancestor, or names a hidden root, refuses with config-malformed', async () => {
+    const base = fresh('symhome');
+    const realHome = join(base, 'var', 'home', 'kb');
+    mkdirSync(realHome, { recursive: true });
+    symlinkSync(join('var', 'home'), join(base, 'home'));
+    const entries: [string, string][] = [['keep', join(base, 'home', 'kb')], ['expose', join(base, 'home')], ['keep', '/tmp'], ['expose', '/var'], ['keep', '/run'], ['keep', tmpdir()]];
+    if (userInfo().homedir && userInfo().homedir !== '/') entries.push(['keep', userInfo().homedir]);
+    for (const [list, entry] of entries) {
+      const s = setup('nested', { p: { mode: 'clean', access: 'repo', [list]: [entry] } }, { testing: 'p' });
+      const r = await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: realHome });
+      expect(r.json, `${list} ${entry}`).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    }
+  });
+
+  // Value: protects=a provider the sandbox would hide refuses at check instead of failing every run; fails_when=argv[0] visibility is not checked; why_new=cycle-1 finding (adversarial, red team); seam=none
+  test('a repo-mode provider whose argv[0] lies under a hidden path refuses with config-malformed unless expose or keep covers it', async () => {
+    const fakeHome = fresh('home-argv');
+    const tool = join(fakeHome, 'bin', 'provider');
+    put(tool, '#!/bin/sh\n');
+    chmodSync(tool, 0o755);
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.p.argv = [tool];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const hidden = await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: fakeHome });
+    expect(hidden.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    cfg.providers.p.expose = [join(fakeHome, 'bin')];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const covered = await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: fakeHome });
+    expect(covered.json.reason).not.toBe('config-malformed');
+  });
+
+  // Value: protects=fixing expose or keep after a failed repo-mode call dispatches again, while diff-mode call ids keep their v0.75.0 inputs; fails_when=callId ignores repo-mode settings; why_new=cycle-1 finding (adversarial); seam=none
+  test('a repo-mode call id covers access, expose and keep, while a diff-mode call id keeps its v0.75.0 inputs', () => {
+    const base = { argv: ['/bin/x'], timeout_s: 30, model: 'm' };
+    const legacy = createHash('sha256').update(JSON.stringify(['p', base.argv, base.model, 'alpha'])).digest('hex');
+    expect(callId('p', base, 'alpha')).toBe(legacy);
+    expect(callId('p', { ...base, access: 'diff' }, 'alpha')).toBe(legacy);
+    const repo = { ...base, access: 'repo' as const, expose: ['/a'], keep: ['/b'] };
+    expect(callId('p', repo, 'alpha')).not.toBe(legacy);
+    expect(callId('p', { ...repo, keep: ['/c'] }, 'alpha')).not.toBe(callId('p', repo, 'alpha'));
+    expect(callId('p', { ...repo, expose: [] }, 'alpha')).not.toBe(callId('p', repo, 'alpha'));
+  });
+
+  // Value: protects=the more specific of two nested expose/keep paths wins, and /var (privileged daemons' sockets) is hidden; fails_when=keep binds always follow expose layers or /var stays visible; why_new=cycle-1 findings (red team, adversarial); seam=none
+  test('sandboxArgs mounts a parent path before any expose or keep path inside it, and hides /var with /var/tmp and /var/run restored', () => {
+    const args = (expose: Parameters<typeof sandboxArgs>[0]['expose'], keep: string[]) => sandboxArgs({ home: '/h', hidden: [], resolvDir: null, expose, keep, copy: '/tmp/c/repo' });
+    const keepParent = args([{ kind: 'file', path: '/h/.codex/config.toml', staged: '/tmp/c/staged/0' }], ['/h/.codex']);
+    expect(keepParent.indexOf('/h/.codex')).toBeLessThan(keepParent.indexOf('/h/.codex/config.toml'));
+    const exposeParent = args([{ kind: 'dir', path: '/h/.codex' }], ['/h/.codex/auth.json']);
+    expect(exposeParent.indexOf('/h/.codex')).toBeLessThan(exposeParent.indexOf('/h/.codex/auth.json'));
+    expect(args([], []).join(' ')).toContain('--tmpfs /var --tmpfs /var/tmp --symlink ../run /var/run');
+  });
+
+  // Value: protects=repo mode hides the main checkout and every linked worktree, not only the reviewed one; fails_when=worktree paths are dropped from the hidden list; why_new=cycle-1 finding (security, adversarial); seam=none
+  test('parseWorktreeList returns the main checkout and every linked worktree from git porcelain output', () => {
+    const { repo } = repository();
+    const linked = join(fresh('linked'), 'wt');
+    expect(git(repo, 'worktree', 'add', '-q', '--detach', linked).status).toBe(0);
+    const paths = parseWorktreeList(git(repo, 'worktree', 'list', '--porcelain', '-z').stdout).map((path) => realpathSync(path));
+    expect(paths).toEqual([realpathSync(repo), realpathSync(linked)]);
+    expect(parseWorktreeList('')).toEqual([]);
+  });
+
+  // Value: protects=an earlier part's deadline and output handling while a later repo-mode part prepares its copy; fails_when=repository setup blocks the event loop; why_new=cycle-1 finding (Codex reproduced); seam=PATH git shim
+  test.if(probe)('a slow repo-mode setup never makes an earlier diff-mode part that finished in time read as a timeout', async () => {
+    const shim = fresh('git-shim');
+    const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    put(join(shim, 'git'), `#!/bin/sh\ncase " $* " in *" clone "*|*" fetch "*) sleep 4 ;; esac\nexec ${realGit} "$@"\n`);
+    chmodSync(join(shim, 'git'), 0o755);
+    const s = setup('nested', { quick: { mode: 'clean', timeout_s: 2 }, slow: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'quick', adversarial: 'slow' });
+    const r = await runInProcess([...runArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)], undefined, { PATH: `${shim}:${process.env.PATH}` });
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+  }, 30_000);
 });
 
 describe('reply parsing and the receipt contract', () => {
