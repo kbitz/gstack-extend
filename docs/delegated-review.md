@@ -10,11 +10,12 @@ command and a model name, and the examples use placeholders.
 
 ## Scope
 
-Four parts can be delegated: `testing`, `maintainability`, `performance` and
-`simplification`. Security, Red Team, state-machines, the native adversarial
-pass, the outside voices and the documentation and coverage audits are not
-delegable under this option and retain their existing routes. A policy value
-that names any other part is an unknown value, so
+Six parts can be delegated: `testing`, `maintainability`, `performance`,
+`simplification`, `adversarial` (the native adversarial pass) and `red-team`
+(the Red Team). Security, state-machines, the outside voices and the
+documentation and coverage audits are not delegable under this option and retain
+their existing routes. A policy value that names any other part
+(`native-adversarial`, `security` and the rest) is an unknown value, so
 the whole policy line reads `none supplied` with the reason `delegate: <name> is
 not delegable`, as for any unknown value.
 
@@ -35,8 +36,12 @@ Review delegates: /absolute/path/to/review-delegates.json
   separated. It is an opt-in value like `test-gaps=record`: a caller first runs
   `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"` (exit 0 means
   supported) and omits the value otherwise, keeping its other keys, because an
-  older installation reads the whole policy line as `none supplied`. The value
-  waives no gate and never authorizes a continuation.
+  older installation reads the whole policy line as `none supplied`. A caller
+  that names `adversarial` or `red-team` also runs
+  `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
+  (exit 0 means the loaded copy accepts both attacker parts) and drops them from
+  the value otherwise, keeping its other parts and keys. The value waives no
+  gate and never authorizes a continuation.
 - `Review delegates:` names the configuration file. Its path is printed in chat
   and never written to a receipt (the receipt records the file's SHA-256 and the
   provider labels). It is not part of a relayed handoff prompt, so a caller
@@ -69,7 +74,9 @@ model needs a caller that configures that provider.
     "testing": "provider-a",
     "maintainability": "provider-b",
     "performance": "provider-b",
-    "simplification": "provider-a"
+    "simplification": "provider-a",
+    "adversarial": "provider-a",
+    "red-team": "provider-b"
   }
 }
 ```
@@ -91,9 +98,28 @@ model needs a caller that configures that provider.
 A delegated part is one bounded, read-only call:
 
 - **Sent.** A fixed policy, one JSON line `{part, base, candidate}`, then
-  `{"diff": ..., "checklist": ...}`: the frozen diff and that specialist's
-  checklist from `<gstack-root>/review/specialists/<part>.md`. Nothing else: no
-  learnings, stack notes, repository files, skill text or plan.
+  `{"diff": ..., "checklist": ...}` for the four specialists and `adversarial`,
+  or `{"diff": ..., "checklist": ..., "already_caught": ...}` for `red-team`
+  (where `already_caught` is the UTF-8 text of `--caught`): the frozen diff and
+  that part's checklist. For the four specialists, the checklist is
+  `<gstack-root>/review/specialists/<part>.md`. For `red-team`, it is
+  `<gstack-root>/review/specialists/red-team.md` after the extension-owned
+  `RED_TEAM_FRAMING`, the defensive framing upstream gives its Red Team dispatch
+  (red-team.md does not carry it). For `adversarial`, the checklist is extracted
+  mechanically from `--adversarial`: the framing line that directly follows the
+  one `Subagent prompt:` line (without its opening `"`) and the one criteria
+  line after it (without its closing `"`), followed by the extension-owned
+  `ADVERSARIAL_SCHEMA` (the JSON-line schema
+  `{"severity":"CRITICAL|INFORMATIONAL","confidence":N,"path":"file","line":N,"category":"adversarial","summary":"...","fix":"..."}`,
+  the rule that `confidence` is an integer from 1 to 10, the rule that
+  `severity` is `CRITICAL` when `FIXABLE` or blocking and `INFORMATIONAL`
+  otherwise, that the JSON severity replaces the criteria's FIXABLE or
+  INVESTIGATE label and Severity and Blocks suffix, and "write nothing after the
+  JSON object"); the upstream line that starts `Read the diff for this branch`
+  is not sent. The framing line is found by its position because a sibling
+  rendering that inlines Review Army (the Cursor copy) repeats the framing text
+  for the Security specialist and the Red Team. Nothing else: no learnings,
+  stack notes, repository files, skill text or plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
   TZ`, and only those that are set. No key or credential is passed; a command
   keeps its own login under `HOME`.
@@ -182,52 +208,84 @@ silently: the receipt names the part and the reason.
 `bin/review-delegate` is internal to `/review-and-prep`.
 
 ```text
-review-delegate check --config FILE --gstack-root DIR --parts P[,P...]
-review-delegate run --config FILE --gstack-root DIR --parts P[,P...] --repo DIR --base SHA --candidate SHA --calls DIR
+review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE]
+review-delegate run --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE] --repo DIR --base SHA --candidate SHA --calls DIR [--caught FILE]
 ```
+
+`--adversarial FILE` (check and run; absolute path) is required when `--parts`
+names `adversarial`, and is a usage error otherwise. `--caught FILE` (run only;
+absolute path; outside `--repo`) is required when `--parts` names `red-team`,
+and is a usage error otherwise. Its text is part of the red-team prompt, so a
+changed list is a new call id: `/review-and-prep` writes it once per cycle as
+`caught-<cycle>-<S>.txt` under the branch-scoped calls directory (created with
+mode 0700 when missing), mode 0600, before the cycle's first red-team call. It
+writes the file through a temporary file in that directory renamed into place
+(so a crash never leaves a partial list to reuse), never rewrites it, and
+reuses it unchanged on a resume.
 
 `check` validates without any call. Exit 0 prints
 `{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`.
 Exit 1 prints `{"v":1,"status":"refused","reason":...}` with `config-missing`,
 `config-malformed`, `part-unmapped`, `helper-missing` (the installed classifier
-cannot be loaded) or `checklist-anchor` (a named part's checklist no longer
-matches the anchors). Exit 2 is a usage error decided before any work (an
-unknown flag, a part outside the four, a repeated part, a relative path, a
-`--calls` inside `--repo`): standard output is empty and standard error has
+cannot be loaded) or `checklist-anchor` (a named part's checklist or
+`--adversarial` file no longer matches the anchors, or its adversarial framing
+line does not directly follow the one `Subagent prompt:` line, or the prompt or
+criteria line does not occur once). Exit 2 is a usage error decided before
+any work (an unknown flag, a part outside the six, a repeated part, a missing or
+extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
+inside `--repo`): standard output is empty and standard error has
 `ERROR USAGE: ...` and `FIX: ...`.
 
 `run` takes the same flags plus the repository, the frozen scope's two full
-SHAs and the calls directory. It runs `check` first (a repository git cannot
-read refuses with `repo-unreadable`), takes the diff once and runs the parts
-concurrently. Exit 0 means every part was credited, 4 means a part fell back, and
-1 means a refusal before any call or a `worktree-changed` result. It prints
+SHAs, the calls directory and (for `red-team`) `--caught`. It runs `check`
+first (a missing or >64 KiB `--caught` file refuses with `caught-unreadable`,
+and a repository git cannot read refuses with `repo-unreadable`), takes the diff
+once and runs the parts concurrently. Exit 0 means every part was credited, 4
+means a part fell back, and 1 means a refusal before any call or a
+`worktree-changed` result. It prints
 `{"v":1,"status":"ran","config_sha256":...,"parts":[...]}`; each part carries
 `part provider model call_id replay dispatched dispatched_at returned_at wall_ms
 input_tokens output_tokens cache_read_input_tokens cache_creation_input_tokens
 parse verdict outcome fallback_reason findings`. The output never carries prompt
 text, reply prose or standard error.
 
+`/review-and-prep` makes one `run` call per review stage that runs named parts.
+After a refusal (exit 1) or a usage error (exit 2) it runs that stage's parts on
+the host and records the reason, and it handles any other exit code like exit 1.
+An exit 1 or 2 that prints no `parts` array records only a receipt note naming
+the exit, with no delegate attempt.
+
 ## Layouts
 
 The option works on both installed layouts, the nested (Claude Code) install and
-the sibling (Codex and Cursor) installs. Most of its anchors are text every copy
-carries: six lines of the installed `/review` file and, for each delegated part,
-three lines of its `review/specialists/<part>.md` checklist, which the sibling
-root links to the nested copy. Three more lines anchor upstream's
-`specialists-dispatched` contract item all-or-none, because the Codex sibling
-copy declares no item while the nested and Cursor copies do. Drift is reported by
+the sibling (Codex and Cursor) installs. Most of its specialist anchors are text
+every copy carries: six lines of the installed `/review` file and, for each
+delegated specialist part, three lines of its `review/specialists/<part>.md`
+checklist, which the sibling root links to the nested copy. Three more lines
+anchor upstream's `specialists-dispatched` contract item all-or-none, because
+the Codex sibling copy declares no item while the nested and Cursor copies do.
+The attacker parts add three `review/specialists/red-team.md` anchors, four
+adversarial anchors in `review/sections/adversarial.md` (nested) or the review
+file itself (sibling), and two all-or-none `adversarial-pass` contract-item
+anchors. Drift is reported by
 [`upstream-check`](upstream-check.md#what-it-checks) (the
-`review-and-prep.delegate` IDs). When the anchors match, a delegated part runs
-through its delegate whichever model hosts the review.
+`review-and-prep.delegate` and `review-and-prep.attacker` IDs). When the anchors
+match, a delegated part runs through its delegate whichever model hosts the
+review.
 
-On the nested layout, the named parts that Review Army selects run through the
-delegate, so delegation never adds or removes a part there. On the sibling layout
-every named part runs through its delegate. On either layout the delegate
-replaces that part's host dispatch for the cycle, however the host would have
-run it, and a delegated part is never also run on the host except after a
-recorded fallback. A fell-back part runs on the host from the same checklist: the
-nested host dispatches it as Review Army would, and a sibling host applies the
-checklist to the frozen diff with the same output contract.
+On the nested layout, the named specialist parts that Review Army selects run
+through the delegate, so delegation never adds or removes a specialist part
+there. On the sibling layout every named specialist part runs through its
+delegate. `adversarial` replaces the native adversarial subagent in every pass
+that runs Step 4.8. `red-team` replaces the Red Team dispatch whenever a red
+team runs (upstream's on its own gate, or the wrapper's red-team step where
+`/review` has none); the sibling rule never removes the red team's gate. On
+either layout the delegate replaces that part's host dispatch for the cycle,
+however the host would have run it, and a delegated part is never also run on
+the host except after a recorded fallback. A fell-back part runs on the host
+from the same checklist or subagent prompt: the nested host dispatches it as
+`/review` would, and a sibling host applies the checklist or runs the host
+subagent with the same output contract.
 
 ## With `specialists=fold`
 
@@ -248,19 +306,29 @@ effect together. A `Review delegates:` line beside a policy that carries only
 
 - The receipt records `delegation: active (parts=<list>; config=<sha256>)` or
   `delegation: inactive — <reason>`, one `specialists-dispatched:` line when the
-  section is active (`waived`, `met`, `not declared` or `unmet`), and one
+  section is active (`waived`, `met`, `not declared` or `unmet`), one
+  `adversarial-pass:` line while `delegate=adversarial` is active (`waived`,
+  `met`, `not declared` or `unmet`), one `Red team:` line when the policy
+  carries `red-team=ensure` or `delegate=` names `red-team`, and one
   `Delegated part:` line per part with
   `provider`, `model`, `outcome`, `reason`, `wall_ms`, the four token counts,
   `findings` and `call` (the call id). Unknown values read `unknown`. The PAUSED
   and STOPPED receipts carry the same lines.
 - The `specialists-dispatched:` status describes the current upstream item
-  result; a met selection outranks an earlier waiver. Mixed cycle outcomes
-  append `; history=<cycle>:<outcome>[,...]` to that line, retaining successful
+  result, and its waiver is scoped to credited specialist parts (a credited
+  `red-team` or `adversarial` alone waives nothing there); `adversarial-pass:`
+  follows the same current-result and history rule for `delegate=adversarial`.
+  A met selection outranks an earlier waiver. Mixed cycle outcomes append
+  `; history=<cycle>:<outcome>[,...]` to the line, retaining successful
   waivers' parts and failed calls' causes even when the current result is met
   or waived. A later failed call does not erase an earlier successful waiver.
-- Findings enter the review as that specialist's findings and keep the
-  `specialist:<part>` attribution; the provider and model are recorded on the
-  part, not inside a finding.
+- Findings enter the review as that part's findings and keep its `found_by`
+  attribution (`specialist:<part>` for the four specialists, `red-team` for
+  `red-team`, and `native-adversarial` for `adversarial`); the provider and
+  model are recorded on the part, not inside a finding. A credited specialist
+  part is recorded as dispatched in the review's `specialists` object, as is a
+  credited `red-team` part in both layouts; a credited `adversarial` part adds
+  no `specialists` entry.
 - The [workflow metrics](telemetry.md#workflow-metrics-delegated) record each
   delegated part as a `pass` v3 attempt with a `delegate` object, so a reader can
   count usage per provider label. Earlier receipts and rows stay readable.
@@ -282,6 +350,8 @@ runs on the host, and against the opt-in folded first cycle
 because the two values exclude each other. No saving is claimed here: record a
 real run's wall time and per-provider usage (`data.delegated`) beside the
 default before treating delegation as an optimization, as SPEC P1 requires.
+The attacker parts' pending by-hand and orchestrated runs are listed in
+[the attacker-parts record](acceptance/attacker-parts.md).
 
 ## Limits
 
@@ -297,7 +367,10 @@ default before treating delegation as an optimization, as SPEC P1 requires.
   a command that leaves a background process behind must clean it up itself.
 - Concurrent parts on one provider can hit its rate limit together and all fall
   back; that costs spend, not coverage.
-- The four parts are the only delegable ones, `/ship-and-land` and
+- A delegated attacker part sees only the diff, never repository files, unlike
+  the native subagent; fixture bytes go in full, as they already do to outside
+  voices.
+- The six parts are the only delegable ones, `/ship-and-land` and
   `/full-review` do not delegate, and routing by remaining quota is a non-goal.
 - An older helper answers `unsupported-version` to a v3 `pass` and reads a stored
   v3 line as `malformed-record`.

@@ -9,9 +9,10 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { recover } from '../src/outside-review/recovery';
-import { delegateInventory } from '../src/upstream-check/cli';
+import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
-  CONFIG_SCHEMA, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, REFUSAL_REASONS, decide, parseFindings, readReply, validateConfig,
+  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SPECIALIST_PARTS,
+  buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
 } from '../src/review-delegate/delegate';
 
 const REPO = join(import.meta.dir, '..');
@@ -23,6 +24,14 @@ const fresh = (label: string) => { const dir = join(scratch, `${label}-${counter
 const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
 
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
+const ATTACKER = (() => { const inv = attackerInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
+const ADVERSARIAL_BODY = [
+  ATTACKER.adversarial[0],
+  `${ATTACKER.adversarial[1]} Focus on concrete failure modes.`,
+  'Read the diff for this branch. First list changed files: git diff origin/main --stat',
+  `${ATTACKER.adversarial[2]} Classify each finding as FIXABLE or INVESTIGATE."`,
+  `**FIXABLE ${ATTACKER.adversarial[3]}`,
+].join('\n') + '\n';
 
 // A strict stand-in for the installed classifier: the review gate needs a recommendation, a tagged finding or an explicit
 // no-findings line, and a refusal is unavailable with the installed reason.
@@ -47,11 +56,19 @@ const MODULES = {
 function upstream(layout: 'nested' | 'sibling') {
   const root = join(fresh(layout), 'gstack');
   put(join(root, 'VERSION'), '1.2.3.4\n');
-  if (layout === 'nested') put(join(root, 'review', 'SKILL.md'), '# review\n');
-  for (const part of PARTS) put(join(root, 'review', 'specialists', `${part}.md`), `${DELEGATE[part].join('\n')}\nCHECKLIST-MARKER-${part}\n`);
+  if (layout === 'nested') {
+    put(join(root, 'review', 'SKILL.md'), '# review\n');
+    put(join(root, 'review', 'sections', 'adversarial.md'), ADVERSARIAL_BODY);
+  } else {
+    put(join(root, '..', 'gstack-review', 'SKILL.md'), `# review\n${ADVERSARIAL_BODY}`);
+  }
+  for (const part of SPECIALIST_PARTS) put(join(root, 'review', 'specialists', `${part}.md`), `${DELEGATE[part].join('\n')}\nCHECKLIST-MARKER-${part}\n`);
+  put(join(root, 'review', 'specialists', 'red-team.md'), `${ATTACKER['red-team'].join('\n')}\nCHECKLIST-MARKER-red-team\n`);
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   return root;
 }
+const adversarialPath = (s: { layout: 'nested' | 'sibling'; root: string }) =>
+  s.layout === 'nested' ? join(s.root, 'review', 'sections', 'adversarial.md') : join(s.root, '..', 'gstack-review', 'SKILL.md');
 
 const git = (repo: string, ...args: string[]) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
 /** Two commits; `outside.txt` is in both and never in the diff. */
@@ -164,7 +181,7 @@ describe('check', () => {
 
 describe('refused part names and usage errors (exit 2, no work)', () => {
   const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
-  test.each(['security', 'red-team', 'state-machines', 'data-migration', 'api-contract', 'design', 'native-adversarial', 'outside', 'documentation', 'coverage', 'testing,testing', 'testing,security', '', 'Testing'])(
+  test.each(['security', 'state-machines', 'data-migration', 'api-contract', 'design', 'native-adversarial', 'outside', 'documentation', 'coverage', 'testing,testing', 'testing,security', '', 'Testing'])(
     'a part list of %p is a usage error that makes no call', (parts) => {
       for (const args of [checkArgs(s, parts), runArgs(s, parts)]) {
         const r = cli(args);
@@ -185,6 +202,16 @@ describe('refused part names and usage errors (exit 2, no work)', () => {
     ['a short SHA', ['run', '--config', s.config, '--gstack-root', s.root, '--parts', 'testing', '--repo', s.repo, '--base', 'abc123', '--candidate', s.candidate, '--calls', s.calls]],
     ['a run flag on check', [...checkArgs(s, 'testing'), '--repo', s.repo]],
     ['a calls directory inside the repository', [...runArgs(s, 'testing').slice(0, -1), join(s.repo, 'calls')]],
+    ['adversarial without --adversarial on check', checkArgs(s, 'adversarial')],
+    ['adversarial without --adversarial on run', runArgs(s, 'adversarial')],
+    ['--adversarial without adversarial on check', [...checkArgs(s, 'testing'), '--adversarial', adversarialPath(s)]],
+    ['--adversarial without adversarial on run', [...runArgs(s, 'testing'), '--adversarial', adversarialPath(s)]],
+    ['a relative --adversarial', [...checkArgs(s, 'adversarial'), '--adversarial', 'adversarial.md']],
+    ['red-team without --caught on run', runArgs(s, 'red-team')],
+    ['--caught without red-team on run', [...runArgs(s, 'testing'), '--caught', join(s.state, 'caught.txt')]],
+    ['--caught on check', [...checkArgs(s, 'red-team'), '--caught', join(s.state, 'caught.txt')]],
+    ['a relative --caught', [...runArgs(s, 'red-team'), '--caught', 'caught.txt']],
+    ['a --caught file inside the repository', [...runArgs(s, 'red-team'), '--caught', join(s.repo, 'caught.txt')]],
   ])('%s is a usage error with empty stdout', (_name, args) => {
     const r = cli(args as string[]);
     expect([r.status, r.stdout]).toEqual([2, '']);
@@ -194,7 +221,7 @@ describe('refused part names and usage errors (exit 2, no work)', () => {
   test('--help prints the contract and exits 0', () => {
     const r = cli(['--help']);
     expect(r.status).toBe(0);
-    for (const word of ['check', 'run', '--calls', 'docs/delegated-review.md', ...PARTS]) expect(r.stdout).toContain(word);
+    for (const word of ['check', 'run', '--calls', '--adversarial', '--caught', 'docs/delegated-review.md', ...PARTS]) expect(r.stdout).toContain(word);
   });
 });
 
@@ -461,6 +488,138 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
       expect(Object.keys(claim).sort()).toEqual(['call_id', 'dispatched_at', 'part', 'prompt_bytes']);
     }
   });
+
+  test.each(['nested', 'sibling'] as const)('%s layout: check and run credit adversarial and red-team with their stamped specialist fields', (layout) => {
+    const s = setup(layout, { alpha: { mode: 'findings', model: 'model-adv' }, beta: { mode: 'plain', model: 'model-rt' } },
+      { adversarial: 'alpha', 'red-team': 'beta' });
+    const adv = adversarialPath(s);
+    const caught = join(s.state, 'caught.txt');
+    put(caught, '[P1] changed.txt:1 — earlier finding\n');
+    const chk = cli([...checkArgs(s, 'adversarial,red-team'), '--adversarial', adv]);
+    expect([chk.status, chk.stderr]).toEqual([0, '']);
+    expect(chk.json.parts).toEqual([
+      { part: 'adversarial', provider: 'alpha', model: 'model-adv' },
+      { part: 'red-team', provider: 'beta', model: 'model-rt' },
+    ]);
+    expect(spawns(s)).toEqual([]);
+
+    const ran = cli([...runArgs(s, 'adversarial,red-team'), '--adversarial', adv, '--caught', caught]);
+    expect([ran.status, ran.stderr]).toEqual([0, '']);
+    expect(row(ran.json, 'adversarial')).toMatchObject({
+      provider: 'alpha', model: 'model-adv', outcome: 'credited',
+      findings: [
+        expect.objectContaining({ severity: 'CRITICAL', specialist: 'adversarial' }),
+        expect.objectContaining({ severity: 'INFORMATIONAL', specialist: 'adversarial' }),
+      ],
+    });
+    expect(row(ran.json, 'red-team')).toMatchObject({
+      provider: 'beta', model: 'model-rt', outcome: 'credited',
+      findings: [expect.objectContaining({ severity: 'CRITICAL', specialist: 'red-team' })],
+    });
+  });
+
+  test('the adversarial prompt carries the extracted framing, criteria and schema without the upstream tool-instructions line', () => {
+    const s = setup('nested', { alpha: { mode: 'inspect' } }, { adversarial: 'alpha' });
+    const adv = adversarialPath(s);
+    const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adv]);
+    expect(r.status).toBe(0);
+    const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
+    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!);
+    expect(payload.checklist).toContain(ATTACKER.adversarial[1].slice(1));
+    expect(payload.checklist).toContain(ATTACKER.adversarial[2]);
+    expect(payload.checklist).toContain(ADVERSARIAL_SCHEMA);
+    expect(seen.prompt).not.toContain('Read the diff for this branch');
+    expect(seen.prompt).not.toContain('already_caught');
+  });
+
+  // Value: protects=a sibling review file that inlines Review Army's defensive framing ahead of the adversarial prompt (the Cursor rendering) still extracts the prompt's own framing; fails_when=the extractor refuses a repeated framing line elsewhere in the file or picks the Review Army copy; why_new=the Cursor sibling copy repeats the framing line, so delegate=adversarial refused there; seam=none
+  test('a sibling file that inlines Review Army\'s defensive framing before the adversarial prompt still extracts the prompt\'s framing', () => {
+    const s = setup('sibling', { alpha: { mode: 'inspect' } }, { adversarial: 'alpha' });
+    const adv = adversarialPath(s);
+    put(adv, `# review\n\n4. **Defensive framing.** Begin the prompt with:\n${ATTACKER.adversarial[1]} REVIEW-ARMY-COPY."\n\n${ADVERSARIAL_BODY}`);
+    expect(cli([...checkArgs(s, 'adversarial'), '--adversarial', adv]).status).toBe(0);
+    const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adv]);
+    expect(r.status).toBe(0);
+    const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
+    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!);
+    expect(payload.checklist).toContain('Focus on concrete failure modes.');
+    expect(payload.checklist).not.toContain('REVIEW-ARMY-COPY');
+  });
+
+  test('drifted, misplaced or repeated prompt, framing or criteria lines in --adversarial refuse with checklist-anchor', () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { adversarial: 'alpha' });
+    const adv = adversarialPath(s);
+    const [promptLine, framingAnchor, criteriaAnchor] = ATTACKER.adversarial as [string, string, string];
+    const criteriaLine = ADVERSARIAL_BODY.split('\n').find((line) => line.startsWith(criteriaAnchor))!;
+    for (const bad of [
+      ADVERSARIAL_BODY.replace(framingAnchor, '"A rewritten framing line.'),
+      ADVERSARIAL_BODY.replace(criteriaAnchor, 'A rewritten criteria line.'),
+      // the framing line no longer directly follows the prompt line
+      ADVERSARIAL_BODY.replace(`${promptLine}\n`, `${promptLine}\n\n`),
+      // a second prompt line
+      `${ADVERSARIAL_BODY}${promptLine}\n${framingAnchor} again\n`,
+      `${ADVERSARIAL_BODY}${criteriaAnchor} duplicate"\n`,
+      // the criteria line comes before the prompt block
+      `${criteriaLine}\n${ADVERSARIAL_BODY.replace(`${criteriaLine}\n`, '')}`,
+      ADVERSARIAL_BODY.replace('Classify each finding as FIXABLE or INVESTIGATE."', 'Classify each finding without a closing quote.'),
+    ]) {
+      put(adv, bad);
+      expect(cli([...checkArgs(s, 'adversarial'), '--adversarial', adv]).json).toEqual({ v: 1, status: 'refused', reason: 'checklist-anchor' });
+      expect(cli([...runArgs(s, 'adversarial'), '--adversarial', adv]).json).toEqual({ v: 1, status: 'refused', reason: 'checklist-anchor' });
+    }
+    expect(spawns(s)).toEqual([]);
+  });
+
+  test('red-team prompt carries already_caught, a different caught list produces a new call_id, and missing or oversized --caught refuses with caught-unreadable', () => {
+    const s = setup('sibling', { alpha: { mode: 'inspect' } }, { 'red-team': 'alpha' });
+    const caught = join(s.state, 'caught.txt');
+    put(caught, 'finding-one\n');
+    const first = cli([...runArgs(s, 'red-team'), '--caught', caught]);
+    expect(first.status).toBe(0);
+    const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
+    expect(seen.prompt).toContain('"already_caught":"finding-one\\n"');
+    // The red-team checklist opens with the defensive framing upstream gives its Red Team dispatch, then red-team.md.
+    const redTeamChecklist = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!).checklist as string;
+    expect(redTeamChecklist.startsWith(`${RED_TEAM_FRAMING}\n\n${ATTACKER['red-team'][0]}`)).toBe(true);
+    const firstId = row(first.json, 'red-team').call_id;
+
+    put(caught, 'finding-one\nfinding-two\n');
+    const second = cli([...runArgs(s, 'red-team'), '--caught', caught]);
+    expect(second.status).toBe(0);
+    expect(row(second.json, 'red-team').call_id).not.toBe(firstId);
+    expect(row(second.json, 'red-team').replay).toBe(false);
+
+    rmSync(caught);
+    expect(cli([...runArgs(s, 'red-team'), '--caught', caught]).json).toEqual({ v: 1, status: 'refused', reason: 'caught-unreadable' });
+    put(caught, 'x'.repeat(64 * 1024 + 1));
+    expect(cli([...runArgs(s, 'red-team'), '--caught', caught]).json).toEqual({ v: 1, status: 'refused', reason: 'caught-unreadable' });
+  });
+
+  test.each(CAUSES)('attacker fallback: %s falls back for adversarial and red-team beside a credited specialist', (_name, mode, reason) => {
+    const s = setup('nested', { bad: { mode }, good: { mode: 'clean' } }, { adversarial: 'bad', 'red-team': 'bad', testing: 'good' });
+    const caught = join(s.state, 'caught.txt');
+    put(caught, '');
+    const r = cli([...runArgs(s, 'testing,adversarial,red-team'), '--adversarial', adversarialPath(s), '--caught', caught]);
+    expect(r.status).toBe(4);
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    for (const part of ATTACKER_PARTS) {
+      expect(row(r.json, part)).toMatchObject({ outcome: 'fell-back', fallback_reason: reason, findings: [], dispatched: true });
+    }
+  }, 60_000);
+
+  test('specialist prompt bytes and callId are byte-identical to pre-72B so saved specialist results replay', () => {
+    const base = 'a'.repeat(40);
+    const candidate = 'b'.repeat(40);
+    const prompt = buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body');
+    expect(prompt).toBe(`${DELEGATE_POLICY}${JSON.stringify({ part: 'testing', base, candidate })}\n${JSON.stringify({ diff: 'diff-body', checklist: 'checklist-body' })}\n`);
+    expect(prompt).not.toContain('already_caught');
+    // Even if a caller passes a caught string for a specialist part, buildPrompt ignores it so specialist callIds cannot drift.
+    expect(buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body', 'ignored')).toBe(prompt);
+    const provider = { argv: ['/bin/delegate', '--ro'], timeout_s: 30, model: 'model-a' };
+    expect(callId(prompt, provider, 'alpha')).toBe(
+      createHash('sha256').update(JSON.stringify([prompt, provider.argv, provider.model, 'alpha'])).digest('hex'),
+    );
+  });
 });
 
 describe('reply parsing and the receipt contract', () => {
@@ -558,6 +717,16 @@ describe('documentation', () => {
       expect(provider.model).toMatch(/^model-[a-z]$/);
     }
     expect(Object.keys(checked.config.parts).sort()).toEqual([...PARTS].sort());
+  });
+
+  test('the attacker-parts acceptance record names pending PM1 and PM2 rows and claims no installed-agent run yet', () => {
+    const record = readFileSync(join(REPO, 'docs', 'acceptance', 'attacker-parts.md'), 'utf8');
+    expect(record).toContain('No installed-agent run backs\nit yet');
+    expect(record).toContain('| `PM1` | pending |');
+    expect(record).toContain('| `PM2` | pending |');
+    expect(record).toContain('297f50c7e1d46aab1404f5f2e8a9584af76ad6b2');
+    expect(record).toContain('red-team=ensure');
+    expect(record).toContain('delegate=adversarial,red-team');
   });
 });
 

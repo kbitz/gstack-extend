@@ -649,9 +649,9 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/, 'first-cycle': /^overlap$/,
   'documentation-audit': /^final$/, 'documentation-scope': /^contracts$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
-  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, specialists: /^fold$/,
-  // The four delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
-  delegate: /^(?!.*\b(testing|maintainability|performance|simplification)\b.*\b\1\b)(?:testing|maintainability|performance|simplification)(?:,(?:testing|maintainability|performance|simplification))*$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, specialists: /^fold$/, 'red-team': /^ensure$/,
+  // The six delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
+  delegate: /^(?!.*\b(testing|maintainability|performance|simplification|adversarial|red-team)\b.*\b\1\b)(?:testing|maintainability|performance|simplification|adversarial|red-team)(?:,(?:testing|maintainability|performance|simplification|adversarial|red-team))*$/,
   'max-continuations': /^[0-9]$/,
 };
 /** `review-and-prep-policy/v1; key=value; ...`; null for an unknown version, key or value, or a repeated key. */
@@ -1379,7 +1379,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -2252,36 +2252,50 @@ describe('(H) delegate', () => {
   const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
   const without = (...keys: string[]) => { const m = { ...POLICY_VALUES }; for (const k of keys) delete m[k]; return m; };
 
-  // Value: protects=the value parses as a comma list of the four delegable parts, each once; every other name, repeat, case and empty value is malformed, and an older map voids the whole line; fails_when=a regex loosens, a repeat or an always-host part parses or the older-install claim stops being true; why_new=new policy value; seam=none; no_claim=installed-agent execution
-  test('the parser accepts the four parts once each, refuses everything else, and an older map voids the line', () => {
-    for (const good of ['testing', 'maintainability', 'performance', 'simplification', 'testing,performance', 'simplification,testing,maintainability,performance']) {
+  // Value: protects=the value parses as a comma list of the six delegable parts, each once, plus red-team=ensure; every other name, repeat, case and empty value is malformed, and an older map voids the whole line; fails_when=a regex loosens, a repeat or an always-host part parses or the older-install claim stops being true; why_new=new policy value; seam=none; no_claim=installed-agent execution
+  test('the parser accepts the six parts once each and red-team=ensure, refuses everything else, and an older map voids the line', () => {
+    for (const good of ['testing', 'maintainability', 'performance', 'simplification', 'adversarial', 'red-team',
+      'testing,performance', 'adversarial,red-team', 'testing,adversarial,red-team',
+      'simplification,testing,maintainability,performance,adversarial,red-team']) {
       expect(parsePolicy(line(`delegate=${good}`))?.get('delegate'), good).toBe(good);
     }
-    const all = parsePolicy(line('in-cap=delta; parent-io=lean; delegate=testing,performance; test-gaps=record; full-suite=external'));
-    expect(all?.get('delegate')).toBe('testing,performance');
+    expect(parsePolicy(line('red-team=ensure'))?.get('red-team')).toBe('ensure');
+    const all = parsePolicy(line('in-cap=delta; parent-io=lean; delegate=testing,performance,adversarial,red-team; red-team=ensure; test-gaps=record; full-suite=external'));
+    expect(all?.get('delegate')).toBe('testing,performance,adversarial,red-team');
+    expect(all?.get('red-team')).toBe('ensure');
     expect(all?.get('test-gaps')).toBe('record');
-    for (const bad of ['delegate=security', 'delegate=red-team', 'delegate=state-machines', 'delegate=data-migration', 'delegate=api-contract', 'delegate=design',
+    for (const bad of ['delegate=security', 'delegate=state-machines', 'delegate=data-migration', 'delegate=api-contract', 'delegate=design',
       'delegate=native-adversarial', 'delegate=outside', 'delegate=documentation', 'delegate=coverage', 'delegate=testing,security', 'delegate=testing,testing',
+      'delegate=adversarial,adversarial', 'delegate=red-team,red-team', 'delegate=testing,native-adversarial',
       'delegate=performance,testing,performance', 'delegate=Testing', 'delegate=TESTING', 'delegate=testing,', 'delegate=,testing', 'delegate=testing,,performance',
       'delegate=testing, performance', 'delegate=', 'delegate', 'delegate=all', 'delegate=*', 'delegates=testing', 'delegate=testing; delegate=performance',
-      'delegate=testing|performance', 'delegate=testingx', 'delegate=xtesting']) {
+      'delegate=testing|performance', 'delegate=testingx', 'delegate=xtesting',
+      'red-team=Ensure', 'red-team=ENSURE', 'red-team=fill', 'red-team=wrapper', 'red-team=', 'red-team', 'red-team=ensure; red-team=ensure',
+      'specialists=fold; delegate=adversarial', 'specialists=fold; delegate=red-team']) {
       expect(parsePolicy(line(bad)), bad).toBeNull();
     }
-    // An older install's map lacks the key, so the whole line is lost with every other key.
+    // An older install's map lacks the key or the attacker values, so the whole line is lost with every other key.
     expect(parsePolicy(line('in-cap=delta; delegate=testing'), without('delegate'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; red-team=ensure'), without('red-team'))).toBeNull();
+    const olderDelegate = {
+      ...POLICY_VALUES,
+      delegate: /^(?!.*\b(testing|maintainability|performance|simplification)\b.*\b\1\b)(?:testing|maintainability|performance|simplification)(?:,(?:testing|maintainability|performance|simplification))*$/,
+    };
+    expect(parsePolicy(line('in-cap=delta; delegate=adversarial'), olderDelegate)).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; delegate=testing,red-team'), olderDelegate)).toBeNull();
     expect(parsePolicy(line('in-cap=delta; full-suite=final'), without('delegate'))?.get('in-cap')).toBe('delta');
   });
 
   // Value: protects=an H-E prompt whose policy carries the value still continues and a bad value still holds; fails_when=the new value breaks the H-E path; why_new=new policy value through the consumer; seam=none; no_claim=installed-agent execution
   test('an H-E prompt whose policy carries the value still continues', () => {
     const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
-    for (const tail of ['delegate=testing', 'delegate=testing,performance; test-gaps=record']) {
+    for (const tail of ['delegate=testing', 'delegate=testing,performance; test-gaps=record', 'delegate=adversarial,red-team', 'red-team=ensure', 'delegate=testing,adversarial,red-team; red-team=ensure']) {
       const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
       const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
       expect(v.mismatches, tail).toEqual([]);
       expect(v.outcome, tail).toBe(FULL);
     }
-    for (const tail of ['delegate=security', 'delegate=testing,testing', 'delegate=testing; delegate=performance']) {
+    for (const tail of ['delegate=security', 'delegate=native-adversarial', 'delegate=testing,testing', 'delegate=testing; delegate=performance', 'red-team=fill']) {
       const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
       expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
     }
@@ -2290,25 +2304,30 @@ describe('(H) delegate', () => {
   // Value: protects=the capability check works against the real skill, and the doc publishes it with the rollout, the omit rule and the caller line outside the relayed prompt; fails_when=the value leaves the skill, a check text drifts or the doc loses the rollout; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
   test('grep -F finds the value in the skill and the doc publishes the check and the rollout', () => {
     const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
-    expect(spawnSync('grep', ['-F', 'delegate=<part>', skillPath]).status).toBe(0);
+    for (const needle of ['delegate=<part>', 'delegate=adversarial,red-team', 'red-team=ensure']) {
+      expect(spawnSync('grep', ['-F', needle, skillPath]).status, needle).toBe(0);
+      const check = `grep -F '${needle}' "<installed skill dir>/SKILL.md"`;
+      expect(has(prep, check), `skill: ${check}`).toBe(true);
+      expect(has(doc, check), `doc: ${check}`).toBe(true);
+    }
     expect(spawnSync('grep', ['-F', 'delegate=guess', skillPath]).status).toBe(1);
-    const check = `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"`;
-    expect(has(prep, check), `skill: ${check}`).toBe(true);
-    expect(has(doc, check), `doc: ${check}`).toBe(true);
     for (const phrase of ['`delegate=<part>[,<part>...]` follows the same rollout order and the same check',
       '(exit 0 means supported)',
       'An installation without it reads the whole line as `none supplied`',
       'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
       'a caller omits it when the check fails and keeps its other keys',
-      'It names only the four delegable parts, each once; a value naming any other part is an unknown value and voids the line.',
+      'It names only the six delegable parts, each once; a value naming any other part is an unknown value and voids the line.',
       'it is not part of the relayed H-E prompt, so a caller supplies it again beside a relayed prompt',
       'without it every part runs on the host model',
       'The value waives no gate and never authorizes a continuation.',
       'While the anchors it relies on drift, every part runs on the host model and the receipt says so.',
-      '`parent-io` (`lean`), `delegate` (`testing`, `maintainability`, `performance`, `simplification`, comma-separated, each once), `repair-review` (`behavior-changing`)']) {
+      '`parent-io` (`lean`), `delegate` (`testing`, `maintainability`, `performance`, `simplification`, `adversarial`, `red-team`, comma-separated, each once), `red-team` (`ensure`), `repair-review` (`behavior-changing`)',
+      '`adversarial-pass:` line | receipt-present',
+      '`Red team:` line | receipt-present']) {
       expect(has(doc, phrase), phrase).toBe(true);
     }
     expect(POLICY_VALUES.delegate!.test('testing,simplification')).toBe(true);
+    expect(POLICY_VALUES.delegate!.test('adversarial,red-team')).toBe(true);
     expect('delegate=testing').not.toMatch(/routine|standard|novel/);
   });
 

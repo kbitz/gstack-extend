@@ -537,7 +537,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -2252,7 +2252,7 @@ describe('recorded-gap routing boundaries', () => {
   });
 });
 
-// Track 64C: `delegate=<part>[,<part>...]` sends named specialist parts to a caller-configured provider, with a host fallback.
+// Track 64C + Track 72B: `delegate=<part>[,<part>...]` sends named specialist and attacker parts to a caller-configured provider, with a host fallback.
 describe('review-and-prep delegate=<part>', () => {
   const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
   const flat = prep.replace(/\s+/g, ' ');
@@ -2260,41 +2260,48 @@ describe('review-and-prep delegate=<part>', () => {
   const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
   const sectionRaw = skillSection(prep, '### Delegate named specialist parts');
   const section = sectionRaw.replace(/\s+/g, ' ');
-  const bullet = policy.slice(policy.indexOf('- `delegate=<part>[,<part>...]`'), policy.indexOf('- `final-gate-repair=tests-docs`'));
-  const paragraph = sectionRaw.slice(sectionRaw.indexOf('**Activation'), sectionRaw.indexOf('\n\n', sectionRaw.indexOf('**Activation')));
+  const bullet = policy.slice(policy.indexOf('- `delegate=<part>[,<part>...]`'), policy.indexOf('- `red-team=ensure`'));
+  const paragraph = sectionRaw.slice(sectionRaw.indexOf('**Activation (`delegate`).**'), sectionRaw.indexOf('\n\n', sectionRaw.indexOf('**Activation (`delegate`).**')));
+  const attackerAt = sectionRaw.indexOf('**Activation (attacker parts).**');
+  const attackerParagraph = sectionRaw.slice(attackerAt, sectionRaw.indexOf('\n\n', attackerAt));
   const metrics = prep.slice(prep.indexOf('### Workflow metrics (optional, local)')).split(/\n## /)[0]!.replace(/\s+/g, ' ');
 
   // Value: protects=the one policy grammar line gains the value without losing a locked substring; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
   test('the grammar line carries the value after parent-io and keeps the locked run after it', () => {
-    expect(flat).toContain('parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
+    expect(flat).toContain('parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
   });
 
-  // Value: protects=the bullet's position, the four delegable parts, the always-host list, the refusal wording and the no-waiver rule; fails_when=a part is added silently, an always-host part becomes delegable or the older-install check is lost; why_new=criterion 1; seam=none
-  test('the policy bullet sits between parent-io and final-gate-repair, names four parts and keeps the rest on the host', () => {
+  // Value: protects=the bullet's position, the six delegable parts, the always-host list, the refusal wording and the no-waiver rule; fails_when=a part is added silently, an always-host part becomes delegable or the older-install check is lost; why_new=criterion 1, 2, 9; seam=none
+  test('the policy bullet sits between parent-io and red-team=ensure, names six parts and keeps the rest on the host', () => {
     expect(policy.indexOf('- `parent-io=lean`')).toBeLessThan(policy.indexOf('- `delegate=<part>[,<part>...]`'));
-    expect(policy.indexOf('- `delegate=<part>[,<part>...]`')).toBeLessThan(policy.indexOf('- `final-gate-repair=tests-docs`'));
-    expect(bullet).toContain('(`testing`, `maintainability`, `performance` and `simplification`, comma-separated, each at most once) is opt-in');
-    for (const kept of ['Security', 'Red Team', 'state-machines', 'the native adversarial pass', 'the outside voices', 'the documentation and coverage audits']) expect(bullet, kept).toContain(kept);
+    expect(policy.indexOf('- `delegate=<part>[,<part>...]`')).toBeLessThan(policy.indexOf('- `red-team=ensure`'));
+    expect(policy.indexOf('- `red-team=ensure`')).toBeLessThan(policy.indexOf('- `final-gate-repair=tests-docs`'));
+    expect(bullet).toContain('(`testing`, `maintainability`, `performance`, `simplification`, `adversarial` and `red-team`, comma-separated, each at most once) is opt-in');
+    expect(bullet).toContain('`adversarial` is the native adversarial pass and `red-team` is the Red Team');
+    for (const kept of ['Security', 'state-machines', 'the outside voices', 'the documentation and coverage audits']) expect(bullet, kept).toContain(kept);
     expect(bullet).toContain('always stay on the host model');
-    expect(bullet).toContain('a value naming any other part is an unknown value, so the line reads `none supplied` with the reason `delegate: <name> is not delegable`');
+    expect(bullet).toContain('a value naming any other part (`native-adversarial` and every other name) is an unknown value, so the line reads `none supplied` with the reason `delegate: <name> is not delegable`');
     expect(bullet).toContain('It needs a `Review delegates: <absolute path>` line and matching upstream anchors; otherwise every part runs on the host as today and the receipt says so');
     expect(bullet).toContain('its path is printed in chat and never written to a receipt');
     expect(bullet).toContain('it is not part of a relayed prompt, so a caller supplies it again beside one');
     expect(bullet).toContain('An installation without the value reads the whole line as `none supplied`');
     expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
     expect(bullet).toContain('`grep -F \'delegate=<part>\' "<installed skill dir>/SKILL.md"` (exit 0 means supported)');
+    expect(bullet).toContain('`grep -F \'delegate=adversarial,red-team\' "<installed skill dir>/SKILL.md"` (exit 0 means the loaded copy accepts both attacker parts) and drops them from the value otherwise, keeping its other parts and keys.');
     // the delegable names are exactly the runner's
     for (const part of PARTS) expect(bullet, part).toContain('`' + part + '`');
   });
 
   // Value: protects=the capability check an older installation fails; fails_when=the value is absent from the loaded copy yet the check passes; why_new=the rollout contract; seam=none
-  test('the capability check exits 0 on this skill and 1 on a copy without the bullet', () => {
+  test('the capability checks exit 0 on this skill and 1 on a copy without the string', () => {
     const dir = makeBaseTmp('delegate-capability');
     const copy = join(dir, 'SKILL.md');
-    const check = (path: string) => spawnSync('grep', ['-F', 'delegate=<part>', path]).status;
-    expect(check(join(ROOT, 'skills', 'review-and-prep.md'))).toBe(0);
-    writeFileSync(copy, prep.replaceAll('delegate=<part>', 'delegate-removed'));
-    expect(check(copy)).toBe(1);
+    for (const needle of ['delegate=<part>', 'delegate=adversarial,red-team']) {
+      const check = (path: string) => spawnSync('grep', ['-F', needle, path]).status;
+      expect(check(join(ROOT, 'skills', 'review-and-prep.md')), needle).toBe(0);
+      writeFileSync(copy, prep.replaceAll(needle, 'delegate-removed'));
+      expect(check(copy), needle).toBe(1);
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -2374,12 +2381,12 @@ describe('review-and-prep delegate=<part>', () => {
     for (const status of ['`delegation: active (parts=<list>; config=<sha256>)`', '`delegation: inactive — <reason>`']) expect(section.replace(/\s+/g, ' ')).toContain(status.replace(/\s+/g, ' '));
   });
 
-  // Value: protects=the v3 sentence beside the locked v2 sentence, and the voices.jsonl delegate object; fails_when=the v2 rule is rewritten or the v3 attempt rule is lost; why_new=criterion 6; seam=none
-  test('a delegated attempt sends v3 beside the unchanged v2 rule, and the join file takes a content-free delegate object', () => {
+  // Value: protects=the v3 sentence beside the locked v2 sentence, the per-part found_by mapping, and the voices.jsonl delegate object; fails_when=the v2 rule is rewritten, a new found_by label is invented or the v3 attempt rule is lost; why_new=criterion 3, 6; seam=none
+  test('a delegated attempt sends v3 beside the unchanged v2 rule, maps found_by per part, and the join file takes a content-free delegate object', () => {
     expect(metrics).toContain('every `pass` record sends `v:2`; every other producer keeps `v:1`');
     expect(metrics).toContain('Delegated attempts (`v:3`): a delegated part\'s `attempt` sends `v:3` with the runner\'s `delegate` values');
     expect(metrics).toContain('`requested_model` from the configuration with `requested_source: launcher-config`, `reported_source: unavailable` and `unknown_reason: not-reported`');
-    expect(metrics).toContain('`found_by` stays `specialist:<part>`, taken from the runner\'s stamped field');
+    expect(metrics).toContain("A delegated part's finding takes `found_by` from the runner's part row: `specialist:<part>` for the four specialists, `red-team` for `red-team`, and `native-adversarial` for `adversarial`, plus today's v3 `delegate` object.");
     expect(section).toContain('A fallback is the failed delegate attempt, then a host attempt that names it as its predecessor, then a `fallback` correction.');
     expect(flat).toContain('A delegated part\'s row adds an optional, content-free `delegate` object');
   });
@@ -2389,19 +2396,23 @@ describe('review-and-prep delegate=<part>', () => {
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 
-  // Value: protects=the delegate section's specialist-dispatch waiver settlement, intro, policy general bullet and three receipt sites; fails_when=the waiver command, never-substitute rule, not-declared case, receipt templates or delimiter isolation drifts; why_new=criterion 1, 2, 4; seam=none
-  test('the section states the specialists-dispatched waiver settlement, receipt templates, intro and policy rule without repeating activation delimiters', () => {
-    const rest = sectionRaw.slice(sectionRaw.indexOf(paragraph) + paragraph.length);
+  // Value: protects=the delegate section's specialist-dispatch and adversarial-pass waiver settlements, intro, policy general bullet and three receipt sites; fails_when=the waiver command, specialist-only scoping, never-substitute rule, not-declared case, receipt templates or delimiter isolation drifts; why_new=criterion 1, 2, 4, 5; seam=none
+  test('the section states the specialists-dispatched and adversarial-pass waiver settlements, receipt templates, intro and policy rule without repeating activation delimiters', () => {
+    expect(attackerAt).toBeGreaterThan(sectionRaw.indexOf(paragraph));
+    expect(attackerParagraph.match(/byte for byte,/g)).toHaveLength(3);
+    expect(attackerParagraph.trimEnd().endsWith('Check each with `grep -F`.')).toBe(true);
+    const rest = sectionRaw.slice(attackerAt + attackerParagraph.length);
     expect(rest).not.toContain('byte for byte');
     expect(rest).not.toContain('grep -F');
     expect(section).toContain("This is a **wrapper override**, not an upstream fork: it changes who runs a part, never a gate of this skill, a checklist or `/review`'s own text; the one upstream contract item a credited part cannot meet is waived as **Upstream's dispatch item** states.");
-    expect(section).toContain('The item list matches when that `/review` contains all of its lines or none of them, and none means it declares no `specialists-dispatched` item.');
-    expect(policy).toContain("Those are this skill's gates; upstream `/review`'s `specialists-dispatched` contract item, checked by upstream's opt-in contract hook, is set aside only by `delegate=` and `specialists=fold`, only where the installed `/review` declares it, through upstream's own waive command, and the receipt records it.");
+    expect(section).toContain('The item list matches when that `/review` contains all of its lines or none of them, and none means it declares no `specialists-dispatched` item; list (c) in **Activation (attacker parts)** matches under the same all-or-none rule for `adversarial-pass`.');
+    expect(policy).toContain("Those are this skill's gates; upstream `/review`'s `specialists-dispatched` contract item, checked by upstream's opt-in contract hook, is set aside only by `delegate=` and `specialists=fold`, only where the installed `/review` declares it, through upstream's own waive command, and the receipt records it. Likewise, upstream `/review`'s `adversarial-pass` contract item is set aside only by `delegate=adversarial`, only where the installed `/review` declares it, through upstream's own waive command, and the receipt records it.");
     const itemAt = section.indexOf("**Upstream's dispatch item.**");
     expect(itemAt).toBeGreaterThan(-1);
     const itemRule = section.slice(itemAt, section.indexOf('Record each part in `voices.jsonl`', itemAt));
     expect(itemRule).toContain('Done means');
     expect(itemRule).toContain('specialists-dispatched');
+    expect(itemRule).toContain('The `specialists-dispatched` waiver is scoped to credited specialist parts, so a credited `red-team` or `adversarial` alone waives nothing there.');
     expect(itemRule).toContain('with no `--skill` flag');
     expect(itemRule).toContain('Never print a narrowed or zero-count selection line or dispatch a placeholder Agent to satisfy the item.');
     expect(itemRule).toContain('When the installed `/review` contains none of the item lines (as on the Codex sibling copy), waive nothing.');
@@ -2410,13 +2421,116 @@ describe('review-and-prep delegate=<part>', () => {
       '`specialists-dispatched: met (delegate; <reason>)`',
       '`specialists-dispatched: not declared (delegate)`',
       '`specialists-dispatched: unmet (delegate; waive failed: <cause>)`',
+      '`adversarial-pass: waived (delegate; cycles=<n>[,<n>...])`',
+      '`adversarial-pass: met (delegate; <reason>)`',
+      '`adversarial-pass: not declared (delegate)`',
+      '`adversarial-pass: unmet (delegate; waive failed: <cause>)`',
     ]) expect(itemRule, template).toContain(template);
+    expect(itemRule).toContain('`gstack-skill-contract waive adversarial-pass --reason "<why>"` (with no `--skill` flag and a reason naming `delegate=adversarial` and the provider label); a fallback pass meets the item through its host dispatch, and when list (c) is not declared, waive nothing.');
     expect(flat).toContain("Add the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active.");
     expect(flat).toContain("Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active.");
     expect(flat).toContain("the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active,");
+    expect(flat).toContain('Add the `adversarial-pass:` line only while `delegate=adversarial` is active.');
+    expect(flat).toContain('Record the `adversarial-pass:` line only while `delegate=adversarial` is active.');
+    expect(flat).toContain('the `adversarial-pass:` line only while `delegate=adversarial` is active,');
     expect(itemRule).toContain('The leading status reports the current upstream item result: a met selection outranks an earlier waiver.');
     expect(itemRule).toContain('`; history=<cycle>:<outcome>[,...]`');
     expect(itemRule).toContain("retaining each successful waiver's parts and each failed call's cause.");
+  });
+
+  // Value: protects=attacker-part routing, upstream review-log source tag, and the no-policy silence rule; fails_when=red-team loses its gate on sibling, adversarial loses its review-log row, or a no-policy run records delegation/red-team lines; why_new=criteria 2, 3, 4, 5; seam=none
+  test('attacker parts route per stage, record source:"delegate:<provider label>" for adversarial, and record nothing without a policy value', () => {
+    expect(section).toContain('`adversarial` replaces the native adversarial subagent in every pass that runs Step 4.8, and `red-team` replaces the Red Team dispatch whenever a red team runs: upstream\'s on its own gate, or **Run a red team where /review has none**.');
+    expect(section).toContain('The sibling rule "every named part runs through its delegate" never removes the red team\'s gate.');
+    expect(section).toContain('`red-team` runs at the Red Team point, with `--caught "<calls directory>/caught-<cycle>-<S>.txt"` holding the findings the Red Team is given, one line each.');
+    expect(section).toContain('Write that file once per cycle, mode 0600, before the cycle\'s first red-team call, never rewrite it, and reuse it unchanged on a resume, so the call id and the runner\'s claim against a second paid call stay stable.');
+    // each stage names only its own parts, and a usage error is handled like a refusal
+    expect(section).toContain('--parts <the parts this stage runs> --repo "<checkout>"');
+    expect(section).toContain('Exit 2 is a usage error decided before any call: run that stage\'s parts on the host and record the usage error as the reason.');
+    // the specialist sentences of the credited-parts bullet are scoped away from the attacker parts
+    expect(section).toContain('Those three sentences describe the four specialist parts; the attacker parts follow the rules below instead, so a credited adversarial part adds no `specialists` entry and its findings are never `specialist:adversarial`, and a credited red-team part\'s findings are `red-team`, never `specialist:red-team`,');
+    expect(section).toContain('when list (c) is not declared, waive nothing. If upstream\'s opt-in contract hook blocks on the item, answer with the recorded waiver, never a late dispatch.');
+    expect(section).toContain('Create the calls directory with mode 0700 when it is missing, and write the file through a temporary file in that directory renamed into place, so a crash never leaves a partial list to reuse.');
+    expect(section).toContain('An exit 1 or 2 that prints no `parts` array records only a receipt note naming the exit, with no delegate attempt, and any other exit code is handled like exit 1.');
+    expect(section).toContain('and a credited red-team part is recorded as dispatched in the `specialists` object in both layouts.');
+    expect(section).toContain('`adversarial` runs at Step 4.8 with `--adversarial "<adversarial instructions file>"`.');
+    expect(section).toContain('`source:"delegate:<provider label>"` and `completed` true only when the part was credited; a fallback\'s host attempt gets its own token and row, as upstream defines.');
+    expect(section).toContain('A policy without the value records nothing here.');
+  });
+});
+
+// Track 72B: `red-team=ensure` and `### Run a red team where /review has none`.
+describe('review-and-prep red-team=ensure and wrapper red-team step', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `red-team=ensure`'), policy.indexOf('- `final-gate-repair=tests-docs`'));
+  const sectionRaw = skillSection(prep, '### Run a red team where /review has none');
+  const section = sectionRaw.replace(/\s+/g, ' ');
+
+  // Value: protects=the section's position between delegation and fold, and its phase-table row; fails_when=the section or row moves or is omitted; why_new=T4; seam=none
+  test('the section sits between Delegate named specialist parts and Fold specialist checklists into cycle 1, and the phase table maps it', () => {
+    const at = (heading: string) => prep.indexOf(heading);
+    expect(at('### Delegate named specialist parts')).toBeLessThan(at('### Run a red team where /review has none'));
+    expect(at('### Run a red team where /review has none')).toBeLessThan(at('### Fold specialist checklists into cycle 1'));
+    const rows = prep.split('\n').filter((line) => line.startsWith('| `'));
+    const table = rows.map((row) => row.split('|')[1]!.trim());
+    expect(table.indexOf('`Run a red team where /review has none`')).toBe(table.indexOf('`Delegate named specialist parts`') + 1);
+    expect(rows).toContain('| `Run a red team where /review has none` | `voice` | `voice` |');
+  });
+
+  // Value: protects=opt-in policy bullet, capability check, light-default opt-out and no-policy silence; fails_when=red-team=ensure turns on by default, loses its grep check or waives a gate; why_new=criteria 1, 4, 5, 9; seam=none
+  test('red-team=ensure is opt-in, has its own capability check, is never set by the light default, and records nothing when omitted', () => {
+    expect(bullet).toContain('`red-team=ensure` (its only value) is opt-in.');
+    expect(bullet).toContain('It runs **Run a red team where /review has none** when the review text the host will execute contains neither `Red Team` nor `red-team` and that section\'s upstream anchors still match; otherwise the review runs as today and the receipt says so.');
+    expect(bullet).toContain('Omitted, every cycle runs as today and nothing is recorded.');
+    expect(bullet).toContain('`grep -F \'red-team=ensure\' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value otherwise, keeping its other keys.');
+    expect(bullet).toContain('The value waives no gate, never authorizes a continuation, and combines with every other key.');
+    expect(light).toContain('It never sets `red-team=ensure`: running a wrapper red team where `/review` has none is an explicit caller opt-in until the acceptance record supports a default (`SPEC P1`).');
+    expect(section).toContain('A run whose policy carries neither `red-team=ensure` nor `delegate=red-team` records nothing here and runs as today.');
+
+    const dir = makeBaseTmp('red-team-capability');
+    const copy = join(dir, 'SKILL.md');
+    const check = (path: string) => spawnSync('grep', ['-F', 'red-team=ensure', path]).status;
+    expect(check(join(ROOT, 'skills', 'review-and-prep.md'))).toBe(0);
+    writeFileSync(copy, prep.replaceAll('red-team=ensure', 'red-team-removed'));
+    expect(check(copy)).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Value: protects=criterion 11 (trigger reads installed /review text only, no host named) and upstream's Red Team gate and skip strings; fails_when=a host name enters the condition, upstream's gate is dropped or skip strings diverge; why_new=criteria 1, 4, 11; seam=none
+  test('activation checks only the policy values, the resolved review text and list (a) without naming any host, and keeps upstream gate and skip strings', () => {
+    const activation = section.slice(0, section.indexOf('**Gate.**'));
+    expect(activation).toContain('1. The review policy carries `red-team=ensure` or `delegate=` names `red-team`.');
+    expect(activation).toContain('2. The review text the host will execute contains neither `Red Team` nor `red-team`: the review file Step 1 resolved, plus every review section it loaded for it, including sections resolved from its source installation. The checklists it reads (`review/checklist.md` and `review/specialists/*.md`) are not part of that text, because they name the Red Team whether or not the host runs one. The condition is this text check, never a host name.');
+    expect(activation).toContain('3. List (a) in **Activation (attacker parts)** matches.');
+    expect(activation).not.toMatch(/claude|codex|cursor|astra|antigravity/i);
+
+    expect(section).toContain('"Only if DIFF_LINES > 200 OR any specialist produced a CRITICAL finding"');
+    expect(section).toContain('`skipped — light default repair cycle`');
+    expect(section).toContain('`skipped — bounded-wait host, cycle 1 only`');
+    expect(section).toContain('Run the step at most once per cycle, after Step 4\'s core pass and any specialist parts and before Step 4.7, and never inside the `first-cycle=overlap` window.');
+    expect(section).toContain('`<gstack-root>/review/specialists/red-team.md`');
+    expect(section).toContain('the already-caught list: the findings the core pass and the specialist parts recorded so far this cycle, one line each');
+    expect(section).toContain('Findings join Step 5\'s combine as specialist findings tagged `red-team` (`found_by: red-team`).');
+    expect(section).toContain('A failed or timed-out step records the red-team review as incomplete, which is missing coverage, as upstream states for its Red Team.');
+  });
+
+  // Value: protects=the three Red team receipt templates and all three receipt sites; fails_when=a template or receipt site is dropped or a host placeholder appears; why_new=criteria 1, 4; seam=none
+  test('locks the Red team receipt templates across all three receipt sites with no host placeholder', () => {
+    for (const template of [
+      '`Red team: wrapper (source=<red-team=ensure|delegate=red-team>; cycles=<n>:<ran|not activated|skipped — <reason>>[,...])`',
+      '`Red team: upstream — installed /review carries one`',
+      '`Red team: inactive — <reason>`',
+    ]) expect(section, template).toContain(template);
+    expect(section).toContain('A policy carrying both triggers records `source=red-team=ensure`.');
+    expect(flat).toContain('Add the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`.');
+    expect(flat).toContain('Record the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`.');
+    expect(flat).toContain('the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`,');
+    expect(sectionRaw).not.toContain('byte for byte');
+    expect(sectionRaw).not.toContain('grep -F');
+    for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });
 
@@ -2444,7 +2558,7 @@ describe('review-and-prep specialists=fold', () => {
 
   // Value: protects=the one policy grammar line gains the value after final-gate-repair and keeps every locked run around it; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
   test('the grammar line carries the value after final-gate-repair and keeps the locked runs around it', () => {
-    expect(flat).toContain('final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
+    expect(flat).toContain('final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
     expect(flat).toContain('documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold;');
   });
 
@@ -2521,7 +2635,7 @@ describe('review-and-prep specialists=fold', () => {
     expect(at('### Fold specialist checklists into cycle 1')).toBeLessThan(at('### Reopen review only for behavior-changing repairs'));
     const rows = prep.split('\n').filter((line) => line.startsWith('| `'));
     const table = rows.map((row) => row.split('|')[1]!.trim());
-    expect(table.indexOf('`Fold specialist checklists into cycle 1`')).toBe(table.indexOf('`Delegate named specialist parts`') + 1);
+    expect(table.indexOf('`Fold specialist checklists into cycle 1`')).toBe(table.indexOf('`Run a red team where /review has none`') + 1);
     expect(rows).toContain('| `Fold specialist checklists into cycle 1` | `local-pass`, `voice` | none |');
   });
 

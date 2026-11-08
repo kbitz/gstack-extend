@@ -122,6 +122,50 @@
 - **Revisit when:** The next Track touches a tagged path (installed acceptance is already assigned to Track 76B).
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=src/review-delegate/delegate.ts] Adversarial criteria line is still found by being unique, not by its place in the prompt block
+
+- **Description:** `extractAdversarialChecklist` now finds the framing line by position (the line after the one `Subagent prompt:` line), but still requires the criteria line (`Think like an attacker and a chaos engineer. ...`) to occur once in the whole file, and drops any line between the framing and criteria lines other than upstream's `Read the diff for this branch` line without notice. A future sibling rendering that repeats the criteria text refuses `checklist-anchor`, which turns off every delegated part for that run; an instruction upstream adds inside the prompt block never reaches the delegate.
+- **Why it can wait:** No installed copy triggers it (nested, Codex and Cursor copies of gstack 1.97.0.0 all extract the same checklist), and the refusal fails closed: every part runs on the host.
+- **Upstream severity:** CRITICAL by `/review`'s rule that a FIXABLE adversarial finding is critical; the reviewer rated it Low, `Blocks: no`.
+- **Found in:** `src/review-delegate/delegate.ts` (`extractAdversarialChecklist`).
+- **Context:** Filed by `/review-and-prep` (Track 72B, cycle 2 native adversarial pass) at `bdfbf8d` on 2026-11-08, before draft PR creation; kept as an auto-chosen disposition at `/review`'s cycle cap.
+- **Revisit when:** An upstream rendering repeats the criteria line or adds lines inside the adversarial subagent prompt block, or `bin/upstream-check` reports drift on a `review-and-prep.attacker.adversarial` anchor.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|src/review-delegate/cli.ts|docs/delegated-review.md] Delegate runner failure and caught-file edge cases left after Track 72B
+
+- **Description:** Six low-impact gaps a cycle 3 native adversarial pass found in the delegation section's failure and caught-file rules. (1) A runner that dies after dispatch (the internal-failure exit 1 with empty stdout, or a signal exit) is recorded as no delegate attempt, under-counting a paid call, and the host gets no explicit before/after work-tree comparison while detached provider process groups may outlive the runner. (2) An exit 0 or 4 whose `parts` array cannot be parsed (for example a truncated tool capture) has no recovery rule; rerunning the identical command replays saved results with no spawn. (3) Rename-into-place can replace an existing caught file, which works against "never rewrite it" if a resume rebuilds the list. (4) The temp file's mode and an fsync before the rename are unspecified. (5) The receipt note for an exit with no `parts` array has no defined line or receipt site. (6) Recording a credited red-team part in `specialists` on a nested diff under 50 lines departs from upstream step 7's small-diff map.
+- **Why it can wait:** Each case falls back to the host model, so coverage is kept; (1) predates this Track (exits other than 0, 1 and 4 were undefined in the Track 64C rules). `docs/delegated-review.md`'s matching caught-file and exit text is left to the documentation audit.
+- **Upstream severity:** CRITICAL by `/review`'s rule that a FIXABLE adversarial finding is critical; the reviewer rated (1) Medium and the rest Low, all `Blocks: no`.
+- **Found in:** `skills/review-and-prep.md` (`### Delegate named specialist parts`, the Run paragraph and the credited-parts bullet), `src/review-delegate/cli.ts` (`main`, `runPart`, `prepare`).
+- **Context:** Filed by `/review-and-prep` (Track 72B, cycle 3 native adversarial pass) at `bdfbf8d` on 2026-11-08, before draft PR creation; kept as auto-chosen dispositions at `/review`'s cycle cap.
+- **Revisit when:** The next change to delegation failure handling or the caught file, a `PM2` run in `docs/acceptance/attacker-parts.md` shows a killed runner or a refused red-team call, or a receipt shows a delegate exit other than 0, 1, 2 or 4.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: runner refusal when red-team.md drifts or is missing
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** `prepare()` refuses `checklist-anchor` when `<gstack-root>/review/specialists/red-team.md` is missing or no longer carries the red-team anchors, but no test drives that branch; the existing anchor-drift test covers the specialist checklists and `--adversarial` only.
+- **Hypothesis (untested):** Add a red-team row to the anchor-drift test in `tests/review-delegate.test.ts` (rewrite an anchor in the fixture `red-team.md`, and remove the file) for `check` and `run` in both layouts; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepare`, red-team branch), `tests/review-delegate.test.ts` (anchor-drift test).
+- **Evidence:** The `/ship` coverage audit (audit-only) traced the branch and found no test; `bun test tests/review-delegate.test.ts tests/upstream-check.test.ts` passed (383 pass, 0 fail); no failure was reproduced.
+- **Context:** Filed by `/review-and-prep` (Track 72B) at `7948a6b` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or the red-team checklist anchors.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/review-delegate/delegate.ts|tests/review-delegate.test.ts] Test gap: adversarial extraction when the prompt line is the file's last line
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** `extractAdversarialChecklist` refuses when no line follows the one `Subagent prompt:` line (the framing line is undefined), but the drift table has no row where the prompt line is last.
+- **Hypothesis (untested):** Add that row to the extractor drift table in `tests/review-delegate.test.ts`; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/delegate.ts` (`extractAdversarialChecklist`), `tests/review-delegate.test.ts` (adversarial drift test).
+- **Evidence:** The `/ship` coverage audit (audit-only) found every existing row has a line after the prompt line; no failure was reproduced.
+- **Context:** Filed by `/review-and-prep` (Track 72B) at `7948a6b` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or the adversarial extraction rule.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

@@ -203,6 +203,9 @@
       "tests/parsers-phases.test.ts",
       "tests/parsers-roadmap.test.ts"
     ],
+    "docs/acceptance/attacker-parts.md": [
+      "tests/review-delegate.test.ts"
+    ],
     "docs/acceptance/external-gate.md": [
       "tests/handoff-contract.test.ts"
     ],
