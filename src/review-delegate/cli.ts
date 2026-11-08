@@ -215,26 +215,28 @@ type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: Refus
 /** Everything `check` establishes, in refusal order, with no model call. */
 async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> {
   const { root } = options;
-  const refuse = (reason: RefusalReason): Preparation => ({ ok: false, reason });
+  // A detail (which file, key or path is at fault) goes to stderr beside the one JSON line.
+  const refuse = (reason: RefusalReason, detail?: string): Preparation => ({ ok: false, reason, ...(detail ? { detail } : {}) });
   const read = readTrusted(options.config, 'configuration');
-  if (!read.ok) return refuse(/not found/.test(read.reason) ? 'config-missing' : 'config-malformed');
-  if (read.bytes.length > CONFIG_LIMIT) return refuse('config-malformed');
+  if (!read.ok) return /not found/.test(read.reason) ? refuse('config-missing') : refuse('config-malformed', read.reason);
+  if (read.bytes.length > CONFIG_LIMIT) return refuse('config-malformed', `configuration is larger than ${CONFIG_LIMIT} bytes`);
   const parsed = validateConfig(read.bytes.toString('utf8'));
   if (!parsed.ok) return { ok: false, reason: parsed.reason, detail: parsed.detail };
   for (const part of options.parts) if (!parsed.config.parts[part]) return refuse('part-unmapped');
 
-  const repoProviders = options.parts
-    .map((part) => parsed.config.providers[parsed.config.parts[part]!]!)
-    .filter((provider) => provider.access === 'repo');
+  const repoProviders = [...new Set(options.parts.map((part) => parsed.config.parts[part]!))]
+    .map((label) => ({ label, provider: parsed.config.providers[label]! }))
+    .filter(({ provider }) => provider.access === 'repo');
   let home: string | undefined;
   let privateDirs: string[] = [];
   if (repoProviders.length > 0) {
     // As uid 0 the sandbox could read every root-only file, and without a seccomp table the kernel keyrings stay reachable.
     if (process.getuid?.() === 0 || !keyringSeccomp(process.arch)) return refuse('sandbox-unavailable');
     const rawHome = process.env.HOME;
-    if (!rawHome || !isAbsolute(rawHome) || CONTROL_RE.test(rawHome)) return refuse('config-malformed');
+    const badHome = 'HOME must be an absolute path other than /, without control characters, for a repo-mode provider';
+    if (!rawHome || !isAbsolute(rawHome) || CONTROL_RE.test(rawHome)) return refuse('config-malformed', badHome);
     home = resolve(rawHome);
-    if (home === '/') return refuse('config-malformed');
+    if (home === '/') return refuse('config-malformed', badHome);
     const accountHome = passwdHome();
     // A path as written and with its symlinks resolved, so a symlinked ancestor cannot disguise a hidden path.
     const forms = (path: string) => [...new Set([path, realpathBelow(path)])];
@@ -254,7 +256,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       ...['/tmp', '/var', '/var/tmp', '/run', '/proc', '/dev', '/sys'].flatMap((path) => forms(path))])];
     // The reviewed repository and the calls directory: no listed path may sit at or inside them (that would show the live checkout).
     const repoPaths = [options.repo, options.calls].filter(Boolean).flatMap(forms);
-    for (const provider of repoProviders) {
+    for (const { label, provider } of repoProviders) {
       const entries = provider.expose ?? [];
       const atOrAbove = (path: string, targets: string[]) => forms(path).some((form) => targets.some((target) => isWithin(form, target)));
       const atOrInside = (path: string, targets: string[]) => forms(path).some((form) => targets.some((target) => isWithin(target, form)));
@@ -273,16 +275,21 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       for (const entry of entries) {
         // A listed path may sit inside a hidden root, never at one or above one: that would show the whole root. Nothing may sit
         // inside a runtime dir (its session bus and agents) or inside the reviewed repository or the calls directory.
-        if (forms(entry).includes('/') || atOrAbove(entry, hiddenRoots) || atOrInside(entry, runtimeDirs) || atOrInside(entry, repoPaths)
-          || symlinkVanishes(entry, entries.filter((other) => other !== entry))) {
-          return refuse('config-malformed');
-        }
+        const why = forms(entry).includes('/') || atOrAbove(entry, hiddenRoots) ? 'is at or above a directory the sandbox hides'
+          : atOrInside(entry, runtimeDirs) ? 'is inside the account runtime directory'
+          : atOrInside(entry, repoPaths) ? 'is at or inside the reviewed repository or the calls directory'
+          : symlinkVanishes(entry, entries.filter((other) => other !== entry)) ? 'passes a symlink that a hidden directory would remove'
+          : null;
+        if (why) return refuse('config-malformed', `provider ${label} expose entry ${JSON.stringify(entry)} ${why}`);
       }
       // Every hop of argv[0]'s link chain that lies under a hidden root needs a listed path around it, with no vanishing symlink.
       const entryPaths = entries.map((entry) => realpathBelow(entry));
       const hops = linkChain(provider.argv[0]!);
       const uncovered = hops.some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
-      if (uncovered || [provider.argv[0]!, ...hops].some((path) => symlinkVanishes(path, entries))) return refuse('config-malformed');
+      if (uncovered || [provider.argv[0]!, ...hops].some((path) => symlinkVanishes(path, entries))) {
+        return refuse('config-malformed', `provider ${label} argv[0] ${JSON.stringify(provider.argv[0])} needs an expose entry around its `
+          + 'install under a hidden directory, reached without a symlink that directory would remove');
+      }
     }
   }
 
@@ -465,8 +472,9 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   };
   for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
   // A listed path at or inside a hidden repository path (a linked worktree or the common git dir) would show the live checkout.
+  // One above it is fine: the --tmpfs mounts over those paths come after every expose layer.
   const forms = (path: string) => [path, realpathBelow(path)];
-  if (spec.expose.some((entry) => forms(entry).some((form) => hidden.some((path) => isWithin(path, form) || isWithin(form, path))))) {
+  if (spec.expose.some((entry) => forms(entry).some((form) => hidden.some((path) => isWithin(path, form))))) {
     throw new SetupFailure('expose');
   }
   const rawXdg = process.env.XDG_RUNTIME_DIR;
@@ -717,7 +725,7 @@ export async function main(argv: string[], io: CliIo, deps: Deps = {}): Promise<
   const prepared = await prepare(options, deps);
   if (!prepared.ok) {
     print({ status: 'refused', reason: prepared.reason });
-    // The validation detail (which key or value is malformed) goes to stderr; stdout keeps its one JSON line.
+    // The detail (which file, key, value or path is at fault) goes to stderr; stdout keeps its one JSON line.
     if (prepared.detail) io.stderr(`review-delegate: ${prepared.reason}: ${prepared.detail}\n`);
     return EXIT.refused;
   }

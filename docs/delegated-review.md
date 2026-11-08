@@ -447,8 +447,10 @@ line does not directly follow the one `Subagent prompt:` line, or the prompt or
 criteria line does not occur once) or `sandbox-unavailable` (a named part maps
 to a repo-mode provider and the host is not Linux, has no executable at the
 fixed `bwrap` paths, or fails the 10 s bubblewrap probe). A `config-malformed`
-refusal also writes its validation detail (the key or value at fault, such as a
-`keep` key) to standard error. Exit 2 is a usage error decided before
+refusal also writes one detail line to standard error naming what is at fault:
+the unreadable or oversized file, the key or value (such as a `keep` key), an
+invalid `HOME`, or the provider and the `expose` entry or `argv[0]` that breaks a
+path rule. Exit 2 is a usage error decided before
 any work (an unknown flag, a part outside the six, a repeated part, a missing or
 extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
 inside `--repo`): standard output is empty and standard error has

@@ -245,13 +245,13 @@ const reportOf = (s: Setup, json: any, part: string) => {
   if (!line) throw new Error(`no REPORT line from ${part}: ${String(saved.spawned.stderr).slice(0, 200)}`);
   return JSON.parse(line.slice('REPORT '.length));
 };
-/** A localhost server the sandbox can reach through the shared network; the port goes to the fake through the exposed state dir. */
 /** Add the state dir to a provider's expose list: the fake reads its inputs there, and anything it writes there is discarded. */
 const exposeState = (s: Setup, label: string) => {
   const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
   cfg.providers[label].expose = [...(cfg.providers[label].expose ?? []), s.state];
   writeFileSync(s.config, JSON.stringify(cfg));
 };
+/** A localhost server the sandbox can reach through the shared network; the port goes to the fake through the exposed state dir. */
 async function socketChannel(state: string, onData?: (socket: Socket, data: string) => void) {
   let connections = 0;
   const server = createServer((socket) => { connections++; socket.on('error', () => {}); socket.on('data', (d) => onData?.(socket, d.toString())); });
@@ -1300,7 +1300,7 @@ describe('repository-mode sandbox and check', () => {
 
   // Value: protects=a TMPDIR outside /tmp is hidden like /tmp, so sibling parts' staged copies stay private; fails_when=the runner's temporary directory is not mounted over; why_new=cycle-2 finding (security, adversarial); seam=none
   test('sandboxArgs puts a tmpfs over the private directories before any expose mount', () => {
-    const args = sandboxArgs({ home: '/h', privateDirs: ['/scratch/tmp', '/home/someone'], hidden: [], resolvDir: null, expose: [{ kind: 'dir', path: '/scratch/tmp/x' }], keep: [], copy: '/scratch/tmp/c/repo' });
+    const args = sandboxArgs({ home: '/h', privateDirs: ['/scratch/tmp', '/home/someone'], hidden: [], resolvDir: null, expose: [{ kind: 'dir', path: '/scratch/tmp/x' }], copy: '/scratch/tmp/c/repo' });
     const joined = args.join(' ');
     expect(joined).toContain('--tmpfs /scratch/tmp');
     expect(joined).toContain('--tmpfs /home/someone');
@@ -1310,15 +1310,46 @@ describe('repository-mode sandbox and check', () => {
   // Value: protects=no listed path shows the live repository or the calls directory, while the runner's own files may be exposed (writes are discarded); fails_when=the repository is not a guarded root; why_new=review findings (security, Codex); seam=none
   test('an expose entry at or inside the reviewed repository or the calls directory refuses with config-malformed at run', async () => {
     const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
-    const withExpose = (entry: string) => { const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.expose = [FAKE, entry]; writeFileSync(s.config, JSON.stringify(cfg)); };
+    const withExpose = (entry: string) => {
+      const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+      cfg.providers.p.expose = [FAKE, ...RUNTIME_EXPOSE, entry];
+      writeFileSync(s.config, JSON.stringify(cfg));
+    };
     mkdirSync(join(s.repo, 'sub'), { recursive: true });
     for (const entry of [s.repo, join(s.repo, 'sub'), s.calls]) {
       withExpose(entry);
-      expect((await runInProcess(runArgs(s, 'testing'))).json, entry).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+      const r = await runInProcess(runArgs(s, 'testing'));
+      expect(r.json, entry).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+      // The refusal's detail names the provider, the entry and the rule it breaks.
+      expect(r.stderr, entry).toContain(`provider p expose entry ${JSON.stringify(entry)} is at or inside the reviewed repository or the calls directory`);
     }
     // Exposing the runner's own configuration is allowed: nothing written to it persists.
     withExpose(dirname(s.config));
     expect((await runInProcess(checkArgs(s, 'testing'))).json.reason).not.toBe('config-malformed');
+  });
+
+  // Value: protects=an expose entry above the reviewed repository and the calls directory runs, and the later tmpfs mounts still hide both; fails_when=setup refuses an entry above a hidden repository path, or the hide mounts come before the expose layers; why_new=continuation cycle-3 finding (adversarial, testing); seam=none
+  test.if(probe)('an expose entry above the reviewed repository runs, and the repository and the calls directory stay hidden', async () => {
+    const s = setup('nested', { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE] } }, { adversarial: 'repo-prov' });
+    const exposeDir = fresh('expose-above');
+    put(join(exposeDir, 'info.txt'), 'HOST-SKILL\n');
+    writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
+    writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
+    // The scratch root holds the repository, the calls directory, the state dir and exposeDir.
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers['repo-prov'].expose = [FAKE, ...RUNTIME_EXPOSE, dirname(s.repo)];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(0);
+    expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    const report = reportOf(s, r.json, 'adversarial');
+    expect(report.head).toBe(s.candidate);
+    expect(report.outside).toBe('REPO-ONLY-MARKER\n');
+    expect(report.exposedBefore).toBe('HOST-SKILL\n');
+    expect(report.realRepoEntries.filter((e: string) => e !== '.git')).toEqual([]);
+    expect(report.callsEntries).toEqual([]);
+    expect(readFileSync(join(exposeDir, 'info.txt'), 'utf8')).toBe('HOST-SKILL\n');
+    expect(existsSync(join(s.repo, 'clone-only.txt'))).toBe(false);
   });
 
   // Value: protects=no symlink that vanishes with a hidden root is trusted (bwrap mounts and execs the written spelling), while a symlink inside a listed directory survives; fails_when=symlinked ancestors pass, or a working link inside an exposed dir is refused; why_new=review findings (Codex, adversarial, testing); seam=none
@@ -1350,7 +1381,7 @@ describe('repository-mode sandbox and check', () => {
   test('an entry at /proc, /dev, /sys, /var/tmp or the account runtime dir refuses with config-malformed even without XDG_RUNTIME_DIR', async () => {
     const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
     for (const entry of ['/proc', '/dev', '/sys', '/var/tmp', `/run/user/${process.getuid?.() ?? 0}`]) {
-      const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.expose = [FAKE, entry]; writeFileSync(s.config, JSON.stringify(cfg));
+      const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.expose = [FAKE, ...RUNTIME_EXPOSE, entry]; writeFileSync(s.config, JSON.stringify(cfg));
       expect((await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: undefined })).json, entry).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
     }
   });
