@@ -634,3 +634,27 @@ describe('full-review PAUSE route', () => {
     expect(skill).toContain('If `/full-review status`, run Telemetry finish with `--outcome unknown` (a status check pairs its own start and reports no run outcome), then stop here. That start is the one Telemetry start runs when this skill begins; a status check whose start did not run skips this finish.');
   });
 });
+
+describe('full-review stage line', () => {
+  const raw = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
+  const skill = flatProse(raw);
+
+  // Value: protects=every full-review exit except /full-review status ends with a stage-handoff/v1 line carrying stage, next, status and head; fails_when=Step 3 in Phase 6 is dropped, the template changes, or TODOS/no-TODOS/PAUSE/BLOCKED/NEEDS_CONTEXT/status rules drift; why_new=Track 72A gives full-review a fixed exit line under the contract; seam=none; no_claim=agent behavior (static prose lock)
+  test('full-review Phase 6 Step 3 defines the stage line and maps finish, pause, blocked, needs-context and status exits', () => {
+    expect(raw).toContain('### Step 3: End with the stage line');
+    expect(raw).toContain(
+      'Stage handoff: stage-handoff/v1; stage: full-review; next: <roadmap|full-review|none>; status: <done|done-with-concerns|paused|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+    );
+    for (const clause of [
+      'End the text before the AskUserQuestion with the stage line from Step 3.',
+      '- **Phase 6 finish:** `next: roadmap` when approved items were written to TODOS.md, else `none`; `status: done` or `done-with-concerns` from the rollup; `head` the reviewed commit (`session.yaml`\'s `commit` expanded with `git rev-parse --verify "<commit>^{commit}"`); `plan-sha256: none`.',
+      '- **PAUSE:** `next: full-review`, `status: paused`, `head` the reviewed commit (`session.yaml`\'s `commit` expanded with `git rev-parse --verify "<commit>^{commit}"`), `plan-sha256: none`.',
+      '- **BLOCKED (Phase 6 after a stop) or NEEDS_CONTEXT:** `next: none`, `status: blocked` or `needs-context`, `head` the reviewed commit (or `none` when the session records no commit or it does not resolve), `plan-sha256: none`.',
+      'End the PAUSE message with the stage line (`next: full-review; status: paused`).',
+      'End every NEEDS_CONTEXT chat-only report and escalation with the stage line (`next: none; status: needs-context`).',
+      '`/full-review status` prints no stage line.',
+    ]) {
+      expect(skill, clause).toContain(flatProse(clause));
+    }
+  });
+});

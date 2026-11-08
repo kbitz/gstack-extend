@@ -385,3 +385,27 @@ describe('collision-driven grouping prose and shared_docs marker', () => {
     );
   });
 });
+
+describe('roadmap stage line', () => {
+  const raw = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+  const flat = raw.replace(/\s+/g, ' ');
+
+  // Value: protects=standalone /roadmap ends every exit with a stage-handoff/v1 line while preserving the 4-line Run /docs-ship fence and suppressing the line when composed inside /project-spec; fails_when=the Run /docs-ship fence changes, the roadmap stage-line template or exit table drifts, or the composition suppression rule is dropped; why_new=Track 72A gives roadmap a fixed exit line under the contract; seam=none; no_claim=agent behavior (static prose lock)
+  test('Step 7 preserves the Run /docs-ship fence, defines the stage line and suppresses it when composed into /project-spec', () => {
+    expect(raw).toContain(
+      '```text\nRun /docs-ship\nBrief: <PROPOSAL_DIR>/proposal-{ts}.md (the approved proposal)\nAllowed files: <every path the Step 6 commit staged>\nVersion: <Step 5 level and reason, or "no bump">\n```',
+    );
+    expect(raw).toContain(
+      'Stage handoff: stage-handoff/v1; stage: roadmap; next: <docs-ship|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+    );
+    for (const clause of [
+      "Under `/project-spec` composition, return these values to the wrapper, which prints the handoff; a run composed into `/project-spec` ends in that skill's Step 3, which prints the stage line, so this step returns its values and prints none.",
+      '- **Step 7 `Run /docs-ship` handoff:** `next: docs-ship`, `status: done` or `done-with-concerns` from the rollup, `head` from `git rev-parse HEAD` (the Step 6 commit), `plan-sha256: none`.',
+      '- **No commit (nothing was committed):** `next: none`, `status: done` or `done-with-concerns`, `head` from `git rev-parse HEAD`, `plan-sha256: none`.',
+      '- **BLOCKED or NEEDS_CONTEXT:** `next: none`, `status: blocked` or `needs-context`, `head` from `git rev-parse HEAD` (or `none` without one), `plan-sha256: none`.',
+      "End every standalone `/roadmap` final message, including no-commit, BLOCKED and NEEDS_CONTEXT exits, with Step 7's stage line (`next: none` when no `Run /docs-ship` handoff is printed).",
+    ]) {
+      expect(flat, clause).toContain(clause);
+    }
+  });
+});

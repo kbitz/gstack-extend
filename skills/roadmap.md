@@ -1411,7 +1411,9 @@ versions it, not `/review-and-prep` and `/ship-and-land`. When Step 6
 committed, end with this copyable handoff for a fresh session in this
 workspace. Do not push, open a PR or run `/docs-ship` here. Skip the handoff
 when nothing was committed. Under `/project-spec` composition, return these
-values to the wrapper, which prints the handoff.
+values to the wrapper, which prints the handoff; a run composed into
+`/project-spec` ends in that skill's Step 3, which prints the stage line, so
+this step returns its values and prints none.
 
 ```text
 Run /docs-ship
@@ -1419,6 +1421,16 @@ Brief: <PROPOSAL_DIR>/proposal-{ts}.md (the approved proposal)
 Allowed files: <every path the Step 6 commit staged>
 Version: <Step 5 level and reason, or "no bump">
 ```
+
+End every standalone `/roadmap` final message (after the `Run /docs-ship` handoff block, or at the end of a no-commit, BLOCKED or NEEDS_CONTEXT exit) with this stage line on its own, outside any fence and with nothing after it:
+
+Stage handoff: stage-handoff/v1; stage: roadmap; next: <docs-ship|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none
+
+For each exit ([stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md), `docs/workflow-handoffs.md`):
+
+- **Step 7 `Run /docs-ship` handoff:** `next: docs-ship`, `status: done` or `done-with-concerns` from the rollup, `head` from `git rev-parse HEAD` (the Step 6 commit), `plan-sha256: none`.
+- **No commit (nothing was committed):** `next: none`, `status: done` or `done-with-concerns`, `head` from `git rev-parse HEAD`, `plan-sha256: none`.
+- **BLOCKED or NEEDS_CONTEXT:** `next: none`, `status: blocked` or `needs-context`, `head` from `git rev-parse HEAD` (or `none` without one), `plan-sha256: none`.
 
 ## Output Format (ROADMAP.md template)
 
@@ -1736,6 +1748,8 @@ ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
 <!-- /SHARED:escalation-format -->
+
+End every standalone `/roadmap` final message, including no-commit, BLOCKED and NEEDS_CONTEXT exits, with Step 7's stage line (`next: none` when no `Run /docs-ship` handoff is printed).
 
 <!-- SHARED:confusion-head -->
 ## Confusion Protocol

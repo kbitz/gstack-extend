@@ -1031,3 +1031,33 @@ describe('pair-review PAUSE route', () => {
     expect(text).toContain('If this was `/pair-review status`, run Telemetry finish with `--outcome unknown` (a status check pairs its own start and reports no run outcome), then stop here. That start is the one Telemetry start runs when this skill begins; a status check whose start did not run skips this finish.');
   });
 });
+
+describe('pair-review stage line', () => {
+  // Value: protects=every pair-review exit except /pair-review status ends with a stage-handoff/v1 line carrying stage, next, status and head; fails_when=the Stage line section moves into Phase 4, drops the template or leaves paused/PAUSE/BLOCKED/NEEDS_CONTEXT/status exits unspecified; why_new=Track 72A gives pair-review a fixed exit line under the contract; seam=none; no_claim=agent behavior (static prose lock)
+  test('pair-review places ## Stage line after Phase 4 and maps every exit', () => {
+    const phase4At = pairSkill.indexOf('## Phase 4: Completion');
+    const stageAt = pairSkill.indexOf('\n---\n\n## Stage line\n');
+    const guardAt = pairSkill.indexOf('## Active Session Guard');
+    expect(phase4At).toBeGreaterThan(-1);
+    expect(stageAt).toBeGreaterThan(phase4At);
+    expect(guardAt).toBeGreaterThan(stageAt);
+    const stageSection = skillSection(pairSkill, '## Stage line');
+    expect(stageSection).toContain(
+      'Stage handoff: stage-handoff/v1; stage: pair-review; next: <review-and-prep|pair-review|none>; status: <done|done-with-concerns|paused|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+    );
+    const text = flatProse(pairSkill);
+    expect(text).toContain(
+      "Every route's text before its AskUserQuestion ends with the stage line from `## Stage line`.",
+    );
+    expect(text).toContain(
+      'End the text with the stage line (`next: review-and-prep`) before the AskUserQuestion.',
+    );
+    expect(text).toContain(
+      'End the PAUSE message with the stage line (`next: pair-review; status: paused`).',
+    );
+    expect(text).toContain(
+      'End every BLOCKED or NEEDS_CONTEXT report with the stage line (`next: none; status: blocked` or `needs-context`).',
+    );
+    expect(text).toContain('`/pair-review status` prints no stage line.');
+  });
+});

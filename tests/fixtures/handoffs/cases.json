@@ -151,7 +151,7 @@
     "C-PAUSED-LIVE-MISSING": {"text":"c-pause.txt","live":{"headSha":"$HEAD"},"unset":["branch"],"expect":{"mismatches":["unknown"]}},
     "C-PAUSED-MALFORMED-OTHER": {"text":"c-pause.txt","edits":[["/pull/42 on example-org/example-repo, feature/handoff-demo, checkpointed at","/pull/99 on example-org/example-repo feature/handoff-demo checkpointed at"]],"live":{"headSha":"$HEAD"},"expect":{"mismatches":["malformed","pr"]}},
     "C-PAUSED-NON-PR-URL": {"text":"c-pause.txt","edits":[["https://github.com/example-org/example-repo/pull/42 on example-org/example-repo,","https://github.example.com/other-org/other-repo/pull/7 on other-org/other-repo,"]],"live":{"headSha":"$HEAD"},"expect":{"mismatches":["malformed","repo"]}},
-    "C-PAUSED-TOKEN": {"text":"c-pause.txt","edits":[["confirm exit 0.","confirm exit 0 with $TOKEN."]],"live":{"headSha":"$HEAD"},"expect":{"mismatches":["redaction"]}},
+    "C-PAUSED-TOKEN": {"text":"c-pause.txt","edits":[["confirm the report downloads.","confirm the report downloads with $TOKEN."]],"live":{"headSha":"$HEAD"},"expect":{"mismatches":["redaction"]}},
     "C-RESUME": {"text":"c-resume.txt","expect":{"handoff":"H-C-resume","mismatches":[]}},
     "C-RESUME-NO-PAUSE-SHA": {"text":"c-resume.txt","edits":[["Paused at: $HEAD\n",""]],"expect":{"mismatches":["paused-sha-missing"]}},
     "C-RESUME-NOT-ANCESTOR": {"text":"c-resume.txt","live":{"pausedShaIsAncestorOfHead":false},"expect":{"mismatches":["paused-sha"]}},
@@ -298,6 +298,11 @@
     "C-PAUSE-STAGE-LINE": {"text":"c-pause.txt","live":{"headSha":"$HEAD"},"suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: pair-review; status: paused; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-C-pause","mismatches":[]}},
     "E-STAGE-LINE": {"text":"e-continue.txt","prefix":"STOPPED \u2014 review cycle cap \u2014 https://github.com/example-org/example-repo/pull/42\n\n","expect":{"handoff":"H-E","mismatches":[]},"suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: review-and-prep; status: stopped; head: $HEAD; plan-sha256: $PLAN\n"},
     "D-STAGE-LINE-BLOCKED": {"text":"d-blocked-summary.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: none; status: blocked; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-D","mismatches":["blocked"]}},
-    "F-PAUSE-STAGE-LINE": {"text":"f-pause.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: pair-review; status: paused; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-F","mismatches":["external-gate-line"]}}
+    "F-PAUSE-STAGE-LINE": {"text":"f-pause.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: pair-review; status: paused; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-F","mismatches":["external-gate-line"]}},
+    "C-RESUME-STAGE-LINE": {"text":"c-resume.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: pair-review; next: review-and-prep; status: done; head: $NEWHEAD; plan-sha256: none\n","expect":{"handoff":"H-C-resume","mismatches":[]}},
+    "C-CLOSED-PAUSED-STAGE-LINE": {"text":"c-closed-paused.txt","live":{"prState":"CLOSED"},"suffix":"\nStage handoff: stage-handoff/v1; stage: pair-review; next: none; status: done; head: $NEWHEAD; plan-sha256: none\n","expect":{"handoff":"H-D","mismatches":["closed-paused"]}},
+    "C-LOOKUP-FAILURE-STAGE-LINE": {"text":"c-lookup-failure.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: pair-review; next: none; status: done; head: $NEWHEAD; plan-sha256: none\n","expect":{"handoff":"H-D","mismatches":["unknown"]}},
+    "D-RELEASE-ONLY-STAGE-LINE": {"text":"d-release-only-handback.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: ship-and-land; next: review-and-prep; status: stopped; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-D","mismatches":["release-only-handback"]}},
+    "D-STAGE-LINE-ONLY": {"text":"stage-line.txt","edits":[["stage: implement; next: review-and-prep; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1;","stage: ship-and-land; next: none; status: done; head: $NEWHEAD;"]],"expect":{"handoff":"H-D","mismatches":["bare-summary"]}}
   }
 }

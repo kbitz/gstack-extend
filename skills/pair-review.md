@@ -1397,7 +1397,7 @@ CHECKPOINTS: <N> saved
 If this was `/pair-review status`, run Telemetry finish with `--outcome unknown`
 (a status check pairs its own start and reports no run outcome), then stop here.
 That start is the one Telemetry start runs when this skill begins; a status check
-whose start did not run skips this finish.
+whose start did not run skips this finish. `/pair-review status` prints no stage line.
 
 If this was `/pair-review resume`, present via AskUserQuestion:
 - Question: "[Dashboard from Step 2 above]\n\nContinue where you left off, or start fresh?"
@@ -1553,7 +1553,8 @@ These routes produce the hold and resume outputs of the published
 [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
 (`docs/workflow-handoffs.md`, H-C). Keep the `paused`, `closed-paused` and
 `lookup-failure` outcomes and the `Run /review-and-prep resume` prompt wording
-aligned with it, because external callers parse them.
+aligned with it, because external callers parse them. Every route's text before
+its AskUserQuestion ends with the stage line from `## Stage line`.
 
 Route by `PR_CLASS`; a failed lookup is never no pause:
 
@@ -1573,6 +1574,8 @@ Route by `PR_CLASS`; a failed lookup is never no pause:
   Local report (this machine only): <SESSION_DIR>/report.md. On another machine, paste its contents into the resumed session.
   Do not run /ship on this PR.
   ```
+
+  End the text with the stage line (`next: review-and-prep`) before the AskUserQuestion.
 
   Present via AskUserQuestion:
   - Question: "Test report saved. PR <URL> is paused for /review-and-prep. Continue to /review-and-prep resume runs it in this session; the fenced handoff is for a fresh session. Do not run /ship on this PR."
@@ -1615,6 +1618,23 @@ Present via AskUserQuestion:
 **If recommending `/ship`:**
 - Question: "**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\n\n[One-line summary of parked bug outcomes if any]"
 - Options: ["Continue to /ship", "Commit the report to the repo", "Done for now"]
+
+---
+
+## Stage line
+
+End every final message (after the `paused` route's ```text handoff block, as the last line of every route's text before its AskUserQuestion, or at the end of a PAUSE, BLOCKED or NEEDS_CONTEXT output) with this stage line on its own, outside any fence and with nothing after it:
+
+Stage handoff: stage-handoff/v1; stage: pair-review; next: <review-and-prep|pair-review|none>; status: <done|done-with-concerns|paused|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none
+
+For each exit ([stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md), `docs/workflow-handoffs.md`):
+
+- **Step 3 `paused` route (H-C resume prompt):** `next: review-and-prep`, `status: done` or `done-with-concerns` from the session rollup, `head` the prompt's `current HEAD` (`git rev-parse HEAD`), `plan-sha256: none`. When the session rollup is BLOCKED, print `next: none; status: blocked`.
+- **Step 3, every other route (`closed-paused`, `lookup-failure`, `no-github`, `no-pr`, `no-pause`):** `next: none`, `status: done` or `done-with-concerns` from the session rollup (`blocked` with `next: none` when the session rollup is BLOCKED), `head` from `git rev-parse HEAD` at the exit, `plan-sha256: none`.
+- **PAUSE:** `next: pair-review`, `status: paused`, `head` from `git rev-parse HEAD` at the exit, `plan-sha256: none`.
+- **BLOCKED or NEEDS_CONTEXT (checkpoint or fix commit failures, a group that cannot proceed, or missing session context):** `next: none`, `status: blocked` or `needs-context`, `head` from `git rev-parse HEAD` (or `none` without one), `plan-sha256: none`.
+
+A reply in the same invocation that ends the run with more output ends that output with the stage line again, `head` read afresh; a reply that starts another skill in the session leaves the exit to that skill. `/pair-review status` ends no run and prints no stage line.
 
 ---
 
@@ -1750,6 +1770,7 @@ continue with `/pair-review resume`, then run Telemetry finish with
 first action in this conversation that continues the work (anything but STATUS)
 runs Telemetry start once, before it acts; a `/pair-review` invocation that
 continues the work (anything but `status`) counts its own start as that one.
+End the PAUSE message with the stage line (`next: pair-review; status: paused`).
 
 When ambiguous, ask.
 
@@ -1793,6 +1814,8 @@ ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
 <!-- /SHARED:escalation-format -->
+
+End every BLOCKED or NEEDS_CONTEXT report with the stage line (`next: none; status: blocked` or `needs-context`).
 
 <!-- SHARED:confusion-head -->
 ## Confusion Protocol

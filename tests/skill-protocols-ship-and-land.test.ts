@@ -353,7 +353,7 @@ describe('release-only ship path', () => {
     const stopN = stop.replace(/\s+/g, ' ');
     for (const clause of [
       "Do not ask land's no-CI, check-exclusion or merge-approval questions: this run cannot act on the answers.",
-      'Run telemetry finish (`--outcome success` at the gate, `error` with a blocker), then finish with the readiness report, `stopped at merge gate (caller request)` and, as the last lines, the merge decision.',
+      'Run telemetry finish (`--outcome success` at the gate, `error` with a blocker), then finish with the readiness report, `stopped at merge gate (caller request)` and, as the last lines before the stage line, the merge decision.',
       'Print it as plain text, not AskUserQuestion: its answer belongs to the next run.',
       'Name the PR, its full head SHA and every state the landing run will ask the user to accept on that head: the CI verdict (`NO_CHECKS`, or each named non-required failing or pending check), an unconfirmed first-run setup, each readiness warning and any deployment the merge triggers.',
       "Ask whether to land it or leave the PR open. To land, give the exact command that starts the landing run: `/ship-and-land <PR URL>`, plus this invocation's verification URL when the user passed one.",
@@ -379,7 +379,7 @@ describe('release-only ship path', () => {
     expect(lines.at(-1)).toContain('To land, run `/ship-and-land <PR URL>`');
     expect(lines.at(-1)).toContain('asks you to accept NO_CHECKS on this head and approve the merge');
     expect(lines.at(-1)).toContain('To leave the PR open, do nothing.');
-    expect(shipN).toContain('After a merge-gate stop, the merge decision stays last.');
+    expect(shipN).toContain('After a merge-gate stop, the merge decision stays last before the stage line.');
     expect(shipN).toContain('every exit, including blockers, preparation handoffs and the merge decision, completes the invocation');
   });
 
@@ -804,5 +804,36 @@ describe('ship-and-land documentation-scope=contracts', () => {
     expect(raw).not.toContain('byte for byte');
   });
 });
+
+describe('ship-and-land stage line', () => {
+  const raw = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
+  const shipN = raw.replace(/\s+/g, ' ');
+
+  // Value: protects=every ship-and-land exit ends with a stage-handoff/v1 line carrying stage, next, status and head; fails_when=the Stage line section or any exit mapping (landed, merge-gate stop, release-only hold, Step 1 hand-backs, merge not approved, or BLOCKED) is dropped or altered; why_new=Track 72A gives ship-and-land a fixed exit line under the contract; seam=none; no_claim=agent behavior (static prose lock)
+  test('ship-and-land maps landed, merge-gate stop, release-only hold, Step 1 hand-backs, merge not approved and blocked exits to stage-handoff/v1', () => {
+    const section = skillSection(raw, '### Stage line');
+    expect(section).toContain(
+      'Stage handoff: stage-handoff/v1; stage: ship-and-land; next: <ship-and-land|review-and-prep|pair-review|none>; status: <done|done-with-concerns|stopped|blocked>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+    );
+    const sectionN = section.replace(/\s+/g, ' ');
+    for (const clause of [
+      '- **Landed (merged, including an already-merged rerun):** `next: none`, `status: done` (`done-with-concerns` when deployment is unverified, CI is pending or canary is unavailable), `head` the PR\'s merge commit (`gh pr view --json mergeCommit`), `plan-sha256` the `Plan` SHA-256 of the marked handoff this invocation validated (else `none`).',
+      '- **Merge-gate stop with no blocker (`--no-land` or a direct stop request):** `next: ship-and-land`, `status: stopped`, `head` the PR head it checked, `plan-sha256` as above.',
+      '- **Release-only hold:** `next: review-and-prep`, `status: stopped`, `head` the hand-back\'s `head`, `plan-sha256` as above.',
+      '- **Hand-back to preparation (draft PR, paused PR, cycle-capped PR, or pending user testing before ship opens a PR):** `next: review-and-prep` (`pair-review` for a paused PR), `status: stopped`, `head` the PR head it checked (local HEAD while no PR exists), `plan-sha256` as above.',
+      '- **Merge not approved (the user declines; the PR stays open):** `next: none`, `status: stopped`, `head` the PR head it checked, `plan-sha256` as above.',
+      '- **BLOCKED (any blocker, including a merge-gate stop that names blockers):** `next: none`, `status: blocked`, `head` the PR head it checked (local HEAD while no PR exists, or `none` when no head was read), `plan-sha256` as above.',
+    ]) {
+      expect(sectionN, clause).toContain(clause);
+    }
+    expect(shipN).toContain(
+      "Every Step 1 hand-back (draft PR, paused PR with `next: pair-review`, cycle-capped PR, or pending user testing before ship opens a PR) ends with the stage line in Step 4's **Stage line** subsection (`status: stopped`).",
+    );
+    expect(shipN).toContain(
+      "Print the stage line after the hand-back fence (`next: review-and-prep; status: stopped`, `head` set to the fence's `head:`).",
+    );
+  });
+});
+
 
 

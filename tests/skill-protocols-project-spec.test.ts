@@ -296,4 +296,20 @@ describe('project-spec composition drift-locks', () => {
     }
     expect(specN).toContain('consumers and the audit use it to recognize the product spec.');
   });
+
+  // Value: protects=every /project-spec exit ends with a stage-handoff/v1 line carrying stage: project-spec after the Run /docs-ship fence or on no-commit/BLOCKED/NEEDS_CONTEXT exits; fails_when=Step 3 drops the project-spec stage-line template or any of the three exit mappings; why_new=Track 72A gives project-spec a fixed exit line under the contract; seam=none; no_claim=agent behavior (static prose lock)
+  test('project-spec ends every exit with the stage line', () => {
+    const step3 = section(spec, '## 3. Finish through /roadmap', '<!-- SHARED:telemetry-finish -->', false);
+    expect(step3).toContain(
+      'Stage handoff: stage-handoff/v1; stage: project-spec; next: <docs-ship|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+    );
+    const step3N = norm(step3);
+    for (const clause of [
+      '- **Step 3 `Run /docs-ship` handoff:** `next: docs-ship`, `status: done` (`done-with-concerns` when roadmap is marked incomplete or evidence is pending), `head` from `git rev-parse HEAD` (the documentation commit), `plan-sha256: none`.',
+      '- **No documentation commit:** `next: none`, `status: done` or `done-with-concerns`, `head` from `git rev-parse HEAD`, `plan-sha256: none`.',
+      '- **BLOCKED or NEEDS_CONTEXT (missing roadmap, version skew, invalid candidate, a write or validation failure, or missing input):** `next: none`, `status: blocked` or `needs-context`, `head` from `git rev-parse HEAD` (or `none` without one), `plan-sha256: none`.',
+    ]) {
+      expect(step3N, clause).toContain(clause);
+    }
+  });
 });

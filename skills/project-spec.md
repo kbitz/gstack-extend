@@ -466,6 +466,23 @@ This docs-only change goes to `/docs-ship`, not `/review-and-prep` and
 `CLAUDE.md`), add a line saying so: `/docs-ship` treats agent instructions as
 executable, so it stops at classification and asks whether to proceed.
 
+```text
+Run /docs-ship
+Brief: <PROPOSAL_DIR>/proposal-{ts}.md (the approved proposal)
+Allowed files: <every path the documentation commit staged>
+Version: <version level and reason, or "no bump">
+```
+
+End every final message (after the `Run /docs-ship` handoff block, or at the end of a no-commit, BLOCKED or NEEDS_CONTEXT exit) with this stage line on its own, outside any fence and with nothing after it:
+
+Stage handoff: stage-handoff/v1; stage: project-spec; next: <docs-ship|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none
+
+For each exit ([stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md), `docs/workflow-handoffs.md`):
+
+- **Step 3 `Run /docs-ship` handoff:** `next: docs-ship`, `status: done` (`done-with-concerns` when roadmap is marked incomplete or evidence is pending), `head` from `git rev-parse HEAD` (the documentation commit), `plan-sha256: none`.
+- **No documentation commit:** `next: none`, `status: done` or `done-with-concerns`, `head` from `git rev-parse HEAD`, `plan-sha256: none`.
+- **BLOCKED or NEEDS_CONTEXT (missing roadmap, version skew, invalid candidate, a write or validation failure, or missing input):** `next: none`, `status: blocked` or `needs-context`, `head` from `git rev-parse HEAD` (or `none` without one), `plan-sha256: none`.
+
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 

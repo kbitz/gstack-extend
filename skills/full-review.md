@@ -781,6 +781,22 @@ Present completion summary via AskUserQuestion. The header is "**Full review sto
   - If approved items > 0: ["Continue to /roadmap", "Done for now"]
   - If no items approved: ["Done"]
 
+End the text before the AskUserQuestion with the stage line from Step 3.
+
+### Step 3: End with the stage line
+
+End every final message (as the last line of Step 2's text before its AskUserQuestion, or at the end of a PAUSE, BLOCKED or NEEDS_CONTEXT output) with this stage line on its own, outside any fence and with nothing after it:
+
+Stage handoff: stage-handoff/v1; stage: full-review; next: <roadmap|full-review|none>; status: <done|done-with-concerns|paused|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none
+
+For each exit ([stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md), `docs/workflow-handoffs.md`):
+
+- **Phase 6 finish:** `next: roadmap` when approved items were written to TODOS.md, else `none`; `status: done` or `done-with-concerns` from the rollup; `head` the reviewed commit (`session.yaml`'s `commit` expanded with `git rev-parse --verify "<commit>^{commit}"`); `plan-sha256: none`.
+- **PAUSE:** `next: full-review`, `status: paused`, `head` the reviewed commit (`session.yaml`'s `commit` expanded with `git rev-parse --verify "<commit>^{commit}"`), `plan-sha256: none`.
+- **BLOCKED (Phase 6 after a stop) or NEEDS_CONTEXT:** `next: none`, `status: blocked` or `needs-context`, `head` the reviewed commit (or `none` when the session records no commit or it does not resolve), `plan-sha256: none`.
+
+A reply in the same invocation that ends the run with more output ends that output with the stage line again, `head` read afresh; a reply that starts another skill in the session leaves the exit to that skill. `/full-review status` ends no run and prints no stage line.
+
 ---
 
 ## Resume Flow
@@ -801,7 +817,7 @@ Read `session.yaml`. For `/full-review resume` only (not `status`, not a `comple
 
 Choosing Start fresh runs the Init state block, then Phase 1. Choosing Continue here proceeds to the phase selection below.
 
-Before selecting or running a resumed phase, apply the Completion Status Protocol's NEEDS_CONTEXT rule to `session.yaml` and that phase's required inputs. Malformed state, including a session at `clusters_complete` or later, not BLOCKED, with no `clusters_total`, stops before triage or persistence; show the chat-only report and escalation without writing a report or marking the session complete.
+Before selecting or running a resumed phase, apply the Completion Status Protocol's NEEDS_CONTEXT rule to `session.yaml` and that phase's required inputs. Malformed state, including a session at `clusters_complete` or later, not BLOCKED, with no `clusters_total`, stops before triage or persistence; show the chat-only report and escalation without writing a report or marking the session complete. End that chat-only report and escalation with the stage line (`next: none; status: needs-context`).
 
 Then match the `phase` field, first match wins:
 
@@ -831,7 +847,8 @@ Add `STATUS: <status> | REPORT: <path>` when the phase is `complete`. Earlier ru
 If `/full-review status`, run Telemetry finish with `--outcome unknown` (a status
 check pairs its own start and reports no run outcome), then stop here. That start
 is the one Telemetry start runs when this skill begins; a status check whose start
-did not run skips this finish. Do not ask a branch question.
+did not run skips this finish. Do not ask a branch question. `/full-review status`
+prints no stage line.
 
 If `/full-review resume`, continue from the phase chosen above.
 
@@ -856,7 +873,8 @@ Telemetry finish with `--outcome blocked`. That resume runs Telemetry start
 again. After a PAUSE, the first action in this conversation that continues the
 work (anything but STATUS) runs Telemetry start once, before it acts; a
 `/full-review` invocation that continues the work (anything but `status`) counts
-its own start as that one.
+its own start as that one. End the PAUSE message with the stage line
+(`next: full-review; status: paused`).
 
 ---
 
@@ -900,6 +918,8 @@ ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
 <!-- /SHARED:escalation-format -->
+
+End every NEEDS_CONTEXT chat-only report and escalation with the stage line (`next: none; status: needs-context`).
 
 <!-- SHARED:confusion-head -->
 ## Confusion Protocol
