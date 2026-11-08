@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.0] - 2026-11-07
+
+### Changed
+
+- `/review-and-prep` now checks agent-checkable items (flows, interactions, rendered pages, command and API output) itself, through an installed upstream QA skill, before any manual-testing pause, and pauses for `/pair-review` only for checks that need the user's judgment or access (look and feel, a device the agent cannot drive, credentials only the user holds, a decision, a destructive action against a shared environment).
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. A PR that used to pause for flow testing may now go on to Greptile and readiness with no H-C hold; the H-C marker, PAUSED receipt and `Run /pair-review for draft PR` prompt are unchanged; an item no installed QA skill can drive still pauses, with the reason on its matrix row; preparation can take longer while a QA skill runs; `/ship-and-land` on an unprepared PR now hands off to `/review-and-prep` whenever an agent-checkable item is pending.
+
 ## [0.72.2] - 2026-11-07
 
 ### Fixed
