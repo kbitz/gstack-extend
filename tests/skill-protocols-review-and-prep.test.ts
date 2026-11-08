@@ -2448,8 +2448,11 @@ describe('review-and-prep delegate=<part>', () => {
     expect(section).toContain('--parts <the parts this stage runs> --repo "<checkout>"');
     expect(section).toContain('Exit 2 is a usage error decided before any call: run that stage\'s parts on the host and record the usage error as the reason.');
     // the specialist sentences of the credited-parts bullet are scoped away from the attacker parts
-    expect(section).toContain('Those three sentences describe the four specialist parts; the attacker parts follow the rules below instead, so a credited adversarial part adds no `specialists` entry and its findings are never `specialist:adversarial`, and a credited red-team part\'s findings are `red-team`, never `specialist:red-team`.');
+    expect(section).toContain('Those three sentences describe the four specialist parts; the attacker parts follow the rules below instead, so a credited adversarial part adds no `specialists` entry and its findings are never `specialist:adversarial`, and a credited red-team part\'s findings are `red-team`, never `specialist:red-team`,');
     expect(section).toContain('when list (c) is not declared, waive nothing. If upstream\'s opt-in contract hook blocks on the item, answer with the recorded waiver, never a late dispatch.');
+    expect(section).toContain('Create the calls directory with mode 0700 when it is missing, and write the file through a temporary file in that directory renamed into place, so a crash never leaves a partial list to reuse.');
+    expect(section).toContain('An exit 1 or 2 that prints no `parts` array records only a receipt note naming the exit, with no delegate attempt, and any other exit code is handled like exit 1.');
+    expect(section).toContain('and a credited red-team part is recorded as dispatched in the `specialists` object in both layouts.');
     expect(section).toContain('`adversarial` runs at Step 4.8 with `--adversarial "<adversarial instructions file>"`.');
     expect(section).toContain('`source:"delegate:<provider label>"` and `completed` true only when the part was credited; a fallback\'s host attempt gets its own token and row, as upstream defines.');
     expect(section).toContain('A policy without the value records nothing here.');

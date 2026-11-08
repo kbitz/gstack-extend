@@ -1481,7 +1481,9 @@ at the Red Team point, with `--caught "<calls directory>/caught-<cycle>-<S>.txt"
 holding the findings the Red Team is given, one line each. Write that file once
 per cycle, mode 0600, before the cycle's first red-team call, never rewrite it,
 and reuse it unchanged on a resume, so the call id and the runner's claim against
-a second paid call stay stable. `adversarial` runs at
+a second paid call stay stable. Create the calls directory with mode 0700 when
+it is missing, and write the file through a temporary file in that directory
+renamed into place, so a crash never leaves a partial list to reuse. `adversarial` runs at
 Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
 directory is branch-scoped under the evidence root
 and kept across invocations of the branch; never choose a fresh one to retry.
@@ -1491,6 +1493,9 @@ means every part was credited, 4 means a part fell back, and 1 means a refusal
 before any call (run every part on the host and record the refusal's reason)
 or a `worktree-changed` result. Exit 2 is a usage error decided before any call:
 run that stage's parts on the host and record the usage error as the reason.
+An exit 1 or 2 that prints no `parts` array records only a receipt note naming
+the exit, with no delegate attempt, and any other exit code is handled like
+exit 1.
 
 - **Credited parts** enter Step 4.6 stage 1 as that specialist's output
   (nested), or the Step 5 combine as specialist findings (sibling). Their
@@ -1500,7 +1505,9 @@ run that stage's parts on the host and record the usage error as the reason.
   Those three sentences describe the four specialist parts; the attacker parts
   follow the rules below instead, so a credited adversarial part adds no
   `specialists` entry and its findings are never `specialist:adversarial`, and a
-  credited red-team part's findings are `red-team`, never `specialist:red-team`.
+  credited red-team part's findings are `red-team`, never `specialist:red-team`,
+  and a credited red-team part is recorded as dispatched in the `specialists`
+  object in both layouts.
   Credited adversarial findings stand in for the native subagent's result
   (`found_by: native-adversarial`): they are presented under the `ADVERSARIAL
   REVIEW` header naming the provider label and model, and CRITICAL findings are
