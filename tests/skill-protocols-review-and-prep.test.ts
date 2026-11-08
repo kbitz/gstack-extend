@@ -3038,7 +3038,7 @@ describe('review-and-prep agent-checkable verification before human testing', ()
       'Run each check against a build, server or install that this invocation started from the checkout\'s current tree, never one that another session or an earlier build left running, and rebuild or restart it before a rerun after any change.',
     );
     expect(section).toContain(
-      "Compare the work tree's status, untracked files included, before and after each run: move anything the run added to the evidence directory and never commit it, and treat a changed tracked file as a blocked check until the agent restores what the run changed. Stop the processes this invocation started before leaving this step.",
+      "Compare the work tree's status, untracked files included, before and after each run: move anything the run added to the evidence directory and never commit it, and a changed tracked file blocks the check: report the change and revert nothing. Stop the processes this invocation started before leaving this step.",
     );
     expect(section).toContain(
       'Record each check on its matrix row: the skill and its version or SKILL.md SHA-256, the surface and target, the head and tree it ran on and the build under test made from that tree, its result (passed, failed, blocked, inconclusive or not run), and the report\'s path and SHA-256 in the evidence directory (for a reused Step 4.7 result, its QA section\'s), with a short sanitized excerpt for the receipt.',
