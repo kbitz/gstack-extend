@@ -216,9 +216,12 @@ review-delegate run --config FILE --gstack-root DIR --parts P[,P...] [--adversar
 names `adversarial`, and is a usage error otherwise. `--caught FILE` (run only;
 absolute path; outside `--repo`) is required when `--parts` names `red-team`,
 and is a usage error otherwise. Its text is part of the red-team prompt, so a
-changed list is a new call id: `/review-and-prep` writes it once per cycle under
-the branch-scoped calls directory, mode 0600, and reuses it unchanged on a
-resume.
+changed list is a new call id: `/review-and-prep` writes it once per cycle as
+`caught-<cycle>-<S>.txt` under the branch-scoped calls directory (created with
+mode 0700 when missing), mode 0600, before the cycle's first red-team call. It
+writes the file through a temporary file in that directory renamed into place
+(so a crash never leaves a partial list to reuse), never rewrites it, and
+reuses it unchanged on a resume.
 
 `check` validates without any call. Exit 0 prints
 `{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`.
@@ -245,6 +248,12 @@ means a part fell back, and 1 means a refusal before any call or a
 input_tokens output_tokens cache_read_input_tokens cache_creation_input_tokens
 parse verdict outcome fallback_reason findings`. The output never carries prompt
 text, reply prose or standard error.
+
+`/review-and-prep` makes one `run` call per review stage that runs named parts.
+After a refusal (exit 1) or a usage error (exit 2) it runs that stage's parts on
+the host and records the reason, and it handles any other exit code like exit 1.
+An exit 1 or 2 that prints no `parts` array records only a receipt note naming
+the exit, with no delegate attempt.
 
 ## Layouts
 
@@ -316,7 +325,10 @@ effect together. A `Review delegates:` line beside a policy that carries only
 - Findings enter the review as that part's findings and keep its `found_by`
   attribution (`specialist:<part>` for the four specialists, `red-team` for
   `red-team`, and `native-adversarial` for `adversarial`); the provider and
-  model are recorded on the part, not inside a finding.
+  model are recorded on the part, not inside a finding. A credited specialist
+  part is recorded as dispatched in the review's `specialists` object, as is a
+  credited `red-team` part in both layouts; a credited `adversarial` part adds
+  no `specialists` entry.
 - The [workflow metrics](telemetry.md#workflow-metrics-delegated) record each
   delegated part as a `pass` v3 attempt with a `delegate` object, so a reader can
   count usage per provider label. Earlier receipts and rows stay readable.
@@ -338,6 +350,8 @@ runs on the host, and against the opt-in folded first cycle
 because the two values exclude each other. No saving is claimed here: record a
 real run's wall time and per-provider usage (`data.delegated`) beside the
 default before treating delegation as an optimization, as SPEC P1 requires.
+The attacker parts' pending by-hand and orchestrated runs are listed in
+[the attacker-parts record](acceptance/attacker-parts.md).
 
 ## Limits
 
