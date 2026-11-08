@@ -1,6 +1,7 @@
 /** Track 24A workflow metrics: real launcher subprocesses in isolated homes (docs/workflow-metrics.schema.json). */
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
+import { openChildStdio, openFifoStdin } from './helpers/child-stdio.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -535,16 +536,30 @@ describe('E1/E14 invalid input never mutates and never echoes', () => {
     expect(JSON.parse(viaFile.stdout).status).toBe('recorded');
     const attempt = (delayMs: number, close: boolean) => new Promise<{ stdout: string; ms: number }>((resolve, reject) => {
       const t0 = Date.now();
-      const child = spawn(HELPER_BIN, ['metrics', 'decision'], { env: fix.env, cwd: repo });
-      let out = '', exited = false;
-      child.stdin.on('error', () => {}); // a write after the helper's deadline exit may EPIPE
-      child.stdout.on('data', d => { out += d; });
-      child.on('error', reject);
-      child.on('close', () => { exited = true; resolve({ stdout: out, ms: Date.now() - t0 }); });
+      const stdin = openFifoStdin();
+      const io = openChildStdio();
+      const child = spawn(HELPER_BIN, ['metrics', 'decision'], {
+        env: fix.env,
+        cwd: repo,
+        stdio: [stdin.readFd, io.stdoutFd, io.stderrFd],
+      });
+      let exited = false;
+      child.on('error', err => {
+        stdin.dispose();
+        io.dispose();
+        reject(err);
+      });
+      child.on('close', () => {
+        exited = true;
+        const { stdout } = io.read();
+        stdin.dispose();
+        io.dispose();
+        resolve({ stdout, ms: Date.now() - t0 });
+      });
       setTimeout(() => {
         if (exited) return;
-        child.stdin.write(JSON.stringify({ ...base(sid), step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }));
-        if (close) child.stdin.end();
+        stdin.write(JSON.stringify({ ...base(sid), step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }));
+        if (close) stdin.end();
         else setTimeout(() => child.kill('SIGKILL'), 4000);
       }, delayMs);
     });
@@ -632,12 +647,24 @@ describe('E4 safe files and the nonblocking lock', () => {
     const { fix, repo, sid, step } = boundFixture();
     const payloads = Array.from({ length: 8 }, () => ({ ...base(sid), step_id: step, phase: 'tests', decision: 'RUN', reason: 'required' }));
     const results = await Promise.all(payloads.map(p => new Promise<any>((resolve, reject) => {
-      const child = spawn(HELPER_BIN, ['metrics', 'decision'], { env: fix.env, cwd: repo });
+      const stdin = openFifoStdin();
+      const child = spawn(HELPER_BIN, ['metrics', 'decision'], {
+        env: fix.env,
+        cwd: repo,
+        stdio: [stdin.readFd, 'pipe', 'pipe'],
+      });
       let out = '';
-      child.stdout.on('data', d => { out += d; });
-      child.on('error', reject);
-      child.on('close', () => resolve(JSON.parse(out)));
-      child.stdin.end(JSON.stringify(p));
+      child.stdout!.on('data', d => { out += d; });
+      child.on('error', err => {
+        stdin.dispose();
+        reject(err);
+      });
+      child.on('close', () => {
+        stdin.dispose();
+        resolve(JSON.parse(out));
+      });
+      stdin.write(JSON.stringify(p));
+      stdin.end();
     })));
     const recorded = results.filter(r => r.status === 'recorded').length;
     expect(results.every(r => ['recorded', 'unavailable'].includes(r.status))).toBe(true);

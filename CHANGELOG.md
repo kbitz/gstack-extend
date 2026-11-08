@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.1] - 2026-11-08
+
+### Fixed
+
+- `upstream-check` writes probe output synchronously, so the result is on disk before the probe continues or exits.
+
 ## [0.76.0] - 2026-11-08
 
 ### Changed

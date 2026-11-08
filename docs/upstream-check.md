@@ -338,8 +338,8 @@ A missing or inaccessible root, directory, FIFO, oversized file or malformed
 inventory source is drift. A deadline exceeded during probe shutdown remains
 drift even if the probe already emitted a result.
 `VERSION` content that is not a dotted version is printed as `unknown`.
-Frames await stream-write callbacks before upstream imports, respecting
-output backpressure, so an upstream
+Frames flush through synchronous writes before upstream imports, in chunks of
+at most 64 KiB, with bounded retries for `EAGAIN` or `EWOULDBLOCK`, so an upstream
 nonzero early exit remains drift. An extension-owned child startup or internal
 failure is instead exit 1, with no report.
 

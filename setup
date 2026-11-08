@@ -1672,7 +1672,7 @@ _shell_quote() {
 # redirecting the tool registration. The same unset also selects HOME's effort
 # config for this child's audit; direct init keeps the override.
 if [ -x "$cli_bin_src" ]; then
-  _self_register_log=$(mktemp /tmp/gstack-extend-self-register.XXXXXX)
+  _self_register_log=$(mktemp "${TMPDIR:-/tmp}/gstack-extend-self-register.XXXXXX")
   _home_registry="$HOME/.gstack-extend/projects.json"
   if env -u GSTACK_EXTEND_STATE_DIR "$cli_bin_src" init --migrate --no-prompt --name gstack-extend "$SCRIPT_DIR" >/dev/null 2>"$_self_register_log"; then
     log "Self-registered gstack-extend in $_home_registry"

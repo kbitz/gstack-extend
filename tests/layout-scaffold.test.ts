@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { spawnSync as nodeSpawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { chmodSync, constants, copyFileSync, lstatSync, linkSync, readdirSync, readlinkSync, renameSync, rmdirSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import type { Stats } from 'node:fs';
+import { spawnSync } from './helpers/child-stdio.ts';
 import { main, help, BUN_FLOOR, EXIT_CODES, type CliIo } from '../src/layout-scaffold/cli.ts';
 import { defaultAudit, type AuditSnapshot } from '../src/layout-scaffold/plan.ts';
 import { defaultFs, Refusal, REFUSAL_ACTIONS, escapeValue, type FileSystem, type Root } from '../src/layout-scaffold/root.ts';
@@ -47,31 +47,6 @@ function createSuiteParent(candidates = suiteCandidates()): string {
 const SUITE_PARENT = createSuiteParent();
 chmodSync(SUITE_PARENT, 0o700);
 afterAll(() => rmSync(SUITE_PARENT, { recursive: true, force: true }));
-// Bun's child_process.spawnSync uses AF_UNIX socketpairs for stdio:'pipe' on Linux, which makes a child
-// Bun process's FileSink (process.stdout.write / process.stderr.write) issue sendto(2) and hit EPERM
-// under seccomp sandboxes that disallow socket sends. File-backed stdio under SUITE_PARENT keeps child
-// fds regular files without touching test roots or assertions.
-let spawnSeq = 0;
-function spawnSync(command: string, args: readonly string[] = [], options: SpawnSyncOptions = {}): SpawnSyncReturns<string> {
-  const ioDir = join(SUITE_PARENT, `.spawn-${process.pid}-${++spawnSeq}`);
-  mkdirSync(ioDir, { mode: 0o700 });
-  const inPath = join(ioDir, 'in');
-  const outPath = join(ioDir, 'out');
-  const errPath = join(ioDir, 'err');
-  writeFileSync(inPath, typeof options.input === 'string' || Buffer.isBuffer(options.input) || options.input instanceof Uint8Array ? options.input : '');
-  const inFd = openSync(inPath, constants.O_RDONLY);
-  const outFd = openSync(outPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600);
-  const errFd = openSync(errPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600);
-  try {
-    const result = nodeSpawnSync(command, args, { ...options, input: undefined, stdio: [inFd, outFd, errFd] });
-    return { ...result, stdout: readFileSync(outPath, 'utf8'), stderr: readFileSync(errPath, 'utf8') };
-  } finally {
-    closeSync(inFd);
-    closeSync(outFd);
-    closeSync(errFd);
-    rmSync(ioDir, { recursive: true, force: true });
-  }
-}
 
 describe('Process: hardened launchers', () => {
   let temp: string;

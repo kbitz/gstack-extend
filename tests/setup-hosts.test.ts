@@ -313,7 +313,12 @@ describe('setup --host flags', () => {
           `---\nname: ${skill}\ndescription: Fixture\n---\n\`\`\`bash\nprintf '%s\\n' ~/.claude/skills/pair-review/SKILL.md\n\`\`\`\n`);
       }
       const result = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
-        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+        },
       });
       expect(result.status).toBe(0);
       const body = readFileSync(join(hostDir(home, host), 'pair-review', 'SKILL.md'), 'utf8');
@@ -344,7 +349,12 @@ describe('setup --host flags', () => {
       linkSync(skillPath(fixture, 'pair-review'), join(dir, 'SKILL.md'));
       writeFileSync(join(dir, '.extend-root'), `${realpathSync(fixture)}\n`);
       const result = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
-        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+        },
       });
       expect(result.status).toBe(0);
       expect(readFileSync(skillPath(fixture, 'pair-review'), 'utf8')).toBe(source('pair-review'));
@@ -374,7 +384,12 @@ describe('setup --host flags', () => {
       chmodSync(src, 0o000);
       try {
         const r = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
-          encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+          encoding: 'utf8',
+          env: {
+            PATH: process.env.PATH,
+            HOME: home,
+            ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+          },
         });
         expect(r.status).not.toBe(0);
       } finally {
@@ -390,7 +405,12 @@ describe('setup --host flags', () => {
       const home = join(baseTmp, `copy-mode-${host}`);
       mkdirSync(home, { recursive: true });
       const r = spawnSync('bash', ['-c', 'umask 022; exec "$0" "$@"', SETUP, '--host', host, '--quiet'], {
-        encoding: 'utf8', env: { PATH: isolatedPath(), HOME: home },
+        encoding: 'utf8',
+        env: {
+          PATH: isolatedPath(),
+          HOME: home,
+          ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+        },
       });
       expect(r.status).toBe(0);
       for (const skill of SKILLS) {
@@ -866,7 +886,11 @@ describe('setup --host flags', () => {
     const home = join(baseTmp, 'codex-link-loop');
     mkdirSync(join(home, '.codex'), { recursive: true });
     symlinkSync('skills', hostDir(home, 'codex'));
-    const env: Record<string, string> = { PATH: isolatedPath(), HOME: home };
+    const env: Record<string, string> = {
+      PATH: isolatedPath(),
+      HOME: home,
+      ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+    };
     const r = spawnSync(SETUP, ['--host', 'codex', '--quiet'], { encoding: 'utf8', env, timeout: 20000 });
     expect(r.error).toBeUndefined();
     expect(r.status).toBe(1);
@@ -884,7 +908,13 @@ describe('setup --host flags', () => {
     writeFileSync(join(bins, 'awk'), '#!/bin/sh\nkill -TERM "$PPID"\nexit 1\n');
     chmodSync(join(bins, 'awk'), 0o755);
     const r = spawnSync(SETUP, ['--host', 'codex', '--quiet'], {
-      encoding: 'utf8', env: { PATH: `${bins}:/bin:/usr/bin`, HOME: home }, timeout: 20000,
+      encoding: 'utf8',
+      env: {
+        PATH: `${bins}:/bin:/usr/bin`,
+        HOME: home,
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
+      timeout: 20000,
     });
     expect(r.status).not.toBe(0);
     const dirs = existsSync(hostDir(home, 'codex')) ? readdirSync(hostDir(home, 'codex')) : [];
@@ -1305,6 +1335,7 @@ function checkFacts(home: string, state = join(home, '.gstack-extend')): { stdou
       GSTACK_EXTEND_DIR: realpathSync(ROOT),
       GSTACK_EXTEND_STATE_DIR: state,
       GSTACK_EXTEND_REMOTE_URL: `file://${REMOTE_VERSION}`,
+      ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
     },
     // A FIFO or lock regression must fail the test, not hang the suite.
     timeout: 10000,
@@ -1346,6 +1377,7 @@ function runRecovery(
       PATH: pathPrefix ? `${pathPrefix}:/bin:/usr/bin` : (process.env.PATH ?? '/usr/bin:/bin'),
       HOME: home,
       GSTACK_EXTEND_RECOVERY_CHECKOUT: realpathSync(ROOT),
+      ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
       ...extra,
     },
     timeout: 60000,
@@ -1675,7 +1707,11 @@ exec /usr/bin/mktemp "$@"
     const before = readFileSync(statusPath(home));
     const elsewhere = spawnSync(join(other, 'setup'), ['--host', 'claude', '--quiet'], {
       encoding: 'utf8',
-      env: { PATH: isolatedPath(), HOME: home },
+      env: {
+        PATH: isolatedPath(),
+        HOME: home,
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
     });
     expect(elsewhere.status).toBe(0);
     expect(readFileSync(join(otherSkill, 'SKILL.md'), 'utf8')).toBe('OTHER ORIGIN\n');
@@ -1691,7 +1727,12 @@ exec /usr/bin/mktemp "$@"
     mkdirSync(join(otherHome, '.claude', 'skills'), { recursive: true });
     const shared = spawnSync(SETUP, ['--host', 'codex', '--quiet'], {
       encoding: 'utf8',
-      env: { PATH: isolatedPath(), HOME: otherHome, GSTACK_EXTEND_STATE_DIR: join(home, '.gstack-extend') },
+      env: {
+        PATH: isolatedPath(),
+        HOME: otherHome,
+        GSTACK_EXTEND_STATE_DIR: join(home, '.gstack-extend'),
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
     });
     expect(shared.status).toBe(0);
     expect(shared.stdout).not.toContain('INSTALL_WARN');
@@ -1859,7 +1900,11 @@ exec /usr/bin/mktemp "$@"
     symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
     const r = spawnSync(join(other, 'setup'), ['--host', 'codex', '--quiet'], {
       encoding: 'utf8',
-      env: { PATH: isolatedPath(), HOME: home },
+      env: {
+        PATH: isolatedPath(),
+        HOME: home,
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
     });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('cause=invalid_record');
@@ -2669,6 +2714,7 @@ exit $status
         PATH: isolatedPath(),
         HOME: home,
         GSTACK_EXTEND_STATE_DIR: state,
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
       },
     });
     expect(r.status).toBe(0);
@@ -2766,7 +2812,12 @@ describe('telemetry-call helper install', () => {
     writeFileSync(join(bins, 'ln'), '#!/bin/sh\ncase "$*" in *"$HOME/.local/bin/"*) exit 42 ;; *) exec /bin/ln "$@" ;; esac\n');
     chmodSync(join(bins, 'ln'), 0o755);
     const result = spawnSync('bash', ['-c', 'umask 000; exec "$1" --host codex --quiet', 'setup-test', SETUP], {
-      env: { HOME: home, PATH: `${bins}:${process.env.PATH ?? '/usr/bin:/bin'}` }, encoding: 'utf8',
+      env: {
+        HOME: home,
+        PATH: `${bins}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
+      encoding: 'utf8',
     });
     expect(result.status).toBe(42);
     expect(existsSync(installed(home))).toBe(false);
@@ -2778,7 +2829,12 @@ describe('telemetry-call helper install', () => {
     mkdirSync(home);
     chmodSync(home, 0o755);
     const result = spawnSync('bash', ['-c', 'umask 000; exec "$1" --host codex --quiet', 'setup-test', SETUP], {
-      env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' }, encoding: 'utf8',
+      env: {
+        HOME: home,
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
+      encoding: 'utf8',
     });
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(installed(home))).toBe(true);

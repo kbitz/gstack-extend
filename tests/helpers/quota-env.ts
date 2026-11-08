@@ -16,6 +16,7 @@ export function quotaFixture() {
     HOME: home, PATH: '/usr/bin:/bin', LANG: 'C.UTF-8',
     GSTACK_EXTEND_STATE_DIR: join(home, 'state'), GSTACK_EXTEND_QUOTA_FIXTURES: fixtures,
     GSTACK_EXTEND_QUOTA_NOW: '2026-09-23T12:00:00Z',
+    ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
   };
   if (process.env.EVALS_ALL === '1') env.EVALS_ALL = '1';
   return {
