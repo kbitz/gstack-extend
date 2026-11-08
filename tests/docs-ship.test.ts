@@ -6,6 +6,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -14,6 +15,7 @@ import { bodyHash, END, REQUIRED_FIELDS, START, receiptField, upsert } from '../
 import { MARKER_KEYS } from '../src/docs-ship/config.ts';
 import { anchors, githubSlug, linkTargets } from '../src/docs-ship/markdown.ts';
 import { expandCommand } from '../src/docs-ship/pinning.ts';
+import { PREGATE_CODES } from '../src/docs-ship/pregate.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'docs-ship-')));
@@ -290,6 +292,345 @@ describe('doc-pinning tests', () => {
     expect(field(out.stdout, 'TESTS')).toBe('0');
     expect(field(out.stdout, 'STATUS')).toBe('none');
   });
+});
+
+describe('pregate selection', () => {
+  // Upstream JSON shape from installed gstack 1.97.0.0:
+  // bin/gstack-pregate:191,215, lib/pregate/index.ts:106-109, lib/pregate/config.ts:324-365,
+  // lib/pregate/checks/lanes.ts:434-439,553,624, lib/pregate/lane-selection.ts:225-228,238,288,295,
+  // lib/pregate/import-graph.ts:541,545.
+  function pregateJson(
+    dir: string,
+    opts: {
+      tests?: string[];
+      provenance?: string[];
+      lanes?: Record<string, unknown>;
+      overrides?: Record<string, unknown>;
+    } = {},
+  ): string {
+    const tests = opts.tests ?? [];
+    const provenance = opts.provenance ?? [];
+    const lanes = opts.lanes ?? {};
+    const overrides = opts.overrides ?? {};
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const tree = git(dir, 'rev-parse', 'HEAD^{tree}');
+    const main12 = git(dir, 'rev-parse', 'main').slice(0, 12);
+    const selection = createHash('sha256').update([...tests].sort().join('\n')).digest('hex');
+    const laneInputs = (lanes.inputs && typeof lanes.inputs === 'object' ? lanes.inputs : {}) as Record<string, unknown>;
+    const laneCheck = {
+      id: 'lanes',
+      stage: 'tests',
+      status: tests.length ? 'incomplete' : 'pass',
+      ...(tests.length ? { code: 'REPO_COMMANDS_NOT_ALLOWED' } : {}),
+      lines: [],
+      ...lanes,
+      inputs: { selection, ...laneInputs },
+    };
+    const payload = {
+      schema_version: 1,
+      tree,
+      head,
+      base: `origin/main@${main12}`,
+      policy: `origin/main@${main12}:.gstack/pregate.json`,
+      explain: provenance,
+      checks: [laneCheck],
+      ok: !tests.length,
+      status: tests.length ? 'incomplete' : 'complete',
+      ...overrides,
+    };
+    const file = join(mkdtempSync(join(TMP, 'pregate-')), 'pregate-explain.json');
+    writeFileSync(file, JSON.stringify(payload) + '\n');
+    return file;
+  }
+
+  test('a. policy-backed explanation owns the selection and reports legacy-only tests', () => {
+    const r = repo({ 'docs/guide.md': '# Guide\n\nChanged.\n' }, { '.gstack/pregate.json': '{}\n' });
+    const f = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+    });
+    const out = cli(r.dir, 'tests', '--base', r.base, '--pregate', f);
+    expect(out.code).toBe(0);
+    expect(field(out.stdout, 'SELECTION')).toMatch(/^pregate \| origin\/main@[0-9a-f]{12}:\.gstack\/pregate\.json$/);
+    expect(lines(out.stdout, 'TEST')).toEqual([['tests/app.test.ts', 'pregate: ← docs/guide.md (dependencies) [touched]']]);
+    expect(lines(out.stdout, 'LEGACY')).toEqual([['tests/guide.test.ts', 'names docs/guide.md', 'not run']]);
+    expect(field(out.stdout, 'COMPARED')).toBe('pregate 1; legacy scan 1; legacy only 1');
+    expect(field(out.stdout, 'STATUS')).toBe('selected');
+  });
+
+  test('b. docs/no-tests pass with zero tests gives TESTS: 0 and STATUS: none', () => {
+    const r = repo({ 'docs/other.md': '# Other\n\nMore.\n' }, { '.gstack/pregate.json': '{}\n' });
+    const f = pregateJson(r.dir, {
+      tests: [],
+      provenance: ['docs/other.md: docs/no-tests (empty lane)'],
+      lanes: { status: 'pass', code: undefined },
+    });
+    const out = cli(r.dir, 'tests', '--base', r.base, '--pregate', f);
+    expect(out.code).toBe(0);
+    expect(field(out.stdout, 'TESTS')).toBe('0');
+    expect(field(out.stdout, 'STATUS')).toBe('none');
+  });
+
+  test('c. configured docs-ship:tests marker joins policy selection and unmatched marker refuses CONFIG_TESTS_MISSING', () => {
+    const r = repo(
+      { 'docs/guide.md': '# Guide\n\nChanged.\n' },
+      { '.gstack/pregate.json': '{}\n', 'AGENTS.md': '<!-- docs-ship:tests=tests/guide.test.ts -->\n' },
+    );
+    const f = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+    });
+    const out = cli(r.dir, 'tests', '--base', r.base, '--pregate', f);
+    expect(out.code).toBe(0);
+    expect(lines(out.stdout, 'TEST')).toEqual([
+      ['tests/app.test.ts', 'pregate: ← docs/guide.md (dependencies) [touched]'],
+      ['tests/guide.test.ts', 'docs-ship:tests'],
+    ]);
+    expect(lines(out.stdout, 'LEGACY')).toEqual([]);
+
+    const missing = repo(
+      { 'docs/guide.md': '# Guide\n\nChanged.\n' },
+      { '.gstack/pregate.json': '{}\n', 'AGENTS.md': '<!-- docs-ship:tests=tests/missing.test.ts -->\n' },
+    );
+    const mf = pregateJson(missing.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+    });
+    const bad = cli(missing.dir, 'tests', '--base', missing.base, '--pregate', mf);
+    expect(bad.code).toBe(3);
+    expect(bad.stderr).toContain('CONFIG_TESTS_MISSING');
+  });
+
+  test('d. policy-less repo ignores --pregate without reading the file and matches legacy output', () => {
+    const r = repo({ 'docs/guide.md': '# Guide\n\nChanged.\n' });
+    const without = cli(r.dir, 'tests', '--base', r.base);
+    const withPregate = cli(r.dir, 'tests', '--base', r.base, '--pregate', join(TMP, 'does-not-need-to-exist.json'));
+    expect(withPregate.code).toBe(0);
+    expect(lines(withPregate.stdout, 'TEST')).toEqual(lines(without.stdout, 'TEST'));
+    expect(field(withPregate.stdout, 'SELECTION')).toMatch(/^legacy \| no \.gstack\/pregate\.json at [0-9a-f]{40} \| --pregate ignored$/);
+  });
+
+  test('e. policy present without --pregate runs legacy scan with explicit SELECTION reason', () => {
+    const r = repo({ 'docs/guide.md': '# Guide\n\nChanged.\n' }, { '.gstack/pregate.json': '{}\n' });
+    const out = cli(r.dir, 'tests', '--base', r.base);
+    expect(out.code).toBe(0);
+    expect(lines(out.stdout, 'TEST')).toEqual([['tests/guide.test.ts', 'names docs/guide.md']]);
+    expect(field(out.stdout, 'SELECTION')).toBe('legacy | base .gstack/pregate.json present; no pregate explanation supplied');
+  });
+
+  test('f. binding, execution, explain-mismatch, refused, invalid and incomplete cases refuse with exit 3 and FIX', () => {
+    const r = repo({ 'docs/guide.md': '# Guide\n\nChanged.\n' }, { '.gstack/pregate.json': '{}\n' });
+    const main12 = git(r.dir, 'rev-parse', 'main').slice(0, 12);
+    const baseOpts = {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+    };
+
+    const bindingFiles = [
+      pregateJson(r.dir, { ...baseOpts, overrides: { head: '0'.repeat(40) } }),
+      pregateJson(r.dir, { ...baseOpts, overrides: { tree: '0'.repeat(40) } }),
+      pregateJson(r.dir, { ...baseOpts, overrides: { base: 'origin/main@000000000000', policy: 'origin/main@000000000000:.gstack/pregate.json' } }),
+      pregateJson(r.dir, { ...baseOpts, overrides: { policy: 'user /tmp/pregate.json' } }),
+      pregateJson(r.dir, { ...baseOpts, overrides: { base: `origin/other@${main12}`, policy: `origin/other@${main12}:.gstack/pregate.json` } }),
+    ];
+    for (const file of bindingFiles) {
+      const out = cli(r.dir, 'tests', '--base', r.base, '--pregate', file);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toContain('ERROR PREGATE_BINDING:');
+      expect(out.stderr).toContain('FIX:');
+    }
+
+    const executed = pregateJson(r.dir, { ...baseOpts, lanes: { inputs: { command: 'a'.repeat(64) } } });
+    const execOut = cli(r.dir, 'tests', '--base', r.base, '--pregate', executed);
+    expect(execOut.code).toBe(3);
+    expect(execOut.stderr).toContain('ERROR PREGATE_EXECUTED:');
+    expect(execOut.stderr).toContain('FIX:');
+
+    const mismatch = pregateJson(r.dir, { tests: ['tests/app.test.ts', 'tests/guide.test.ts'], provenance: baseOpts.provenance });
+    const mismatchOut = cli(r.dir, 'tests', '--base', r.base, '--pregate', mismatch);
+    expect(mismatchOut.code).toBe(3);
+    expect(mismatchOut.stderr).toContain('ERROR PREGATE_EXPLAIN_MISMATCH:');
+    expect(mismatchOut.stderr).toContain('FIX:');
+
+    const refusedFile = join(mkdtempSync(join(TMP, 'pregate-')), 'refused.json');
+    writeFileSync(refusedFile, JSON.stringify({
+      ok: false,
+      status: 'refused',
+      code: 'PREGATE_CONFIG_INVALID',
+      detail: '.gstack/pregate.json has invalid JSON',
+      fix: 'fix .gstack/pregate.json on the base branch',
+    }));
+    const refusedOut = cli(r.dir, 'tests', '--base', r.base, '--pregate', refusedFile);
+    expect(refusedOut.code).toBe(3);
+    expect(refusedOut.stderr).toContain('ERROR PREGATE_REFUSED: PREGATE_CONFIG_INVALID:');
+    expect(refusedOut.stderr).toContain('FIX: fix .gstack/pregate.json on the base branch');
+
+    const nonJsonFile = join(mkdtempSync(join(TMP, 'pregate-')), 'bad.json');
+    writeFileSync(nonJsonFile, 'not json at all\n');
+    const missingExplain = pregateJson(r.dir, { ...baseOpts, overrides: { explain: undefined } });
+    for (const file of [nonJsonFile, missingExplain]) {
+      const out = cli(r.dir, 'tests', '--base', r.base, '--pregate', file);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toContain('ERROR PREGATE_INVALID:');
+      expect(out.stderr).toContain('FIX:');
+    }
+
+    const incomplete = pregateJson(r.dir, {
+      ...baseOpts,
+      lanes: { status: 'incomplete', code: 'PREGATE_INCOMPLETE', detail: 'working tree moved', fix: 'rerun pregate' },
+    });
+    const incOut = cli(r.dir, 'tests', '--base', r.base, '--pregate', incomplete);
+    expect(incOut.code).toBe(3);
+    expect(incOut.stderr).toContain('ERROR PREGATE_INCOMPLETE:');
+    expect(incOut.stderr).toContain('FIX: rerun pregate');
+  });
+
+  test('g. no-lane fail gives NO_LANE | fail, STATUS: no-lane and exit 1 while printing TEST lines; warn keeps exit 0', () => {
+    const r = repo({ 'docs/guide.md': '# Guide\n\nChanged.\n', 'docs/notes.rst': 'Notes\n=====\n' }, { '.gstack/pregate.json': '{}\n' });
+    const failFile = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+      lanes: {
+        status: 'fail',
+        code: 'PREGATE_NO_LANE',
+        lines: ['FAIL lanes — docs/notes.rst has no test lane'],
+      },
+    });
+    const failOut = cli(r.dir, 'tests', '--base', r.base, '--pregate', failFile);
+    expect(failOut.code).toBe(1);
+    expect(lines(failOut.stdout, 'TEST')).toEqual([['tests/app.test.ts', 'pregate: ← docs/guide.md (dependencies) [touched]']]);
+    expect(lines(failOut.stdout, 'NO_LANE')).toEqual([['docs/notes.rst', 'fail']]);
+    expect(field(failOut.stdout, 'STATUS')).toBe('no-lane');
+
+    const warnFile = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+      lanes: {
+        status: 'warn',
+        code: 'PREGATE_NO_LANE',
+        lines: ['WARN lanes — docs/notes.rst has no test lane (warn: ["lanes"] in origin/main:.gstack/pregate.json; the selected tests are still judged)'],
+      },
+    });
+    const warnOut = cli(r.dir, 'tests', '--base', r.base, '--pregate', warnFile);
+    expect(warnOut.code).toBe(0);
+    expect(lines(warnOut.stdout, 'NO_LANE')).toEqual([['docs/notes.rst', 'warn']]);
+    expect(field(warnOut.stdout, 'STATUS')).toBe('selected');
+  });
+
+  test('h. bump delta filters explanation to bump-seeded tests plus always-run only when a test is kept', () => {
+    const r = repo(
+      { 'docs/guide.md': '# Guide\n\nChanged.\n' },
+      {
+        '.gstack/pregate.json': '{}\n',
+        'tests/version.test.ts': "import { readFileSync } from 'node:fs';\nreadFileSync('VERSION', 'utf8');\n",
+        'tests/always.test.ts': 'export const ok = true;\n',
+      },
+    );
+    const preBump = git(r.dir, 'rev-parse', 'HEAD');
+    write(r.dir, {
+      'VERSION': '1.2.1\n',
+      'CHANGELOG.md': CHANGELOG.replace('## [Unreleased]\n\n', '## [Unreleased]\n\n## [1.2.1] - 2026-10-02\n\n- Docs bump.\n\n'),
+    });
+    git(r.dir, 'add', '-A');
+    git(r.dir, 'commit', '--quiet', '-m', 'bump');
+
+    const withVersionSeed = pregateJson(r.dir, {
+      tests: ['tests/always.test.ts', 'tests/app.test.ts', 'tests/version.test.ts'],
+      provenance: [
+        'tests/version.test.ts ← VERSION (dependencies) [touched]',
+        'tests/app.test.ts ← docs/guide.md (dependencies) [touched]',
+        'tests/always.test.ts (always_run, .gstack/pregate-always-run)',
+      ],
+    });
+    const out = cli(r.dir, 'tests', '--base', preBump, '--config-ref', 'main', '--pregate', withVersionSeed);
+    expect(out.code).toBe(0);
+    expect(lines(out.stdout, 'TEST')).toEqual([
+      ['tests/always.test.ts', 'pregate: (always_run, .gstack/pregate-always-run)'],
+      ['tests/version.test.ts', 'pregate: ← VERSION (dependencies) [touched]'],
+    ]);
+
+    const withoutBumpSeed = pregateJson(r.dir, {
+      tests: ['tests/always.test.ts', 'tests/app.test.ts'],
+      provenance: [
+        'tests/app.test.ts ← docs/guide.md (dependencies) [touched]',
+        'tests/always.test.ts (always_run, .gstack/pregate-always-run)',
+      ],
+    });
+    const emptyOut = cli(r.dir, 'tests', '--base', preBump, '--config-ref', 'main', '--pregate', withoutBumpSeed);
+    expect(emptyOut.code).toBe(0);
+    expect(field(emptyOut.stdout, 'TESTS')).toBe('0');
+    expect(lines(emptyOut.stdout, 'TEST')).toEqual([]);
+  });
+
+  test('i. same tree and explanation produce byte-identical COMMAND lines in sorted TEST order', () => {
+    const r = repo(
+      { 'docs/guide.md': '# Guide\n\nChanged.\n' },
+      {
+        '.gstack/pregate.json': '{}\n',
+        'AGENTS.md': '<!-- docs-ship:tests=tests/guide.test.ts -->\n<!-- docs-ship:test-command=bun test {tests} -->\n',
+      },
+    );
+    const f1 = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+    });
+    const f2 = pregateJson(r.dir, {
+      tests: ['tests/app.test.ts'],
+      provenance: ['tests/app.test.ts ← docs/guide.md (dependencies) [touched]'],
+    });
+    const out1 = cli(r.dir, 'tests', '--base', r.base, '--pregate', f1);
+    const out2 = cli(r.dir, 'tests', '--base', r.base, '--pregate', f2);
+    expect(out1.code).toBe(0);
+    expect(out2.code).toBe(0);
+    expect(field(out1.stdout, 'COMMAND')).toBe('bun test tests/app.test.ts tests/guide.test.ts');
+    expect(field(out2.stdout, 'COMMAND')).toBe(field(out1.stdout, 'COMMAND'));
+  });
+
+  test.skipIf(!process.env.GSTACK_PREGATE_BIN)(
+    'j. installed gstack-pregate --stage tests --explain --json selects without executing',
+    () => {
+      const originDir = mkdtempSync(join(TMP, 'origin-'));
+      git(originDir, 'init', '--bare', '--quiet', '--initial-branch=main');
+      const r = repo(
+        { 'docs/guide.md': '# Guide\n\nChanged for live pregate.\n' },
+        { '.gstack/pregate.json': JSON.stringify({ dependencies: { 'docs/guide.md': ['tests/app.test.ts'] } }) + '\n' },
+      );
+      git(r.dir, 'remote', 'add', 'origin', originDir);
+      git(r.dir, 'push', '--quiet', 'origin', 'main:main');
+
+      const isolatedHome = mkdtempSync(join(TMP, 'home-'));
+      const outPath = join(isolatedHome, 'pregate-out.json');
+      const explainPath = join(isolatedHome, 'pregate-explain.json');
+      const pregateRun = spawnSync(
+        process.env.GSTACK_PREGATE_BIN!,
+        ['--stage', 'tests', '--explain', '--json', '--no-ci-carry', '--base', 'main', '--out', outPath],
+        {
+          cwd: r.dir,
+          encoding: 'utf8',
+          env: {
+            ...GIT_ENV,
+            HOME: isolatedHome,
+            GSTACK_STATE_ROOT: join(isolatedHome, 'state'),
+            GSTACK_HOME: join(isolatedHome, 'gstack'),
+          },
+        },
+      );
+      expect(pregateRun.stdout.trim()).not.toBe('');
+      writeFileSync(explainPath, pregateRun.stdout);
+      const parsed = JSON.parse(pregateRun.stdout);
+      const lanesCheck = parsed.checks.find((c: { id: string }) => c.id === 'lanes');
+      expect(lanesCheck?.inputs?.command).toBeUndefined();
+
+      const out = cli(r.dir, 'tests', '--base', 'origin/main', '--pregate', explainPath);
+      expect(out.code).toBe(0);
+      const selected = lines(out.stdout, 'TEST');
+      const appTest = selected.find((t) => t[0] === 'tests/app.test.ts');
+      expect(appTest).toBeDefined();
+      expect(appTest![1]).toMatch(/^pregate:/);
+      expect(git(r.dir, 'status', '--porcelain')).toBe('');
+    },
+    60_000,
+  );
 });
 
 describe('review boundary regressions', () => {
@@ -800,6 +1141,16 @@ describe('skill and contract text', () => {
     expect(table).toEqual([...MARKER_KEYS]);
     const template = /```markdown\n(## Docs ship\n[\s\S]*?)```/.exec(contract)![1]!;
     for (const field of REQUIRED_FIELDS) expect([field, receiptField(template, field) !== undefined]).toEqual([field, true]);
+  });
+
+  test('step 6, step 9 and the contract lock pregate selection flags and refusal codes', () => {
+    const step6 = skill.slice(skill.indexOf('## 6. Doc-pinning tests'), skill.indexOf('## 7. PR body'));
+    const step9 = skill.slice(skill.indexOf('## 9. Release'), skill.indexOf('## 10. Receipt, ready and CI'));
+    expect(step6).toContain('--pregate');
+    expect(step6).toContain('--no-ci-carry');
+    expect(step6).toContain('Never add `--allow-repo-commands`');
+    expect(step9).toContain('--pregate');
+    for (const code of PREGATE_CODES) expect([code, contract.includes(`\`${code}\``)]).toEqual([code, true]);
   });
 
   test('skill and contract share one result line', () => {

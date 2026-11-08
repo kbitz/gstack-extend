@@ -136,6 +136,46 @@ verified base as `--config-ref`, so PR edits cannot choose their own runner.
 If selected tests have neither a base-tip marker command nor a narrow runner
 documented at that base, stop with `CHANGES`; do not invent a runner from PR edits.
 
+**Selection source (`SELECTION:`).** `docs-ship tests` chooses one of three
+modes mechanically from the `--config-ref` commit's tree:
+
+- **No base policy** (`SELECTION: legacy | no .gstack/pregate.json at <config commit>`):
+  uses the legacy text scan above so repositories without a base pregate policy
+  keep today's selection. When `--pregate` was also passed, the helper appends
+  ` | --pregate ignored` and does not read the file.
+- **Base policy, no `--pregate`** (`SELECTION: legacy | base .gstack/pregate.json present; no pregate explanation supplied`):
+  uses the legacy text scan when `gstack-pregate` is not installed beside the
+  skill's `gstack-evidence`.
+- **Base policy and `--pregate FILE`** (`SELECTION: pregate | <policy label>`):
+  the skill runs `<gstack-pregate> --stage tests --explain --json --no-ci-carry --base <base branch> --out <files dir>/pregate.json > <files dir>/pregate-explain.json`
+  once without `--allow-repo-commands` (its exit 1 for selected-but-unrun tests
+  is expected) and passes `--pregate <files dir>/pregate-explain.json`. The
+  helper parses and binds the explanation without spawning pregate: `policy`
+  must equal `origin/<branch>@<config 12-hex>:.gstack/pregate.json`, `base`
+  must equal `origin/<branch>@<config 12-hex>` (with `<branch>` matching
+  `--config-ref` when not a full SHA), `head` must equal the verified head SHA,
+  and `tree` must equal `HEAD^{tree}`. It refuses `PREGATE_INVALID` (malformed
+  JSON, bad schema/fields or missing `explain`), `PREGATE_REFUSED` (pregate's
+  own refusal, such as `PREGATE_CONFIG_INVALID` or `POLICY_SOURCE_UNAVAILABLE`),
+  `PREGATE_BINDING` (any bound field mismatch), `PREGATE_EXECUTED`
+  (`inputs.command` present because lanes ran), `PREGATE_INCOMPLETE` (any other
+  lanes status/code, such as a thrown check or environment failure) and
+  `PREGATE_EXPLAIN_MISMATCH` (parsed provenance test set SHA-256 differs from
+  `inputs.selection`). Pregate owns the selected tests (with `pregate:` reasons)
+  plus any `docs-ship:tests` marker files. `NO_LANE: <file> | fail` sets
+  `STATUS: no-lane` and exits 1 (a finding → `CHANGES`); `NO_LANE: <file> | warn`
+  keeps `STATUS: selected` or `none` (exit 0) and is recorded in the receipt.
+  Tests that only the legacy text scan would have picked are printed as
+  `LEGACY: <test> | <reasons> | not run` with `COMPARED: pregate <n>; legacy scan <m>; legacy only <k>`
+  for before/after comparison (reported, never run). When `--base` differs from
+  `--config-ref` on the step 9 release bump (`--base <pre-bump SHA> --config-ref <verified base SHA>`),
+  the skill reruns the nonexecuting pregate probe on the pushed bump head and
+  the helper filters the explanation to tests whose provenance seed or
+  `itself a test` path is in the bump delta (adding always-run tests only when
+  at least one test is kept) and filters `NO_LANE` to the bump delta. The runner
+  choice is unchanged: the `docs-ship:test-command` marker, else the base's
+  documented narrow runner; pregate's `runner` is not used.
+
 Run only the selected tests, never the full suite. When upstream gstack's
 `gstack-evidence` is installed, run them as
 `gstack-evidence run --label docs-ship-tests -- '<command>'`. Before a rerun,
@@ -180,7 +220,7 @@ its own line outside fenced or indented code. Quoted code examples remain body t
 - **Claims:** <N> listed; unconfirmed: <claims or none>
 - **Rules:** <rules file>: <result>
 - **Links:** <N> checked, <M> broken
-- **Tests:** `<command>`: <exit, count, FRESH reuse or new run> | none selected
+- **Tests:** <pregate (<policy>) | legacy (<reason>)>; `<command>`: <exit, count, FRESH reuse or new run>; legacy only: <tests or none> | none selected
 - **Release:** none (<policy reason>) | <old> -> <new> (<level>)
 - **CI:** <checks state on the head>
 - **Findings:** none | <N>, listed in the result
@@ -286,3 +326,15 @@ explicit list above. Nonstandard changelog headings and metadata formats need
 project rules or exclusions; the helper is not a complete Markdown/YAML parser.
 Link extraction is line-oriented: an HTML target must be complete on the opening-tag
 line. It is not a full HTML parser.
+
+For pregate-backed test selection: the base is bound by a 12-hex prefix, which
+is all upstream pregate records; parsing depends on upstream's explain text,
+guarded by the selection hash (`inputs.selection`), so an upstream explain
+format change refuses with `PREGATE_EXPLAIN_MISMATCH`; removed-path waivers
+refuse because their suite tests emit no per-test provenance line; pregate's
+`requires-remote` and CI-carry routing do not apply because `/docs-ship` runs
+the selected tests itself (`--no-ci-carry`); without `gstack-pregate` installed,
+the base policy is not validated; non-Markdown docs (`.rst`, `.adoc`, `.txt`)
+are no-lane under a strict policy unless `empty_lanes` covers them
+(`lib/pregate/docs-lane.ts:56-77`); and paths with spaces in `no lane policy:`
+lines are split on spaces.

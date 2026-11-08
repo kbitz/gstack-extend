@@ -4,9 +4,9 @@ import { randomBytes } from 'node:crypto';
 import { BodyError, bodyHash, upsert } from './body.ts';
 import { check } from './check.ts';
 import { classify } from './classify.ts';
-import { CONFIG_FILES, describeConfig, readConfig } from './config.ts';
+import { basePolicy, CONFIG_FILES, describeConfig, readConfig } from './config.ts';
 import { changes, commitOf, gitIn, mergeBase, readAt, Refusal, topLevel, worktreeClean } from './git.ts';
-import { expandCommand, selectTests } from './pinning.ts';
+import { composeTests, expandCommand, parseAndBindPregate } from './pinning.ts';
 
 // All three launcher flags first coexist in Bun 1.3.3's src/cli/Arguments.zig.
 export const BUN_FLOOR = '1.3.3';
@@ -21,7 +21,7 @@ Requires Bun >= ${BUN_FLOOR} (--no-env-file --no-install --config=/dev/null).
 Usage:
   docs-ship classify --base REF [--head REF]
   docs-ship check --base REF [--head REF] [--brief FILE]...
-  docs-ship tests --base REF [--head REF] [--config-ref REF]
+  docs-ship tests --base REF [--head REF] [--config-ref REF] [--pregate FILE]
   docs-ship hash --body FILE
   docs-ship receipt --body FILE --receipt FILE --out FILE
   docs-ship --help | -h | --version
@@ -47,6 +47,15 @@ tests     List the test files that name a changed path or file name, plus the
           template with {tests} filled in, when the project sets one.
           Read settings at --config-ref (default --base), independently of
           the diff range. CONFIG_REF reports the settings' commit.
+          SELECTION names pregate (when --config-ref has .gstack/pregate.json
+          and --pregate FILE supplies nonexecuting gstack-pregate --stage tests
+          --explain --json output) or legacy (no base policy, or no --pregate).
+          Binds policy, base, head and tree; refuses PREGATE_INVALID,
+          PREGATE_REFUSED, PREGATE_BINDING, PREGATE_EXECUTED, PREGATE_INCOMPLETE
+          and PREGATE_EXPLAIN_MISMATCH. NO_LANE: <file> | fail sets
+          STATUS: no-lane (exit 1); warn keeps selected/none. LEGACY and
+          COMPARED report legacy-only matches without running them. When --base
+          differs from --config-ref, filters the explanation to the bump delta.
 hash      Print the SHA-256 of FILE's PR body without the receipt block.
 receipt   Insert or replace the receipt block from --receipt in the body and
           write the result to --out. Refuses a receipt whose "Body SHA-256"
@@ -163,20 +172,44 @@ function checkCmd(argv: string[], io: CliIo): number {
 }
 
 function testsCmd(argv: string[], io: CliIo): number {
-  const args = parse(argv, { '--base': 'value', '--head': 'value', '--config-ref': 'value' });
+  const args = parse(argv, { '--base': 'value', '--head': 'value', '--config-ref': 'value', '--pregate': 'value' });
   const r = range(args, io.cwd);
   const configRef = args['--config-ref']?.[0] ?? r.baseRef;
   const configCommit = args['--config-ref'] === undefined ? r.base : commitOf(r.git, configRef, '--config-ref');
   const config = readConfig(r.git, configCommit);
   const changed = changes(r.git, r.from, r.head).map((c) => c.path);
-  const selected = selectTests(r.git, r.head, changed, config.tests);
+  const hasPolicy = basePolicy(r.git, configCommit);
+  const pregateArg = args['--pregate']?.[0];
+  let selectionLine: string;
+  let pregateInput: { bound: ReturnType<typeof parseAndBindPregate>; delta: 'all' | ReadonlySet<string> } | undefined;
+  if (!hasPolicy) {
+    selectionLine = `legacy | no .gstack/pregate.json at ${configCommit}${pregateArg !== undefined ? ' | --pregate ignored' : ''}`;
+  } else if (pregateArg === undefined) {
+    selectionLine = 'legacy | base .gstack/pregate.json present; no pregate explanation supplied';
+  } else {
+    const text = readFile(abs(io.cwd, pregateArg), 'pregate');
+    const bound = parseAndBindPregate(text, r.git, r.head, configCommit, configRef);
+    const delta = r.base === configCommit ? 'all' : new Set(changed);
+    selectionLine = `pregate | ${bound.policy}`;
+    pregateInput = { bound, delta };
+  }
+  const composed = composeTests(r.git, r.head, changed, config.tests, pregateInput);
+  const { selected, noLane } = composed;
   let out = `HEAD: ${r.head}\nMERGE_BASE: ${r.from}\nCONFIG_REF: ${configCommit} (${configRef})\nCHANGED: ${changed.length}\n`;
+  out += `SELECTION: ${selectionLine}\n`;
   for (const s of selected) out += `TEST: ${show(s.test)} | ${s.reasons.join('; ')}\n`;
+  for (const n of noLane) out += `NO_LANE: ${show(n.file)} | ${n.mode}\n`;
+  if (composed.mode === 'pregate') {
+    for (const l of composed.legacyOnly) out += `LEGACY: ${show(l.test)} | ${l.reasons.join('; ')} | not run\n`;
+    out += `COMPARED: pregate ${composed.pregateCount}; legacy scan ${composed.legacyScanCount}; legacy only ${composed.legacyOnly.length}\n`;
+  }
   out += `TESTS: ${selected.length}\n`;
   if (config.testCommand && selected.length) out += `COMMAND: ${expandCommand(config.testCommand, selected.map((s) => s.test))}\n`;
-  out += `STATUS: ${selected.length ? 'selected' : 'none'}\n`;
+  const hasFailNoLane = noLane.some((n) => n.mode === 'fail');
+  const status = hasFailNoLane ? 'no-lane' : selected.length ? 'selected' : 'none';
+  out += `STATUS: ${status}\n`;
   io.stdout(out);
-  return EXIT.ok;
+  return hasFailNoLane ? EXIT.failed : EXIT.ok;
 }
 
 function hashCmd(argv: string[], io: CliIo): number {
