@@ -11,9 +11,10 @@ import { spawnSync } from 'node:child_process';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
-  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SPECIALIST_PARTS,
-  buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
+  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, REPO_POLICY, SPECIALIST_PARTS,
+  buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, sandboxArgs, validateConfig, type Access,
 } from '../src/review-delegate/delegate';
+import { BWRAP_PATHS, main, probeSandbox, type Deps } from '../src/review-delegate/cli';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'review-delegate');
@@ -88,11 +89,12 @@ function repository() {
 }
 
 const FAKE = join(fresh('fake'), 'delegate.ts');
-put(FAKE, `import { appendFileSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
+put(FAKE, `import { appendFileSync, existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 const [, , mode, state] = process.argv;
 const prompt = await Bun.stdin.text();
-appendFileSync(join(state, 'spawns.log'), mode + '\\n');
+try { appendFileSync(join(state, 'spawns.log'), mode + '\\n'); } catch {}
 const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 8, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
 const rec = 'Recommendation: fix because a gap remains.';
 const envelope = (result, usage) => JSON.stringify({ result, usage });
@@ -100,7 +102,7 @@ if (mode === 'findings') console.log(envelope(finding('CRITICAL', '[P1]') + '\\n
 else if (mode === 'plain') console.log(finding('CRITICAL', '[P0]') + '\\n' + rec);
 else if (mode === 'clean') console.log(envelope('NO_FINDINGS: none\\nRecommendation: merge because nothing is wrong.', { input_tokens: 90, output_tokens: 4 }));
 else if (mode === 'exit') { console.error('STDERR-MARKER boom'); process.exit(3); }
-else if (mode === 'sleep') { writeFileSync(join(state, 'pid.txt'), String(process.pid)); await new Promise((resolve) => setTimeout(resolve, 5000)); writeFileSync(join(state, 'finished.txt'), 'natural completion'); }
+else if (mode === 'sleep') { try { writeFileSync(join(state, 'pid.txt'), String(process.pid)); } catch {} await new Promise((resolve) => setTimeout(resolve, 5000)); try { writeFileSync(join(state, 'finished.txt'), 'natural completion'); } catch {} }
 else if (mode === 'refusal') console.log('I cannot review this.\\nRecommendation: none because I refuse.');
 else if (mode === 'needs-context') console.log('NEEDS_CONTEXT: the callers of changed.txt\\nNO_FINDINGS: none\\nRecommendation: wait because callers are missing.');
 else if (mode === 'uncredited') console.log('Looks fine to me.\\nRecommendation: merge because it reads well.');
@@ -115,11 +117,73 @@ else if (mode === 'inspect') {
   writeFileSync(join(state, 'inspect.json'), JSON.stringify({ cwd: process.cwd(), entries: readdirSync(process.cwd()), env: Object.keys(process.env), prompt }));
   console.error('STDERR-MARKER inspected');
   console.log('NO_FINDINGS: none\\nRecommendation: merge because inspected.');
+} else if (mode === 'repo-probe') {
+  const realRepo = readFileSync(join(state, 'repo.txt'), 'utf8').trim();
+  const exposeDir = readFileSync(join(state, 'expose-dir.txt'), 'utf8').trim();
+  const callsDir = readFileSync(join(state, 'calls-dir.txt'), 'utf8').trim();
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const status = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).stdout.trim();
+  const log = spawnSync('git', ['log', '-1', '--oneline'], { encoding: 'utf8' }).stdout.trim();
+  const remotes = spawnSync('git', ['remote'], { encoding: 'utf8' }).stdout.trim();
+  const pushStatus = spawnSync('git', ['push'], { encoding: 'utf8' }).status;
+  const outside = readFileSync(join(process.cwd(), 'outside.txt'), 'utf8');
+  writeFileSync(join(process.cwd(), 'clone-only.txt'), 'CLONE\\n');
+  const realRepoEntries = existsSync(realRepo) ? readdirSync(realRepo) : ['missing'];
+  const callsEntries = existsSync(callsDir) ? readdirSync(callsDir) : ['missing'];
+  const secretInReal = existsSync(join(realRepo, 'ignored-secret.txt'));
+  const secretInCopy = existsSync(join(process.cwd(), 'ignored-secret.txt'));
+  const homeCred = existsSync(join(process.env.HOME ?? '', 'cred.txt'));
+  const sshExists = existsSync(join(process.env.HOME ?? '', '.ssh'));
+  const runUser = existsSync('/run/user');
+  const hostsLen = readFileSync('/etc/hosts', 'utf8').length;
+  const exposedBefore = readFileSync(join(exposeDir, 'info.txt'), 'utf8');
+  writeFileSync(join(exposeDir, 'info.txt'), 'THROW-AWAY\\n');
+  writeFileSync(join(exposeDir, 'extra.txt'), 'THROW-AWAY\\n');
+  writeFileSync(join(state, 'kept.txt'), 'KEPT-MARKER\\n');
+  writeFileSync('/tmp/probe-tmp.txt', 'TMP-OK\\n');
+  const tmpBack = readFileSync('/tmp/probe-tmp.txt', 'utf8');
+  writeFileSync(join(state, 'repo-probe.json'), JSON.stringify({
+    cwd: process.cwd(), head, status, log, remotes, pushStatus, outside, realRepoEntries, callsEntries,
+    secretInReal, secretInCopy, homeCred, sshExists, runUser, hostsLen, exposedBefore, tmpdir: process.env.TMPDIR, tmpBack,
+    env: Object.keys(process.env), prompt,
+  }));
+  console.log('[P1] ' + JSON.stringify({
+    severity: 'CRITICAL', confidence: 9, path: 'changed.txt', line: 2, category: 'adversarial',
+    summary: 'verified in clone', fix: 'guard it', evidence: 'git rev-parse HEAD -> ' + head,
+  }) + '\\nRecommendation: fix because reproduced in clone.');
+} else if (mode === 'escape-write') {
+  const realRepo = readFileSync(join(state, 'repo.txt'), 'utf8').trim();
+  const attempts: Record<string, string> = {};
+  for (const [name, target] of [
+    ['worktree', join(realRepo, 'changed.txt')],
+    ['worktreeNew', join(realRepo, 'escape.txt')],
+    ['gitObjects', join(realRepo, '.git', 'objects', 'escape')],
+    ['homeCred', join(process.env.HOME ?? '', 'cred.txt')],
+    ['etc', '/etc/extend-escape-probe'],
+    ['etcHosts', '/etc/hosts'],
+    ['stagedScript', process.argv[1]!],
+  ] as const) {
+    try { writeFileSync(target, 'ESCAPED\\n'); attempts[name] = 'wrote-in-sandbox'; }
+    catch (err: any) { attempts[name] = err?.code ?? 'error'; }
+  }
+  writeFileSync(join(state, 'escape.json'), JSON.stringify(attempts));
+  console.log('NO_FINDINGS: none\\nRecommendation: merge because escape probes ran.');
+} else if (mode === 'background') {
+  const child = spawn(process.execPath, ['-e', \`setTimeout(() => { try { require('node:fs').writeFileSync(\${JSON.stringify(join(state, 'bg-survived.txt'))}, 'alive'); } catch {} }, 1500);\`], { detached: true, stdio: 'ignore' });
+  child.unref();
+  console.log('NO_FINDINGS: none\\nRecommendation: merge because background spawned.');
+} else if (mode === 'signal-wait') {
+  writeFileSync(join(state, 'ready.txt'), '1');
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !existsSync(join(state, 'go.txt'))) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  console.log('NO_FINDINGS: none\\nRecommendation: merge because signal received.');
 }
 `);
 
 interface Setup { layout: 'nested' | 'sibling'; root: string; repo: string; base: string; candidate: string; state: string; calls: string; config: string }
-type Provider = { mode: string; timeout_s?: number; model?: string };
+type Provider = { mode: string; timeout_s?: number; model?: string; access?: Access; expose?: string[]; keep?: string[] };
 /** A configuration whose providers are fake delegates; `parts` maps each part to a provider label. */
 function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>, parts: Record<string, string>): Setup {
   const { repo, base, candidate } = repository();
@@ -127,7 +191,14 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
   writeFileSync(join(state, 'repo.txt'), repo);
   const config = join(fresh('config'), 'delegates.json');
   put(config, JSON.stringify({ schema: CONFIG_SCHEMA, parts, providers: Object.fromEntries(Object.entries(providers).map(([label, p]) =>
-    [label, { argv: [process.execPath, FAKE, p.mode, state], timeout_s: p.timeout_s ?? 30, model: p.model ?? `model-${label}` }])) }));
+    [label, {
+      argv: [process.execPath, FAKE, p.mode, state],
+      timeout_s: p.timeout_s ?? 30,
+      model: p.model ?? `model-${label}`,
+      ...(p.access !== undefined ? { access: p.access } : {}),
+      ...(p.expose !== undefined ? { expose: p.expose } : {}),
+      ...(p.keep !== undefined ? { keep: p.keep } : {}),
+    }])) }));
   return { layout, root: upstream(layout), repo, base, candidate, state, calls: join(fresh('calls'), 'delegate-calls'), config };
 }
 const spawns = (s: Setup) => existsSync(join(s.state, 'spawns.log')) ? readFileSync(join(s.state, 'spawns.log'), 'utf8').split('\n').filter(Boolean) : [];
@@ -221,7 +292,7 @@ describe('refused part names and usage errors (exit 2, no work)', () => {
   test('--help prints the contract and exits 0', () => {
     const r = cli(['--help']);
     expect(r.status).toBe(0);
-    for (const word of ['check', 'run', '--calls', '--adversarial', '--caught', 'docs/delegated-review.md', ...PARTS]) expect(r.stdout).toContain(word);
+    for (const word of ['check', 'run', '--calls', '--adversarial', '--caught', 'sandbox-unavailable', 'docs/delegated-review.md', ...PARTS]) expect(r.stdout).toContain(word);
   });
 });
 
@@ -250,6 +321,21 @@ describe('configuration errors refuse before any call', () => {
     ['a part mapped to an unknown label', (c) => ({ ...c, parts: { testing: 'ghost' } }), 'config-malformed'],
     ['a part mapped to a non-string', (c) => ({ ...c, parts: { testing: 7 } }), 'config-malformed'],
     ['a named part without a mapping', (c) => ({ ...c, parts: { performance: 'alpha' } }), 'part-unmapped'],
+    ['a bad access value', (c) => { c.providers.alpha.access = 'write'; return c; }, 'config-malformed'],
+    ['expose without repo mode', (c) => { c.providers.alpha.expose = ['/path/to/x']; return c; }, 'config-malformed'],
+    ['keep with diff mode', (c) => { c.providers.alpha.access = 'diff'; c.providers.alpha.keep = ['/path/to/x']; return c; }, 'config-malformed'],
+    ['a relative expose path', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['relative/path']; return c; }, 'config-malformed'],
+    ['an unnormalized expose path with ..', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/../b']; return c; }, 'config-malformed'],
+    ['an unnormalized keep path with //', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/a//b']; return c; }, 'config-malformed'],
+    ['a trailing-slash path in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/b/']; return c; }, 'config-malformed'],
+    ['root / in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/']; return c; }, 'config-malformed'],
+    ['root / in keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/']; return c; }, 'config-malformed'],
+    ['a control character in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/path/to/\nfile']; return c; }, 'config-malformed'],
+    ['a NUL in keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/path/to/\0file']; return c; }, 'config-malformed'],
+    ['duplicate path within expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/b', '/a/b']; return c; }, 'config-malformed'],
+    ['duplicate path across expose and keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/b']; c.providers.alpha.keep = ['/a/b']; return c; }, 'config-malformed'],
+    ['more than 32 entries in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = Array.from({ length: 33 }, (_, i) => `/path/e${i}`); return c; }, 'config-malformed'],
+    ['more than 32 entries in keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = Array.from({ length: 33 }, (_, i) => `/path/k${i}`); return c; }, 'config-malformed'],
   ];
   test.each(cases)('%s', (_name, mutate, reason) => {
     const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
@@ -273,9 +359,24 @@ describe('configuration errors refuse before any call', () => {
     expect(spawns(s)).toEqual([]);
   });
 
-  test('validateConfig accepts the documented shape and keeps the closed schema string', () => {
+  test('validateConfig accepts the documented shape, repo-mode providers for all six parts, and keeps the closed schema string', () => {
     const ok = validateConfig(JSON.stringify(good('/state')));
     expect(ok.ok).toBe(true);
+    const repoCfg = validateConfig(JSON.stringify({
+      schema: CONFIG_SCHEMA,
+      providers: {
+        alpha: {
+          argv: ['/path/to/bin'],
+          timeout_s: 60,
+          model: 'model-a',
+          access: 'repo',
+          expose: Array.from({ length: 32 }, (_, i) => `/path/expose/${i}`),
+          keep: Array.from({ length: 32 }, (_, i) => `/path/keep/${i}`),
+        },
+      },
+      parts: Object.fromEntries(PARTS.map((p) => [p, 'alpha'])),
+    }));
+    expect(repoCfg.ok).toBe(true);
     expect(validateConfig('[]').ok).toBe(false);
     expect(validateConfig('null').ok).toBe(false);
   });
@@ -615,10 +716,348 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
     expect(prompt).not.toContain('already_caught');
     // Even if a caller passes a caught string for a specialist part, buildPrompt ignores it so specialist callIds cannot drift.
     expect(buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body', 'ignored')).toBe(prompt);
-    const provider = { argv: ['/bin/delegate', '--ro'], timeout_s: 30, model: 'model-a' };
+    const provider = { argv: ['/bin/delegate', '--ro'], timeout_s: 30, model: 'model-a', access: 'diff' as const, expose: [] as string[], keep: [] as string[] };
     expect(callId(prompt, provider, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([prompt, provider.argv, provider.model, 'alpha'])).digest('hex'),
     );
+    expect(buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body', undefined, 'diff')).toBe(prompt);
+    const repoPrompt = buildPrompt('adversarial', base, candidate, 'diff-body', 'checklist-body', undefined, 'repo');
+    const diffAdvPrompt = buildPrompt('adversarial', base, candidate, 'diff-body', 'checklist-body', undefined, 'diff');
+    expect(repoPrompt.startsWith(REPO_POLICY)).toBe(true);
+    expect(repoPrompt).not.toBe(diffAdvPrompt);
+    expect(repoPrompt.slice(REPO_POLICY.length)).toBe(diffAdvPrompt.slice(DELEGATE_POLICY.length));
+    expect(callId(repoPrompt, { ...provider, access: 'repo' }, 'alpha')).not.toBe(callId(diffAdvPrompt, provider, 'alpha'));
+  });
+
+  test('sandboxArgs orders hides after keeps and exposes, puts the copy bind and chdir last, and never binds hidden paths read-write', () => {
+    const args = sandboxArgs({
+      home: '/home/tester',
+      copy: '/tmp/extend-delegate-1/copy',
+      expose: [
+        { kind: 'dir', path: '/home/tester/.codex/skills' },
+        { kind: 'file', path: '/home/tester/.codex/auth.json', staged: '/tmp/extend-delegate-1/staged/0' },
+      ],
+      keep: ['/home/tester/.local/state/provider'],
+      hidden: ['/work/repo', '/work/repo/.git', '/work/calls', '/run/user/1000', '/work/repo'],
+      resolvDir: '/run/systemd/resolve',
+    });
+    expect(args).toContain('--share-net');
+    expect(args).toContain('--die-with-parent');
+    expect(args).toContain('--new-session');
+    const lastKeep = args.lastIndexOf('/home/tester/.local/state/provider');
+    const lastExpose = args.lastIndexOf('/home/tester/.codex/auth.json');
+    const firstHidden = args.indexOf('/work/repo');
+    expect(firstHidden).toBeGreaterThan(lastKeep);
+    expect(firstHidden).toBeGreaterThan(lastExpose);
+    expect(args.slice(-5)).toEqual(['--bind', '/tmp/extend-delegate-1/copy', '/tmp/extend-delegate-1/copy', '--chdir', '/tmp/extend-delegate-1/copy']);
+    for (const hidden of ['/work/repo', '/work/repo/.git', '/work/calls', '/run/user/1000']) {
+      for (let i = 0; i < args.length - 2; i++) {
+        if (args[i] === '--bind') expect(args[i + 2]).not.toBe(hidden);
+      }
+    }
+  });
+});
+
+describe('repository-mode sandbox and check', () => {
+  const probe = probeSandbox();
+  const runInProcess = async (argv: string[], deps?: Deps, envPatch?: Record<string, string | undefined>) => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const saved: Record<string, string | undefined> = {};
+    if (envPatch) {
+      for (const [k, v] of Object.entries(envPatch)) {
+        saved[k] = process.env[k];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    try {
+      const status = await main(argv, { stdout: (t) => out.push(t), stderr: (t) => err.push(t) }, deps);
+      return { status, stdout: out.join(''), stderr: err.join(''), json: JSON.parse(out.join('').trim()) };
+    } finally {
+      if (envPatch) {
+        for (const [k, v] of Object.entries(saved)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+    }
+  };
+
+  test('injected darwin or missing bwrap refuses repo-mode check and run with sandbox-unavailable while diff-only still checks ok', async () => {
+    const s = setup(
+      'nested',
+      { 'repo-prov': { mode: 'clean', access: 'repo', expose: [FAKE], keep: [fresh('keep')] }, 'diff-prov': { mode: 'clean' } },
+      { adversarial: 'repo-prov', testing: 'diff-prov' },
+    );
+    for (const deps of [{ platform: 'darwin' as const }, { platform: 'linux' as const, bwrapPaths: ['/nonexistent/bwrap'] }]) {
+      const chk = await runInProcess([...checkArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)], deps);
+      expect(chk.status).toBe(1);
+      expect(chk.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+      const run = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)], deps);
+      expect(run.status).toBe(1);
+      expect(run.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+    }
+    expect(existsSync(join(s.state, 'spawns.log'))).toBe(false);
+    const diffChk = await runInProcess(checkArgs(s, 'testing'), { platform: 'darwin' });
+    expect(diffChk.status).toBe(0);
+    expect(diffChk.json).toMatchObject({
+      v: 1, status: 'ok',
+      parts: [{ part: 'testing', provider: 'diff-prov', model: 'model-diff-prov' }],
+    });
+  });
+
+  test('keep or expose equal to HOME or an ancestor of HOME, or relative HOME, refuses with config-malformed', async () => {
+    const homeDir = fresh('fake-home');
+    const sHome = setup('nested', { p: { mode: 'clean', access: 'repo', keep: [homeDir] } }, { testing: 'p' });
+    const r1 = await runInProcess(checkArgs(sHome, 'testing'), undefined, { HOME: homeDir });
+    expect(r1.status).toBe(1);
+    expect(r1.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+
+    const sAncestor = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [ scratch ] } }, { testing: 'p' });
+    const r2 = await runInProcess(checkArgs(sAncestor, 'testing'), undefined, { HOME: homeDir });
+    expect(r2.status).toBe(1);
+    expect(r2.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+
+    const sRelHome = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    const r3 = await runInProcess(checkArgs(sRelHome, 'testing'), undefined, { HOME: 'relative/home' });
+    expect(r3.status).toBe(1);
+    expect(r3.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+  });
+
+  test.if(probe)('check emits access: "repo" only on repo-mode parts and keeps diff-mode part rows at 3 keys', () => {
+    const s = setup(
+      'nested',
+      { 'repo-prov': { mode: 'clean', access: 'repo', expose: [FAKE] }, 'diff-prov': { mode: 'clean' } },
+      { testing: 'diff-prov', adversarial: 'repo-prov' },
+    );
+    const r = cli([...checkArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(0);
+    expect(r.json.parts).toEqual([
+      { part: 'testing', provider: 'diff-prov', model: 'model-diff-prov' },
+      { part: 'adversarial', provider: 'repo-prov', model: 'model-repo-prov', access: 'repo' },
+    ]);
+    expect(Object.keys(r.json.parts[0])).toEqual(['part', 'provider', 'model']);
+    expect(Object.keys(r.json.parts[1])).toEqual(['part', 'provider', 'model', 'access']);
+  });
+  test.if(!probe)('check refuses with sandbox-unavailable when sandbox probe is false', () => {
+    const s = setup('nested', { 'repo-prov': { mode: 'clean', access: 'repo', expose: [FAKE] } }, { adversarial: 'repo-prov' });
+    const r = cli([...checkArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('repo-probe runs inside a bubblewrap-sandboxed clone at candidate SHA with expose, keep, hidden paths and no remotes', async () => {
+    const fakeHome = fresh('home');
+    put(join(fakeHome, 'cred.txt'), 'SECRET-CRED\n');
+    put(join(fakeHome, '.ssh', 'id_ed25519'), 'PRIVATE-KEY\n');
+    const exposeDir = join(fakeHome, '.codex', 'skills');
+    put(join(exposeDir, 'info.txt'), 'HOST-SKILL\n');
+    const exposeFile = join(fakeHome, '.codex', 'config.toml');
+    put(exposeFile, 'model = "o3"\n');
+    const s = setup(
+      'nested',
+      { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE, exposeDir, exposeFile], keep: [fresh('keep-placeholder')] } },
+      { adversarial: 'repo-prov' },
+    );
+    // Point keep at s.state so FAKE can write its probe report and kept.txt back to the test.
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers['repo-prov'].keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
+    writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
+    git(s.repo, 'remote', 'add', 'origin', 'https://example.invalid/repo.git');
+    put(join(s.repo, '.gitignore'), 'ignored-secret.txt\n');
+    git(s.repo, 'add', '.gitignore');
+    git(s.repo, 'commit', '-q', '-m', 'ignore secret');
+    s.candidate = git(s.repo, 'rev-parse', 'HEAD').stdout.trim();
+    put(join(s.repo, 'ignored-secret.txt'), 'DONT-COPY-ME\n');
+
+    const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)], undefined, { HOME: fakeHome });
+    expect(r.status).toBe(0);
+    expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
+    expect(report.cwd).not.toBe(s.repo);
+    expect(report.head).toBe(s.candidate);
+    expect(report.status).toBe('');
+    expect(report.log).toContain('ignore secret');
+    expect(report.remotes).toBe('');
+    expect(report.pushStatus).not.toBe(0);
+    expect(report.outside).toBe('REPO-ONLY-MARKER\n');
+    expect(report.realRepoEntries.filter((e: string) => e !== '.git')).toEqual([]);
+    expect(report.callsEntries).toEqual([]);
+    expect(report.secretInReal).toBe(false);
+    expect(report.secretInCopy).toBe(false);
+    expect(report.homeCred).toBe(false);
+    expect(report.sshExists).toBe(false);
+    expect(report.runUser).toBe(false);
+    expect(report.hostsLen).toBeGreaterThan(0);
+    expect(report.exposedBefore).toBe('HOST-SKILL\n');
+    expect(report.tmpdir).toBe('/tmp');
+    expect(report.tmpBack).toBe('TMP-OK\n');
+    expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
+    // Host state after the run: expose Dir/File untouched, keep file persisted, host repo has no clone-only.txt and still has origin, disposable root removed.
+    expect(readFileSync(join(exposeDir, 'info.txt'), 'utf8')).toBe('HOST-SKILL\n');
+    expect(existsSync(join(exposeDir, 'extra.txt'))).toBe(false);
+    expect(readFileSync(join(s.state, 'kept.txt'), 'utf8')).toBe('KEPT-MARKER\n');
+    expect(existsSync(join(s.repo, 'clone-only.txt'))).toBe(false);
+    expect(git(s.repo, 'remote').stdout.trim()).toBe('origin');
+    expect(existsSync(report.cwd)).toBe(false);
+  });
+  test.if(!probe)('repo-probe twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE] } }, { adversarial: 'repo-prov' });
+    const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('escape-write cannot modify the host worktree, git objects, HOME, or /etc, and still returns a clean review', async () => {
+    const fakeHome = fresh('home-esc');
+    put(join(fakeHome, 'cred.txt'), 'HOST-CRED\n');
+    const s = setup('nested', { esc: { mode: 'escape-write', access: 'repo', expose: [FAKE], keep: [fresh('keep-esc')] } }, { testing: 'esc' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.esc.keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = await runInProcess(runArgs(s, 'testing'), undefined, { HOME: fakeHome });
+    expect(r.status).toBe(0);
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    const attempts = JSON.parse(readFileSync(join(s.state, 'escape.json'), 'utf8'));
+    expect(attempts.gitObjects).toBe('ENOENT');
+    expect(['EACCES', 'EROFS']).toContain(attempts.etc);
+    expect(['EACCES', 'EROFS']).toContain(attempts.etcHosts);
+    expect(readFileSync(join(s.repo, 'changed.txt'), 'utf8')).toBe('one\nDIFF-MARKER\n');
+    expect(existsSync(join(s.repo, 'escape.txt'))).toBe(false);
+    expect(readFileSync(join(fakeHome, 'cred.txt'), 'utf8')).toBe('HOST-CRED\n');
+    expect(readFileSync(FAKE, 'utf8')).toContain('escape-write');
+  });
+  test.if(!probe)('escape-write twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { esc: { mode: 'escape-write', access: 'repo', expose: [FAKE] } }, { testing: 'esc' });
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('background child inside bwrap dies with parent when the provider exits', async () => {
+    const s = setup('nested', { bg: { mode: 'background', access: 'repo', expose: [FAKE], keep: [fresh('keep-bg')] } }, { testing: 'bg' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.bg.keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(existsSync(join(s.state, 'bg-survived.txt'))).toBe(false);
+  }, 15_000);
+  test.if(!probe)('background twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { bg: { mode: 'background', access: 'repo', expose: [FAKE] } }, { testing: 'bg' });
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('repo-mode timeout records fallback_reason: timeout and removes the disposable root', () => {
+    const s = setup('nested', { slow: { mode: 'sleep', timeout_s: 1, access: 'repo', expose: [FAKE], keep: [fresh('keep-slow')] } }, { testing: 'slow' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.slow.keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(4);
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout', findings: [] });
+  }, 15_000);
+  test.if(!probe)('repo-mode timeout twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { slow: { mode: 'sleep', timeout_s: 1, access: 'repo', expose: [FAKE] } }, { testing: 'slow' });
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('missing expose path records fallback_reason: failed on that part without refusing a sibling diff-mode part, and replays without a second spawn', () => {
+    const s = setup(
+      'nested',
+      { 'broken-repo': { mode: 'clean', access: 'repo', expose: [FAKE, '/nonexistent/expose-path-xyz'] }, 'good-diff': { mode: 'clean' } },
+      { adversarial: 'broken-repo', testing: 'good-diff' },
+    );
+    const first = cli([...runArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(first.status).toBe(4);
+    expect(row(first.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null, replay: false });
+    expect(row(first.json, 'adversarial')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed', replay: false, dispatched: true });
+    expect(readFileSync(join(s.state, 'spawns.log'), 'utf8').trim().split('\n')).toEqual(['clean']);
+
+    const second = cli([...runArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(second.status).toBe(4);
+    expect(row(second.json, 'testing').replay).toBe(true);
+    expect(row(second.json, 'adversarial')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed', replay: true, dispatched: false });
+    expect(readFileSync(join(s.state, 'spawns.log'), 'utf8').trim().split('\n')).toEqual(['clean']);
+  });
+  test.if(!probe)('missing expose twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { 'broken-repo': { mode: 'clean', access: 'repo', expose: [FAKE, '/nonexistent/expose-path-xyz'] } }, { adversarial: 'broken-repo' });
+    const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('host worktree change during a repo-mode run refuses with worktree-changed and marks dispatched parts worktree-changed', async () => {
+    const s = setup('nested', { sig: { mode: 'signal-wait', access: 'repo', expose: [FAKE], keep: [fresh('keep-sig')] } }, { testing: 'sig' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.sig.keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const pending = runInProcess(runArgs(s, 'testing'));
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !existsSync(join(s.state, 'ready.txt'))) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(existsSync(join(s.state, 'ready.txt'))).toBe(true);
+    put(join(s.repo, 'changed.txt'), 'mutated on host during repo-mode run\n');
+    put(join(s.state, 'go.txt'), '1');
+    const r = await pending;
+    expect(r.status).toBe(1);
+    expect(r.json.status).toBe('ran');
+    expect(row(r.json, 'testing')).toMatchObject({ part: 'testing', outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [], dispatched: true });
+    const files = readdirSync(s.calls).filter((name) => name.endsWith('.json'));
+    expect(files.length).toBe(1);
+    const saved = JSON.parse(readFileSync(join(s.calls, files[0]!), 'utf8'));
+    expect(saved).toMatchObject({ v: 1, worktree_changed: true });
+  }, 15_000);
+  test.if(!probe)('worktree-changed twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup('nested', { sig: { mode: 'signal-wait', access: 'repo', expose: [FAKE] } }, { testing: 'sig' });
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+  });
+
+  test.if(probe)('mixed diff and repo call in one invocation gives diff mode DELEGATE_POLICY and repo mode REPO_POLICY and credits both', () => {
+    const s = setup(
+      'nested',
+      {
+        'diff-inspect': { mode: 'findings' },
+        'repo-probe': { mode: 'repo-probe', access: 'repo', expose: [FAKE, fresh('expose-mix')], keep: [fresh('keep-mix')] },
+      },
+      { testing: 'diff-inspect', adversarial: 'repo-probe' },
+    );
+    const exposeDir = JSON.parse(readFileSync(s.config, 'utf8')).providers['repo-probe'].expose[1];
+    put(join(exposeDir, 'info.txt'), 'MIX-SKILL\n');
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers['repo-probe'].keep = [s.state];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
+    writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
+
+    const r = cli([...runArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(0);
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
+    expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
+    expect(report.cwd).not.toBe(s.repo);
+  });
+  test.if(!probe)('mixed call twin refuses with sandbox-unavailable when probe is false', () => {
+    const s = setup(
+      'nested',
+      { 'diff-inspect': { mode: 'findings' }, 'repo-probe': { mode: 'repo-probe', access: 'repo', expose: [FAKE] } },
+      { testing: 'diff-inspect', adversarial: 'repo-probe' },
+    );
+    const r = cli([...runArgs(s, 'testing,adversarial'), '--adversarial', adversarialPath(s)]);
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
   });
 });
 
@@ -696,8 +1135,25 @@ describe('reply parsing and the receipt contract', () => {
   });
 
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
+    expect([...PART_KEYS]).toEqual([
+      'part', 'provider', 'model', 'call_id', 'replay', 'dispatched', 'dispatched_at', 'returned_at', 'wall_ms',
+      'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'parse', 'verdict', 'outcome', 'fallback_reason', 'findings',
+    ]);
+    expect(RECEIPT_KEYS).toEqual({
+      part: 'part', provider: 'provider', model: 'model', outcome: 'outcome', reason: 'fallback_reason', wall_ms: 'wall_ms',
+      input_tokens: 'input_tokens', output_tokens: 'output_tokens', cache_read_input_tokens: 'cache_read_input_tokens',
+      cache_creation_input_tokens: 'cache_creation_input_tokens', findings: 'findings', call: 'call_id',
+    });
+    expect([...FALLBACK_REASONS]).toEqual(['unresolved-claim', 'timeout', 'failed', 'refused', 'needs-context', 'uncredited', 'unparsed-finding', 'worktree-changed']);
     for (const source of Object.values(RECEIPT_KEYS)) expect(PART_KEYS).toContain(source);
     expect(Object.keys(RECEIPT_KEYS)).toEqual(['part', 'provider', 'model', 'outcome', 'reason', 'wall_ms', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'findings', 'call']);
+    const s = setup('nested', { p: { mode: 'clean' } }, { testing: 'p' });
+    const chk = cli(checkArgs(s, 'testing'));
+    expect(Object.keys(chk.json)).toEqual(['v', 'status', 'config_sha256', 'parts']);
+    expect(Object.keys(chk.json.parts[0])).toEqual(['part', 'provider', 'model']);
+    const run = cli(runArgs(s, 'testing'));
+    expect(Object.keys(run.json)).toEqual(['v', 'status', 'config_sha256', 'parts']);
+    expect(Object.keys(row(run.json, 'testing'))).toEqual([...PART_KEYS]);
     const docs = readFileSync(join(REPO, 'docs', 'delegated-review.md'), 'utf8').replace(/\s+/g, ' ');
     expect(docs).toContain(PART_KEYS.join(' '));
     for (const reason of [...FALLBACK_REASONS, ...REFUSAL_REASONS]) expect(docs, reason).toContain(`\`${reason}\``);
@@ -705,18 +1161,35 @@ describe('reply parsing and the receipt contract', () => {
 });
 
 describe('documentation', () => {
-  test('the example configuration validates and names only placeholder labels, paths and models', () => {
+  test('the example configurations validate and name only placeholder labels, paths and models', () => {
     const docs = readFileSync(join(REPO, 'docs', 'delegated-review.md'), 'utf8');
-    const example = /```json\n([\s\S]*?)\n```/.exec(docs)![1]!;
-    const checked = validateConfig(example);
-    expect(checked.ok).toBe(true);
-    if (!checked.ok) return;
-    expect(Object.keys(checked.config.providers).every((label) => /^provider-[a-z]$/.test(label))).toBe(true);
-    for (const provider of Object.values(checked.config.providers)) {
-      expect(provider.argv[0]).toMatch(/^\/path\/to\//);
-      expect(provider.model).toMatch(/^model-[a-z]$/);
+    const blocks = [...docs.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]!);
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    for (const example of blocks) {
+      const checked = validateConfig(example);
+      expect(checked.ok).toBe(true);
+      if (!checked.ok) continue;
+      expect(Object.keys(checked.config.providers).every((label) => /^provider-[a-z]$/.test(label))).toBe(true);
+      for (const provider of Object.values(checked.config.providers)) {
+        expect(provider.argv[0]).toMatch(/^\/path\/to\//);
+        expect(provider.model).toMatch(/^model-[a-z]$/);
+        for (const entry of [...(provider.expose ?? []), ...(provider.keep ?? [])]) {
+          expect(entry).toMatch(/^\/path\/to\//);
+        }
+      }
     }
-    expect(Object.keys(checked.config.parts).sort()).toEqual([...PARTS].sort());
+    const first = validateConfig(blocks[0]!);
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(Object.keys(first.config.parts).sort()).toEqual([...PARTS].sort());
+    const second = validateConfig(blocks[1]!);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      const attackerMapped = ATTACKER_PARTS.some((part) => {
+        const label = second.config.parts[part];
+        return label !== undefined && second.config.providers[label]?.access === 'repo';
+      });
+      expect(attackerMapped).toBe(true);
+    }
   });
 
   test('the attacker-parts acceptance record names pending PM1 and PM2 rows and claims no installed-agent run yet', () => {
@@ -727,6 +1200,16 @@ describe('documentation', () => {
     expect(record).toContain('297f50c7e1d46aab1404f5f2e8a9584af76ad6b2');
     expect(record).toContain('red-team=ensure');
     expect(record).toContain('delegate=adversarial,red-team');
+  });
+
+  test('the delegate-repo-access acceptance record names pending RR1, release-note input and non-claims', () => {
+    const record = readFileSync(join(REPO, 'docs', 'acceptance', 'delegate-repo-access.md'), 'utf8');
+    expect(record).toContain('| `RR1` | pending |');
+    expect(record).toContain('_release: minor');
+    expect(record).toContain('User-facing change:');
+    expect(record).toContain('Upgrade risk:');
+    expect(record).toContain('No real run backs it yet');
+    expect(record).toContain('297f50c7e1d46aab1404f5f2e8a9584af76ad6b2');
   });
 });
 

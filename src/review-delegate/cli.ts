@@ -6,20 +6,22 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
 import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
 import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, validateConfig,
-  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SpecialistPart, type Spawned,
+  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, sandboxArgs, validateConfig,
+  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SandboxExpose, type SpecialistPart, type Spawned,
 } from './delegate';
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
+export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'] as const;
+export interface Deps { platform?: string; bwrapPaths?: readonly string[] }
 const CHILD_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -126,13 +128,50 @@ function parseArgs(argv: string[]): 'help' | Options {
     caught: caught ? resolve(caught) : '' };
 }
 
+function resolveSandboxBwrap(deps: Deps = {}): string | null {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== 'linux') return null;
+  const paths = deps.bwrapPaths ?? BWRAP_PATHS;
+  let bwrap: string | null = null;
+  for (const candidate of paths) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) { bwrap = candidate; break; }
+    } catch { /* try next */ }
+  }
+  if (!bwrap) return null;
+  let probeDir: string;
+  try {
+    try { probeDir = mkdtempSync(join(tmpdir(), 'extend-bwrap-probe-')); }
+    catch { probeDir = mkdtempSync('/tmp/extend-bwrap-probe-'); }
+  } catch { return null; }
+  try {
+    const res = spawnSync(bwrap, [
+      '--unshare-all', '--share-net', '--die-with-parent',
+      '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
+      '--tmpfs', '/tmp', '--overlay-src', probeDir, '--tmp-overlay', probeDir,
+      '--', '/bin/true',
+    ], { stdio: 'ignore', timeout: 10_000 });
+    return res.status === 0 && !res.error && !res.signal ? bwrap : null;
+  } catch {
+    return null;
+  } finally {
+    try { rmSync(probeDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+export function probeSandbox(deps: Deps = {}): boolean {
+  return resolveSandboxBwrap(deps) !== null;
+}
+
 interface Prepared {
   config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string;
+  bwrap?: string; home?: string;
 }
 type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason };
 
 /** Everything `check` establishes, in refusal order, with no model call. */
-async function prepare(options: Options): Promise<Preparation> {
+async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> {
   const { root } = options;
   const refuse = (reason: RefusalReason): Preparation => ({ ok: false, reason });
   const read = readTrusted(options.config, 'configuration');
@@ -141,6 +180,30 @@ async function prepare(options: Options): Promise<Preparation> {
   const parsed = validateConfig(read.bytes.toString('utf8'));
   if (!parsed.ok) return refuse(parsed.reason);
   for (const part of options.parts) if (!parsed.config.parts[part]) return refuse('part-unmapped');
+
+  const repoProviders = options.parts
+    .map((part) => parsed.config.providers[parsed.config.parts[part]!]!)
+    .filter((provider) => provider.access === 'repo');
+  let home: string | undefined;
+  if (repoProviders.length > 0) {
+    const rawHome = process.env.HOME;
+    if (!rawHome || !isAbsolute(rawHome) || CONTROL.test(rawHome)) return refuse('config-malformed');
+    home = resolve(rawHome);
+    if (home === '/') return refuse('config-malformed');
+    const isHomeOrAncestor = (entry: string, target: string) => {
+      const rel = relative(entry, target);
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    };
+    let realHome = home;
+    try { realHome = realpathSync(home); } catch { /* use resolved home */ }
+    for (const provider of repoProviders) {
+      for (const entry of [...(provider.expose ?? []), ...(provider.keep ?? [])]) {
+        if (entry === '/' || isHomeOrAncestor(entry, home) || isHomeOrAncestor(entry, realHome)) {
+          return refuse('config-malformed');
+        }
+      }
+    }
+  }
 
   const entry = UPSTREAM_HELPERS.find((helper) => helper.name === 'classifyOutsideReview')!;
   let classify: unknown;
@@ -181,13 +244,28 @@ async function prepare(options: Options): Promise<Preparation> {
       checklists[part] = file.bytes.toString('utf8');
     }
   }
+  let bwrap: string | undefined;
+  if (repoProviders.length > 0) {
+    const resolvedBwrap = resolveSandboxBwrap(deps);
+    if (!resolvedBwrap) return refuse('sandbox-unavailable');
+    bwrap = resolvedBwrap;
+  }
   let caught: string | undefined;
   if (options.command === 'run' && options.parts.includes('red-team')) {
     const caughtRead = readTrusted(options.caught, 'caught findings');
     if (!caughtRead.ok || caughtRead.bytes.length > CONFIG_LIMIT) return refuse('caught-unreadable');
     caught = caughtRead.bytes.toString('utf8');
   }
-  return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists, ...(caught !== undefined ? { caught } : {}) } };
+  return {
+    ok: true,
+    prepared: {
+      config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'),
+      classify: classify as Classifier, checklists,
+      ...(caught !== undefined ? { caught } : {}),
+      ...(bwrap !== undefined ? { bwrap } : {}),
+      ...(home !== undefined ? { home } : {}),
+    },
+  };
 }
 
 /** Hash HEAD, status, index entries and nonignored file bytes without following symlinks. */
@@ -228,8 +306,18 @@ function worktreeState(repo: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** One process in its own group, an empty private cwd, an allowlisted env and bounded output. */
-function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promise<Spawned> {
+interface RepoSandboxSpec {
+  bwrap: string;
+  home: string;
+  repo: string;
+  candidate: string;
+  calls: string;
+  expose: readonly string[];
+  keep: readonly string[];
+}
+
+/** One process in its own group, an empty private cwd (or a bubblewrap-sandboxed clone), an allowlisted env and bounded output. */
+function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpec?: RepoSandboxSpec): Promise<Spawned> {
   return new Promise((settle) => {
     const started = Date.now();
     let cwd: string;
@@ -246,7 +334,8 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promis
     let outSize = 0, errSize = 0;
     let timedOut = false, overflow = false, spawnError = false, finished = false;
     let grace: ReturnType<typeof setTimeout> | undefined;
-    let child: ReturnType<typeof spawn>;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let child: ReturnType<typeof spawn> | undefined;
     const killGroup = () => { try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
     const finish = (code: number | null, signal: string | null) => {
       if (finished) return;
@@ -255,13 +344,111 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promis
       clearTimeout(grace);
       child?.stdout?.destroy();
       child?.stderr?.destroy();
-      try { rmSync(cwd, { recursive: true, force: true }); } catch { spawnError = true; }
+      try { rmSync(cwd, { recursive: true, force: true }); }
+      catch {
+        try {
+          spawnSync('chmod', ['-R', 'u+rwx', cwd], { stdio: 'ignore' });
+          rmSync(cwd, { recursive: true, force: true });
+        } catch { spawnError = true; }
+      }
       settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
         stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: Buffer.concat(err, errSize).toString('utf8'), wall_ms: Date.now() - started });
     };
-    const deadline = setTimeout(() => { timedOut = true; killGroup(); }, timeoutS * 1000);
+
+    let spawnCmd = argv[0]!;
+    let spawnArgs = argv.slice(1);
+    if (repoSpec) {
+      const remainingMs = () => timeoutS * 1000 - (Date.now() - started);
+      const gitEnv = {
+        ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+        GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C',
+      };
+      const runGit = (args: string[], encoding?: 'utf8') => {
+        const rem = remainingMs();
+        if (rem <= 0) { timedOut = true; throw new Error('timeout'); }
+        const res = spawnSync('git', args, { env: gitEnv, timeout: rem, ...(encoding ? { encoding } : { stdio: 'ignore' }) });
+        if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' || remainingMs() <= 0) {
+          timedOut = true;
+          throw new Error('timeout');
+        }
+        if (res.status !== 0 || res.error || res.signal) throw new Error('git failed');
+        return res;
+      };
+      try {
+        const rev = runGit(['-C', repoSpec.repo, 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], 'utf8');
+        const lines = (rev.stdout as string).replace(/\r\n/g, '\n').trimEnd().split('\n');
+        if (lines.length !== 3 || lines.some((line) => !line)) throw new Error('rev-parse');
+        const [top, gitDir, commonDir] = lines as [string, string, string];
+        const hidden: string[] = [];
+        for (const basePath of [resolve(top), resolve(gitDir), resolve(repoSpec.repo, commonDir), resolve(repoSpec.calls)]) {
+          hidden.push(basePath);
+          const real = realpathBelow(basePath);
+          if (real !== basePath) hidden.push(real);
+        }
+        const rawXdg = process.env.XDG_RUNTIME_DIR;
+        if (rawXdg && isAbsolute(rawXdg) && !CONTROL.test(rawXdg)) {
+          const xdg = resolve(rawXdg);
+          if (!xdg.startsWith('/run/') || [...repoSpec.expose, ...repoSpec.keep].some((p) => p === '/run' || p.startsWith('/run/'))) {
+            hidden.push(xdg);
+          }
+        }
+        let resolvDir: string | null = null;
+        try {
+          const realResolv = realpathSync('/etc/resolv.conf');
+          if (realResolv.startsWith('/run/')) {
+            const dir = dirname(realResolv);
+            resolvDir = dir === '/run' ? realResolv : dir;
+          }
+        } catch { resolvDir = null; }
+
+        const exposeEntries: SandboxExpose[] = [];
+        const stagedDir = join(cwd, 'staged');
+        for (let i = 0; i < repoSpec.expose.length; i++) {
+          const entry = repoSpec.expose[i]!;
+          const stat = lstatSync(entry);
+          if (stat.isSymbolicLink()) throw new Error('symlink expose');
+          if (stat.isDirectory()) {
+            exposeEntries.push({ kind: 'dir', path: entry });
+          } else if (stat.isFile()) {
+            mkdirSync(stagedDir, { recursive: true });
+            const staged = join(stagedDir, String(i));
+            copyFileSync(entry, staged);
+            exposeEntries.push({ kind: 'file', path: entry, staged });
+          } else {
+            throw new Error('unsupported expose');
+          }
+        }
+        for (const entry of repoSpec.keep) {
+          const stat = lstatSync(entry);
+          if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
+            throw new Error('unsupported keep');
+          }
+        }
+
+        const copyDir = join(cwd, 'repo');
+        runGit(['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--no-checkout', '--template=', '--quiet', repoSpec.repo, copyDir]);
+        runGit(['-C', copyDir, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false', 'checkout', '--quiet', '--detach', repoSpec.candidate]);
+        runGit(['-C', copyDir, '-c', 'core.hooksPath=/dev/null', 'remote', 'remove', 'origin']);
+
+        spawnCmd = repoSpec.bwrap;
+        spawnArgs = [...sandboxArgs({ home: repoSpec.home, hidden, resolvDir, expose: exposeEntries, keep: repoSpec.keep, copy: copyDir }), '--', ...argv];
+        env.TMPDIR = '/tmp';
+      } catch {
+        if (!timedOut) spawnError = true;
+        finish(null, null);
+        return;
+      }
+    }
+
+    const rem = timeoutS * 1000 - (Date.now() - started);
+    if (rem <= 0) {
+      timedOut = true;
+      finish(null, null);
+      return;
+    }
+    deadline = setTimeout(() => { timedOut = true; killGroup(); }, rem);
     try {
-      child = spawn(argv[0]!, argv.slice(1), { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(spawnCmd, spawnArgs, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch {
       spawnError = true;
       finish(null, null);
@@ -302,7 +489,8 @@ const NO_CALL = { replay: false, dispatched: false, dispatched_at: null, returne
 async function runPart(part: Part, prepared: Prepared, options: Options, diff: string): Promise<PendingPart> {
   const label = prepared.config.parts[part]!;
   const provider = prepared.config.providers[label]!;
-  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined);
+  const access = provider.access ?? 'diff';
+  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined, access);
   const id = callId(prompt, provider, label);
   const identity = { part, provider: label, model: provider.model, call_id: id };
   const saved = join(options.calls, `${id}.json`);
@@ -326,7 +514,10 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
     try { writeFileSync(claim, claimBody(id, part, new Date().toISOString(), prompt), { flag: 'wx', mode: 0o600 }); }
     catch (error) { return fellBack((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'unresolved-claim' : 'failed'); }
     dispatchedAt = new Date().toISOString();
-    spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s);
+    const repoSpec: RepoSandboxSpec | undefined = access === 'repo'
+      ? { bwrap: prepared.bwrap!, home: prepared.home!, repo: options.repo, candidate: options.candidate, calls: options.calls, expose: provider.expose ?? [], keep: provider.keep ?? [] }
+      : undefined;
+    spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s, repoSpec);
     returnedAt = new Date().toISOString();
   }
   const verdict = decide(part, spawned, prepared.classify);
@@ -346,6 +537,7 @@ Usage: review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [-
 
 Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on the host model.
   --config FILE       absolute path of a review-delegates/v1 JSON file (at most 64 KiB)
+                      A provider may set "access": "repo" (with optional "expose" and "keep") for a bubblewrap-sandboxed clone on Linux; see docs/delegated-review.md.
   --gstack-root DIR   absolute path of the installed gstack root the review uses (its review/specialists and lib are read)
   --repo DIR          absolute path of the repository under review (run only)
   --base, --candidate full SHAs of the frozen scope's endpoints (run only)
@@ -354,8 +546,8 @@ Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on
   --caught FILE       absolute path of the already-caught findings file outside --repo, at most 64 KiB (run only; required when --parts includes red-team)
 
 Output (stdout, one JSON line):
-  check: {"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}
-         {"v":1,"status":"refused","reason":"config-missing|config-malformed|part-unmapped|helper-missing|checklist-anchor"}
+  check: {"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]} (adds "access":"repo" for repo-mode parts)
+         {"v":1,"status":"refused","reason":"config-missing|config-malformed|part-unmapped|helper-missing|checklist-anchor|sandbox-unavailable"}
   run:   {"v":1,"status":"ran","config_sha256":...,"parts":[...]} or the same refused form (also reasons caught-unreadable and repo-unreadable)
 Exit: 0 every part credited; 4 a part fell back to the host; 1 refused before any call, or the work tree changed
       during the calls; 2 usage error (stdout empty; "ERROR USAGE: ..." and "FIX: ..." on stderr).
@@ -363,7 +555,7 @@ Docs: docs/delegated-review.md
 `;
 }
 
-export async function main(argv: string[], io: CliIo): Promise<number> {
+export async function main(argv: string[], io: CliIo, deps: Deps = {}): Promise<number> {
   let options: ReturnType<typeof parseArgs>;
   try { options = parseArgs(argv); } catch (error) {
     if (!(error instanceof UsageError)) throw error;
@@ -372,11 +564,24 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
   }
   if (options === 'help') { io.stdout(help()); return EXIT.ok; }
   const print = (value: object) => io.stdout(`${JSON.stringify({ v: 1, ...value })}\n`);
-  const prepared = await prepare(options);
+  const prepared = await prepare(options, deps);
   if (!prepared.ok) { print({ status: 'refused', reason: prepared.reason }); return EXIT.refused; }
   const { config, sha } = prepared.prepared;
   if (options.command === 'check') {
-    print({ status: 'ok', config_sha256: sha, parts: options.parts.map((part) => ({ part, provider: config.parts[part]!, model: config.providers[config.parts[part]!]!.model })) });
+    print({
+      status: 'ok',
+      config_sha256: sha,
+      parts: options.parts.map((part) => {
+        const label = config.parts[part]!;
+        const provider = config.providers[label]!;
+        return {
+          part,
+          provider: label,
+          model: provider.model,
+          ...(provider.access === 'repo' ? { access: 'repo' as const } : {}),
+        };
+      }),
+    });
     return EXIT.ok;
   }
 

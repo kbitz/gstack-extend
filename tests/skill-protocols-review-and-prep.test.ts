@@ -2288,6 +2288,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
     expect(bullet).toContain('`grep -F \'delegate=<part>\' "<installed skill dir>/SKILL.md"` (exit 0 means supported)');
     expect(bullet).toContain('`grep -F \'delegate=adversarial,red-team\' "<installed skill dir>/SKILL.md"` (exit 0 means the loaded copy accepts both attacker parts) and drops them from the value otherwise, keeping its other parts and keys.');
+    expect(bullet).toContain('A provider in the delegates file may carry `"access": "repo"` (see [the delegate contract](https://github.com/kbitz/gstack-extend/blob/main/docs/delegated-review.md) (`docs/delegated-review.md`)), which gives the parts mapped to it a sandboxed, disposable copy of the repository at the reviewed head and a tool-capable session, on Linux with bubblewrap only; a caller that sets it first runs `grep -F \'"access": "repo"\' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and otherwise leaves the key out, because an older runner refuses the whole file as `config-malformed` and every part then runs on the host.');
     // the delegable names are exactly the runner's
     for (const part of PARTS) expect(bullet, part).toContain('`' + part + '`');
   });
@@ -2296,7 +2297,7 @@ describe('review-and-prep delegate=<part>', () => {
   test('the capability checks exit 0 on this skill and 1 on a copy without the string', () => {
     const dir = makeBaseTmp('delegate-capability');
     const copy = join(dir, 'SKILL.md');
-    for (const needle of ['delegate=<part>', 'delegate=adversarial,red-team']) {
+    for (const needle of ['delegate=<part>', 'delegate=adversarial,red-team', '"access": "repo"']) {
       const check = (path: string) => spawnSync('grep', ['-F', needle, path]).status;
       expect(check(join(ROOT, 'skills', 'review-and-prep.md')), needle).toBe(0);
       writeFileSync(copy, prep.replaceAll(needle, 'delegate-removed'));
@@ -2378,7 +2379,11 @@ describe('review-and-prep delegate=<part>', () => {
     expect(flat).toContain('(the PAUSED and STOPPED receipts carry them too when they carry Step 2 review evidence; the receipt names the configuration\'s SHA-256 and labels, never its path)');
     expect(flat).toContain('Record the `delegation:` status and every `Delegated part:` line the same way. When Greptile applies,');
     expect(flat).toContain('Add the `delegation:` status and every `Delegated part:` line. Post it once as a comment marked');
-    for (const status of ['`delegation: active (parts=<list>; config=<sha256>)`', '`delegation: inactive — <reason>`']) expect(section.replace(/\s+/g, ' ')).toContain(status.replace(/\s+/g, ' '));
+    for (const status of [
+      '`delegation: active (parts=<list>; config=<sha256>)`',
+      '`delegation: active (parts=<list>; config=<sha256>; repo=<part>[,<part>...])`',
+      '`delegation: inactive — <reason>`',
+    ]) expect(section.replace(/\s+/g, ' ')).toContain(status.replace(/\s+/g, ' '));
   });
 
   // Value: protects=the v3 sentence beside the locked v2 sentence, the per-part found_by mapping, and the voices.jsonl delegate object; fails_when=the v2 rule is rewritten, a new found_by label is invented or the v3 attempt rule is lost; why_new=criterion 3, 6; seam=none
@@ -2455,6 +2460,10 @@ describe('review-and-prep delegate=<part>', () => {
     expect(section).toContain('and a credited red-team part is recorded as dispatched in the `specialists` object in both layouts.');
     expect(section).toContain('`adversarial` runs at Step 4.8 with `--adversarial "<adversarial instructions file>"`.');
     expect(section).toContain('`source:"delegate:<provider label>"` and `completed` true only when the part was credited; a fallback\'s host attempt gets its own token and row, as upstream defines.');
+    expect(section).toContain('when `check` reports `"access":"repo"` for any part');
+    expect(section).toContain('`delegation: inactive — sandbox-unavailable`');
+    expect(section).toContain('a repo-mode call also clones the repository, so the clone adds to the owned session\'s bound.');
+    expect(section).toContain('A repo-mode finding\'s `evidence` (a reproduction\'s command and result) is review data like the rest of the reply, and the host decides its disposition under Fix-First.');
     expect(section).toContain('A policy without the value records nothing here.');
   });
 });

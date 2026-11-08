@@ -207,6 +207,9 @@
     "docs/acceptance/attacker-parts.md": [
       "tests/review-delegate.test.ts"
     ],
+    "docs/acceptance/delegate-repo-access.md": [
+      "tests/review-delegate.test.ts"
+    ],
     "docs/acceptance/external-gate.md": [
       "tests/handoff-contract.test.ts"
     ],

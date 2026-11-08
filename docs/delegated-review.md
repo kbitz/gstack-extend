@@ -84,20 +84,26 @@ model needs a caller that configures that provider.
 - Key sets are closed. `providers` maps a label (`[a-z][a-z0-9-]{0,31}`) to its
   `argv` (1-64 non-empty strings; `argv[0]` is an absolute path, never a `PATH`
   lookup), `timeout_s` (an integer from 1 to 1800) and `model` (a name the
-  workflow-metrics identifier grammar accepts). `parts` maps each delegable part
-  to a label; every part the policy names needs a mapping, and a mapping to an
+  workflow-metrics identifier grammar accepts), plus optional `access`
+  (`"diff"` or `"repo"`, default `"diff"`), `expose` and `keep` (0-32 unique,
+  `path.normalize`-stable absolute paths without trailing slashes or control
+  characters, allowed only when `access` is `"repo"`; see
+  [Repository access](#repository-access)). `parts` maps each delegable part to
+  a label; every part the policy names needs a mapping, and a mapping to an
   unknown label is malformed.
 - The prompt goes on the command's standard input only. There is no placeholder
   substitution and no shell.
-- The command must run with no tools, no agents and no write access. The runner
-  grants and requests none, and it cannot observe what a command does inside
-  itself: that limit is yours to configure (see [Limits](#limits)).
+- In default (`diff`) mode, the command must run with no tools, no agents and no
+  write access. The runner grants and requests none, and it cannot observe what
+  a command does inside itself: that limit is yours to configure (see
+  [Repository access](#repository-access) and [Limits](#limits)).
 
 ## The call
 
-A delegated part is one bounded, read-only call:
+A delegated part is one bounded call:
 
-- **Sent.** A fixed policy, one JSON line `{part, base, candidate}`, then
+- **Sent.** A fixed policy (`DELEGATE_POLICY` in diff mode, or `REPO_POLICY` in
+  repo mode), one JSON line `{part, base, candidate}`, then
   `{"diff": ..., "checklist": ...}` for the four specialists and `adversarial`,
   or `{"diff": ..., "checklist": ..., "already_caught": ...}` for `red-team`
   (where `already_caught` is the UTF-8 text of `--caught`): the frozen diff and
@@ -118,13 +124,16 @@ A delegated part is one bounded, read-only call:
   JSON object"); the upstream line that starts `Read the diff for this branch`
   is not sent. The framing line is found by its position because a sibling
   rendering that inlines Review Army (the Cursor copy) repeats the framing text
-  for the Security specialist and the Red Team. Nothing else: no learnings,
-  stack notes, repository files, skill text or plan.
+  for the Security specialist and the Red Team. Nothing else on stdin: no
+  learnings, stack notes, repository files, skill text or plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
-  TZ`, and only those that are set. No key or credential is passed; a command
-  keeps its own login under `HOME`.
-- **Where it runs.** A fresh, empty, private temporary directory as its working
-  directory, removed afterwards, in its own process group.
+  TZ`, and only those that are set (in repo mode `TMPDIR` is set to `/tmp`). No
+  key or credential is passed; a command keeps its own login under `HOME`.
+- **Where it runs.** In diff mode (the default), a fresh, empty, private
+  temporary directory as its working directory, removed afterwards, in its own
+  process group. In repo mode (`"access": "repo"`), a bubblewrap sandbox whose
+  working directory is a disposable clone of the repository at `--candidate`;
+  see [Repository access](#repository-access).
 - **Bounds.** Its configured timeout (the whole group gets SIGKILL, and the exit
   is recorded as the classifier's timeout code, 124), standard output capped at
   1 MiB and standard error at 64 KiB. One process per part, never retried with
@@ -145,6 +154,113 @@ with no spawn. A result discarded for `worktree-changed` stays discarded on
 every replay and still exits 1. A claim
 without a result is `unresolved-claim` with no spawn. Never delete a claim or pick
 a fresh directory to retry.
+
+## Repository access
+
+A provider in `review-delegates/v1` may opt into repository access by setting
+`"access": "repo"` (omitted or `"diff"` keeps diff-only mode) with optional
+`"expose"` and `"keep"` path lists. Any of the six delegable parts (`testing`,
+`maintainability`, `performance`, `simplification`, `adversarial` and
+`red-team`) may map to a repo-mode provider. A caller that sets `"access":
+"repo"` first runs `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"`
+(exit 0 means supported) and leaves `access`, `expose` and `keep` out otherwise,
+because an older runner rejects unknown provider keys as `config-malformed` and
+runs every part on the host.
+
+```json
+{
+  "schema": "review-delegates/v1",
+  "providers": {
+    "provider-a": {
+      "argv": ["/path/to/delegate-command", "--read-only", "--no-tools"],
+      "timeout_s": 600,
+      "model": "model-a"
+    },
+    "provider-b": {
+      "argv": ["/path/to/repo-delegate-command", "--sandbox-net=api-only"],
+      "timeout_s": 900,
+      "model": "model-b",
+      "access": "repo",
+      "expose": ["/path/to/provider-config"],
+      "keep": ["/path/to/delegate-login"]
+    }
+  },
+  "parts": {
+    "testing": "provider-a",
+    "adversarial": "provider-b",
+    "red-team": "provider-b"
+  }
+}
+```
+
+- **Keys and path rules.** `expose` and `keep` are allowed only when `access` is
+  `"repo"`. Each list holds 0 to 32 entries. Every entry must be a unique
+  (across both lists), `path.normalize`-stable absolute path without trailing
+  slashes, NUL or control characters, and must not be `/`, `HOME` or an
+  ancestor of `HOME` (`config-malformed`). At run time each listed path is
+  checked with `lstat`: an `expose` directory becomes a throwaway overlay, an
+  `expose` regular file is staged into `<tmp>/staged/<n>` and bound read-write
+  at its path, and a `keep` directory or regular file is bound read-write.
+  Missing paths, symlinks, sockets or other file types fail that part (`failed`).
+- **What the runner builds.** On Linux with bubblewrap (`bwrap`), the runner
+  creates a disposable copy with
+  `git -c core.hooksPath=/dev/null clone --no-local --no-checkout --template= --quiet <repo> <tmp>/repo`,
+  checks out `--candidate` detached with hooks and LFS smudge/process filters
+  disabled (`-c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false`),
+  and removes the `origin` remote. The clone is bounded by the provider's
+  `timeout_s` and counted in `wall_ms`. It then spawns the provider through
+  `bwrap` in this order:
+  - `--unshare-all --share-net --die-with-parent --new-session`
+  - `--ro-bind / /`, `--dev /dev`, `--proc /proc`
+  - `--tmpfs` over `/tmp`, `/var/tmp`, `/run` and `$HOME`, followed by a
+    read-only `--ro-bind` of the DNS resolver directory when
+    `realpath('/etc/resolv.conf')` resolves under `/run/`
+  - the `expose` layers (`--overlay-src <dir> --tmp-overlay <dir>` for
+    directories; `--bind <staged> <file>` for files), then the `keep` binds
+    (`--bind <path> <path>`)
+  - `--tmpfs` over each hidden path: the real repository's
+    `git rev-parse --show-toplevel`, `--absolute-git-dir` and
+    `--git-common-dir` (made absolute), the `--calls` directory, and
+    `XDG_RUNTIME_DIR` when set (which also covers any repository path inside an
+    `expose` or `keep` directory)
+  - a read-write `--bind` of the disposable copy and `--chdir` into it, with
+    `TMPDIR=/tmp` in the child environment
+- **Platform rule and `sandbox-unavailable`.** When any named part maps to a
+  repo-mode provider, `check` and `run` require `linux`, an executable at the
+  first existing path in `['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap']`
+  (never a `PATH` lookup), and a 10 s probe that verifies user namespaces and
+  `--tmp-overlay`. If any check fails, the whole invocation refuses before any
+  call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
+  every part of that call (including diff-mode parts named in the same command)
+  runs on the host model.
+- **Contents of the disposable copy and clone cost.** The copy holds committed
+  files at `--candidate` and git history. Ignored files (such as `.env` or
+  `node_modules`), untracked files, build outputs and submodules are absent, and
+  Git LFS files contain pointer text only. Each repo-mode part clones the
+  repository per call, which adds wall time and disk I/O on large repositories.
+- **`keep` versus `expose` for rotating logins.** Writes to an `expose` path
+  land in a throwaway layer and vanish when the call ends. If a provider CLI
+  rotates its refresh token during a call, discarding that write under `expose`
+  can lose the refreshed token and may invalidate the host's stored login (not
+  established here). Use a dedicated delegate login under `keep` for credentials
+  that rotate, and never list a directory in `expose` or `keep` that holds
+  unrelated credentials or SSH keys.
+- **What the runner cannot observe or enforce.**
+  - Anything inside the provider command itself.
+  - The tool network bound: the sandbox keeps `--share-net` because the
+    provider command must reach its API, so the runner cannot tell API traffic
+    from tool traffic. Keeping the model's tools off other network hosts and
+    starting no agents is the provider command's own sandbox configuration.
+  - Abstract-namespace Unix domain sockets on Linux, which remain reachable
+    through the shared network namespace (`--share-net`).
+  - Reads of world-readable host paths that are not hidden by a `--tmpfs`, such
+    as `/etc`, `/usr`, `/sys` and other non-hidden mounts.
+  - Reads of paths the caller listed in `expose` or `keep`, and writes to paths
+    the caller listed in `keep`.
+  - Prompt injection from the reviewed diff or repository files steering tools
+    inside the sandbox.
+  - A finding's text (including `evidence`) carrying data read by tools inside
+    the sandbox into the review receipt.
 
 ## The reply
 
@@ -224,13 +340,17 @@ writes the file through a temporary file in that directory renamed into place
 reuses it unchanged on a resume.
 
 `check` validates without any call. Exit 0 prints
-`{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`.
+`{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`,
+adding `"access":"repo"` to each part object whose provider sets `"access": "repo"`
+(diff-mode parts keep `{part, provider, model}`).
 Exit 1 prints `{"v":1,"status":"refused","reason":...}` with `config-missing`,
 `config-malformed`, `part-unmapped`, `helper-missing` (the installed classifier
-cannot be loaded) or `checklist-anchor` (a named part's checklist or
+cannot be loaded), `checklist-anchor` (a named part's checklist or
 `--adversarial` file no longer matches the anchors, or its adversarial framing
 line does not directly follow the one `Subagent prompt:` line, or the prompt or
-criteria line does not occur once). Exit 2 is a usage error decided before
+criteria line does not occur once) or `sandbox-unavailable` (a named part maps
+to a repo-mode provider and the host is not Linux, has no executable at the
+fixed `bwrap` paths, or fails the 10 s bubblewrap probe). Exit 2 is a usage error decided before
 any work (an unknown flag, a part outside the six, a repeated part, a missing or
 extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
 inside `--repo`): standard output is empty and standard error has
@@ -304,7 +424,9 @@ effect together. A `Review delegates:` line beside a policy that carries only
 
 ## Receipts and metrics
 
-- The receipt records `delegation: active (parts=<list>; config=<sha256>)` or
+- The receipt records `delegation: active (parts=<list>; config=<sha256>)` (or
+  `delegation: active (parts=<list>; config=<sha256>; repo=<part>[,<part>...])`
+  when `check` reports `"access":"repo"` for any part) or
   `delegation: inactive — <reason>`, one `specialists-dispatched:` line when the
   section is active (`waived`, `met`, `not declared` or `unmet`), one
   `adversarial-pass:` line while `delegate=adversarial` is active (`waived`,
@@ -337,10 +459,12 @@ effect together. A `Review delegates:` line beside a policy that carries only
 
 ## Privacy
 
-The frozen diff, including any secret it contains, is sent to the command you
-configured and on to whatever provider it calls. Configure a provider you would
-trust with the repository's diff; the runner passes no credential, but it cannot
-stop a command from reading its own.
+In diff mode, the frozen diff, including any secret it contains, is sent to the
+command you configured and on to whatever provider it calls. In repo mode
+(`"access": "repo"`), the command and its tools can also read every committed
+file in the repository and its git history. Configure a provider you would
+trust with that scope; the runner passes no credential, but it cannot stop a
+command from reading its own `expose` or `keep` paths.
 
 ## Measurement
 
@@ -351,25 +475,33 @@ because the two values exclude each other. No saving is claimed here: record a
 real run's wall time and per-provider usage (`data.delegated`) beside the
 default before treating delegation as an optimization, as SPEC P1 requires.
 The attacker parts' pending by-hand and orchestrated runs are listed in
-[the attacker-parts record](acceptance/attacker-parts.md).
+[the attacker-parts record](acceptance/attacker-parts.md), and the pending
+repo-mode run is listed in
+[the repo-access record](acceptance/delegate-repo-access.md).
 
 ## Limits
 
-- The runner builds every control it can observe: no tool or agent grant, a
-  prompt that forbids tools, an empty temporary directory, an environment
-  allowlist, one process per part and a before-and-after work-tree check. It
-  cannot see inside a configured command, so "starts no subagents and writes
-  nothing" depends on that command's own configuration, and a write that lands
-  outside the work tree is not detected. Ignored files are outside the check.
-  A before-and-after snapshot
-  also cannot detect a write that is restored before the second snapshot.
-- After a normal exit the runner does not signal the command's process group, so
-  a command that leaves a background process behind must clean it up itself.
+- In diff mode, the runner builds every control it can observe: no tool or agent
+  grant, a prompt that forbids tools, an empty temporary directory, an
+  environment allowlist, one process per part and a before-and-after work-tree
+  check. It cannot see inside a configured command, so "starts no subagents and
+  writes nothing" depends on that command's own configuration, and a write that
+  lands outside the work tree is not detected. Ignored files are outside the
+  check. A before-and-after snapshot also cannot detect a write that is restored
+  before the second snapshot. In repo mode (`"access": "repo"`), bubblewrap
+  enforces the filesystem and PID-namespace bounds while the tool network bound
+  and no-agents rule remain the command's own configuration (see
+  [Repository access](#repository-access)).
+- In diff mode, after a normal exit the runner does not signal the command's
+  process group, so a command that leaves a background process behind must clean
+  it up itself. In repo mode, bubblewrap's PID namespace and `--die-with-parent`
+  end the process tree when the command exits.
 - Concurrent parts on one provider can hit its rate limit together and all fall
   back; that costs spend, not coverage.
-- A delegated attacker part sees only the diff, never repository files, unlike
-  the native subagent; fixture bytes go in full, as they already do to outside
-  voices.
+- In diff mode, a delegated attacker part sees only the diff, never repository
+  files, unlike the native subagent; fixture bytes go in full, as they already
+  do to outside voices. In repo mode, a part mapped to an `"access": "repo"`
+  provider sees a disposable clone of committed files at `--candidate`.
 - The six parts are the only delegable ones, `/ship-and-land` and
   `/full-review` do not delegate, and routing by remaining quota is a non-goal.
 - An older helper answers `unsupported-version` to a v3 `pass` and reads a stored

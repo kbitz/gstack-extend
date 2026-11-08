@@ -996,8 +996,16 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   `red-team` also checks
   `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
   (exit 0 means the loaded copy accepts both attacker parts) and drops them from
-  the value otherwise, keeping its other parts and keys. The value waives no
-  gate and never authorizes a continuation.
+  the value otherwise, keeping its other parts and keys. A provider in the
+  delegates file may carry `"access": "repo"` (see
+  [the delegate contract](https://github.com/kbitz/gstack-extend/blob/main/docs/delegated-review.md)
+  (`docs/delegated-review.md`)), which gives the parts mapped to it a sandboxed,
+  disposable copy of the repository at the reviewed head and a tool-capable
+  session, on Linux with bubblewrap only; a caller that sets it first runs
+  `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"` (exit 0 means
+  supported) and otherwise leaves the key out, because an older runner refuses
+  the whole file as `config-malformed` and every part then runs on the host. The
+  value waives no gate and never authorizes a continuation.
 - `red-team=ensure` (its only value) is opt-in. It runs **Run a red team where
   /review has none** when the review text the host will execute contains neither
   `Red Team` nor `red-team` and that section's upstream anchors still match;
@@ -1456,8 +1464,12 @@ matches under the same all-or-none rule for `adversarial-pass`.
 `delegation: active` also requires the attacker lists in **Activation (attacker
 parts)** for each named attacker part: list (a) for `red-team`, and lists (b)
 and (c) for `adversarial`. Exit 0 with every required anchor matching records
-`delegation: active (parts=<list>; config=<sha256>)`. Anything else records
-`delegation: inactive — <reason>` (the changed anchor, the check's `reason`, or
+`delegation: active (parts=<list>; config=<sha256>)`, or
+`delegation: active (parts=<list>; config=<sha256>; repo=<part>[,<part>...])`
+when `check` reports `"access":"repo"` for any part. Anything else records
+`delegation: inactive — <reason>` (the changed anchor, the check's `reason`
+including `sandbox-unavailable` which records
+`delegation: inactive — sandbox-unavailable`, or
 no `Review delegates:` line), every part runs on the host model as today, and no
 upstream file is edited. A policy without the value records nothing here.
 
@@ -1488,7 +1500,9 @@ Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
 directory is branch-scoped under the evidence root
 and kept across invocations of the branch; never choose a fresh one to retry.
 Use an owned execution session and poll it rather than killing it at a short
-shell-tool timeout; the longest configured provider timeout bounds it. Exit 0
+shell-tool timeout; the longest configured provider timeout bounds it, and a
+repo-mode call also clones the repository, so the clone adds to the owned
+session's bound. Exit 0
 means every part was credited, 4 means a part fell back, and 1 means a refusal
 before any call (run every part on the host and record the refusal's reason)
 or a `worktree-changed` result. Exit 2 is a usage error decided before any call:
@@ -1519,7 +1533,9 @@ exit 1.
   upstream defines. Credited red-team findings (`found_by: red-team`) are added
   to the specialist outputs and Step 4.6 stages 1–8 rerun, as upstream does for
   its Red Team (nested); for **Run a red team where /review has none** they join
-  Step 5's combine.
+  Step 5's combine. A repo-mode finding's `evidence` (a reproduction's command
+  and result) is review data like the rest of the reply, and the host decides
+  its disposition under Fix-First.
 - **Fell-back parts** run on the host model: nested dispatches them as Review
   Army would, and sibling has the host apply that checklist to the frozen diff
   with the same output contract. For `adversarial` or `red-team`, the host

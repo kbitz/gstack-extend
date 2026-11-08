@@ -67,6 +67,8 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'delegate=adversarial,red-team'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its attacker policy values, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: 'grep -F \'"access": "repo"\'',
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its delegates config value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'red-team=ensure'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'specialists=fold'",
