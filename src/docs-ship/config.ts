@@ -12,13 +12,18 @@
  */
 import { GateError } from '../merge-gate/errors.ts';
 import { assertGlob } from '../merge-gate/glob.ts';
-import { readAt, Refusal, resolvedPath, type Git } from './git.ts';
+import { objectType, readAt, Refusal, resolvedPath, type Git } from './git.ts';
 import { fencedLines, maskInlineCode } from './markdown.ts';
 
 export const CONFIG_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
+export const PREGATE_POLICY = '.gstack/pregate.json';
 const LIST_KEYS = ['docs', 'not-docs', 'tests'] as const;
 const SCALAR_KEYS = ['rules', 'test-command'] as const;
 export const MARKER_KEYS = [...LIST_KEYS, ...SCALAR_KEYS];
+
+export function basePolicy(git: Git, rev: string): boolean {
+  return objectType(git, rev, PREGATE_POLICY) !== undefined;
+}
 
 /** A simple command with one argument-list slot; shell programs belong in a wrapper script. */
 export function validTestCommand(template: string): boolean {
