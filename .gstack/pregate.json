@@ -232,6 +232,9 @@
     "docs/merge-gate.md": [
       "tests/merge-gate.test.ts"
     ],
+    "docs/orchestration-contract.md": [
+      "tests/handoff-contract.test.ts"
+    ],
     "docs/outside-review.md": [
       "tests/outside-review.test.ts",
       "tests/upstream-check.test.ts"
@@ -320,6 +323,7 @@
       "tests/handoff-contract.test.ts"
     ],
     "skills/full-review.md": [
+      "tests/handoff-contract.test.ts",
       "tests/skill-protocols-full-review.test.ts",
       "tests/telemetry.test.ts",
       "tests/update.test.ts"
@@ -343,6 +347,7 @@
     ],
     "skills/project-spec.md": [
       "tests/docs-ship.test.ts",
+      "tests/handoff-contract.test.ts",
       "tests/skill-protocols-project-spec.test.ts"
     ],
     "skills/review-and-prep.md": [
@@ -356,6 +361,7 @@
     ],
     "skills/roadmap.md": [
       "tests/docs-ship.test.ts",
+      "tests/handoff-contract.test.ts",
       "tests/skill-protocols-project-spec.test.ts",
       "tests/skill-protocols-roadmap.test.ts",
       "tests/update.test.ts"

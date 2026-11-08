@@ -21,7 +21,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-D | blocked and partial outputs | 1 | none; additive-only | the status words `BLOCKED`, `NEEDS_CONTEXT`, `DONE_WITH_CONCERNS`, `DONE` |
 | H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
 | H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
-| Stage line | the last line of the final message of `/plan-track`, `/implement` and `/review-and-prep`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
+| Stage line | the last line of the final message of `/plan-track`, `/implement`, `/review-and-prep`, `/pair-review`, `/ship-and-land`, `/full-review`, `/roadmap` and `/project-spec`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -358,6 +358,11 @@ classifier reports, with the expected and actual values.
 | <a id="e-stage-line"></a>`E-STAGE-LINE` | H-E | `Stage handoff: stage-handoff/v1;` | FULL_CHECK_REQUIRED | none; the stage line after the prompt is outside text and changes no outcome | Run `/review-and-prep continue` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
 | <a id="d-stage-line-blocked"></a>`D-STAGE-LINE-BLOCKED` | H-D | `BLOCKED` | REFUSE | `blocked`: the BLOCKED report refuses, and the lower-case `status: blocked` of a stage line is not a second signal | Stop; give the user the resume summary; start nothing | yes |
 | <a id="f-pause-stage-line"></a>`F-PAUSE-STAGE-LINE` | H-F | `External gate: external-gate/v1;` | HOLD | `external-gate-line`: a stage line is text after the pause line, which must be the last line of the turn | Hold; the line is not the published form, so show it to the user and run nothing on it | yes |
+| <a id="c-resume-stage-line"></a>`C-RESUME-STAGE-LINE` | H-C | `Stage handoff: stage-handoff/v1;` | FULL_CHECK_REQUIRED | none; the stage line after the prompt is outside text and changes no outcome | Run `/review-and-prep resume` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
+| <a id="c-closed-paused-stage-line"></a>`C-CLOSED-PAUSED-STAGE-LINE` | H-C | `Stage handoff: stage-handoff/v1;` | HOLD | `closed-paused`: the PR closed while paused, and the stage line does not lift the hold | Ask the user; do not ship; a replacement PR needs a new `/review-and-prep` decision | yes |
+| <a id="c-lookup-failure-stage-line"></a>`C-LOOKUP-FAILURE-STAGE-LINE` | H-C | `Stage handoff: stage-handoff/v1;` | HOLD | `unknown`: the pause check failed, and the stage line does not lift the hold | Retry the check; if it keeps failing, ask the user; do not run `/ship` | yes |
+| <a id="d-release-only-stage-line"></a>`D-RELEASE-ONLY-STAGE-LINE` | H-D | `/ship-and-land stopped on the release-only path; it made no change for this finding.` | HOLD | `release-only-handback`: preparation work is needed, and the stage line after the fence changes no outcome | Tell the user to convert the PR to draft and run `/review-and-prep` to fix the finding, then use its new handoff | yes |
+| <a id="d-stage-line-only"></a>`D-STAGE-LINE-ONLY` | H-D | `Stage handoff: stage-handoff/v1;` | HOLD | `bare-summary`: a stage line alone has a 40-hex SHA and no handoff block, so it never starts a stage | Show the user the stage exit and ask which stage to run; a stage line alone never starts one | yes |
 
 ## Worked caller flow
 
@@ -745,7 +750,7 @@ fails.
 Run /pair-review for draft PR https://github.com/example-org/example-repo/pull/42 on example-org/example-repo, feature/handoff-demo, checkpointed at
 a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; resume its existing matching session if present.
 Review and local checks are recorded in the PR's "Review and prep" receipt.
-Required user checks: M1 open the export page and confirm the report downloads; M2 run the CLI with the new flag and confirm exit 0.
+Required user checks: M1 judge whether the export page's new layout reads clearly; M2 sign in with your own account and confirm the report downloads.
 Keep this PR draft and leave Greptile postponed while testing and fixing.
 Save item-level results, tested build/commit, and fix/retest evidence.
 When these checks are complete, return to /review-and-prep resume for this
@@ -1201,11 +1206,15 @@ External gate result: fail; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree
 
 ### Grammar stage line
 
-`/plan-track`, `/implement` and `/review-and-prep` end their final message with one more
+`/plan-track`, `/implement`, `/review-and-prep`, `/pair-review`, `/ship-and-land`,
+`/full-review`, `/roadmap` and `/project-spec` end their final message with one more
 line, after the handoff block and outside it. It is the stage's own account of its exit, for a
 caller that routes before it parses. `/plan-track` is a fifth producer of this line and of
-nothing else here; the four producers of H-A to H-F are unchanged.
-The three stages print exactly this form, and a new producer starts with the same prefix:
+nothing else here; `/full-review`, `/roadmap` and `/project-spec` likewise produce only this
+line, while `/pair-review` (H-C resume, H-D words) and `/ship-and-land` (H-D release-only
+hold) are existing H-C/H-D producers that now also print it. The four producers of H-A to
+H-F are unchanged.
+The eight stages print this form, and a new producer starts with the same prefix:
 
 ```text fixture=stage-line.txt
 Stage handoff: stage-handoff/v1; stage: implement; next: review-and-prep; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a
@@ -1214,8 +1223,8 @@ Stage handoff: stage-handoff/v1; stage: implement; next: review-and-prep; status
 | Label | Required | Value |
 |---|---|---|
 | `stage-handoff/v1` | yes | the version token, right after `Stage handoff: ` |
-| `stage` | yes | `plan` (`/plan-track`), `implement` or `review` (`/review-and-prep`) |
-| `next` | yes | `implement`, `review-and-prep`, `ship-and-land`, `pair-review` or `none` |
+| `stage` | yes | `plan` (`/plan-track`), `implement`, `review` (`/review-and-prep`), `pair-review` (`/pair-review`), `ship-and-land` (`/ship-and-land`), `full-review` (`/full-review`), `roadmap` (`/roadmap`) or `project-spec` (`/project-spec`) |
+| `next` | yes | `implement`, `review-and-prep`, `ship-and-land`, `pair-review`, `docs-ship`, `roadmap`, `full-review` or `none` |
 | `status` | yes | `done`, `done-with-concerns`, `paused`, `stopped`, `blocked` or `needs-context` |
 | `head` | yes | the stage's HEAD as 40 lowercase hex characters, or `none` |
 | `plan-sha256` | yes | the plan's SHA-256 as 64 lowercase hex characters, or `none` |
@@ -1233,6 +1242,47 @@ for each exit:
 | `/review-and-prep` H-C pause | `review` | `pair-review` | `paused` | the checkpoint SHA | the plan hash the receipt records, or `none` |
 | `/review-and-prep` H-E | `review` | `review-and-prep` | `stopped` | `Stopped at` | the plan hash the receipt records, or `none` |
 | `/review-and-prep` BLOCKED or NEEDS_CONTEXT | `review` | `none` | `blocked`, `needs-context` | HEAD or `none` | the plan hash the receipt records, or `none` |
+| `/pair-review` Step 3 `paused` route (H-C resume prompt) | `pair-review` | `review-and-prep` | `done`, `done-with-concerns` | HEAD at the exit (the prompt's `current HEAD`) | `none` |
+| `/pair-review` Step 3, every other route (`closed-paused`, `lookup-failure`, `no-github`, `no-pr`, `no-pause`) | `pair-review` | `none` | `done`, `done-with-concerns` | HEAD at the exit | `none` |
+| `/pair-review` PAUSE | `pair-review` | `pair-review` | `paused` | HEAD at the exit | `none` |
+| `/pair-review` BLOCKED or NEEDS_CONTEXT (including a BLOCKED session rollup on any Step 3 route) | `pair-review` | `none` | `blocked`, `needs-context` | HEAD, or `none` without one | `none` |
+| `/ship-and-land` landed (merged, including an already-merged rerun) | `ship-and-land` | `none` | `done`; `done-with-concerns` when deployment is unverified, CI pending or canary unavailable | the PR's merge commit (`gh pr view --json mergeCommit`) | the `Plan` SHA-256 of the marked handoff this invocation validated, or `none` |
+| `/ship-and-land` merge-gate stop with no blocker (`--no-land` or a direct stop request) | `ship-and-land` | `ship-and-land` | `stopped` | the PR head it checked | as above |
+| `/ship-and-land` release-only hold | `ship-and-land` | `review-and-prep` | `stopped` | the hand-back's `head` | as above |
+| `/ship-and-land` hand-back to preparation (draft PR, paused PR, cycle-capped PR, or pending user testing before ship opens a PR) | `ship-and-land` | `review-and-prep`; `pair-review` for a paused PR | `stopped` | the PR head it checked; local HEAD while no PR exists | as above |
+| `/ship-and-land` merge not approved (the user declines; the PR stays open) | `ship-and-land` | `none` | `stopped` | the PR head it checked | as above |
+| `/ship-and-land` BLOCKED (any blocker, including a merge-gate stop that names blockers) | `ship-and-land` | `none` | `blocked` | the PR head it checked; local HEAD while no PR exists; `none` when no head was read | as above |
+| `/full-review` Phase 6 finish | `full-review` | `roadmap` when approved items were written, else `none` | `done`, `done-with-concerns` | the reviewed commit: `session.yaml`'s `commit` expanded with `git rev-parse --verify` | `none` |
+| `/full-review` PAUSE | `full-review` | `full-review` | `paused` | the reviewed commit | `none` |
+| `/full-review` BLOCKED (Phase 6 after a stop) or NEEDS_CONTEXT | `full-review` | `none` | `blocked`, `needs-context` | the reviewed commit, or `none` when the session records none or it does not resolve | `none` |
+| `/roadmap` Step 7 `Run /docs-ship` handoff | `roadmap` | `docs-ship` | `done`, `done-with-concerns` | HEAD (the Step 6 commit) | `none` |
+| `/roadmap` no commit | `roadmap` | `none` | `done`, `done-with-concerns` | HEAD | `none` |
+| `/roadmap` BLOCKED or NEEDS_CONTEXT | `roadmap` | `none` | `blocked`, `needs-context` | HEAD, or `none` without one | `none` |
+| `/project-spec` Step 3 `Run /docs-ship` handoff | `project-spec` | `docs-ship` | `done`; `done-with-concerns` when roadmap is marked incomplete or evidence is pending | HEAD (the documentation commit) | `none` |
+| `/project-spec` no documentation commit | `project-spec` | `none` | `done`, `done-with-concerns` | HEAD | `none` |
+| `/project-spec` BLOCKED or NEEDS_CONTEXT (missing roadmap, version skew, invalid candidate, a write or validation failure, missing input) | `project-spec` | `none` | `blocked`, `needs-context` | HEAD, or `none` without one | `none` |
+
+```text fixture=stage-lines.txt
+Stage handoff: stage-handoff/v1; stage: pair-review; next: review-and-prep; status: done; head: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: pair-review; next: none; status: done; head: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: pair-review; next: pair-review; status: paused; head: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: pair-review; next: none; status: blocked; head: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: none; status: done; head: e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5; plan-sha256: 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: ship-and-land; status: stopped; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: review-and-prep; status: stopped; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: pair-review; status: stopped; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: none; status: stopped; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: none; status: blocked; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: full-review; next: roadmap; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: full-review; next: full-review; status: paused; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: full-review; next: none; status: blocked; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: roadmap; next: docs-ship; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: roadmap; next: none; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: roadmap; next: none; status: blocked; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: project-spec; next: docs-ship; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: project-spec; next: none; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+Stage handoff: stage-handoff/v1; stage: project-spec; next: none; status: blocked; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: none
+```
 
 Rules:
 
@@ -1252,12 +1302,26 @@ Rules:
    no such value, never an unknown one.
 7. **Version.** A breaking change to this line bumps the token to `stage-handoff/v2` and
    needs a 0.x MINOR release under the [release policy](SPEC.md#release-policy). An older
-   consumer ignores a line it cannot parse, by rule 4.
+   consumer ignores a line it cannot parse, by rule 4. Adding a producer or a `stage` or
+   `next` value keeps `v1`: an older consumer reads a line with a value it does not know as
+   malformed and ignores it (rule 4), which is how it read these producers' turns before they
+   printed any line (rule 2).
 8. **`/plan-track` has no H-A–H-F section.** Its prompt is for `/implement`, not a handoff
    this document classifies, and it has no check helper (`/implement` reads its plan's
    `Verify command:` line as intent and never runs it). It ends its turn with the `plan`
    stage line after the prompt; `tests/skill-protocols-plan-track.test.ts` still refuses
    any other text after the block.
+9. **Question exits.** `/pair-review` Step 3 and `/full-review` Phase 6 present their exit
+   through the question tool: the line is the last line of the text that presents the exit,
+   after any fence, before the question. A reply in the same invocation that ends the run with
+   more output ends that output with the line again, `head` read afresh; a reply that starts
+   another skill in the session leaves the exit to that skill.
+10. **No line.** `/pair-review status` and `/full-review status` end no run and print no line.
+    A `/roadmap` run composed into `/project-spec` ends in `/project-spec`'s Step 3, which
+    prints the `project-spec` line; `/roadmap` prints none there.
+11. **Not a handoff.** `/full-review resume`, `/pair-review resume` and the `Run /docs-ship`
+    prompt are not handoffs this document classifies; `/docs-ship` reads its own prompt, and
+    the line sits outside that fence, so the prompt's bytes and its consumers are unchanged.
 
 ### Signals H-D
 

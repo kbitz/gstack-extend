@@ -216,12 +216,16 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/handoff-contract.test.ts': [
     'docs/workflow-handoffs.md',
+    'docs/orchestration-contract.md',
     skill('implement'),
     skill('review-and-prep'),
     skill('pair-review'),
     skill('ship-and-land'),
-    // The stage line: /plan-track prints it too, and the others must not.
+    // The stage line: these producers print it too, and docs-ship uses its own result line.
     skill('plan-track'),
+    skill('full-review'),
+    skill('roadmap'),
+    skill('project-spec'),
     skill('docs-ship'),
     'README.md',
     'docs/acceptance/external-gate.md',

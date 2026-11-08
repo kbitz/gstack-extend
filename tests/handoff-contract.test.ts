@@ -899,7 +899,7 @@ describe('(A) the doc is the oracle', () => {
 
   test('embedded fixtures are byte-locked to the fixture files', () => {
     const embedded = [...DOC.matchAll(/^```text fixture=(\S+)\n([\s\S]*?)\n```$/gm)];
-    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'stage-line.txt']);
+    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'stage-line.txt', 'stage-lines.txt']);
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
@@ -2013,22 +2013,34 @@ const STAGE_TEMPLATES: Record<string, string> = {
   'plan-track': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
   implement: 'Stage handoff: stage-handoff/v1; stage: implement; next: <review-and-prep|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
   'review-and-prep': 'Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+  'pair-review': 'Stage handoff: stage-handoff/v1; stage: pair-review; next: <review-and-prep|pair-review|none>; status: <done|done-with-concerns|paused|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+  'ship-and-land': 'Stage handoff: stage-handoff/v1; stage: ship-and-land; next: <ship-and-land|review-and-prep|pair-review|none>; status: <done|done-with-concerns|stopped|blocked>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+  'full-review': 'Stage handoff: stage-handoff/v1; stage: full-review; next: <roadmap|full-review|none>; status: <done|done-with-concerns|paused|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+  roadmap: 'Stage handoff: stage-handoff/v1; stage: roadmap; next: <docs-ship|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
+  'project-spec': 'Stage handoff: stage-handoff/v1; stage: project-spec; next: <docs-ship|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: none',
 };
-const stageSkillText = (name: string): string => (name === 'plan-track' ? read('skills/plan-track.md') : SKILLS[name]);
+const STAGE_EXTRA_SKILLS: Record<string, string> = {
+  'plan-track': read('skills/plan-track.md'),
+  'full-review': read('skills/full-review.md'),
+  roadmap: read('skills/roadmap.md'),
+  'project-spec': read('skills/project-spec.md'),
+};
+const stageSkillText = (name: string): string => STAGE_EXTRA_SKILLS[name] ?? SKILLS[name];
 const STAGE_DOC = section('### Grammar stage line');
 const STAGE_FIXTURE = readFileSync(join(FIXTURES, 'stage-line.txt'), 'utf8').trimEnd();
+const STAGE_LINES_FIXTURE = readFileSync(join(FIXTURES, 'stage-lines.txt'), 'utf8').trimEnd().split('\n');
 const stageDocFields = (): Array<{ label: string; values: string[] }> =>
   tableRows(STAGE_DOC).map(([label, , value]) => ({ label: unTick(label), values: [...value.matchAll(/`([^`]+)`/g)].map((m) => m[1]) }));
 
 describe('(F) the stage line', () => {
-  test('each of the three producers carries its template once, as a line of its own outside any fence', () => {
+  test('every producer carries its template once, as a line of its own outside any fence', () => {
     for (const [name, line] of Object.entries(STAGE_TEMPLATES)) {
       const text = stageSkillText(name);
       expect(text.split(`\n${line}\n`), name).toHaveLength(2);
       for (const fenced of fencedTexts(text)) expect(fenced, `${name}: the stage line is outside the fence`).not.toContain('Stage handoff:');
     }
-    // Only these three print it; the others do not mention it.
-    for (const name of ['pair-review', 'ship-and-land', 'docs-ship']) {
+    // docs-ship uses its own docs-ship/v1 result line and never prints Stage handoff:.
+    for (const name of ['docs-ship']) {
       expect(read(`skills/${name}.md`), name).not.toContain('Stage handoff:');
     }
   });
@@ -2067,8 +2079,64 @@ describe('(F) the stage line', () => {
       .flatMap((t) => new RegExp(`${key}: (?:<([^>]+)>|([a-z-]+))`).exec(t)!.slice(1).filter(Boolean).flatMap((v) => v.split('|')));
     const fields = Object.fromEntries(stageDocFields().map((f) => [f.label, f.values]));
     for (const key of ['stage', 'next', 'status']) {
-      const doc = key === 'stage' ? ['plan', 'implement', 'review'] : fields[key];
+      const doc = key === 'stage' ? fields.stage.filter((v) => !v.startsWith('/')) : fields[key];
       expect([...new Set(alternatives(key))].sort(), key).toEqual([...new Set(doc)].sort());
+    }
+  });
+
+  // Value: protects=each new producer's exit-table row has a matching stage-lines.txt example that parses against the label table and template alternatives; fails_when=a row or example line drifts, duplicates or drops an exit; why_new=Track 72A adds 19 exit rows across 5 producers; seam=none
+  test('every line of stage-lines.txt parses against the label table, matches its template, and maps 1-to-1 to the new exit rows', () => {
+    const fields = stageDocFields();
+    const fieldMap = Object.fromEntries(fields.map((f) => [f.label, f.values]));
+    const stageValues = fieldMap.stage.filter((v) => !v.startsWith('/'));
+    const tplAlts = (tpl: string, key: string): string[] =>
+      new RegExp(`${key}: (?:<([^>]+)>|([a-z-]+))`).exec(tpl)!.slice(1).filter(Boolean).flatMap((v) => v.split('|'));
+    const exitRows = tableRows(STAGE_DOC.slice(STAGE_DOC.indexOf('| Exit |')));
+    const newExitRows = exitRows.slice(8);
+    expect(newExitRows).toHaveLength(19);
+    expect(STAGE_LINES_FIXTURE).toHaveLength(newExitRows.length);
+
+    const parsedLines = STAGE_LINES_FIXTURE.map((line) => {
+      const parts = line.split('; ');
+      expect(parts[0], line).toBe('Stage handoff: stage-handoff/v1');
+      const given = new Map(parts.slice(1).map((p) => [p.slice(0, p.indexOf(': ')), p.slice(p.indexOf(': ') + 2)] as const));
+      expect([...given.keys()], line).toEqual(['stage', 'next', 'status', 'head', 'plan-sha256']);
+      const stage = given.get('stage')!;
+      const next = given.get('next')!;
+      const status = given.get('status')!;
+      const head = given.get('head')!;
+      const plan = given.get('plan-sha256')!;
+      expect(stageValues, line).toContain(stage);
+      expect(fieldMap.next, line).toContain(next);
+      expect(fieldMap.status, line).toContain(status);
+      expect(head === 'none' || SHA40.test(head), line).toBe(true);
+      expect(plan === 'none' || SHA256.test(plan), line).toBe(true);
+      const tpl = STAGE_TEMPLATES[stage];
+      expect(tpl, stage).toBeDefined();
+      expect(tplAlts(tpl, 'next'), line).toContain(next);
+      expect(tplAlts(tpl, 'status'), line).toContain(status);
+      if (tpl.endsWith('plan-sha256: none')) expect(plan, line).toBe('none');
+      return { line, stage, next, status, head, plan };
+    });
+
+    const matchesRow = (p: (typeof parsedLines)[number], row: string[]): boolean => {
+      const [exitCell, stageCell, nextCell, statusCell] = row;
+      if (unTick(stageCell) !== p.stage) return false;
+      const nextVals = [...nextCell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      const statusVals = [...statusCell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      if (!nextVals.includes(p.next) || !statusVals.includes(p.status)) return false;
+      if (exitCell.includes('release-only hold')) return p.plan !== 'none';
+      if (exitCell.includes('hand-back to preparation')) return p.next === 'pair-review' || p.plan === 'none';
+      return true;
+    };
+
+    for (const p of parsedLines) {
+      const matched = newExitRows.filter((r) => matchesRow(p, r));
+      expect(matched, p.line).toHaveLength(1);
+    }
+    for (const row of newExitRows) {
+      const matched = parsedLines.filter((p) => matchesRow(p, row));
+      expect(matched, row[0]).toHaveLength(1);
     }
   });
 
@@ -2080,7 +2148,16 @@ describe('(F) the stage line', () => {
   });
 
   test('the line never changes an outcome, a handoff kind or a binding, whatever it says', () => {
-    for (const [code, base] of [['A-STAGE-LINE', 'A-SUCCESS'], ['B-STAGE-LINE', 'B-FENCED'], ['C-PAUSE-STAGE-LINE', 'C-PAUSED'], ['E-STAGE-LINE', 'E-CONTINUE']] as const) {
+    for (const [code, base] of [
+      ['A-STAGE-LINE', 'A-SUCCESS'],
+      ['B-STAGE-LINE', 'B-FENCED'],
+      ['C-PAUSE-STAGE-LINE', 'C-PAUSED'],
+      ['E-STAGE-LINE', 'E-CONTINUE'],
+      ['C-RESUME-STAGE-LINE', 'C-RESUME'],
+      ['C-CLOSED-PAUSED-STAGE-LINE', 'C-CLOSED-PAUSED'],
+      ['C-LOOKUP-FAILURE-STAGE-LINE', 'C-LOOKUP-FAILURE'],
+      ['D-RELEASE-ONLY-STAGE-LINE', 'D-RELEASE-ONLY-HANDBACK'],
+    ] as const) {
       const without = run(base);
       const withLine = run(code);
       expect({ code, outcome: withLine.outcome, handoff: withLine.handoff, mismatches: withLine.mismatches.map((m) => m.binding) })
@@ -2112,6 +2189,37 @@ describe('(F) the stage line', () => {
     for (const phrase of ['The line follows the handoff and never changes an outcome.', 'The block wins: classify it as usual.',
       'Older producers print no line, and H-F prints none', 'so the line never caps an outcome', 'Malformed is ignored.',
       'a stage line after it holds', 'still refuses any other text after the block']) expect(has(doc, phrase), phrase).toBe(true);
+  });
+
+  // Value: protects=the stage-line section states the question-exit, no-line, not-a-handoff and v1 compatibility rules; fails_when=any of rules 7 or 9-11 is dropped or reworded; why_new=Track 72A criteria 2 and 8; seam=none
+  test('the stage-line section states the question-exit, no-line and rule 7 compatibility rules', () => {
+    const doc = squash(STAGE_DOC);
+    for (const phrase of [
+      "Adding a producer or a `stage` or `next` value keeps `v1`: an older consumer reads a line with a value it does not know as malformed and ignores it (rule 4), which is how it read these producers' turns before they printed any line (rule 2).",
+      '`/pair-review` Step 3 and `/full-review` Phase 6 present their exit through the question tool: the line is the last line of the text that presents the exit, after any fence, before the question.',
+      'A reply in the same invocation that ends the run with more output ends that output with the line again, `head` read afresh; a reply that starts another skill in the session leaves the exit to that skill.',
+      '`/pair-review status` and `/full-review status` end no run and print no line.',
+      "A `/roadmap` run composed into `/project-spec` ends in `/project-spec`'s Step 3, which prints the `project-spec` line; `/roadmap` prints none there.",
+      '`/full-review resume`, `/pair-review resume` and the `Run /docs-ship` prompt are not handoffs this document classifies; `/docs-ship` reads its own prompt, and the line sits outside that fence, so the prompt\'s bytes and its consumers are unchanged.',
+    ]) expect(has(doc, phrase), phrase).toBe(true);
+  });
+
+  // Value: protects=orchestration-contract rows for the five Track 72A stages cite the stage line as honored and never name Track 72A; fails_when=a row still names Track 72A or drops the stage-line reference; why_new=Track 72A criteria 5 and 9; seam=none
+  test('orchestration-contract rows for the five stages cite the stage line as honored and never name Track 72A', () => {
+    const contract = read('docs/orchestration-contract.md');
+    const promises = contract.slice(contract.indexOf('\n## What each stage promises\n'), contract.indexOf('\n## Compatibility and versioning\n'));
+    const rows = new Map(tableRows(promises).map((r) => [r[0], r] as const));
+    for (const stage of ['`/pair-review`', '`/ship-and-land`', '`/full-review`', '`/roadmap` and `/project-spec`']) {
+      const row = rows.get(stage);
+      expect(row, stage).toBeDefined();
+      const joined = row!.join(' | ');
+      expect(joined, stage).not.toContain('Track 72A');
+      expect(joined, stage).not.toContain('not yet honored');
+      expect(joined, stage).toContain('workflow-handoffs.md#grammar-stage-line');
+      expect(joined, stage).toContain('`honored`');
+    }
+    expect(squash(promises)).toContain('Its other exits end with the prose report (PR URL, version, merged/deploy verdict) followed by the [stage line](workflow-handoffs.md#grammar-stage-line).');
+    expect(promises).not.toContain('Track 72A');
   });
 
   test('/review-and-prep keeps the H-F pause line last and prints no stage line after it', () => {

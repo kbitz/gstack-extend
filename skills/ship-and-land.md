@@ -475,7 +475,9 @@ use fallback ship reviews to bypass pending user testing or scope decisions.
 A draft PR, with or without a receipt, goes through `/review-and-prep` before
 release work; it owns the single ready transition. Stop and hand off to it in a
 new session; rerun `/ship-and-land` after it marks the PR ready. Never toggle a
-ready PR to draft.
+ready PR to draft. Every Step 1 hand-back (draft PR, paused PR with `next: pair-review`,
+cycle-capped PR, or pending user testing before ship opens a PR) ends with the
+stage line in Step 4's **Stage line** subsection (`status: stopped`).
 
 ### Choose the review profile
 
@@ -689,7 +691,7 @@ Greptile stays once per PR. To repair during shipping instead, rerun
 /ship-and-land and ask for the full path.
 ```
 
-A post-write failure, such as a build, a release check or the final preflight, stops before the
+Print the stage line after the hand-back fence (`next: review-and-prep; status: stopped`, `head` set to the fence's `head:`). A post-write failure, such as a build, a release check or the final preflight, stops before the
 push. Fix it when the fix stays within release metadata. Otherwise, before any
 push, identify any uncommitted release writes this invocation owns. Restore only
 those named paths from the prepared HEAD after verifying their entire diff is
@@ -1444,7 +1446,7 @@ Do not merge, enqueue, or enable auto-merge. Do not ask land's no-CI,
 check-exclusion or merge-approval questions: this run cannot act on the
 answers. Run telemetry finish (`--outcome success` at the gate, `error` with a
 blocker), then finish with the readiness report, `stopped at merge gate
-(caller request)` and, as the last lines, the merge decision. Print it as
+(caller request)` and, as the last lines before the stage line, the merge decision. Print it as
 plain text, not AskUserQuestion: its answer belongs to the next run.
 
 - Name the PR, its full head SHA and every state the landing run will ask the
@@ -1459,7 +1461,7 @@ plain text, not AskUserQuestion: its answer belongs to the next run.
   validated a marked handoff, tell them to paste the same handoff again with
   it. Say that run rechecks the head, asks for each acceptance and the merge
   approval, then merges and reports. Leaving the PR open needs no action.
-- With a blocker, name each blocker and its repair instead of offering to land.
+- With a blocker, name each blocker and its repair instead of offering to land. A merge-gate stop that names blockers prints `status: blocked` and `next: none` on the stage line.
 
 For example, for a head with no CI:
 
@@ -1506,12 +1508,27 @@ Finish with PR URL, version, merged/deploy verdict, a brief reused-versus-run
 summary, the path taken, the wall time from the invocation start to the merge
 gate, and any blocker or unverified deployment. Link the receipt instead of
 restating it or the review findings in chat. After a merge-gate stop, the
-merge decision stays last. CI pending, deployment
+merge decision stays last before the stage line. CI pending, deployment
 unconfirmed, or canary unavailable must not read as deployed and verified.
 This skill has no deliberate pause: every exit, including blockers,
 preparation handoffs and the merge decision, completes the invocation, so run
 telemetry finish with its actual outcome. Waiting in this session for an
 answer this invocation acts on, such as merge approval, is not an exit.
+
+### Stage line
+
+End every final message (after the prose report, the merge-gate stop decision, the release-only hand-back fence, a Step 1 hand-back or a blocker report) with this stage line on its own, outside any fence and with nothing after it:
+
+Stage handoff: stage-handoff/v1; stage: ship-and-land; next: <ship-and-land|review-and-prep|pair-review|none>; status: <done|done-with-concerns|stopped|blocked>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
+
+For each exit ([stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md), `docs/workflow-handoffs.md`):
+
+- **Landed (merged, including an already-merged rerun):** `next: none`, `status: done` (`done-with-concerns` when deployment is unverified, CI is pending or canary is unavailable), `head` the PR's merge commit (`gh pr view --json mergeCommit`), `plan-sha256` the `Plan` SHA-256 of the marked handoff this invocation validated (else `none`).
+- **Merge-gate stop with no blocker (`--no-land` or a direct stop request):** `next: ship-and-land`, `status: stopped`, `head` the PR head it checked, `plan-sha256` as above.
+- **Release-only hold:** `next: review-and-prep`, `status: stopped`, `head` the hand-back's `head`, `plan-sha256` as above.
+- **Hand-back to preparation (draft PR, paused PR, cycle-capped PR, or pending user testing before ship opens a PR):** `next: review-and-prep` (`pair-review` for a paused PR), `status: stopped`, `head` the PR head it checked (local HEAD while no PR exists), `plan-sha256` as above.
+- **Merge not approved (the user declines; the PR stays open):** `next: none`, `status: stopped`, `head` the PR head it checked, `plan-sha256` as above.
+- **BLOCKED (any blocker, including a merge-gate stop that names blockers):** `next: none`, `status: blocked`, `head` the PR head it checked (local HEAD while no PR exists, or `none` when no head was read), `plan-sha256` as above.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
