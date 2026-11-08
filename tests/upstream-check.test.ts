@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './helpers/child-stdio.ts';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
 import { ANCHORS_QUALIFIED, ATTACKER_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, attackerInventory, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';

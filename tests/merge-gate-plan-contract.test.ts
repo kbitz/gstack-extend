@@ -41,11 +41,11 @@ function fixture() {
   git(['commit', '--quiet', '-m', 'head']);
   const calls = join(dir, 'calls.jsonl');
   writeFileSync(join(path, 'git'), `#!${process.execPath}\n` + [
-    "import { appendFileSync } from 'node:fs';",
+    "import { appendFileSync, writeSync } from 'node:fs';",
     "import { spawnSync } from 'node:child_process';",
     'const args = process.argv.slice(2);',
     `appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');`,
-    "if (process.env.MERGE_GATE_FAIL_BATCH === '1' && args.includes('--batch')) { process.stderr.write('fatal: synthetic missing manifest blob\\n'); process.exit(128); }",
+    "if (process.env.MERGE_GATE_FAIL_BATCH === '1' && args.includes('--batch')) { writeSync(2, 'fatal: synthetic missing manifest blob\\n'); process.exit(128); }",
     `const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });`,
     'process.exit(result.status ?? 1);',
   ].join('\n'), { mode: 0o755 });
@@ -108,9 +108,9 @@ test('no-merge proof: Git and PR checks and replay preserve refs, HEAD, index an
     headRefOid: f.git(['rev-parse', 'HEAD']).trim(),
   };
   writeFileSync(join(f.path, 'gh'), `#!${process.execPath}\n` + [
-    "import { appendFileSync } from 'node:fs';",
+    "import { appendFileSync, writeSync } from 'node:fs';",
     `appendFileSync(${JSON.stringify(f.calls + '.gh')}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
-    `process.stdout.write(${JSON.stringify(JSON.stringify(pr))});`,
+    `writeSync(1, ${JSON.stringify(JSON.stringify(pr))});`,
   ].join('\n'), { mode: 0o755 });
   writeFileSync(join(f.repo, 'package.json'), '{"dirty":true}\n');
   writeFileSync(join(f.repo, 'untracked.bin'), Buffer.from([0, 1, 255, 10]));

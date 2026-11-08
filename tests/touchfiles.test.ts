@@ -35,7 +35,7 @@
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './helpers/child-stdio.ts';
 import { join, posix, relative } from 'node:path';
 
 import {

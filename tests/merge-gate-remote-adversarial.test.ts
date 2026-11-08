@@ -134,9 +134,9 @@ function fixture(remote: string) {
   const log = join(shim, 'gh-called.json');
   const executable = join(shim, 'gh');
   writeFileSync(executable, `#!${process.execPath}\n
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, writeSync } from 'node:fs';
 writeFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)));
-process.stdout.write(${JSON.stringify(JSON.stringify(response))});
+writeSync(1, ${JSON.stringify(JSON.stringify(response))});
 `);
   chmodSync(executable, 0o755);
   return { repo, env, log };

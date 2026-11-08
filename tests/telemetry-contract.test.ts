@@ -1696,7 +1696,7 @@ describe('workflow metrics contract (Track 24A)', () => {
         'CLAUDE_PLUGIN_DATA', 'CLAUDE_PLUGIN_ROOT'].map(name => [name, canary]));
       const script = join(fix.home, 'quickstart.sh');
       writeFileSync(script, `cd '${callerDir}'\n${withProof}\nrc=$?\necho "AFTER rc=$rc pwd=$PWD home=$HOME state=$GSTACK_EXTEND_STATE_DIR root=$GSTACK_STATE_ROOT"\n`);
-      const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home, ...canaries, ...(keep ? { KEEP: '1' } : {}) }, encoding: 'utf8', timeout: 30_000 });
+      const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home, ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}), ...canaries, ...(keep ? { KEEP: '1' } : {}) }, encoding: 'utf8', timeout: 30_000 });
       return { fix, canary, callerDir, proof, r };
     };
     const { fix, canary, callerDir, proof, r } = run(false);

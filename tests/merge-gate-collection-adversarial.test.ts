@@ -63,8 +63,9 @@ for (const [label, warning, phase] of [
     const executable = join(shim, 'git');
     writeFileSync(executable, `#!${process.execPath}\n
 import { spawnSync } from 'node:child_process';
+import { writeSync } from 'node:fs';
 const args = process.argv.slice(2);
-if (args.includes(${JSON.stringify(phase)})) process.stderr.write(${JSON.stringify(warning)});
+if (args.includes(${JSON.stringify(phase)})) writeSync(2, ${JSON.stringify(warning)});
 const result = spawnSync(${JSON.stringify(GIT)}, args, { stdio: 'inherit' });
 process.exit(result.status ?? 1);
 `);
@@ -109,7 +110,7 @@ for (const field of ['headRefOid', 'baseRefOid'] as const) {
       };
       const shim = tmp('gh-path-');
       const executable = join(shim, 'gh');
-      writeFileSync(executable, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify(response))});\n`);
+      writeFileSync(executable, `#!${process.execPath}\nimport { writeSync } from 'node:fs';\nwriteSync(1, ${JSON.stringify(JSON.stringify(response))});\n`);
       chmodSync(executable, 0o755);
       const result = await runJson(['check', '--pr', '7'], repo, { ...env, PATH: `${shim}:${process.env.PATH ?? ''}` }, 1);
       expect(result.error?.code).toBe('gh_bad_json');
