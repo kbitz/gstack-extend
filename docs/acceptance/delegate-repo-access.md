@@ -3,8 +3,8 @@
 Recorded against source revision `fb04192` plus this Track's implementation,
 with upstream gstack qualified at
 `297f50c7e1d46aab1404f5f2e8a9584af76ad6b2` (`1.97.0.0`). This record covers
-the opt-in `"access": "repo"` provider mode (with optional `"expose"` and
-`"keep"` path lists) in `review-delegates/v1` (see
+the opt-in `"access": "repo"` provider mode (with an optional throwaway
+`"expose"` path list) in `review-delegates/v1` (see
 [delegated review](../delegated-review.md#repository-access)), the bubblewrap
 sandbox and disposable copy in `bin/review-delegate`, and the `/review-and-prep`
 receipt and capability-check rules. No real run backs it yet: a static prose or
@@ -16,8 +16,8 @@ target acceptance O6 and P1).
 
 Repository access is **opt-in per provider**:
 
-- A provider in `review-delegates/v1` sets `"access": "repo"` (with optional
-  `expose` and `keep` absolute path lists) to run inside a bubblewrap sandbox
+- A provider in `review-delegates/v1` sets `"access": "repo"` (with an optional
+  `expose` absolute path list) to run inside a bubblewrap sandbox
   whose working directory is a disposable copy of the repository at
   `--candidate`. Omitting `access` or setting `"access": "diff"` preserves
   v0.75.0 diff-only behavior byte-for-byte.
@@ -43,6 +43,21 @@ and `red-team` was put to the owner at plan approval on 2026-11-08:
   tool network bound (`"4 accept"`), and `minor` release level (`"5 minor is
   fine"`) were confirmed at the same approval.
 
+## No writable host path (owner decision)
+
+During `/review-and-prep`'s owner-approved full continuation of PR #224, five
+review rounds each found another way that a read-write `keep` host path let
+sandboxed code alias, redirect or rewrite something the host trusts. The owner
+chose to drop `keep` (option A) on 2026-11-08. His answer, verbatim:
+
+> Tools track review -A
+
+Every listed path is now a throwaway `expose` layer, and a configuration that
+still names `keep` refuses as `config-malformed` with the key named on standard
+error. The cost: a CLI that rotates its login token during a call loses the
+refreshed token, so a repo-mode provider uses a dedicated delegate login that
+does not rotate mid-call, or stays in diff mode.
+
 ## Safety-model summary
 
 See [Repository access in `docs/delegated-review.md`](../delegated-review.md#repository-access)
@@ -52,21 +67,20 @@ for the complete contract:
   --share-net --die-with-parent --new-session`, a `--seccomp` filter blocking the
   kernel keyring calls, `--ro-bind / /`, `--tmpfs` over
   `/tmp`, `/var` (with `/var/tmp` empty and `/var/run` linked to `../run`),
-  `/run` (re-binding the DNS resolver directory read-only when
+  `/run` (re-binding the DNS resolver file alone, read-only, when
   `realpath('/etc/resolv.conf')` is under `/run/` or `/var/`), `$HOME`, the
-  passwd home and the runner's temporary directory,
-  throwaway overlays or staged copies for `expose` paths and read-write binds
-  for `keep` paths (a parent before any listed path inside it), `--tmpfs` over
+  passwd home and the runner's temporary directory, an empty file over
+  `/proc/keys` and `/proc/key-users`, throwaway overlays or staged copies for
+  `expose` paths (no read-write host mount at all), `--tmpfs` over
   the real repository's work tree, git directory, common git directory, every
   worktree `git worktree list` names, the `--calls` directory and
   `XDG_RUNTIME_DIR`, and a read-write bind of a disposable copy: an empty
   repository that fetches only `--candidate` (a frozen snapshot commit no ref
   reaches included) and checks it out detached, with hooks, LFS filters and the
-  host's global and system git configuration off. `expose` and `keep` entries
-  at or above a hidden root, inside a runtime dir or the reviewed repository,
-  nested inside a `keep` entry or behind a symlink below a hidden root, a `keep`
-  entry around the runner's own code or configuration or the repository, and an
-  `argv[0]` with a hidden link hop no entry covers, refuse as
+  host's global and system git configuration off. `expose` entries at or above a
+  hidden root, inside a runtime dir or the reviewed repository, or behind a
+  symlink that would vanish with a hidden root, a provider that still names
+  `keep`, and an `argv[0]` with a hidden link hop no entry covers, refuse as
   `config-malformed`; uid 0 and architectures without a keyring seccomp table
   refuse as `sandbox-unavailable`. The before-and-after
   `worktreeState` check on the real repository still holds and discards every
@@ -78,7 +92,7 @@ for the complete contract:
   candidate's project settings (such as `.claude/settings.json` hooks). Code from
   the reviewed head can run when the model runs commands. Abstract-namespace Unix sockets and path
   sockets outside the hidden paths, reads of non-hidden world-readable host paths
-  (`/etc`, `/sys`), reads of `expose`/`keep` paths, writes to `keep` paths,
+  (`/etc`, `/sys`), reads of `expose` paths, discarded login refreshes,
   unsized temporary mounts, prompt injection inside the sandbox, and findings
   carrying tool-read text into the receipt are documented limits.
 
@@ -99,8 +113,8 @@ written at the release step, not on the implementation branch:
 
 _release: minor (0.x compatible addition to a stable surface: optional `review-delegates/v1` provider keys, SPEC Release policy "During 0.x: compatible additions use MINOR")_
 
-- `User-facing change:` a `review-delegates/v1` provider can set `"access": "repo"` (with optional `expose` and `keep` paths); on Linux with bubblewrap, `bin/review-delegate` starts its command in a sandboxed, disposable copy of the repository at the reviewed head so a delegated review part can read repository files and use tools, and records `; repo=<part>[,<part>...]` on `delegation: active (...)`; providers without it are unchanged.
-- `Upgrade risk:` an older runner refuses a `review-delegates/v1` file carrying `access`, `expose` or `keep` as `config-malformed`, so delegation goes inactive and every part runs on the host; callers first check `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"`. Repo mode is Linux-only and requires bubblewrap (refusing with `sandbox-unavailable` elsewhere); a repo-mode provider's command and runtime must be visible in the sandbox or listed in `expose`/`keep` (an `argv[0]` under a hidden path refuses as `config-malformed`); the model's commands can run code from the reviewed head, so diff mode stays the choice for untrusted changes; and bounding tool network access is the caller's command configuration. Existing flags, exits and `run` output keys are unchanged, while `check` gains a conditional `access` key and the `sandbox-unavailable` refusal.
+- `User-facing change:` a `review-delegates/v1` provider can set `"access": "repo"` (with optional throwaway `expose` paths); on Linux with bubblewrap, `bin/review-delegate` starts its command in a sandboxed, disposable copy of the repository at the reviewed head so a delegated review part can read repository files and use tools, and records `; repo=<part>[,<part>...]` on `delegation: active (...)`; providers without it are unchanged.
+- `Upgrade risk:` an older runner refuses a `review-delegates/v1` file carrying `access` or `expose` as `config-malformed`, so delegation goes inactive and every part runs on the host; callers first check `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"`. Repo mode is Linux-only and requires bubblewrap (refusing with `sandbox-unavailable` elsewhere); a repo-mode provider's command and runtime must be visible in the sandbox or listed in `expose` (an `argv[0]` under a hidden path refuses as `config-malformed`); nothing written inside the sandbox persists, so a CLI that rotates its login token during a call loses the refreshed token (use a dedicated delegate login that does not rotate mid-call, or diff mode for that provider); the model's commands can run code from the reviewed head, so diff mode stays the choice for untrusted changes; and bounding tool network access is the caller's command configuration. Existing flags, exits and `run` output keys are unchanged, while `check` gains a conditional `access` key and the `sandbox-unavailable` refusal.
 
 ## What this Track does not claim
 

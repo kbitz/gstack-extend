@@ -4,7 +4,7 @@
  * `run` makes one bounded, read-only call per part and reports which parts the
  * host must run itself. Contract and recovery: docs/delegated-review.md.
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -210,7 +210,7 @@ interface Prepared {
   config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string;
   bwrap?: string; home?: string; privateDirs?: string[];
 }
-type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason };
+type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason; detail?: string };
 
 /** Everything `check` establishes, in refusal order, with no model call. */
 async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> {
@@ -220,7 +220,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   if (!read.ok) return refuse(/not found/.test(read.reason) ? 'config-missing' : 'config-malformed');
   if (read.bytes.length > CONFIG_LIMIT) return refuse('config-malformed');
   const parsed = validateConfig(read.bytes.toString('utf8'));
-  if (!parsed.ok) return refuse(parsed.reason);
+  if (!parsed.ok) return { ok: false, reason: parsed.reason, detail: parsed.detail };
   for (const part of options.parts) if (!parsed.config.parts[part]) return refuse('part-unmapped');
 
   const repoProviders = options.parts
@@ -252,44 +252,37 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
     // Every directory the sandbox hides or replaces: the homes, the system roots, the runner's temporary directory and the runtime dirs.
     const hiddenRoots = [...new Set([...homes, ...temp, ...runtimeDirs,
       ...['/tmp', '/var', '/var/tmp', '/run', '/proc', '/dev', '/sys'].flatMap((path) => forms(path))])];
-    // The runner's own code and configuration and the reviewed repository: a writable keep there would let sandboxed code change what
-    // the host runs next, or move the real checkout from under its hiding mount.
-    const runnerPaths = [options.root, extendRoot(), options.config, options.adversarial, options.caught].filter(Boolean).flatMap(forms);
+    // The reviewed repository and the calls directory: no listed path may sit at or inside them (that would show the live checkout).
     const repoPaths = [options.repo, options.calls].filter(Boolean).flatMap(forms);
-    // A symlink below the deepest hidden root around a path vanishes with that tmpfs, so bwrap would mount or exec at the written
-    // spelling, not the target (the spelling of the root itself is recreated by its own tmpfs).
-    const symlinkBelowHiddenRoot = (path: string) => {
-      const root = hiddenRoots.filter((dir) => dir !== path && isWithin(dir, path)).sort((a, b) => b.length - a.length)[0];
-      if (root === undefined) return false;
-      const parts = relative(root, path).split(sep);
-      for (let i = 1; i < parts.length; i++) {
-        try { if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true; } catch { return false; }
-      }
-      return false;
-    };
     for (const provider of repoProviders) {
-      const keeps = provider.keep ?? [];
-      const entries = [...(provider.expose ?? []), ...keeps];
+      const entries = provider.expose ?? [];
       const atOrAbove = (path: string, targets: string[]) => forms(path).some((form) => targets.some((target) => isWithin(form, target)));
       const atOrInside = (path: string, targets: string[]) => forms(path).some((form) => targets.some((target) => isWithin(target, form)));
+      // A symlink below the deepest hidden root around a path vanishes with that tmpfs, so bwrap would mount or exec at the written
+      // spelling; below a listed directory the overlay keeps it, so the walk starts at the deepest hidden root or listed directory.
+      const symlinkVanishes = (path: string, listed: readonly string[]) => {
+        const containers = [...hiddenRoots, ...listed].filter((dir) => dir !== path && isWithin(dir, path)).sort((x, y) => y.length - x.length);
+        const deepest = containers[0];
+        if (deepest === undefined || listed.includes(deepest)) return false;
+        const parts = relative(deepest, path).split(sep);
+        for (let i = 1; i < parts.length; i++) {
+          try { if (lstatSync(join(deepest, ...parts.slice(0, i))).isSymbolicLink()) return true; } catch { return false; }
+        }
+        return false;
+      };
       for (const entry of entries) {
-        // An entry may sit inside a hidden root, never at one or above one: that would re-bind the whole root. Nothing may sit
-        // inside a runtime dir, whose tmpfs would also cover the entry at run time, or inside the reviewed repository.
+        // A listed path may sit inside a hidden root, never at one or above one: that would show the whole root. Nothing may sit
+        // inside a runtime dir (its session bus and agents) or inside the reviewed repository or the calls directory.
         if (forms(entry).includes('/') || atOrAbove(entry, hiddenRoots) || atOrInside(entry, runtimeDirs) || atOrInside(entry, repoPaths)
-          || symlinkBelowHiddenRoot(entry)) {
+          || symlinkVanishes(entry, entries.filter((other) => other !== entry))) {
           return refuse('config-malformed');
         }
-        // Nothing nests inside a keep entry, whose writable contents (a planted symlink) could redirect the inner mount.
-        if (keeps.some((keep) => keep !== entry && atOrInside(entry, [keep]))) return refuse('config-malformed');
       }
-      for (const keep of keeps) {
-        if (atOrAbove(keep, [...runnerPaths, ...repoPaths]) || atOrInside(keep, runnerPaths)) return refuse('config-malformed');
-      }
-      // Every hop of argv[0]'s link chain that lies under a hidden root needs an entry around it, with no symlink below that root.
+      // Every hop of argv[0]'s link chain that lies under a hidden root needs a listed path around it, with no vanishing symlink.
       const entryPaths = entries.map((entry) => realpathBelow(entry));
       const hops = linkChain(provider.argv[0]!);
       const uncovered = hops.some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
-      if (uncovered || [provider.argv[0]!, ...hops].some(symlinkBelowHiddenRoot)) return refuse('config-malformed');
+      if (uncovered || [provider.argv[0]!, ...hops].some((path) => symlinkVanishes(path, entries))) return refuse('config-malformed');
     }
   }
 
@@ -402,7 +395,6 @@ interface RepoSandboxSpec {
   candidate: string;
   calls: string;
   expose: readonly string[];
-  keep: readonly string[];
 }
 
 /** A repo-mode setup step that failed before the provider started; `timedOut` when the part's deadline ran out first. */
@@ -450,7 +442,7 @@ export function parseWorktreeList(output: string): string[] {
 }
 
 /**
- * Hide the real repository, stage the expose and keep paths, and build the disposable copy: an empty repository that fetches only
+ * Hide the real repository, stage the expose paths, and build the disposable copy: an empty repository that fetches only
  * the candidate (a frozen snapshot commit no ref reaches included), then checks it out detached with hooks and LFS filters off.
  */
 async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: () => number): Promise<SandboxInput> {
@@ -472,14 +464,13 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
     if (real !== path) hidden.push(real);
   };
   for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
-  // A keep entry at, above or inside any hidden repository path (linked worktrees and the common git dir included) would let
-  // sandboxed code move the real checkout from under its mount or write into it.
+  // A listed path at or inside a hidden repository path (a linked worktree or the common git dir) would show the live checkout.
   const forms = (path: string) => [path, realpathBelow(path)];
-  if (spec.keep.some((keep) => forms(keep).some((form) => hidden.some((path) => isWithin(form, path) || isWithin(path, form))))) {
-    throw new SetupFailure('keep');
+  if (spec.expose.some((entry) => forms(entry).some((form) => hidden.some((path) => isWithin(path, form) || isWithin(form, path))))) {
+    throw new SetupFailure('expose');
   }
   const rawXdg = process.env.XDG_RUNTIME_DIR;
-  const entriesUnderRun = [...spec.expose, ...spec.keep].some((path) => [path, realpathBelow(path)].some((form) => isWithin('/run', form)));
+  const entriesUnderRun = spec.expose.some((path) => [path, realpathBelow(path)].some((form) => isWithin('/run', form)));
   const uid = process.getuid?.();
   if (entriesUnderRun && uid !== undefined) hide(`/run/user/${uid}`);
   if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/') {
@@ -514,12 +505,6 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
       }
     }
   } catch { throw new SetupFailure('expose'); }
-  try {
-    for (const entry of spec.keep) {
-      const stat = lstatSync(entry);
-      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new SetupFailure('keep');
-    }
-  } catch { throw new SetupFailure('keep'); }
 
   const copy = join(cwd, 'repo');
   await git(['init', '--quiet', '--template=', copy], 'init');
@@ -527,7 +512,9 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
     '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.repo, spec.candidate], 'fetch');
   await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false',
     'checkout', '--quiet', '--detach', spec.candidate], 'checkout');
-  return { home: spec.home, privateDirs: spec.privateDirs, hidden, resolvDir, expose, keep: spec.keep, copy };
+  const emptyFile = join(cwd, 'empty');
+  try { writeFileSync(emptyFile, '', { mode: 0o600 }); } catch { throw new SetupFailure('setup'); }
+  return { home: spec.home, privateDirs: spec.privateDirs, hidden, resolvDir, expose, copy, emptyFile };
 }
 
 /** One process in its own group, an empty private cwd (or a bubblewrap-sandboxed copy), an allowlisted env and bounded output. */
@@ -566,11 +553,7 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
       const cleanup = async () => {
         try { await rm(cwd, { recursive: true, force: true }); return; } catch { /* make it writable, then retry */ }
         await new Promise<void>((done) => {
-          let chmod: ReturnType<typeof spawn>;
-          try { chmod = spawn('chmod', ['-R', 'u+rwx', cwd], { stdio: 'ignore' }); } catch { done(); return; }
-          const limit = setTimeout(() => { try { chmod.kill('SIGKILL'); } catch { /* gone */ } }, 10_000);
-          chmod.on('error', () => { clearTimeout(limit); done(); });
-          chmod.on('close', () => { clearTimeout(limit); done(); });
+          try { execFile('chmod', ['-R', 'u+rwx', cwd], { timeout: 10_000, killSignal: 'SIGKILL' }, () => done()); } catch { done(); }
         });
         try { await rm(cwd, { recursive: true, force: true }); } catch { spawnError = true; }
       };
@@ -682,7 +665,7 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
     dispatchedAt = new Date().toISOString();
     const repoSpec: RepoSandboxSpec | undefined = access === 'repo'
       ? { bwrap: prepared.bwrap!, home: prepared.home!, privateDirs: prepared.privateDirs ?? [], repo: options.repo, candidate: options.candidate, calls: options.calls,
-        expose: provider.expose ?? [], keep: provider.keep ?? [] }
+        expose: provider.expose ?? [] }
       : undefined;
     spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s, repoSpec);
     returnedAt = new Date().toISOString();
@@ -704,7 +687,7 @@ Usage: review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [-
 
 Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on the host model.
   --config FILE       absolute path of a review-delegates/v1 JSON file (at most 64 KiB)
-                      A provider may set "access": "repo" (with optional "expose" and "keep") for a bubblewrap-sandboxed clone on Linux; see docs/delegated-review.md.
+                      A provider may set "access": "repo" (with optional throwaway "expose" paths) for a bubblewrap-sandboxed clone on Linux; see docs/delegated-review.md.
   --gstack-root DIR   absolute path of the installed gstack root the review uses (its review/specialists and lib are read)
   --repo DIR          absolute path of the repository under review (run only)
   --base, --candidate full SHAs of the frozen scope's endpoints (run only)
@@ -732,7 +715,12 @@ export async function main(argv: string[], io: CliIo, deps: Deps = {}): Promise<
   if (options === 'help') { io.stdout(help()); return EXIT.ok; }
   const print = (value: object) => io.stdout(`${JSON.stringify({ v: 1, ...value })}\n`);
   const prepared = await prepare(options, deps);
-  if (!prepared.ok) { print({ status: 'refused', reason: prepared.reason }); return EXIT.refused; }
+  if (!prepared.ok) {
+    print({ status: 'refused', reason: prepared.reason });
+    // The validation detail (which key or value is malformed) goes to stderr; stdout keeps its one JSON line.
+    if (prepared.detail) io.stderr(`review-delegate: ${prepared.reason}: ${prepared.detail}\n`);
+    return EXIT.refused;
+  }
   const { config, sha } = prepared.prepared;
   if (options.command === 'check') {
     print({

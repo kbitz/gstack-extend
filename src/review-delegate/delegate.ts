@@ -35,7 +35,6 @@ export interface Provider {
   model: string;
   access?: Access;
   expose?: string[];
-  keep?: string[];
 }
 export interface DelegateConfig { providers: Record<string, Provider>; parts: Partial<Record<Part, string>> }
 export type ConfigResult = { ok: true; config: DelegateConfig } | { ok: false; reason: 'config-malformed'; detail: string };
@@ -44,7 +43,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => !!value &
 const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
   Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const PROVIDER_REQUIRED = ['argv', 'timeout_s', 'model'] as const;
-const PROVIDER_ALLOWED = new Set<string>([...PROVIDER_REQUIRED, 'access', 'expose', 'keep']);
+const PROVIDER_ALLOWED = new Set<string>([...PROVIDER_REQUIRED, 'access', 'expose']);
 /** C0 and C1 control characters, rejected in paths and flag values. */
 export const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -60,10 +59,12 @@ export function validateConfig(text: string): ConfigResult {
   const providers: Record<string, Provider> = {};
   for (const [label, entry] of Object.entries(value.providers)) {
     if (!LABEL_RE.test(label)) return bad(`provider label ${JSON.stringify(label.slice(0, 40))} does not match ${LABEL_RE.source}`);
+    // Repo mode has no writable host path: a config that still names keep is refused by name, never silently ignored.
+    if (isObject(entry) && Object.hasOwn(entry, 'keep')) return bad(`provider ${label} key "keep" is not supported: list the path in expose, whose writes are discarded`);
     if (!isObject(entry) || !PROVIDER_REQUIRED.every((key) => Object.hasOwn(entry, key)) || Object.keys(entry).some((key) => !PROVIDER_ALLOWED.has(key))) {
-      return bad(`provider ${label} keys must be argv, timeout_s and model (plus optional access, expose and keep)`);
+      return bad(`provider ${label} keys must be argv, timeout_s and model (plus optional access and expose)`);
     }
-    const { argv, timeout_s: timeout, model, access, expose, keep } = entry;
+    const { argv, timeout_s: timeout, model, access, expose } = entry;
     if (!Array.isArray(argv) || argv.length < 1 || argv.length > 64 || argv.some((arg) => typeof arg !== 'string' || !arg.length || arg.includes('\0'))) {
       return bad(`provider ${label} argv must be 1-64 non-empty strings`);
     }
@@ -71,7 +72,7 @@ export function validateConfig(text: string): ConfigResult {
     if (!Number.isInteger(timeout) || (timeout as number) < 1 || (timeout as number) > 1800) return bad(`provider ${label} timeout_s must be an integer from 1 to 1800`);
     if (typeof model !== 'string' || !MODEL_RE.test(model)) return bad(`provider ${label} model does not match ${MODEL_RE.source}`);
     if (access !== undefined && access !== 'diff' && access !== 'repo') return bad(`provider ${label} access must be "diff" or "repo"`);
-    if ((expose !== undefined || keep !== undefined) && access !== 'repo') return bad(`provider ${label} expose and keep require access "repo"`);
+    if (expose !== undefined && access !== 'repo') return bad(`provider ${label} expose requires access "repo"`);
     const seenPaths = new Set<string>();
     const checkPaths = (list: unknown): string[] | null => {
       if (!Array.isArray(list) || list.length > 32) return null;
@@ -91,19 +92,12 @@ export function validateConfig(text: string): ConfigResult {
       if (!list) return bad(`provider ${label} expose must be 0-32 unique normalized absolute paths`);
       checkedExpose = list;
     }
-    let checkedKeep: string[] | undefined;
-    if (keep !== undefined) {
-      const list = checkPaths(keep);
-      if (!list) return bad(`provider ${label} keep must be 0-32 unique normalized absolute paths`);
-      checkedKeep = list;
-    }
     providers[label] = {
       argv: argv as string[],
       timeout_s: timeout as number,
       model,
       ...(access !== undefined ? { access } : {}),
       ...(checkedExpose !== undefined ? { expose: checkedExpose } : {}),
-      ...(checkedKeep !== undefined ? { keep: checkedKeep } : {}),
     };
   }
   const parts: Partial<Record<Part, string>> = {};
@@ -143,12 +137,13 @@ export interface SandboxInput {
   home: string;
   /** A descriptor the child inherits holding the keyring seccomp program, passed to bwrap --seccomp. */
   seccompFd?: number;
-  /** Further private directories to hide before the expose and keep mounts: the passwd home when it differs from HOME, and the runner's temporary directory. */
+  /** An empty file bound over /proc/keys and /proc/key-users, which would otherwise list the account's key descriptions. */
+  emptyFile?: string;
+  /** Further private directories to hide before the expose mounts: the passwd home when it differs from HOME, and the runner's temporary directory. */
   privateDirs?: readonly string[];
   hidden: readonly string[];
   resolvDir: string | null;
   expose: readonly SandboxExpose[];
-  keep: readonly string[];
   copy: string;
 }
 
@@ -162,6 +157,7 @@ export function sandboxArgs(input: SandboxInput): string[] {
     '--ro-bind', '/', '/',
     '--dev', '/dev',
     '--proc', '/proc',
+    ...(input.emptyFile !== undefined ? ['--ro-bind', input.emptyFile, '/proc/keys', '--ro-bind', input.emptyFile, '/proc/key-users'] : []),
     '--tmpfs', '/tmp',
     // /var holds privileged daemons' path sockets (lxd, incus and the like); /var/tmp and /var/run come back empty and as a link.
     '--tmpfs', '/var', '--tmpfs', '/var/tmp', '--symlink', '../run', '/var/run',
@@ -170,12 +166,10 @@ export function sandboxArgs(input: SandboxInput): string[] {
   const privateDirs = [...new Set([input.home, ...(input.privateDirs ?? [])])].filter(Boolean).sort((a, b) => pathDepth(a) - pathDepth(b));
   for (const dir of privateDirs) args.push('--tmpfs', dir);
   if (input.resolvDir !== null) args.push('--ro-bind', input.resolvDir, input.resolvDir);
-  // A parent mounts before any expose or keep path inside it (a stable sort by depth), so the more specific entry wins.
-  const mounts = [
-    ...input.expose.map((entry) => ({ path: entry.path,
-      args: entry.kind === 'dir' ? ['--overlay-src', entry.path, '--tmp-overlay', entry.path] : ['--bind', entry.staged, entry.path] })),
-    ...input.keep.map((path) => ({ path, args: ['--bind', path, path] })),
-  ].sort((a, b) => pathDepth(a.path) - pathDepth(b.path));
+  // Every listed path is a throwaway layer; a parent mounts before any listed path inside it (a stable sort by depth).
+  const mounts = input.expose.map((entry) => ({ path: entry.path,
+    args: entry.kind === 'dir' ? ['--overlay-src', entry.path, '--tmp-overlay', entry.path] : ['--bind', entry.staged, entry.path] }))
+    .sort((a, b) => pathDepth(a.path) - pathDepth(b.path));
   for (const mount of mounts) args.push(...mount.args);
   for (const path of new Set(input.hidden)) args.push('--tmpfs', path);
   args.push('--bind', input.copy, input.copy, '--chdir', input.copy);
@@ -188,12 +182,13 @@ export function sandboxArgs(input: SandboxInput): string[] {
  * null for an architecture without a table, which repo mode then refuses.
  */
 export function keyringSeccomp(arch: string): Buffer | null {
-  const tables: Record<string, { audit: number; nrs: number[]; mask?: number }[]> = {
-    x64: [{ audit: 0xc000003e, nrs: [248, 249, 250], mask: 0xbfffffff }, { audit: 0x40000003, nrs: [286, 287, 288] }],
-    arm64: [{ audit: 0xc00000b7, nrs: [217, 218, 219] }, { audit: 0x40000028, nrs: [309, 310, 311] }],
-  };
-  const blocks = tables[arch];
-  if (!blocks) return null;
+  if (arch !== 'x64' && arch !== 'arm64') return null;
+  // Every table, whatever the runner's own architecture (an emulated runner still makes native calls); any other syscall
+  // architecture is denied outright.
+  const blocks: { audit: number; nrs: number[]; mask?: number }[] = [
+    { audit: 0xc000003e, nrs: [248, 249, 250], mask: 0xbfffffff }, { audit: 0x40000003, nrs: [286, 287, 288] },
+    { audit: 0xc00000b7, nrs: [217, 218, 219] }, { audit: 0x40000028, nrs: [309, 310, 311] },
+  ];
   const LD_ABS = 0x20, JEQ = 0x15, AND = 0x54, RET = 0x06, ALLOW = 0x7fff0000, EPERM = 0x00050001;
   type Insn = [code: number, jt: number | 'deny', jf: number, k: number];
   const insns: Insn[] = [];
@@ -204,7 +199,7 @@ export function keyringSeccomp(arch: string): Buffer | null {
     for (const nr of block.nrs) insns.push([JEQ, 'deny', 0, nr]);
     insns.push([RET, 0, 0, ALLOW]);
   }
-  insns.push([RET, 0, 0, ALLOW], [RET, 0, 0, EPERM]);
+  insns.push([RET, 0, 0, EPERM]);
   const deny = insns.length - 1;
   const out = Buffer.alloc(insns.length * 8);
   insns.forEach(([code, jt, jf, k], i) => {
@@ -244,10 +239,10 @@ export function extractAdversarialChecklist(text: string, promptAnchor: string, 
 export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string, access: Access = 'diff') =>
   `${access === 'repo' ? REPO_POLICY : DELEGATE_POLICY}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(part === 'red-team' ? { diff, checklist, already_caught: caught ?? '' } : { diff, checklist })}\n`;
 
-/** Diff mode keeps its v0.75.0 inputs; a repo-mode id also covers the mode and its paths, so fixing expose or keep dispatches again. */
+/** Diff mode keeps its v0.75.0 inputs; a repo-mode id also covers the mode and its paths, so fixing expose dispatches again. */
 export const callId = (prompt: string, provider: Provider, label: string) =>
   hash(JSON.stringify(provider.access === 'repo'
-    ? [prompt, provider.argv, provider.model, label, 'repo', provider.expose ?? [], provider.keep ?? []]
+    ? [prompt, provider.argv, provider.model, label, 'repo', provider.expose ?? []]
     : [prompt, provider.argv, provider.model, label]));
 
 export interface Tokens { input_tokens: number | null; output_tokens: number | null; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null }

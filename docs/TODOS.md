@@ -199,6 +199,17 @@
 - **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=src/review-delegate/delegate.ts|tests/review-delegate.test.ts] Test gap: keyring seccomp program's compat and x32 entries
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The keyring seccomp program carries x86_64 (with the x32 mask), i386, aarch64 and arm entries and denies other architectures, but only a native keyctl call under bwrap is tested.
+- **Hypothesis (untested):** A small classic-BPF evaluator over `(arch, nr)` pairs would pin every entry's jump offsets and syscall numbers; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/delegate.ts` (`keyringSeccomp`).
+- **Evidence:** Continuation cycle-2 testing specialist; the security specialist independently confirmed native and x32 keyctl return EPERM under bwrap. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (2026-11-08).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

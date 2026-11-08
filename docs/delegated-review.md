@@ -85,7 +85,7 @@ model needs a caller that configures that provider.
   `argv` (1-64 non-empty strings; `argv[0]` is an absolute path, never a `PATH`
   lookup), `timeout_s` (an integer from 1 to 1800) and `model` (a name the
   workflow-metrics identifier grammar accepts), plus optional `access`
-  (`"diff"` or `"repo"`, default `"diff"`), `expose` and `keep` (0-32 unique,
+  (`"diff"` or `"repo"`, default `"diff"`) and `expose` (0-32 unique,
   `path.normalize`-stable absolute paths without trailing slashes or control
   characters, allowed only when `access` is `"repo"`; see
   [Repository access](#repository-access)). `parts` maps each delegable part to
@@ -154,18 +154,18 @@ with no spawn. A result discarded for `worktree-changed` stays discarded on
 every replay and still exits 1. A claim
 without a result is `unresolved-claim` with no spawn. Never delete a claim or pick
 a fresh directory to retry. A call id hashes the prompt, `argv`, `model` and the
-provider label; for a repo-mode provider it also covers `access`, `expose` and
-`keep`, so correcting either list after a failed call dispatches again.
+provider label; for a repo-mode provider it also covers `access` and `expose`,
+so correcting the list after a failed call dispatches again.
 
 ## Repository access
 
 A provider in `review-delegates/v1` may opt into repository access by setting
-`"access": "repo"` (omitted or `"diff"` keeps diff-only mode) with optional
-`"expose"` and `"keep"` path lists. Any of the six delegable parts (`testing`,
+`"access": "repo"` (omitted or `"diff"` keeps diff-only mode) with an optional
+`"expose"` path list. Any of the six delegable parts (`testing`,
 `maintainability`, `performance`, `simplification`, `adversarial` and
 `red-team`) may map to a repo-mode provider. A caller that sets `"access":
 "repo"` first runs `grep -F '"access": "repo"' "<installed skill dir>/SKILL.md"`
-(exit 0 means supported) and leaves `access`, `expose` and `keep` out otherwise,
+(exit 0 means supported) and leaves `access` and `expose` out otherwise,
 because an older runner rejects unknown provider keys as `config-malformed` and
 runs every part on the host.
 
@@ -183,8 +183,7 @@ runs every part on the host.
       "timeout_s": 900,
       "model": "model-b",
       "access": "repo",
-      "expose": ["/path/to/provider-config"],
-      "keep": ["/path/to/delegate-login"]
+      "expose": ["/path/to/provider-config", "/path/to/delegate-login"]
     }
   },
   "parts": {
@@ -195,10 +194,15 @@ runs every part on the host.
 }
 ```
 
-- **Keys and path rules.** `expose` and `keep` are allowed only when `access` is
-  `"repo"`. Each list holds 0 to 32 entries. Every entry must be a unique
-  (across both lists), `path.normalize`-stable absolute path without trailing
-  slashes, NUL or control characters. An entry may lie inside a directory the
+- **No writable host path.** Every listed path is a throwaway `expose` layer:
+  nothing written inside the sandbox persists on the host. There is no
+  read-write mount, so a configuration that still names `keep` (an earlier draft
+  of this mode) is `config-malformed`, and the refusal's standard error names
+  the key.
+- **Keys and path rules.** `expose` is allowed only when `access` is `"repo"`.
+  It holds 0 to 32 entries. Every entry must be a unique,
+  `path.normalize`-stable absolute path without trailing slashes, NUL or
+  control characters. An entry may lie inside a directory the
   sandbox hides, never at it or above it: an entry that is `/`, `HOME`, the
   account's passwd home (read from the passwd database, since Bun's
   `os.userInfo()` follows `HOME`), `/tmp`, `/var`, `/run`, the runner's
@@ -207,27 +211,24 @@ runs every part on the host.
   dir (its session bus and agents, whose tmpfs would cover the entry at run time)
   or inside the reviewed repository or `--calls`, is `config-malformed`, compared
   both as written and with its symlinks resolved. So is an entry with a symlink
-  component below a hidden directory (that symlink vanishes with the tmpfs, so
-  bwrap would mount at the written spelling), any entry nested inside a `keep`
-  entry (its writable contents could hold a planted symlink that redirects the
-  inner mount), and a `keep` entry at, above or inside the runner's own code and
-  configuration (`--gstack-root`, the gstack-extend install, `--config`,
-  `--adversarial`, `--caught`) or at or above the reviewed repository or
-  `--calls`. At run, a `keep` entry at, above or inside any hidden repository
-  path (worktrees and the common git dir included) fails setup (`keep`). At run time each listed path is
-  checked with `lstat`: an `expose` directory becomes a throwaway overlay, an
-  `expose` regular file is staged into `<tmp>/staged/<n>` and bound read-write
-  at its path, and a `keep` directory or regular file is bound read-write.
-  Missing paths, symlinks, sockets or other file types fail that part (`failed`).
+  component below the deepest hidden directory around it (that symlink vanishes
+  with the tmpfs, so bwrap would mount at the written spelling); below another
+  listed directory the overlay keeps the symlink, so that case is allowed. At
+  run, an entry at or inside any hidden repository path (worktrees and the
+  common git dir included) fails setup (`expose`). At run time each listed path
+  is checked with `lstat`: a directory becomes a throwaway overlay, and a
+  regular file is staged into `<tmp>/staged/<n>` and bound at its path, so a
+  write to it changes only the staged copy. Missing paths, symlinks, sockets or
+  other file types fail that part (`failed`).
 - **The command must be visible.** The sandbox hides `HOME`, the passwd home,
   `/tmp`, `/var`, `/run` and the runner's temporary directory. The runner
   follows `argv[0]`'s link chain (at most 16 hops) and compares each hop, with
   its ancestor directories resolved, against each entry's resolved path: every
   hop under a hidden directory must lie inside some entry, with no symlink below
-  that directory, or the provider is `config-malformed` at `check`. The runner cannot see the command's other
-  needs: an interpreter's script, a runtime under `HOME` (for example an
-  `npm`, `bun` or `mise` install), its configuration and its login. List each in
-  `expose` or `keep`, or the part fails on every call.
+  that directory, or the provider is `config-malformed` at `check`. The runner
+  cannot see the command's other needs: an interpreter's script, a runtime under
+  `HOME` (for example an `npm`, `bun` or `mise` install), its configuration and
+  its login. List each in `expose`, or the part fails on every call.
 - **What the runner builds.** On Linux with bubblewrap (`bwrap`), the runner
   first hides the real repository and stages the listed paths, then creates a
   disposable copy: `git init --template=` of an empty repository, a
@@ -247,8 +248,11 @@ runs every part on the host.
   provider through `bwrap` in this order:
   - `--unshare-all --share-net --die-with-parent --new-session`, and a
     `--seccomp` filter that makes `add_key`, `request_key` and `keyctl` fail
-    (`EPERM`), so sandboxed code cannot read or change the account's kernel
-    keyrings (the session keyring is otherwise inherited)
+    (`EPERM`) for every x86_64, i386, aarch64 and arm system call and denies any
+    other architecture's calls, so sandboxed code cannot read or change the
+    account's kernel keyrings (the session keyring is otherwise inherited)
+  - an empty file bound over `/proc/keys` and `/proc/key-users`, which would
+    otherwise list the account's key descriptions
   - `--ro-bind / /`, `--dev /dev`, `--proc /proc`
   - `--tmpfs` over `/tmp`, `/var` (with an empty `/var/tmp` and
     `/var/run` linked to `../run`), `/run`, `$HOME`, the passwd home when it
@@ -257,19 +261,17 @@ runs every part on the host.
     alone when `realpath('/etc/resolv.conf')` resolves under `/run/` or `/var/`
     (directories there hold daemons' sockets)
   - the `expose` layers (`--overlay-src <dir> --tmp-overlay <dir>` for
-    directories; `--bind <staged> <file>` for files) and the `keep` binds
-    (`--bind <path> <path>`), a parent path before any listed path inside it,
-    so the more specific entry wins: an `expose` file inside a `keep` directory
-    stays throwaway, and a `keep` file inside an `expose` directory persists
+    directories; `--bind <staged> <file>` for files), a parent path before any
+    listed path inside it; every write to them is discarded with the call
   - `--tmpfs` over each hidden path that exists: the real repository's
     `git rev-parse --show-toplevel`, `--absolute-git-dir` and
     `--git-common-dir` (made absolute), every worktree `git worktree list`
     names (the main checkout and each linked worktree; `--porcelain -z`, which
     needs git 2.36 or later), the `--calls` directory, and `XDG_RUNTIME_DIR`
     (written and resolved) when it resolves outside `/run`, plus it and
-    `/run/user/<uid>` when an `expose` or `keep` entry lies under `/run`;
+    `/run/user/<uid>` when an `expose` entry lies under `/run`;
     each hidden path is mounted both as written and resolved; these come after
-    the `expose` and `keep` mounts, so they also hide any repository path inside
+    the `expose` mounts, so they also hide any repository path inside
     a listed directory
   - a read-write `--bind` of the disposable copy and `--chdir` into it, with
     `TMPDIR=/tmp` in the child environment
@@ -299,23 +301,24 @@ runs every part on the host.
   `/var` (Fedora Atomic), snap or flatpak runtimes, and SSSD's `/var/lib/sss`.
   A provider that needs one fails (`failed`); list that directory in `expose`.
 - **A failed setup.** A setup step that fails (a missing or unsupported
-  `expose` or `keep` path, a `git` failure, the deadline) records `failed` or
+  `expose` path, a `git` failure, the deadline) records `failed` or
   `timeout`, and the saved result's standard error names the step
   (`review-delegate: repo-mode setup failed (<step>)`).
-- **`keep` versus `expose` for rotating logins.** Writes to an `expose` path
-  land in a throwaway layer and vanish when the call ends. If a provider CLI
-  rotates its refresh token during a call, discarding that write under `expose`
-  can lose the refreshed token and may invalidate the host's stored login (not
-  established here). Use a dedicated delegate login in its own directory under
-  `keep` for credentials that rotate: not the credential file alone (inside the
-  sandbox a listed file is a mount point, so a CLI's atomic rename onto it
-  fails), and never the host's own agent configuration directory (such as
-  `~/.claude` or `~/.codex`), where sandboxed code could plant hooks or skills
-  that the host runs later. The environment allowlist passes no
-  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; point the CLI at the dedicated directory
-  through `argv`, for example `["/usr/bin/env", "CLAUDE_CONFIG_DIR=/path/to/delegate-login", "/path/to/claude", ...]`.
-  Never list a directory in `expose` or `keep` that holds unrelated credentials
-  or SSH keys.
+- **Logins, and the cost of throwaway writes.** Every write inside the
+  sandbox, a refreshed login token included, is discarded when the call ends.
+  A CLI that rotates its login token during a call therefore loses the
+  refreshed token; with refresh-token rotation the server may already have
+  retired the old one, so the next call (or the host's own use of that login)
+  can fail until someone logs in again. Use a dedicated delegate login that
+  does not rotate mid-call (for example a long-lived API key or token in a
+  dedicated configuration directory listed in `expose`), or keep that provider
+  in diff mode. Never point a repo-mode provider at the host's own agent
+  configuration directory (such as `~/.claude` or `~/.codex`). The environment
+  allowlist passes no `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; point the CLI at the
+  dedicated directory through `argv`, for example
+  `["/usr/bin/env", "CLAUDE_CONFIG_DIR=/path/to/delegate-login", "/path/to/claude", ...]`.
+  Never list a directory in `expose` that holds unrelated credentials or SSH
+  keys: the provider and its tools can read every listed path.
 - **The provider reads project configuration from the copy.** The working
   directory is the candidate's checkout, and a CLI may load project settings
   from it before the model reads anything (Claude Code: `.claude/settings.json`
@@ -326,7 +329,7 @@ runs every part on the host.
 - **Code from the reviewed head runs.** `REPO_POLICY` lets the model run
   commands in the copy to reproduce a defect, and those commands can execute
   code from the reviewed head (its tests, build or install scripts). That code
-  runs with the shared network, the `expose` and `keep` paths and the Unix
+  runs with the shared network, the `expose` paths and the Unix
   sockets listed below. Use diff mode for changes from contributors you would
   not let run code on this machine.
 - **What the runner cannot observe or enforce.**
@@ -344,8 +347,8 @@ runs every part on the host.
   - Reads of any path the account can read that is not hidden by a `--tmpfs`,
     such as `/etc`, `/usr`, `/sys`, `/srv`, `/opt` and other mounts, including
     the account's own files there.
-  - Reads of paths the caller listed in `expose` or `keep`, and writes to paths
-    the caller listed in `keep`.
+  - Reads of paths the caller listed in `expose` (writes to them are
+    discarded).
   - Prompt injection from the reviewed diff or repository files steering tools
     inside the sandbox.
   - A finding's text (including `evidence`) carrying data read by tools inside
@@ -443,7 +446,9 @@ cannot be loaded), `checklist-anchor` (a named part's checklist or
 line does not directly follow the one `Subagent prompt:` line, or the prompt or
 criteria line does not occur once) or `sandbox-unavailable` (a named part maps
 to a repo-mode provider and the host is not Linux, has no executable at the
-fixed `bwrap` paths, or fails the 10 s bubblewrap probe). Exit 2 is a usage error decided before
+fixed `bwrap` paths, or fails the 10 s bubblewrap probe). A `config-malformed`
+refusal also writes its validation detail (the key or value at fault, such as a
+`keep` key) to standard error. Exit 2 is a usage error decided before
 any work (an unknown flag, a part outside the six, a repeated part, a missing or
 extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
 inside `--repo`): standard output is empty and standard error has
@@ -557,7 +562,7 @@ command you configured and on to whatever provider it calls. In repo mode
 (`"access": "repo"`), the command and its tools can also read every committed
 file in the repository and its git history. Configure a provider you would
 trust with that scope; the runner passes no credential, but it cannot stop a
-command from reading its own `expose` or `keep` paths.
+command from reading its own `expose` paths.
 
 ## Measurement
 

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { createServer, type Socket } from 'node:net';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
@@ -91,8 +92,11 @@ function repository() {
 const FAKE = join(fresh('fake'), 'delegate.ts');
 put(FAKE, `import { appendFileSync, existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { connect } from 'node:net';
 import { join } from 'node:path';
 const [, , mode, state] = process.argv;
+// Repo mode persists nothing on the host, so sandboxed modes report through stderr (the runner saves it, never parses it) or a localhost socket.
+const report = (value) => console.error('REPORT ' + JSON.stringify(value));
 const prompt = await Bun.stdin.text();
 try { appendFileSync(join(state, 'spawns.log'), mode + '\\n'); } catch {}
 const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 8, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
@@ -139,7 +143,7 @@ else if (mode === 'inspect') {
   const exposedBefore = readFileSync(join(exposeDir, 'info.txt'), 'utf8');
   writeFileSync(join(exposeDir, 'info.txt'), 'THROW-AWAY\\n');
   writeFileSync(join(exposeDir, 'extra.txt'), 'THROW-AWAY\\n');
-  writeFileSync(join(state, 'kept.txt'), 'KEPT-MARKER\\n');
+  writeFileSync(join(state, 'kept.txt'), 'DISCARDED-MARKER\\n');
   writeFileSync('/tmp/probe-tmp.txt', 'TMP-OK\\n');
   const tmpBack = readFileSync('/tmp/probe-tmp.txt', 'utf8');
   const snapshotOnly = existsSync(join(process.cwd(), 'snapshot-only.txt'));
@@ -147,12 +151,14 @@ else if (mode === 'inspect') {
   // The host reads the passwd home (a lookup inside the sandbox can miss accounts served from /run or /var).
   const passwdHome = existsSync(join(state, 'passwd-home.txt')) ? readFileSync(join(state, 'passwd-home.txt'), 'utf8').trim() : '';
   const passwdHomeEntries = passwdHome && passwdHome !== process.env.HOME && existsSync(passwdHome) ? readdirSync(passwdHome) : [];
-  writeFileSync(join(state, 'repo-probe.json'), JSON.stringify({
+  let procKeys = 'unreadable';
+  try { procKeys = readFileSync('/proc/keys', 'utf8'); } catch {}
+  report({
     cwd: process.cwd(), head, status, log, remotes, pushStatus, outside, realRepoEntries, callsEntries,
     secretInReal, secretInCopy, homeCred, sshExists, runUser, hostsLen, exposedBefore, tmpdir: process.env.TMPDIR, tmpBack,
-    snapshotOnly, varLib, passwdHome, passwdHomeEntries, home: process.env.HOME,
+    snapshotOnly, varLib, passwdHome, passwdHomeEntries, home: process.env.HOME, procKeys,
     env: Object.keys(process.env), prompt,
-  }));
+  });
   console.log('[P1] ' + JSON.stringify({
     severity: 'CRITICAL', confidence: 9, path: 'changed.txt', line: 2, category: 'adversarial',
     summary: 'verified in clone', fix: 'guard it', evidence: 'git rev-parse HEAD -> ' + head,
@@ -160,7 +166,7 @@ else if (mode === 'inspect') {
 } else if (mode === 'keyring') {
   // Ask the kernel for the session keyring id (KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING); the sandbox's seccomp filter must refuse it.
   const r = spawnSync('/usr/bin/python3', ['-c', 'import ctypes,os;libc=ctypes.CDLL(None,use_errno=True);nr={"x86_64":250,"aarch64":219}[os.uname().machine];r=libc.syscall(nr,0,-3,0);print(r,ctypes.get_errno())'], { encoding: 'utf8' });
-  writeFileSync(join(state, 'keyring.txt'), (r.stdout ?? '').trim());
+  report({ keyring: (r.stdout ?? '').trim() });
   console.log('NO_FINDINGS: none\\nRecommendation: merge because keyring probed.');
 } else if (mode === 'escape-write') {
   const realRepo = readFileSync(join(state, 'repo.txt'), 'utf8').trim();
@@ -177,24 +183,27 @@ else if (mode === 'inspect') {
     try { writeFileSync(target, 'ESCAPED\\n'); attempts[name] = 'wrote-in-sandbox'; }
     catch (err: any) { attempts[name] = err?.code ?? 'error'; }
   }
-  writeFileSync(join(state, 'escape.json'), JSON.stringify(attempts));
+  report(attempts);
   console.log('NO_FINDINGS: none\\nRecommendation: merge because escape probes ran.');
 } else if (mode === 'background') {
-  const child = spawn(process.execPath, ['-e', \`setTimeout(() => { try { require('node:fs').writeFileSync(\${JSON.stringify(join(state, 'bg-survived.txt'))}, 'alive'); } catch {} }, 1500);\`], { detached: true, stdio: 'ignore' });
+  const port = Number(readFileSync(join(state, 'port.txt'), 'utf8'));
+  const child = spawn(process.execPath, ['-e', \`setTimeout(() => { const s = require('node:net').connect(\${port}, '127.0.0.1', () => s.end('alive')); s.on('error', () => {}); }, 1500);\`], { detached: true, stdio: 'ignore' });
   child.unref();
   console.log('NO_FINDINGS: none\\nRecommendation: merge because background spawned.');
 } else if (mode === 'signal-wait') {
-  writeFileSync(join(state, 'ready.txt'), '1');
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && !existsSync(join(state, 'go.txt'))) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
+  const port = Number(readFileSync(join(state, 'port.txt'), 'utf8'));
+  await new Promise((resolve) => {
+    const socket = connect(port, '127.0.0.1', () => socket.write('ready'));
+    socket.on('data', () => { socket.end(); resolve(null); });
+    socket.on('error', () => resolve(null));
+    setTimeout(() => resolve(null), 5000);
+  });
   console.log('NO_FINDINGS: none\\nRecommendation: merge because signal received.');
 }
 `);
 
 interface Setup { layout: 'nested' | 'sibling'; root: string; repo: string; base: string; candidate: string; state: string; calls: string; config: string }
-type Provider = { mode: string; timeout_s?: number; model?: string; access?: Access; expose?: string[]; keep?: string[] };
+type Provider = { mode: string; timeout_s?: number; model?: string; access?: Access; expose?: string[] };
 /** The bun runtime runs every fake delegate; when the sandbox would hide it (bun under a home, /tmp, /var or /run), repo-mode providers expose it. */
 const PASSWD_HOME = passwdHome();
 const RUNTIME_DIR = dirname(realpathSync(process.execPath));
@@ -214,7 +223,6 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
       model: p.model ?? `model-${label}`,
       ...(p.access !== undefined ? { access: p.access } : {}),
       ...(p.access === 'repo' && RUNTIME_EXPOSE.length ? { expose: [...(p.expose ?? []), ...RUNTIME_EXPOSE] } : p.expose !== undefined ? { expose: p.expose } : {}),
-      ...(p.keep !== undefined ? { keep: p.keep } : {}),
     }])) }));
   return { layout, root: upstream(layout), repo, base, candidate, state, calls: join(fresh('calls'), 'delegate-calls'), config };
 }
@@ -230,6 +238,27 @@ function cli(args: string[], env: Record<string, string> = {}) {
 const checkArgs = (s: Setup, parts: string) => ['check', '--config', s.config, '--gstack-root', s.root, '--parts', parts];
 const runArgs = (s: Setup, parts: string) => ['run', '--config', s.config, '--gstack-root', s.root, '--parts', parts, '--repo', s.repo, '--base', s.base, '--candidate', s.candidate, '--calls', s.calls];
 const row = (json: any, part: string) => json.parts.find((p: any) => p.part === part);
+/** The REPORT line a sandboxed fake wrote to stderr, read back from the runner's saved result (repo mode persists nothing on the host). */
+const reportOf = (s: Setup, json: any, part: string) => {
+  const saved = JSON.parse(readFileSync(join(s.calls, `${row(json, part).call_id}.json`), 'utf8'));
+  const line = String(saved.spawned.stderr).split('\n').find((l: string) => l.startsWith('REPORT '));
+  if (!line) throw new Error(`no REPORT line from ${part}: ${String(saved.spawned.stderr).slice(0, 200)}`);
+  return JSON.parse(line.slice('REPORT '.length));
+};
+/** A localhost server the sandbox can reach through the shared network; the port goes to the fake through the exposed state dir. */
+/** Add the state dir to a provider's expose list: the fake reads its inputs there, and anything it writes there is discarded. */
+const exposeState = (s: Setup, label: string) => {
+  const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+  cfg.providers[label].expose = [...(cfg.providers[label].expose ?? []), s.state];
+  writeFileSync(s.config, JSON.stringify(cfg));
+};
+async function socketChannel(state: string, onData?: (socket: Socket, data: string) => void) {
+  let connections = 0;
+  const server = createServer((socket) => { connections++; socket.on('error', () => {}); socket.on('data', (d) => onData?.(socket, d.toString())); });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', () => done()));
+  writeFileSync(join(state, 'port.txt'), String((server.address() as { port: number }).port));
+  return { connections: () => connections, close: () => new Promise<void>((done) => server.close(() => done())) };
+}
 
 describe('check', () => {
   test.each(['nested', 'sibling'] as const)('%s layout: a valid configuration reports each part, provider and model without any call', (layout) => {
@@ -340,19 +369,15 @@ describe('configuration errors refuse before any call', () => {
     ['a named part without a mapping', (c) => ({ ...c, parts: { performance: 'alpha' } }), 'part-unmapped'],
     ['a bad access value', (c) => { c.providers.alpha.access = 'write'; return c; }, 'config-malformed'],
     ['expose without repo mode', (c) => { c.providers.alpha.expose = ['/path/to/x']; return c; }, 'config-malformed'],
-    ['keep with diff mode', (c) => { c.providers.alpha.access = 'diff'; c.providers.alpha.keep = ['/path/to/x']; return c; }, 'config-malformed'],
     ['a relative expose path', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['relative/path']; return c; }, 'config-malformed'],
     ['an unnormalized expose path with ..', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/../b']; return c; }, 'config-malformed'],
-    ['an unnormalized keep path with //', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/a//b']; return c; }, 'config-malformed'],
     ['a trailing-slash path in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/b/']; return c; }, 'config-malformed'],
     ['root / in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/']; return c; }, 'config-malformed'],
-    ['root / in keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/']; return c; }, 'config-malformed'],
+    ['a keep key (repo mode has no writable host path)', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/path/to/x']; return c; }, 'config-malformed'],
+    ['a keep key in diff mode', (c) => { c.providers.alpha.keep = []; return c; }, 'config-malformed'],
     ['a control character in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/path/to/\nfile']; return c; }, 'config-malformed'],
-    ['a NUL in keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = ['/path/to/\0file']; return c; }, 'config-malformed'],
     ['duplicate path within expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/b', '/a/b']; return c; }, 'config-malformed'],
-    ['duplicate path across expose and keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = ['/a/b']; c.providers.alpha.keep = ['/a/b']; return c; }, 'config-malformed'],
     ['more than 32 entries in expose', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.expose = Array.from({ length: 33 }, (_, i) => `/path/e${i}`); return c; }, 'config-malformed'],
-    ['more than 32 entries in keep', (c) => { c.providers.alpha.access = 'repo'; c.providers.alpha.keep = Array.from({ length: 33 }, (_, i) => `/path/k${i}`); return c; }, 'config-malformed'],
   ];
   test.each(cases)('%s', (_name, mutate, reason) => {
     const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
@@ -376,6 +401,19 @@ describe('configuration errors refuse before any call', () => {
     expect(spawns(s)).toEqual([]);
   });
 
+  // Value: protects=a configuration that still names keep is refused by name, never silently ignored; fails_when=keep is accepted or refused without naming it; why_new=owner decision to drop keep (2026-11-08); seam=none
+  test('a provider that still names keep refuses as config-malformed and standard error names the key', () => {
+    const s = setup('nested', { p: { mode: 'clean' } }, { testing: 'p' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.p.access = 'repo';
+    cfg.providers.p.keep = ['/path/to/delegate-login'];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = cli(checkArgs(s, 'testing'));
+    expect(r.status).toBe(1);
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    expect(r.stderr).toContain('key "keep" is not supported');
+  });
+
   test('validateConfig accepts the documented shape, repo-mode providers for all six parts, and keeps the closed schema string', () => {
     const ok = validateConfig(JSON.stringify(good('/state')));
     expect(ok.ok).toBe(true);
@@ -388,7 +426,6 @@ describe('configuration errors refuse before any call', () => {
           model: 'model-a',
           access: 'repo',
           expose: Array.from({ length: 32 }, (_, i) => `/path/expose/${i}`),
-          keep: Array.from({ length: 32 }, (_, i) => `/path/keep/${i}`),
         },
       },
       parts: Object.fromEntries(PARTS.map((p) => [p, 'alpha'])),
@@ -733,7 +770,7 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
     expect(prompt).not.toContain('already_caught');
     // Even if a caller passes a caught string for a specialist part, buildPrompt ignores it so specialist callIds cannot drift.
     expect(buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body', 'ignored')).toBe(prompt);
-    const provider = { argv: ['/bin/delegate', '--ro'], timeout_s: 30, model: 'model-a', access: 'diff' as const, expose: [] as string[], keep: [] as string[] };
+    const provider = { argv: ['/bin/delegate', '--ro'], timeout_s: 30, model: 'model-a', access: 'diff' as const, expose: [] as string[] };
     expect(callId(prompt, provider, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([prompt, provider.argv, provider.model, 'alpha'])).digest('hex'),
     );
@@ -746,7 +783,7 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
     expect(callId(repoPrompt, { ...provider, access: 'repo' }, 'alpha')).not.toBe(callId(diffAdvPrompt, provider, 'alpha'));
   });
 
-  test('sandboxArgs orders hides after keeps and exposes, puts the copy bind and chdir last, and never binds hidden paths read-write', () => {
+  test('sandboxArgs orders hides after exposes, puts the copy bind and chdir last, and binds no hidden path', () => {
     const args = sandboxArgs({
       home: '/home/tester',
       copy: '/tmp/extend-delegate-1/copy',
@@ -754,17 +791,14 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
         { kind: 'dir', path: '/home/tester/.codex/skills' },
         { kind: 'file', path: '/home/tester/.codex/auth.json', staged: '/tmp/extend-delegate-1/staged/0' },
       ],
-      keep: ['/home/tester/.local/state/provider'],
       hidden: ['/work/repo', '/work/repo/.git', '/work/calls', '/run/user/1000', '/work/repo'],
       resolvDir: '/run/systemd/resolve',
     });
     expect(args).toContain('--share-net');
     expect(args).toContain('--die-with-parent');
     expect(args).toContain('--new-session');
-    const lastKeep = args.lastIndexOf('/home/tester/.local/state/provider');
     const lastExpose = args.lastIndexOf('/home/tester/.codex/auth.json');
     const firstHidden = args.indexOf('/work/repo');
-    expect(firstHidden).toBeGreaterThan(lastKeep);
     expect(firstHidden).toBeGreaterThan(lastExpose);
     expect(args.slice(-5)).toEqual(['--bind', '/tmp/extend-delegate-1/copy', '/tmp/extend-delegate-1/copy', '--chdir', '/tmp/extend-delegate-1/copy']);
     for (const hidden of ['/work/repo', '/work/repo/.git', '/work/calls', '/run/user/1000']) {
@@ -804,7 +838,7 @@ describe('repository-mode sandbox and check', () => {
   test('injected darwin or missing bwrap refuses repo-mode check and run with sandbox-unavailable while diff-only still checks ok', async () => {
     const s = setup(
       'nested',
-      { 'repo-prov': { mode: 'clean', access: 'repo', expose: [FAKE], keep: [fresh('keep')] }, 'diff-prov': { mode: 'clean' } },
+      { 'repo-prov': { mode: 'clean', access: 'repo', expose: [FAKE] }, 'diff-prov': { mode: 'clean' } },
       { adversarial: 'repo-prov', testing: 'diff-prov' },
     );
     for (const deps of [{ platform: 'darwin' as const }, { platform: 'linux' as const, bwrapPaths: ['/nonexistent/bwrap'] }]) {
@@ -824,9 +858,9 @@ describe('repository-mode sandbox and check', () => {
     });
   });
 
-  test('keep or expose equal to HOME or an ancestor of HOME, or relative HOME, refuses with config-malformed', async () => {
+  test('expose equal to HOME or an ancestor of HOME, or relative HOME, refuses with config-malformed', async () => {
     const homeDir = fresh('fake-home');
-    const sHome = setup('nested', { p: { mode: 'clean', access: 'repo', keep: [homeDir] } }, { testing: 'p' });
+    const sHome = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [homeDir] } }, { testing: 'p' });
     const r1 = await runInProcess(checkArgs(sHome, 'testing'), undefined, { HOME: homeDir });
     expect(r1.status).toBe(1);
     expect(r1.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
@@ -864,7 +898,7 @@ describe('repository-mode sandbox and check', () => {
     expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
   });
 
-  test.if(probe)('repo-probe runs inside a bubblewrap-sandboxed clone at candidate SHA with expose, keep, hidden paths and no remotes', async () => {
+  test.if(probe)('repo-probe runs inside a bubblewrap-sandboxed copy at the candidate SHA with throwaway expose layers, hidden paths and no remotes', async () => {
     const fakeHome = fresh('home');
     put(join(fakeHome, 'cred.txt'), 'SECRET-CRED\n');
     put(join(fakeHome, '.ssh', 'id_ed25519'), 'PRIVATE-KEY\n');
@@ -874,12 +908,12 @@ describe('repository-mode sandbox and check', () => {
     put(exposeFile, 'model = "o3"\n');
     const s = setup(
       'nested',
-      { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE, exposeDir, exposeFile], keep: [fresh('keep-placeholder')] } },
+      { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE, exposeDir, exposeFile, fresh('state-placeholder')] } },
       { adversarial: 'repo-prov' },
     );
-    // Point keep at s.state so FAKE can write its probe report and kept.txt back to the test.
+    // The state dir is exposed read-only-in-effect: FAKE reads its inputs there, and every write it makes there is discarded.
     const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    cfg.providers['repo-prov'].keep = [s.state];
+    cfg.providers['repo-prov'].expose[3] = s.state;
     writeFileSync(s.config, JSON.stringify(cfg));
     writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
     writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
@@ -893,11 +927,13 @@ describe('repository-mode sandbox and check', () => {
     const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)], undefined, { HOME: fakeHome });
     expect(r.status).toBe(0);
     expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
-    const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
+    const report = reportOf(s, r.json, 'adversarial');
     expect(report.cwd).not.toBe(s.repo);
     expect(report.head).toBe(s.candidate);
     expect(report.status).toBe('');
     expect(report.log).toContain('ignore secret');
+    // /proc/keys and /proc/key-users are masked, so not even key descriptions are listed.
+    expect(report.procKeys).toBe('');
     expect(report.remotes).toBe('');
     expect(report.pushStatus).not.toBe(0);
     expect(report.outside).toBe('REPO-ONLY-MARKER\n');
@@ -918,10 +954,11 @@ describe('repository-mode sandbox and check', () => {
     expect(report.passwdHome).not.toBe(fakeHome);
     expect(report.passwdHomeEntries).toEqual([]);
     expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
-    // Host state after the run: expose Dir/File untouched, keep file persisted, host repo has no clone-only.txt and still has origin, disposable root removed.
+    // Host state after the run: every exposed path is untouched (no write persists), the host repo has no clone-only.txt and still
+    // has origin, and the disposable root is removed.
     expect(readFileSync(join(exposeDir, 'info.txt'), 'utf8')).toBe('HOST-SKILL\n');
     expect(existsSync(join(exposeDir, 'extra.txt'))).toBe(false);
-    expect(readFileSync(join(s.state, 'kept.txt'), 'utf8')).toBe('KEPT-MARKER\n');
+    expect(existsSync(join(s.state, 'kept.txt'))).toBe(false);
     expect(existsSync(join(s.repo, 'clone-only.txt'))).toBe(false);
     expect(git(s.repo, 'remote').stdout.trim()).toBe('origin');
     expect(existsSync(report.cwd)).toBe(false);
@@ -936,14 +973,12 @@ describe('repository-mode sandbox and check', () => {
   test.if(probe)('escape-write cannot modify the host worktree, git objects, HOME, or /etc, and still returns a clean review', async () => {
     const fakeHome = fresh('home-esc');
     put(join(fakeHome, 'cred.txt'), 'HOST-CRED\n');
-    const s = setup('nested', { esc: { mode: 'escape-write', access: 'repo', expose: [FAKE], keep: [fresh('keep-esc')] } }, { testing: 'esc' });
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    cfg.providers.esc.keep = [s.state];
-    writeFileSync(s.config, JSON.stringify(cfg));
+    const s = setup('nested', { esc: { mode: 'escape-write', access: 'repo', expose: [FAKE] } }, { testing: 'esc' });
+    exposeState(s, 'esc');
     const r = await runInProcess(runArgs(s, 'testing'), undefined, { HOME: fakeHome });
     expect(r.status).toBe(0);
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
-    const attempts = JSON.parse(readFileSync(join(s.state, 'escape.json'), 'utf8'));
+    const attempts = reportOf(s, r.json, 'testing');
     expect(attempts.gitObjects).toBe('ENOENT');
     expect(['EACCES', 'EROFS']).toContain(attempts.etc);
     expect(['EACCES', 'EROFS']).toContain(attempts.etcHosts);
@@ -960,14 +995,16 @@ describe('repository-mode sandbox and check', () => {
   });
 
   test.if(probe)('background child inside bwrap dies with parent when the provider exits', async () => {
-    const s = setup('nested', { bg: { mode: 'background', access: 'repo', expose: [FAKE], keep: [fresh('keep-bg')] } }, { testing: 'bg' });
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    cfg.providers.bg.keep = [s.state];
-    writeFileSync(s.config, JSON.stringify(cfg));
-    const r = cli(runArgs(s, 'testing'));
-    expect(r.status).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    expect(existsSync(join(s.state, 'bg-survived.txt'))).toBe(false);
+    // The detached child would connect to this socket 1.5 s after the provider exits; the PID namespace must end it first.
+    const s = setup('nested', { bg: { mode: 'background', access: 'repo', expose: [FAKE] } }, { testing: 'bg' });
+    const channel = await socketChannel(s.state);
+    exposeState(s, 'bg');
+    try {
+      const r = cli(runArgs(s, 'testing'));
+      expect(r.status).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      expect(channel.connections()).toBe(0);
+    } finally { await channel.close(); }
   }, 15_000);
   test.if(!probe)('background twin refuses with sandbox-unavailable when probe is false', () => {
     const s = setup('nested', { bg: { mode: 'background', access: 'repo', expose: [FAKE] } }, { testing: 'bg' });
@@ -977,10 +1014,7 @@ describe('repository-mode sandbox and check', () => {
   });
 
   test.if(probe)('repo-mode timeout records fallback_reason: timeout and removes the disposable root', () => {
-    const s = setup('nested', { slow: { mode: 'sleep', timeout_s: 1, access: 'repo', expose: [FAKE], keep: [fresh('keep-slow')] } }, { testing: 'slow' });
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    cfg.providers.slow.keep = [s.state];
-    writeFileSync(s.config, JSON.stringify(cfg));
+    const s = setup('nested', { slow: { mode: 'sleep', timeout_s: 1, access: 'repo', expose: [FAKE] } }, { testing: 'slow' });
     const r = cli(runArgs(s, 'testing'));
     expect(r.status).toBe(4);
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout', findings: [] });
@@ -1021,19 +1055,18 @@ describe('repository-mode sandbox and check', () => {
   });
 
   test.if(probe)('host worktree change during a repo-mode run refuses with worktree-changed and marks dispatched parts worktree-changed', async () => {
-    const s = setup('nested', { sig: { mode: 'signal-wait', access: 'repo', expose: [FAKE], keep: [fresh('keep-sig')] } }, { testing: 'sig' });
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    cfg.providers.sig.keep = [s.state];
-    writeFileSync(s.config, JSON.stringify(cfg));
-    const pending = runInProcess(runArgs(s, 'testing'));
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline && !existsSync(join(s.state, 'ready.txt'))) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    expect(existsSync(join(s.state, 'ready.txt'))).toBe(true);
-    put(join(s.repo, 'changed.txt'), 'mutated on host during repo-mode run\n');
-    put(join(s.state, 'go.txt'), '1');
-    const r = await pending;
+    // The fake signals 'ready' over a localhost socket; the test mutates the host repository, then answers 'go'.
+    const s = setup('nested', { sig: { mode: 'signal-wait', access: 'repo', expose: [FAKE] } }, { testing: 'sig' });
+    let mutated = false;
+    const channel = await socketChannel(s.state, (socket, data) => {
+      if (!data.includes('ready')) return;
+      put(join(s.repo, 'changed.txt'), 'mutated on host during repo-mode run\n');
+      mutated = true;
+      socket.write('go');
+    });
+    exposeState(s, 'sig');
+    const r = await runInProcess(runArgs(s, 'testing')).finally(() => channel.close());
+    expect(mutated).toBe(true);
     expect(r.status).toBe(1);
     expect(r.json.status).toBe('ran');
     expect(row(r.json, 'testing')).toMatchObject({ part: 'testing', outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [], dispatched: true });
@@ -1054,15 +1087,13 @@ describe('repository-mode sandbox and check', () => {
       'nested',
       {
         'diff-inspect': { mode: 'findings' },
-        'repo-probe': { mode: 'repo-probe', access: 'repo', expose: [FAKE, fresh('expose-mix')], keep: [fresh('keep-mix')] },
+        'repo-probe': { mode: 'repo-probe', access: 'repo', expose: [FAKE, fresh('expose-mix')] },
       },
       { testing: 'diff-inspect', adversarial: 'repo-probe' },
     );
     const exposeDir = JSON.parse(readFileSync(s.config, 'utf8')).providers['repo-probe'].expose[1];
     put(join(exposeDir, 'info.txt'), 'MIX-SKILL\n');
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    cfg.providers['repo-probe'].keep = [s.state];
-    writeFileSync(s.config, JSON.stringify(cfg));
+    exposeState(s, 'repo-probe');
     writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
     writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
 
@@ -1070,7 +1101,7 @@ describe('repository-mode sandbox and check', () => {
     expect(r.status).toBe(0);
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
     expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
-    const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
+    const report = reportOf(s, r.json, 'adversarial');
     expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
     expect(report.cwd).not.toBe(s.repo);
     // The launcher starts with a HOME override (cli() sets a fresh one), the case where Bun's userInfo() reports HOME, not the passwd home.
@@ -1091,12 +1122,10 @@ describe('repository-mode sandbox and check', () => {
 
   // Value: protects=/review-and-prep's --candidate is a frozen snapshot commit no ref reaches; fails_when=the copy only carries ref-reachable objects; why_new=cycle-1 finding (QA reproduced); seam=none
   test.if(probe)('repo mode checks out an unreferenced snapshot candidate, including the untracked file it captured', async () => {
-    const s = setup('nested', { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE, fresh('expose-snap')], keep: [fresh('keep-snap')] } }, { adversarial: 'repo-prov' });
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-    const exposeDir = cfg.providers['repo-prov'].expose[1];
+    const s = setup('nested', { 'repo-prov': { mode: 'repo-probe', access: 'repo', expose: [FAKE, fresh('expose-snap')] } }, { adversarial: 'repo-prov' });
+    const exposeDir = JSON.parse(readFileSync(s.config, 'utf8')).providers['repo-prov'].expose[1];
     put(join(exposeDir, 'info.txt'), 'SNAP-SKILL\n');
-    cfg.providers['repo-prov'].keep = [s.state];
-    writeFileSync(s.config, JSON.stringify(cfg));
+    exposeState(s, 'repo-prov');
     writeFileSync(join(s.state, 'expose-dir.txt'), exposeDir);
     writeFileSync(join(s.state, 'calls-dir.txt'), s.calls);
     put(join(s.repo, 'snapshot-only.txt'), 'UNTRACKED-IN-SNAPSHOT\n');
@@ -1109,7 +1138,7 @@ describe('repository-mode sandbox and check', () => {
     expect(git(s.repo, 'for-each-ref', '--contains', s.candidate).stdout.trim()).toBe('');
     const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)]);
     expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
-    const report = JSON.parse(readFileSync(join(s.state, 'repo-probe.json'), 'utf8'));
+    const report = reportOf(s, r.json, 'adversarial');
     expect(report.head).toBe(s.candidate);
     expect(report.snapshotOnly).toBe(true);
     expect(report.status).toBe('');
@@ -1140,13 +1169,13 @@ describe('repository-mode sandbox and check', () => {
   });
 
   // Value: protects=the HOME guard holds for symlinked spellings, the passwd home and the sandbox's own tmpfs roots; fails_when=entries are compared only as written; why_new=cycle-1 finding (security reproduced); seam=none
-  test('an expose or keep entry that resolves to HOME, the passwd home or an ancestor, or names a hidden root, refuses with config-malformed', async () => {
+  test('an expose entry that resolves to HOME, the passwd home or an ancestor, or names a hidden root, refuses with config-malformed', async () => {
     const base = fresh('symhome');
     const realHome = join(base, 'var', 'home', 'kb');
     mkdirSync(realHome, { recursive: true });
     symlinkSync(join('var', 'home'), join(base, 'home'));
-    const entries: [string, string][] = [['keep', join(base, 'home', 'kb')], ['expose', join(base, 'home')], ['keep', '/tmp'], ['expose', '/var'], ['keep', '/run'], ['keep', tmpdir()]];
-    if (PASSWD_HOME && PASSWD_HOME !== '/') entries.push(['keep', PASSWD_HOME]);
+    const entries: [string, string][] = [['expose', join(base, 'home', 'kb')], ['expose', join(base, 'home')], ['expose', '/tmp'], ['expose', '/var'], ['expose', '/run'], ['expose', tmpdir()]];
+    if (PASSWD_HOME && PASSWD_HOME !== '/') entries.push(['expose', PASSWD_HOME]);
     for (const [list, entry] of entries) {
       const s = setup('nested', { p: { mode: 'clean', access: 'repo', [list]: [entry] } }, { testing: 'p' });
       const r = await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: realHome });
@@ -1155,7 +1184,7 @@ describe('repository-mode sandbox and check', () => {
   });
 
   // Value: protects=a provider the sandbox would hide refuses at check instead of failing every run; fails_when=argv[0] visibility is not checked; why_new=cycle-1 finding (adversarial, red team); seam=none
-  test('a repo-mode provider whose argv[0] lies under a hidden path refuses with config-malformed unless expose or keep covers it', async () => {
+  test('a repo-mode provider whose argv[0] lies under a hidden path refuses with config-malformed unless expose covers it', async () => {
     const fakeHome = fresh('home-argv');
     const tool = join(fakeHome, 'bin', 'provider');
     put(tool, '#!/bin/sh\n');
@@ -1172,26 +1201,25 @@ describe('repository-mode sandbox and check', () => {
     expect(covered.json.reason).not.toBe('config-malformed');
   });
 
-  // Value: protects=fixing expose or keep after a failed repo-mode call dispatches again, while diff-mode call ids keep their v0.75.0 inputs; fails_when=callId ignores repo-mode settings; why_new=cycle-1 finding (adversarial); seam=none
-  test('a repo-mode call id covers access, expose and keep, while a diff-mode call id keeps its v0.75.0 inputs', () => {
+  // Value: protects=fixing expose after a failed repo-mode call dispatches again, while diff-mode call ids keep their v0.75.0 inputs; fails_when=callId ignores repo-mode settings; why_new=cycle-1 finding (adversarial); seam=none
+  test('a repo-mode call id covers access and expose, while a diff-mode call id keeps its v0.75.0 inputs', () => {
     const base = { argv: ['/bin/x'], timeout_s: 30, model: 'm' };
     const legacy = createHash('sha256').update(JSON.stringify(['p', base.argv, base.model, 'alpha'])).digest('hex');
     expect(callId('p', base, 'alpha')).toBe(legacy);
     expect(callId('p', { ...base, access: 'diff' }, 'alpha')).toBe(legacy);
-    const repo = { ...base, access: 'repo' as const, expose: ['/a'], keep: ['/b'] };
+    const repo = { ...base, access: 'repo' as const, expose: ['/a', '/b'] };
     expect(callId('p', repo, 'alpha')).not.toBe(legacy);
-    expect(callId('p', { ...repo, keep: ['/c'] }, 'alpha')).not.toBe(callId('p', repo, 'alpha'));
+    expect(callId('p', { ...repo, expose: ['/a', '/c'] }, 'alpha')).not.toBe(callId('p', repo, 'alpha'));
     expect(callId('p', { ...repo, expose: [] }, 'alpha')).not.toBe(callId('p', repo, 'alpha'));
   });
 
-  // Value: protects=the more specific of two nested expose/keep paths wins, and /var (privileged daemons' sockets) is hidden; fails_when=keep binds always follow expose layers or /var stays visible; why_new=cycle-1 findings (red team, adversarial); seam=none
-  test('sandboxArgs mounts a parent path before any expose or keep path inside it, and hides /var with /var/tmp and /var/run restored', () => {
-    const args = (expose: Parameters<typeof sandboxArgs>[0]['expose'], keep: string[]) => sandboxArgs({ home: '/h', hidden: [], resolvDir: null, expose, keep, copy: '/tmp/c/repo' });
-    const keepParent = args([{ kind: 'file', path: '/h/.codex/config.toml', staged: '/tmp/c/staged/0' }], ['/h/.codex']);
-    expect(keepParent.indexOf('/h/.codex')).toBeLessThan(keepParent.indexOf('/h/.codex/config.toml'));
-    const exposeParent = args([{ kind: 'dir', path: '/h/.codex' }], ['/h/.codex/auth.json']);
-    expect(exposeParent.indexOf('/h/.codex')).toBeLessThan(exposeParent.indexOf('/h/.codex/auth.json'));
-    expect(args([], []).join(' ')).toContain('--tmpfs /var --tmpfs /var/tmp --symlink ../run /var/run');
+  // Value: protects=a parent expose layer mounts before a listed path inside it, and /var (privileged daemons' sockets) is hidden; fails_when=mount order follows list order or /var stays visible; why_new=review findings (red team, adversarial); seam=none
+  test('sandboxArgs mounts a parent expose layer before any listed path inside it, and hides /var with /var/tmp and /var/run restored', () => {
+    const args = (expose: Parameters<typeof sandboxArgs>[0]['expose']) => sandboxArgs({ home: '/h', hidden: [], resolvDir: null, expose, copy: '/tmp/c/repo' });
+    const nested = args([{ kind: 'file', path: '/h/.codex/config.toml', staged: '/tmp/c/staged/0' }, { kind: 'dir', path: '/h/.codex' }]);
+    expect(nested.indexOf('/h/.codex')).toBeLessThan(nested.indexOf('/h/.codex/config.toml'));
+    expect(nested.join(' ')).not.toMatch(/--bind \/h\/\.codex \/h\/\.codex/);
+    expect(args([]).join(' ')).toContain('--tmpfs /var --tmpfs /var/tmp --symlink ../run /var/run');
   });
 
   // Value: protects=repo mode hides the main checkout and every linked worktree, not only the reviewed one; fails_when=worktree paths are dropped from the hidden list; why_new=cycle-1 finding (security, adversarial); seam=none
@@ -1252,26 +1280,26 @@ describe('repository-mode sandbox and check', () => {
   });
 
   // Value: protects=an entry inside XDG_RUNTIME_DIR is refused, since the runtime dir's tmpfs would cover it at run time; fails_when=inside entries pass check; why_new=cycle-3 findings (security, adversarial); seam=none
-  test('an expose or keep entry inside XDG_RUNTIME_DIR refuses with config-malformed', async () => {
+  test('an expose entry inside XDG_RUNTIME_DIR refuses with config-malformed', async () => {
     const xdg = fresh('xdg-inside');
     mkdirSync(join(xdg, 'provider'), { recursive: true });
-    const s = setup('nested', { p: { mode: 'clean', access: 'repo', keep: [join(xdg, 'provider')] } }, { testing: 'p' });
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [join(xdg, 'provider')] } }, { testing: 'p' });
     const r = await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: xdg });
     expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
   });
 
   // Value: protects=XDG_RUNTIME_DIR (session bus, agents) cannot be re-bound through another spelling; fails_when=the runtime dir is not a hidden root; why_new=cycle-2 finding (security, adversarial); seam=none
-  test('an expose or keep entry that resolves to XDG_RUNTIME_DIR or above refuses with config-malformed', async () => {
+  test('an expose entry that resolves to XDG_RUNTIME_DIR or above refuses with config-malformed', async () => {
     const xdg = fresh('xdg');
     const link = join(fresh('xdg-alias'), 'runtime');
     symlinkSync(xdg, link);
-    const s = setup('nested', { p: { mode: 'clean', access: 'repo', keep: [link] } }, { testing: 'p' });
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [link] } }, { testing: 'p' });
     const r = await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: xdg });
     expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
   });
 
   // Value: protects=a TMPDIR outside /tmp is hidden like /tmp, so sibling parts' staged copies stay private; fails_when=the runner's temporary directory is not mounted over; why_new=cycle-2 finding (security, adversarial); seam=none
-  test('sandboxArgs puts a tmpfs over the private directories before any expose or keep mount', () => {
+  test('sandboxArgs puts a tmpfs over the private directories before any expose mount', () => {
     const args = sandboxArgs({ home: '/h', privateDirs: ['/scratch/tmp', '/home/someone'], hidden: [], resolvDir: null, expose: [{ kind: 'dir', path: '/scratch/tmp/x' }], keep: [], copy: '/scratch/tmp/c/repo' });
     const joined = args.join(' ');
     expect(joined).toContain('--tmpfs /scratch/tmp');
@@ -1279,62 +1307,64 @@ describe('repository-mode sandbox and check', () => {
     expect(args.indexOf('/scratch/tmp')).toBeLessThan(args.indexOf('--overlay-src'));
   });
 
-  // Value: protects=a keep entry never covers the runner's own code, configuration or the reviewed repository; fails_when=keep is checked only against HOME and the tmpfs roots; why_new=continuation cycle-1 findings (security, red team, Codex); seam=none
-  test('a keep entry at, above or inside the runner code, its configuration or the reviewed repository refuses with config-malformed', async () => {
+  // Value: protects=no listed path shows the live repository or the calls directory, while the runner's own files may be exposed (writes are discarded); fails_when=the repository is not a guarded root; why_new=review findings (security, Codex); seam=none
+  test('an expose entry at or inside the reviewed repository or the calls directory refuses with config-malformed at run', async () => {
     const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
-    const withKeep = (keep: string) => { const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.keep = [keep]; writeFileSync(s.config, JSON.stringify(cfg)); };
+    const withExpose = (entry: string) => { const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.expose = [FAKE, entry]; writeFileSync(s.config, JSON.stringify(cfg)); };
     mkdirSync(join(s.repo, 'sub'), { recursive: true });
-    for (const keep of [dirname(s.root), join(s.root, 'lib'), dirname(s.config)]) {
-      withKeep(keep);
-      expect((await runInProcess(checkArgs(s, 'testing'))).json, keep).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    for (const entry of [s.repo, join(s.repo, 'sub'), s.calls]) {
+      withExpose(entry);
+      expect((await runInProcess(runArgs(s, 'testing'))).json, entry).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
     }
-    for (const keep of [s.repo, join(s.repo, 'sub')]) {
-      withKeep(keep);
-      expect((await runInProcess(runArgs(s, 'testing'))).json, keep).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
-    }
+    // Exposing the runner's own configuration is allowed: nothing written to it persists.
+    withExpose(dirname(s.config));
+    expect((await runInProcess(checkArgs(s, 'testing'))).json.reason).not.toBe('config-malformed');
   });
 
-  // Value: protects=nothing nests inside a keep entry (a planted symlink could redirect it) and no symlink below a hidden root is trusted (bwrap mounts the written spelling); fails_when=nested entries or symlinked ancestors pass; why_new=continuation cycle-1 findings (security, Codex); seam=none
-  test('an entry nested inside a keep entry, or a path with a symlink below a hidden root, refuses with config-malformed', async () => {
-    const h = fresh('home-nested');
-    mkdirSync(join(h, 'kept', 'a'), { recursive: true });
+  // Value: protects=no symlink that vanishes with a hidden root is trusted (bwrap mounts and execs the written spelling), while a symlink inside a listed directory survives; fails_when=symlinked ancestors pass, or a working link inside an exposed dir is refused; why_new=review findings (Codex, adversarial, testing); seam=none
+  test('a path with a symlink below the deepest hidden root around it refuses, and a symlink inside an exposed directory is allowed', async () => {
+    const h = fresh('home-symlink');
     put(join(h, 'real', 'bin', 'tool'), '#!/bin/sh\n');
     chmodSync(join(h, 'real', 'bin', 'tool'), 0o755);
     symlinkSync(join(h, 'real'), join(h, 'link'));
+    put(join(h, 'rt', 'installs', '22.1.0', 'bin', 'tool'), '#!/bin/sh\n');
+    chmodSync(join(h, 'rt', 'installs', '22.1.0', 'bin', 'tool'), 0o755);
+    symlinkSync('22.1.0', join(h, 'rt', 'installs', 'latest'));
     const s = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
-    const cases: [Record<string, unknown>, string[]][] = [
-      [{ keep: [join(h, 'kept')], expose: [join(h, 'kept', 'a')] }, [process.execPath]],
-      [{ expose: [join(h, 'link', 'bin')] }, [process.execPath]],
-      [{ expose: [join(h, 'link', 'bin')] }, [join(h, 'real', 'bin', 'tool')]],
-    ];
-    for (const [lists, argv] of cases) {
+    const verdict = async (expose: string[], argv0: string) => {
       const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
-      cfg.providers.p = { ...cfg.providers.p, argv: [...argv, ...cfg.providers.p.argv.slice(1)], ...lists };
+      cfg.providers.p = { ...cfg.providers.p, argv: [argv0, ...cfg.providers.p.argv.slice(1)], expose: [...expose, ...RUNTIME_EXPOSE] };
       writeFileSync(s.config, JSON.stringify(cfg));
-      expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: h })).json, JSON.stringify(lists)).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
-    }
+      return (await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: h })).json.reason;
+    };
+    // A listed entry, or argv[0] alone, written through h/link (a symlink below HOME, which the HOME tmpfs drops).
+    expect(await verdict([join(h, 'link', 'bin')], process.execPath)).toBe('config-malformed');
+    expect(await verdict([join(h, 'real', 'bin')], join(h, 'link', 'bin', 'tool'))).toBe('config-malformed');
+    expect(await verdict([join(h, 'link', 'bin')], join(h, 'real', 'bin', 'tool'))).toBe('config-malformed');
+    // Positive controls: the real spelling, and a version alias inside an exposed directory (the overlay keeps the link).
+    expect(await verdict([join(h, 'real', 'bin')], join(h, 'real', 'bin', 'tool'))).not.toBe('config-malformed');
+    expect(await verdict([join(h, 'rt')], join(h, 'rt', 'installs', 'latest', 'bin', 'tool'))).not.toBe('config-malformed');
   });
 
   // Value: protects=procfs, devices, the shared /var/tmp and the account's runtime dir cannot be re-bound, with or without XDG_RUNTIME_DIR; fails_when=those roots are missing from the guard; why_new=continuation cycle-1 finding (adversarial); seam=none
   test('an entry at /proc, /dev, /sys, /var/tmp or the account runtime dir refuses with config-malformed even without XDG_RUNTIME_DIR', async () => {
     const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
-    for (const keep of ['/proc', '/dev', '/sys', '/var/tmp', `/run/user/${process.getuid?.() ?? 0}`]) {
-      const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.keep = [keep]; writeFileSync(s.config, JSON.stringify(cfg));
-      expect((await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: undefined })).json, keep).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    for (const entry of ['/proc', '/dev', '/sys', '/var/tmp', `/run/user/${process.getuid?.() ?? 0}`]) {
+      const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.expose = [FAKE, entry]; writeFileSync(s.config, JSON.stringify(cfg));
+      expect((await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: undefined })).json, entry).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
     }
   });
 
   // Value: protects=sandboxed code cannot read or change keys in the account's kernel keyrings; fails_when=no seccomp filter blocks keyctl; why_new=continuation cycle-1 finding (Codex reproduced); seam=python3 ctypes syscall
   test.if(probe && existsSync('/usr/bin/python3'))('repo mode refuses kernel keyring system calls inside the sandbox', () => {
-    const s = setup('nested', { k: { mode: 'keyring', access: 'repo', expose: [FAKE], keep: [fresh('keep-keyring')] } }, { testing: 'k' });
-    const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.k.keep = [s.state]; writeFileSync(s.config, JSON.stringify(cfg));
+    const s = setup('nested', { k: { mode: 'keyring', access: 'repo', expose: [FAKE] } }, { testing: 'k' });
     const r = cli(runArgs(s, 'testing'));
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
-    expect(readFileSync(join(s.state, 'keyring.txt'), 'utf8').trim()).toBe('-1 1');
+    expect(reportOf(s, r.json, 'testing').keyring).toBe('-1 1');
   });
 
   test('sandboxArgs skips the HOME tmpfs when HOME is empty (a HOME that does not exist has nothing to hide)', () => {
-    const args = sandboxArgs({ home: '', hidden: [], resolvDir: null, expose: [], keep: [], copy: '/tmp/c/repo' });
+    const args = sandboxArgs({ home: '', hidden: [], resolvDir: null, expose: [], copy: '/tmp/c/repo' });
     for (let i = 0; i < args.length - 1; i++) if (args[i] === '--tmpfs') expect(args[i + 1]).not.toBe('');
   });
 
@@ -1463,7 +1493,7 @@ describe('documentation', () => {
       for (const provider of Object.values(checked.config.providers)) {
         expect(provider.argv[0]).toMatch(/^\/path\/to\//);
         expect(provider.model).toMatch(/^model-[a-z]$/);
-        for (const entry of [...(provider.expose ?? []), ...(provider.keep ?? [])]) {
+        for (const entry of provider.expose ?? []) {
           expect(entry).toMatch(/^\/path\/to\//);
         }
       }
