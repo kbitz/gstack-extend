@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.1] - 2026-11-08
+
+### Added
+
+- Fresh checkouts can run the full suite with one command, `scripts/full-suite.sh`, which cds to the repository root even when `CDPATH` is exported.
+
 ## [0.75.0] - 2026-11-08
 
 ### Changed
