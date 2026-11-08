@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.0] - 2026-11-08
+
+### Changed
+
+- `/docs-ship` selects its doc-pinning tests from the base branch's pregate policy (`gstack-pregate --stage tests --explain`, which selects and runs nothing) when the repository has one, and reports the selection source; a repository with no base policy or no installed pregate keeps today's text-scan selection and says so.
+
+### Upgrade notes
+
+- In a repository with a base pregate policy, docs PRs may run different tests than the old text scan picked; tests only the old scan would have chosen are listed but not run; under a strict policy, `.rst`, `.adoc` and `.txt` docs the policy does not map become findings until it maps them; an invalid policy, a pregate refusal or unbindable pregate output stops `/docs-ship` with `CHANGES`.
+
 ## [0.75.1] - 2026-11-08
 
 ### Added

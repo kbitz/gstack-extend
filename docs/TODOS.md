@@ -14,6 +14,114 @@
 - **Revisit when:** The next Track touches either tagged path or changes these stage-line bindings.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate envelope refusal variants
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Malformed envelope and lane-field variants lack direct CLI fixtures.
+- **Hypothesis (untested):** Extend the existing refusal table for invalid schema, SHA, checks cardinality and selection/lines types. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 22; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate remote and no-policy outcomes
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Supported requires-remote and warn PREGATE_NO_POLICY outcomes lack focused fixtures.
+- **Hypothesis (untested):** Add outcome-table rows proving nonexecuting selection is retained. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 23; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate full-SHA config binding
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Bump fixtures pass main rather than a full config SHA.
+- **Hypothesis (untested):** Exercise a full-SHA config ref and a stale prefix at the CLI boundary. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 24; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate alternate provenance and escaping
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Self-test, multi-hop, repeated reasons and special output characters lack focused fixtures.
+- **Hypothesis (untested):** Extend provenance cases to check the authenticated test set and deterministic quoted reasons. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 25; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate frozen-pin failure paths
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Frozen-pin regression fixtures cover valid pins, not unreadable or malformed pin metadata.
+- **Hypothesis (untested):** Add invalid pin cases proving coverage is never silently dropped. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 26; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate no-lane delta variants
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** No-policy warning parsing, missing strict FAIL lines and bump no-lane filtering lack focused fixtures.
+- **Hypothesis (untested):** Extend no-lane and bump fixtures with relevant and unrelated findings. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 27; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/cli.ts|tests/docs-ship.test.ts] Test gap: pregate explanation file boundary
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The policy-backed --pregate file boundary lacks missing and nonregular-file cases.
+- **Hypothesis (untested):** Extend CLI cases for FILE_MISSING and UNSAFE_PATH while preserving the policyless ignore behavior. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/cli.ts`.
+- **Evidence:** Coverage audit row 28; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/docs-ship/pregate.ts|tests/docs-ship.test.ts] Test gap: pregate frozen-pin glob variants
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Pin fixtures cover ** and ? but not literal brackets/braces and depth/normalization variants.
+- **Hypothesis (untested):** Extend the existing pin fixture against the documented upstream glob contract. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/docs-ship/pregate.ts`.
+- **Evidence:** Coverage audit row 29; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/docs-ship.md|tests/docs-ship.test.ts] Test gap: docs-ship installed selection workflow
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Helper integration and prompt locks cannot prove installed-agent execution through selection, bump and receipt.
+- **Hypothesis (untested):** Use Track 76B installed acceptance for refusal, stale output, fresh bump and no-tests states; report exercised versions only. Re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/docs-ship.md`.
+- **Evidence:** Coverage audit row 30; source and existing tests read, no failure reproduced. All Track 72C T3 and T4 required cases exist.
+- **Context:** Filed by `/review-and-prep` at `97dd3f9` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches a tagged path (installed acceptance is already assigned to Track 76B).
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=src/review-delegate/delegate.ts] Adversarial criteria line is still found by being unique, not by its place in the prompt block
 
 - **Description:** `extractAdversarialChecklist` now finds the framing line by position (the line after the one `Subagent prompt:` line), but still requires the criteria line (`Think like an attacker and a chaos engineer. ...`) to occur once in the whole file, and drops any line between the framing and criteria lines other than upstream's `Read the diff for this branch` line without notice. A future sibling rendering that repeats the criteria text refuses `checklist-anchor`, which turns off every delegated part for that run; an instruction upstream adds inside the prompt block never reaches the delegate.

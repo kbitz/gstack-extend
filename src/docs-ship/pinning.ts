@@ -8,6 +8,9 @@ import { globMatcher } from '../merge-gate/glob.ts';
 import { shellQuote } from '../audit/lib/shell-quote.ts';
 import { readAt, Refusal, trackedFiles, type Git } from './git.ts';
 import { validTestCommand } from './config.ts';
+import { filterPregate, parseAndBindPregate, type BoundPregate, type NoLaneItem } from './pregate.ts';
+
+export { filterPregate, parseAndBindPregate, type BoundPregate, type NoLaneItem };
 
 const TEST_NAME = /(\.(test|spec)\.[^/.]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|_spec\.rb$)/;
 const TEST_DIR = /(^|\/)(tests?|__tests__|specs?)\//;
@@ -59,6 +62,61 @@ export function selectTests(git: Git, head: string, changed: string[], configure
     }
   }
   return [...byTest.entries()].map(([test, reasons]) => ({ test, reasons })).sort((a, b) => (a.test < b.test ? -1 : a.test > b.test ? 1 : 0));
+}
+
+export type ComposedSelection =
+  | { mode: 'legacy'; selected: Selected[]; noLane: NoLaneItem[] }
+  | {
+    mode: 'pregate';
+    selected: Selected[];
+    noLane: NoLaneItem[];
+    legacyOnly: Selected[];
+    pregateCount: number;
+    legacyScanCount: number;
+  };
+
+export function composeTests(
+  git: Git,
+  head: string,
+  changed: string[],
+  configured: string[],
+  pregate?: { bound: BoundPregate; delta: 'all' | ReadonlySet<string> },
+): ComposedSelection {
+  if (!pregate) {
+    return { mode: 'legacy', selected: selectTests(git, head, changed, configured), noLane: [] };
+  }
+  const filtered = filterPregate(pregate.bound, pregate.delta);
+  const byTest = new Map<string, string[]>();
+  const note = (test: string, reason: string) => {
+    const list = byTest.get(test) ?? [];
+    if (!list.includes(reason)) list.push(reason);
+    byTest.set(test, list);
+  };
+  for (const s of filtered.tests) {
+    for (const r of s.reasons) note(s.test, r);
+  }
+  if (configured.length) {
+    const all = trackedFiles(git, head);
+    for (const pattern of configured) {
+      const matches = all.filter(globMatcher([pattern]));
+      if (!matches.length) throw new Refusal('CONFIG_TESTS_MISSING', `docs-ship:tests pattern ${pattern} matches no tracked files at head`, 'restore the configured tests or fix the marker on the base branch');
+      for (const f of matches) note(f, 'docs-ship:tests');
+    }
+  }
+  const selected = [...byTest.entries()]
+    .map(([test, reasons]) => ({ test, reasons }))
+    .sort((a, b) => (a.test < b.test ? -1 : a.test > b.test ? 1 : 0));
+  const selectedSet = new Set(selected.map((s) => s.test));
+  const legacyScan = selectTests(git, head, changed, []);
+  const legacyOnly = legacyScan.filter((s) => !selectedSet.has(s.test));
+  return {
+    mode: 'pregate',
+    selected,
+    noLane: filtered.noLane,
+    legacyOnly,
+    pregateCount: filtered.tests.length,
+    legacyScanCount: legacyScan.length,
+  };
 }
 
 export function expandCommand(template: string, tests: string[]): string {
