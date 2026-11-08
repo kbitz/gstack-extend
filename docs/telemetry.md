@@ -756,9 +756,10 @@ explains an empty one:
 - Labels: `specialist:<name>` (the `specialist` field of a specialist's
   finding; `<name>` is lowercase letters, digits and hyphens), `red-team` (one
   spelling: `specialist:red-team` is invalid), `native-adversarial` (the
-  in-host adversarial pass), `core` (the core checklist), `qa` (exploratory QA
-  probes), `greptile`, and `outside:challenge` or `outside:structured` (an
-  outside voice, by its phase).
+  in-host adversarial pass, or a delegated `adversarial` part whose v3
+  `delegate` object names the provider), `core` (the core checklist), `qa`
+  (exploratory QA probes), `greptile`, and `outside:challenge` or
+  `outside:structured` (an outside voice, by its phase).
 - Each label comes from that part's own record, never inferred from the
   finding's text, file, category or scope. A finding several parts reported
   keeps every part (the kept finding of a merge lists every source its merge
@@ -805,9 +806,10 @@ exactly these keys:
 
 A fallback is the failed delegate attempt, then a host attempt whose
 `predecessor_attempt_id` names it, then a `fallback` correction. The delegate
-carries no prompt text, reply prose or finding body, and `found_by` stays
-`specialist:<part>`: the provider and model are on the attempt, never inside a
-finding.
+carries no prompt text, reply prose or finding body, and `found_by` keeps the
+part's own label (`specialist:<part>` for the four specialists, `red-team` for
+`red-team`, and `native-adversarial` for `adversarial`): the provider and model
+are on the attempt, never inside a finding.
 
 A read adds `data.delegated`: per provider label (sorted), `attempts`,
 `credited`, `fell_back`, `by_reason`, `wall_ms`, the four token sums and

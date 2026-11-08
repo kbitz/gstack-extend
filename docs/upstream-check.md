@@ -158,7 +158,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified; repair-review=behavior-changing is also inactive, so every edited pass repeats as today and the receipt says so
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=98 drift=1
+RESULT drift checks=108 drift=1
 ```
 
 ## What it checks
@@ -238,6 +238,27 @@ The inventory comes from this extension's own source, never a second copy:
   read `review-and-prep.delegate.<review|dispatch-item|testing|maintainability|performance|simplification>.<n>`,
   twenty-one in all. `bin/review-delegate` repeats the specialist-file anchors for
   the parts it is asked to run, so a part never runs partly applied.
+- **Attacker-part anchors.** The backtick spans of the second activation
+  paragraph of `skills/review-and-prep.md` in the delegation section (opened by
+  `**Activation (attacker parts).**`), in three lists each opened by "byte for
+  byte,": the three after the first (following "its `review/specialists/red-team.md`
+  still contains,") are checked as raw bytes in `<root>/review/specialists/red-team.md`
+  in both layouts; the four after the second (following "its adversarial
+  instructions (`review/sections/adversarial.md` in the nested layout, the review
+  file itself in the sibling layout) still contain,") are checked in
+  `<root>/review/sections/adversarial.md` in the nested layout and in
+  `<skills dir>/gstack-review/SKILL.md` in the sibling layout; and the two after
+  the third (following "and, where that `/review` contains any line of the next
+  list, it still contains every line of it,") are checked all-or-none in the
+  installed `/review` skill file, reporting `OK` plus
+  `INFO not-declared review-and-prep.attacker.adversarial-item <path>` when neither
+  line is present. The second `adversarial-item` line is also an overlap anchor:
+  a change to it while `adversarial-pass` is present drifts both IDs, each with
+  its own effect. They are listed by `attackerInventory`, a separate check
+  (`review-and-prep.attacker`). Anchor IDs read
+  `review-and-prep.attacker.<red-team|adversarial|adversarial-item>.<n>`, nine in
+  all. `bin/review-delegate` repeats the `red-team` or `adversarial` anchors when
+  asked to check or run those parts.
 - **Fold anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation (`specialists=fold`).**`),
   in eleven lists each opened by "byte for byte,": the first list, six lines, is
@@ -362,7 +383,11 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   `specialists=fold` is inactive: cycle 1 dispatches specialists as today and the
   receipt says so, with no upstream file edited. For the eight overlap anchors,
   `first-cycle=overlap` is inactive: cycle 1 runs in today's order and the
-  receipt says so, with no upstream file edited. For the two secret-finding
+  receipt says so, with no upstream file edited. For the nine attacker-part
+  anchors (including the two all-or-none item lines when at least one is
+  present), the red-team step and `delegate=adversarial|red-team` are inactive:
+  the red team and the adversarial pass run on the host as today and the receipt
+  says so, with no upstream file edited. For the two secret-finding
   location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
   secret finding as unrecognized, so the pregate gate stays blocked; nothing is
   approved in its place and no upstream file is edited.
@@ -478,6 +503,7 @@ and the test-gap routing value.
 | Delegation anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Fold anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Overlap anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
+| Attacker-part anchors | `297f50c7e1d46aab1404f5f2e8a9584af76ad6b2` | 1.97.0.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
 ## Measured startup profile

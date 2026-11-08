@@ -7,7 +7,11 @@ import { isAbsolute } from 'node:path';
 import { bytes, hash } from '../outside-review/prompt';
 import { recover, type Classification, type Classifier } from '../outside-review/recovery';
 
-export const PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
+export const SPECIALIST_PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
+export const ATTACKER_PARTS = ['adversarial', 'red-team'] as const;
+export const PARTS = [...SPECIALIST_PARTS, ...ATTACKER_PARTS] as const;
+export type SpecialistPart = (typeof SPECIALIST_PARTS)[number];
+export type AttackerPart = (typeof ATTACKER_PARTS)[number];
 export type Part = (typeof PARTS)[number];
 export const CONFIG_SCHEMA = 'review-delegates/v1';
 export const LABEL_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -22,7 +26,7 @@ export const TIMEOUT_EXIT = 124;
 export const FALLBACK_REASONS = ['unresolved-claim', 'timeout', 'failed', 'refused', 'needs-context', 'uncredited', 'unparsed-finding', 'worktree-changed'] as const;
 export type FallbackReason = (typeof FALLBACK_REASONS)[number];
 /** Why `check` or `run` refused before any call. */
-export const REFUSAL_REASONS = ['config-missing', 'config-malformed', 'part-unmapped', 'helper-missing', 'checklist-anchor', 'repo-unreadable'] as const;
+export const REFUSAL_REASONS = ['config-missing', 'config-malformed', 'part-unmapped', 'helper-missing', 'checklist-anchor', 'caught-unreadable', 'repo-unreadable'] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
 export interface Provider { argv: string[]; timeout_s: number; model: string }
@@ -74,9 +78,23 @@ End with Recommendation: <action> because <specific reason>.
 If essential context is missing, return NEEDS_CONTEXT: <specific callers, contracts or tests>.
 Never declare a review complete when essential context is missing.\n`;
 
-/** The only material a delegate receives: the policy, the frozen scope's endpoints, the diff and that specialist's checklist. */
-export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string) =>
-  `${DELEGATE_POLICY}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify({ diff, checklist })}\n`;
+export const ADVERSARIAL_SCHEMA = `Output: JSON objects, one finding per line. Schema:
+{"severity":"CRITICAL|INFORMATIONAL","confidence":N,"path":"file","line":N,"category":"adversarial","summary":"...","fix":"..."}
+Rule: severity is CRITICAL exactly when the finding is FIXABLE or would block (fail a test, break production, or lose data or secrets); otherwise INFORMATIONAL; write nothing after the JSON object.`;
+
+/** Extract the framing and criteria lines from the adversarial instructions and append the JSON-line schema. */
+export function extractAdversarialChecklist(text: string, framingAnchor: string, criteriaAnchor: string): { ok: true; checklist: string } | { ok: false } {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const framing = lines.filter((line) => line.startsWith(framingAnchor));
+  const criteria = lines.filter((line) => line.startsWith(criteriaAnchor));
+  if (framing.length !== 1 || criteria.length !== 1) return { ok: false };
+  if (!framing[0]!.startsWith('"') || !criteria[0]!.endsWith('"')) return { ok: false };
+  return { ok: true, checklist: `${framing[0]!.slice(1)}\n\n${criteria[0]!.slice(0, -1)}\n\n${ADVERSARIAL_SCHEMA}\n` };
+}
+
+/** The only material a delegate receives: the policy, the frozen scope's endpoints, the diff and that part's checklist (plus already_caught for red-team). */
+export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string) =>
+  `${DELEGATE_POLICY}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(part === 'red-team' ? { diff, checklist, already_caught: caught ?? '' } : { diff, checklist })}\n`;
 
 export const callId = (prompt: string, provider: Provider, label: string) =>
   hash(JSON.stringify([prompt, provider.argv, provider.model, label]));

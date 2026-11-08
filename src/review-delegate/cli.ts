@@ -13,10 +13,10 @@ import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
 import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
-import { delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
+import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  CONFIG_LIMIT, PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, validateConfig,
-  type DelegateConfig, type Part, type PartResult, type RefusalReason, type Spawned,
+  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, validateConfig,
+  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SpecialistPart, type Spawned,
 } from './delegate';
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
@@ -32,11 +32,17 @@ class UsageError extends Error {
 interface Options {
   command: 'check' | 'run'; config: string; root: string; parts: Part[];
   repo: string; base: string; candidate: string; calls: string;
+  adversarial: string; caught: string;
 }
 
-const FLAGS = {
+const REQUIRED_FLAGS = {
   check: ['--config', '--gstack-root', '--parts'],
   run: ['--config', '--gstack-root', '--parts', '--repo', '--base', '--candidate', '--calls'],
+} as const;
+
+const KNOWN_FLAGS = {
+  check: [...REQUIRED_FLAGS.check, '--adversarial'],
+  run: [...REQUIRED_FLAGS.run, '--adversarial', '--caught'],
 } as const;
 
 /** realpath of the nearest existing ancestor plus the not-yet-created tail, so a symlinked temp root cannot hide the repository. */
@@ -56,7 +62,8 @@ function parseArgs(argv: string[]): 'help' | Options {
   const [command, ...rest] = argv;
   if (command === undefined || command === '--help' || command === '-h') return 'help';
   if (command !== 'check' && command !== 'run') throw new UsageError(`unknown command ${JSON.stringify(String(command).slice(0, 40))}`, 'use check or run');
-  const known: readonly string[] = FLAGS[command];
+  const known: readonly string[] = KNOWN_FLAGS[command];
+  const required: readonly string[] = REQUIRED_FLAGS[command];
   const seen = new Map<string, string>();
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i]!;
@@ -68,7 +75,7 @@ function parseArgs(argv: string[]): 'help' | Options {
     if (CONTROL.test(value)) throw new UsageError(`${flag} contains a control character`, `pass a plain value for ${flag}`);
     seen.set(flag, value);
   }
-  for (const flag of known) if (!seen.has(flag)) throw new UsageError(`${flag} is required`, `pass ${flag} <value>`);
+  for (const flag of required) if (!seen.has(flag)) throw new UsageError(`${flag} is required`, `pass ${flag} <value>`);
   const parts = seen.get('--parts')!.split(',');
   for (const part of parts) {
     if (!(PARTS as readonly string[]).includes(part)) {
@@ -76,7 +83,21 @@ function parseArgs(argv: string[]): 'help' | Options {
     }
   }
   if (new Set(parts).size !== parts.length) throw new UsageError('a part is repeated', 'name each part once');
-  for (const flag of ['--config', '--gstack-root', '--repo', '--calls']) {
+  if (parts.includes('adversarial') && !seen.has('--adversarial')) {
+    throw new UsageError('--adversarial is required when --parts includes adversarial', 'pass --adversarial <file>');
+  }
+  if (!parts.includes('adversarial') && seen.has('--adversarial')) {
+    throw new UsageError('--adversarial is only allowed when --parts includes adversarial', 'omit --adversarial or include adversarial in --parts');
+  }
+  if (command === 'run') {
+    if (parts.includes('red-team') && !seen.has('--caught')) {
+      throw new UsageError('--caught is required when --parts includes red-team', 'pass --caught <file>');
+    }
+    if (!parts.includes('red-team') && seen.has('--caught')) {
+      throw new UsageError('--caught is only allowed when --parts includes red-team', 'omit --caught or include red-team in --parts');
+    }
+  }
+  for (const flag of ['--config', '--gstack-root', '--repo', '--calls', '--adversarial', '--caught']) {
     const value = seen.get(flag);
     if (value !== undefined && !isAbsolute(value)) throw new UsageError(`${flag} must be an absolute path`, `pass an absolute path for ${flag}`);
   }
@@ -86,21 +107,27 @@ function parseArgs(argv: string[]): 'help' | Options {
   }
   const repo = seen.get('--repo');
   const calls = seen.get('--calls');
-  if (repo !== undefined && calls !== undefined) {
-    // A claim inside the work tree would read as a write by the delegate.
+  const caught = seen.get('--caught');
+  if (repo !== undefined) {
+    // A claim or caught-findings file inside the work tree would read as a write by the delegate or mix with reviewed files.
     let top = resolve(repo);
     try { top = realpathSync(top); } catch { /* reported as repo-unreadable */ }
-    const rel = relative(top, realpathBelow(resolve(calls)));
-    if (!rel || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
-      throw new UsageError('--calls is inside --repo', 'pass a calls directory outside the repository under review');
+    for (const [flag, target, label] of [['--calls', calls, 'calls directory'], ['--caught', caught, 'caught file']] as const) {
+      if (target === undefined) continue;
+      const rel = relative(top, realpathBelow(resolve(target)));
+      if (!rel || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
+        throw new UsageError(`${flag} is inside --repo`, `pass a ${label} outside the repository under review`);
+      }
     }
   }
   return { command, config: resolve(seen.get('--config')!), root: resolve(seen.get('--gstack-root')!), parts: parts as Part[],
-    repo: repo ?? '', base: seen.get('--base') ?? '', candidate: seen.get('--candidate') ?? '', calls: calls ?? '' };
+    repo: repo ?? '', base: seen.get('--base') ?? '', candidate: seen.get('--candidate') ?? '', calls: calls ?? '',
+    adversarial: seen.get('--adversarial') ? resolve(seen.get('--adversarial')!) : '',
+    caught: caught ? resolve(caught) : '' };
 }
 
 interface Prepared {
-  config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>;
+  config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string;
 }
 type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason };
 
@@ -121,15 +148,44 @@ async function prepare(options: Options): Promise<Preparation> {
   if (typeof classify !== 'function') return refuse('helper-missing');
 
   // The runner checks its own anchors, so a part never runs partly applied even if the host skipped the check.
-  const inventory = delegateInventory(extendRoot());
-  if (!inventory.ok) return refuse('checklist-anchor');
+  const hasSpecialist = options.parts.some((part) => (SPECIALIST_PARTS as readonly string[]).includes(part));
+  const hasAttacker = options.parts.some((part) => (ATTACKER_PARTS as readonly string[]).includes(part));
+  const specialistInv = hasSpecialist ? delegateInventory(extendRoot()) : undefined;
+  if (specialistInv && !specialistInv.ok) return refuse('checklist-anchor');
+  const attackerInv = hasAttacker ? attackerInventory(extendRoot()) : undefined;
+  if (attackerInv && !attackerInv.ok) return refuse('checklist-anchor');
+
   const checklists: Record<string, string> = {};
   for (const part of options.parts) {
-    const file = readTrusted(join(root, 'review', 'specialists', `${part}.md`), `${part} checklist`);
-    if (!file.ok || !inventory[part].every((anchor) => file.bytes.includes(Buffer.from(anchor, 'utf8')))) return refuse('checklist-anchor');
-    checklists[part] = file.bytes.toString('utf8');
+    if (part === 'red-team') {
+      const file = readTrusted(join(root, 'review', 'specialists', 'red-team.md'), 'red-team checklist');
+      if (!file.ok || !attackerInv || !attackerInv.ok || !attackerInv['red-team'].every((anchor) => file.bytes.includes(Buffer.from(anchor, 'utf8')))) {
+        return refuse('checklist-anchor');
+      }
+      checklists[part] = file.bytes.toString('utf8');
+    } else if (part === 'adversarial') {
+      const file = readTrusted(options.adversarial, 'adversarial instructions');
+      if (!file.ok || !attackerInv || !attackerInv.ok || !attackerInv.adversarial.every((anchor) => file.bytes.includes(Buffer.from(anchor, 'utf8')))) {
+        return refuse('checklist-anchor');
+      }
+      const extracted = extractAdversarialChecklist(file.bytes.toString('utf8'), attackerInv.adversarial[1]!, attackerInv.adversarial[2]!);
+      if (!extracted.ok) return refuse('checklist-anchor');
+      checklists[part] = extracted.checklist;
+    } else {
+      const file = readTrusted(join(root, 'review', 'specialists', `${part}.md`), `${part} checklist`);
+      if (!file.ok || !specialistInv || !specialistInv.ok || !specialistInv[part as SpecialistPart].every((anchor) => file.bytes.includes(Buffer.from(anchor, 'utf8')))) {
+        return refuse('checklist-anchor');
+      }
+      checklists[part] = file.bytes.toString('utf8');
+    }
   }
-  return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists } };
+  let caught: string | undefined;
+  if (options.command === 'run' && options.parts.includes('red-team')) {
+    const caughtRead = readTrusted(options.caught, 'caught findings');
+    if (!caughtRead.ok || caughtRead.bytes.length > CONFIG_LIMIT) return refuse('caught-unreadable');
+    caught = caughtRead.bytes.toString('utf8');
+  }
+  return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists, ...(caught !== undefined ? { caught } : {}) } };
 }
 
 /** Hash HEAD, status, index entries and nonignored file bytes without following symlinks. */
@@ -244,7 +300,7 @@ const NO_CALL = { replay: false, dispatched: false, dispatched_at: null, returne
 async function runPart(part: Part, prepared: Prepared, options: Options, diff: string): Promise<PendingPart> {
   const label = prepared.config.parts[part]!;
   const provider = prepared.config.providers[label]!;
-  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!);
+  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined);
   const id = callId(prompt, provider, label);
   const identity = { part, provider: label, model: provider.model, call_id: id };
   const saved = join(options.calls, `${id}.json`);
@@ -280,23 +336,25 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
 }
 
 export function help() {
-  return `review-delegate — run named review specialist parts through caller-configured provider commands
+  return `review-delegate — run named review specialist and attacker parts through caller-configured provider commands
 
-Usage: review-delegate check --config FILE --gstack-root DIR --parts P[,P...]
-       review-delegate run --config FILE --gstack-root DIR --parts P[,P...] --repo DIR --base SHA --candidate SHA --calls DIR
+Usage: review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE]
+       review-delegate run --config FILE --gstack-root DIR --parts P[,P...] --repo DIR --base SHA --candidate SHA --calls DIR [--adversarial FILE] [--caught FILE]
        review-delegate --help
 
 Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on the host model.
-  --config FILE      absolute path of a review-delegates/v1 JSON file (at most 64 KiB)
-  --gstack-root DIR  absolute path of the installed gstack root the review uses (its review/specialists and lib are read)
-  --repo DIR         absolute path of the repository under review (run only)
-  --base, --candidate  full SHAs of the frozen scope's endpoints (run only)
-  --calls DIR        absolute private directory for call claims and saved results, outside --repo (run only)
+  --config FILE       absolute path of a review-delegates/v1 JSON file (at most 64 KiB)
+  --gstack-root DIR   absolute path of the installed gstack root the review uses (its review/specialists and lib are read)
+  --repo DIR          absolute path of the repository under review (run only)
+  --base, --candidate full SHAs of the frozen scope's endpoints (run only)
+  --calls DIR         absolute private directory for call claims and saved results, outside --repo (run only)
+  --adversarial FILE  absolute path of the adversarial instructions file (required when --parts includes adversarial)
+  --caught FILE       absolute path of the already-caught findings file outside --repo, at most 64 KiB (run only; required when --parts includes red-team)
 
 Output (stdout, one JSON line):
   check: {"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}
          {"v":1,"status":"refused","reason":"config-missing|config-malformed|part-unmapped|helper-missing|checklist-anchor"}
-  run:   {"v":1,"status":"ran","config_sha256":...,"parts":[...]} or the same refused form (also reason repo-unreadable)
+  run:   {"v":1,"status":"ran","config_sha256":...,"parts":[...]} or the same refused form (also reasons caught-unreadable and repo-unreadable)
 Exit: 0 every part credited; 4 a part fell back to the host; 1 refused before any call, or the work tree changed
       during the calls; 2 usage error (stdout empty; "ERROR USAGE: ..." and "FIX: ..." on stderr).
 Docs: docs/delegated-review.md

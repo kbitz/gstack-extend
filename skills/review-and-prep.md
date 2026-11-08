@@ -358,8 +358,10 @@ library and both call forms are in
   unknown); the pass's other records keep `v:2`. Its `model_context` sends
   `requested_model` from the configuration with `requested_source:
   launcher-config`, `reported_source: unavailable` and `unknown_reason:
-  not-reported`. `found_by` stays `specialist:<part>`, taken from the runner's
-  stamped field. An older helper answers `unsupported-version`; that capture is
+  not-reported`. A delegated part's finding takes `found_by` from the runner's
+  part row: `specialist:<part>` for the four specialists, `red-team` for
+  `red-team`, and `native-adversarial` for `adversarial`, plus today's v3
+  `delegate` object. An older helper answers `unsupported-version`; that capture is
   unavailable, like any other unrecorded call.
 - Corrections, appended as they happen: `correction_kind:"finding"` with the
   finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
@@ -419,6 +421,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `Bound Claude Code outside calls` | `local-pass`, `voice` | none |
 | `Scope a re-review to its delta` | `local-pass`, `voice` | `local-pass`, `voice` |
 | `Delegate named specialist parts` | `voice` | `voice` (cross-call) |
+| `Run a red team where /review has none` | `voice` | `voice` |
 | `Fold specialist checklists into cycle 1` | `local-pass`, `voice` | none |
 | `Overlap independent first-cycle reviewers` | `local-pass`, `voice` | `voice` (cross-call) |
 | `Reopen review only for behavior-changing repairs` | `fix`, `tests` | `fix`, `tests` (cross-call) |
@@ -907,7 +910,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -970,26 +973,41 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   poll and the bounded-wait host rules above, which keep their own bounds. Its
   older-install check is the same: `grep -F 'parent-io=lean'
   "<installed skill dir>/SKILL.md"`, and omit the value when it fails.
-- `delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`
-  and `simplification`, comma-separated, each at most once) is opt-in. It sends
-  those specialist parts to a provider the caller configured, as **Delegate
-  named specialist parts** defines, and a part whose delegate fails runs on the
-  host model instead. Security, Red Team, state-machines, the native adversarial
-  pass, the outside voices and the documentation and coverage audits always stay
-  on the host model: a value naming any other part is an unknown value, so the
-  line reads `none supplied` with the reason `delegate: <name> is not
-  delegable`. It needs a `Review delegates: <absolute path>` line and matching
-  upstream anchors; otherwise every part runs on the host as today and the
-  receipt says so. The `Review delegates:` line is one invocation-prompt line,
-  read from the same sources as the policy; it names a `review-delegates/v1`
-  file, its path is printed in chat and never written to a receipt (the receipt
-  records the file's SHA-256 and the provider labels), and it is not part of a
-  relayed prompt, so a caller supplies it again beside one. An installation
-  without the value reads the whole line as `none supplied`, so a caller first
-  checks the loaded copy with
+- `delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,
+  `simplification`, `adversarial` and `red-team`, comma-separated, each at most
+  once) is opt-in. It sends those parts to a provider the caller configured, as
+  **Delegate named specialist parts** defines (`adversarial` is the native
+  adversarial pass and `red-team` is the Red Team), and a part whose delegate
+  fails runs on the host model instead. Security, state-machines, the outside
+  voices and the documentation and coverage audits always stay on the host
+  model: a value naming any other part (`native-adversarial` and every other
+  name) is an unknown value, so the line reads `none supplied` with the reason
+  `delegate: <name> is not delegable`. It needs a `Review delegates: <absolute
+  path>` line and matching upstream anchors; otherwise every part runs on the
+  host as today and the receipt says so. The `Review delegates:` line is one
+  invocation-prompt line, read from the same sources as the policy; it names a
+  `review-delegates/v1` file, its path is printed in chat and never written to a
+  receipt (the receipt records the file's SHA-256 and the provider labels), and
+  it is not part of a relayed prompt, so a caller supplies it again beside one.
+  An installation without the value reads the whole line as `none supplied`, so
+  a caller first checks the loaded copy with
   `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
-  otherwise, keeping its other keys. The value waives no gate and never
-  authorizes a continuation.
+  otherwise, keeping its other keys. A caller that names `adversarial` or
+  `red-team` also checks
+  `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
+  (exit 0 means the loaded copy accepts both attacker parts) and drops them from
+  the value otherwise, keeping its other parts and keys. The value waives no
+  gate and never authorizes a continuation.
+- `red-team=ensure` (its only value) is opt-in. It runs **Run a red team where
+  /review has none** when the review text the host will execute contains neither
+  `Red Team` nor `red-team` and that section's upstream anchors still match;
+  otherwise the review runs as today and the receipt says so. Omitted, every
+  cycle runs as today and nothing is recorded. An installation without the value
+  reads the whole line as `none supplied`, so a caller first checks the loaded
+  copy with `grep -F 'red-team=ensure' "<installed skill dir>/SKILL.md"` (exit 0
+  means supported) and omits the value otherwise, keeping its other keys. The
+  value waives no gate, never authorizes a continuation, and combines with every
+  other key.
 - `final-gate-repair=tests-docs` (its only value) lets Step 2's **Repair a
   test-only final-gate failure** run, once per invocation. Omitted, every
   final-gate failure takes today's rule, which that section names. An older
@@ -1073,6 +1091,9 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   `/review`'s `specialists-dispatched` contract item, checked by upstream's
   opt-in contract hook, is set aside only by `delegate=` and `specialists=fold`,
   only where the installed `/review` declares it, through upstream's own waive
+  command, and the receipt records it. Likewise, upstream `/review`'s
+  `adversarial-pass` contract item is set aside only by `delegate=adversarial`,
+  only where the installed `/review` declares it, through upstream's own waive
   command, and the receipt records it.
 - Record the line verbatim and its source in the receipt, and copy it
   unchanged into any continuation prompt.
@@ -1104,6 +1125,9 @@ Under the light default:
   P1).
 - It never sets `delegate=`: sending review work to another model needs a
   caller that configures that provider, so it is an explicit caller opt-in.
+- It never sets `red-team=ensure`: running a wrapper red team where `/review`
+  has none is an explicit caller opt-in until the acceptance record supports a
+  default (`SPEC P1`).
 - It never sets `specialists=fold`: comparing the folded first cycle with
   dispatched specialists needs a caller that measures the two arms, so it is an
   explicit caller opt-in.
@@ -1399,6 +1423,20 @@ and its `review/specialists/simplification.md` still contains, byte for byte,
 and `"specialist":"simplification"`
 Check each with `grep -F`.
 
+**Activation (attacker parts).** Each list below is used only by the features that need it: list (a) by **Run a red team where /review has none** and `delegate=red-team`, and lists (b) and (c) by `delegate=adversarial`, only while, for the installed `/review` read in Step 1, its `review/specialists/red-team.md` still contains, byte for byte,
+`# Red Team Review`
+`Output: JSON objects, one finding per line. Schema:`
+and `"specialist":"red-team"`,
+its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain, byte for byte,
+`Subagent prompt:`
+`"This is an authorized defensive-security review of the maintainer's own repository, requested by the repository owner before merge.`
+`Think like an attacker and a chaos engineer. Your job is to find ways this code will fail in production.`
+and `findings** are CRITICAL and are queued for the parent's Fix-First handling at Step 5`,
+and, where that `/review` contains any line of the next list, it still contains every line of it, byte for byte,
+`adversarial-pass`
+and `an Agent dispatch for the adversarial pass, its prompt including`
+Check each with `grep -F`.
+
 Read [the delegate contract](https://github.com/kbitz/gstack-extend/blob/main/docs/delegated-review.md)
 (`docs/delegated-review.md`) before the first use. This is a **wrapper
 override**, not an upstream fork: it changes who runs a part, never a gate of
@@ -1409,9 +1447,15 @@ the upstream root from the installed `/review` used in Step 1.
 
 **Step 1.** Check the anchors above with the installed files, then run
 `"<extend-root>/bin/review-delegate" check --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <list>`
-once. The item list matches when that `/review` contains all of its lines or
-none of them, and none means it declares no `specialists-dispatched` item. Exit
-0 with every anchor matching records
+(adding `--adversarial "<adversarial instructions file>"` when `adversarial` is
+named, using `review/sections/adversarial.md` in the nested layout or the review
+file itself in the sibling layout) once. The item list matches when that
+`/review` contains all of its lines or none of them, and none means it declares
+no `specialists-dispatched` item; list (c) in **Activation (attacker parts)**
+matches under the same all-or-none rule for `adversarial-pass`.
+`delegation: active` also requires the attacker lists in **Activation (attacker
+parts)** for each named attacker part: list (a) for `red-team`, and lists (b)
+and (c) for `adversarial`. Exit 0 with every required anchor matching records
 `delegation: active (parts=<list>; config=<sha256>)`. Anything else records
 `delegation: inactive — <reason>` (the changed anchor, the check's `reason`, or
 no `Review delegates:` line), every part runs on the host model as today, and no
@@ -1421,13 +1465,22 @@ upstream file is edited. A policy without the value records nothing here.
 Step 4.5 run through the delegate, so delegation never adds or removes a part
 there. On the sibling layout every named part runs through its delegate. Either
 way a delegated part replaces that part's host dispatch for the cycle, however
-the host would have run it: never run both for one part in a cycle.
+the host would have run it: never run both for one part in a cycle. For the
+attacker parts, `adversarial` replaces the native adversarial subagent in every
+pass that runs Step 4.8, and `red-team` replaces the Red Team dispatch whenever
+a red team runs: upstream's on its own gate, or **Run a red team where /review
+has none**. The sibling rule "every named part runs through its delegate" never
+removes the red team's gate.
 
-**Run.** Each cycle that runs specialists makes one
+**Run.** Make one runner call per review stage that runs named parts:
 `"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <list> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<evidence-directory>/delegate-calls"`
-call on that cycle's frozen scope: the merge base (or B) to S, from the snapshot
+on that cycle's frozen scope: the merge base (or B) to S, from the snapshot
 procedure in **Scope a re-review to its delta**, as **Bound Claude Code outside
-calls** uses them. The calls directory is branch-scoped under the evidence root
+calls** uses them. Specialist parts run at Step 4.5, as today. `red-team` runs
+at the Red Team point, with `--caught "<private file outside the repository>"`
+holding the findings the Red Team is given, one line each. `adversarial` runs at
+Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
+directory is branch-scoped under the evidence root
 and kept across invocations of the branch; never choose a fresh one to retry.
 Use an owned execution session and poll it rather than killing it at a short
 shell-tool timeout; the longest configured provider timeout bounds it. Exit 0
@@ -1440,9 +1493,24 @@ or a `worktree-changed` result.
   findings keep `specialist:<name>` attribution, and the receipt adds the
   provider label and model that produced them. An empty result is `NO
   FINDINGS`, and the `specialists` entry records the part as dispatched.
+  Credited adversarial findings stand in for the native subagent's result
+  (`found_by: native-adversarial`): they are presented under the `ADVERSARIAL
+  REVIEW` header naming the provider label and model, and CRITICAL findings are
+  queued for Fix-First and combined at Step 5 as adversarial findings.
+  Upstream's persist rule needs a recorded attempt, so the delegated adversarial
+  attempt takes its own `adversarial-review` token and row, with
+  `source:"delegate:<provider label>"` and `completed` true only when the part
+  was credited; a fallback's host attempt gets its own token and row, as
+  upstream defines. Credited red-team findings (`found_by: red-team`) are added
+  to the specialist outputs and Step 4.6 stages 1–8 rerun, as upstream does for
+  its Red Team (nested); for **Run a red team where /review has none** they join
+  Step 5's combine.
 - **Fell-back parts** run on the host model: nested dispatches them as Review
   Army would, and sibling has the host apply that checklist to the frozen diff
-  with the same output contract. The receipt says which part fell back and why:
+  with the same output contract. For `adversarial` or `red-team`, the host
+  dispatches the native adversarial subagent or the Red Team as `/review`
+  defines them, or **Run a red team where /review has none**'s host subagent.
+  The receipt says which part fell back and why:
   `unresolved-claim`, `timeout`, `failed`, `refused`, `needs-context`,
   `uncredited` or `unparsed-finding`. Never send a fell-back part back to the
   delegate, and never resend unchanged input.
@@ -1455,21 +1523,25 @@ or a `worktree-changed` result.
   remains incomplete until those parts actually run on the host.
 
 **Upstream's dispatch item.** Where the installed `/review` declares the
-`specialists-dispatched` item in its `Done means`, a credited delegated part has
-no Agent dispatch and cannot meet that item on its own. In each cycle where the
-delegate credited at least one part, waive the item once after those parts are
-credited, using the waive command that `/review`'s `Done means` gives
-(`gstack-skill-contract waive specialists-dispatched --reason "<why>"`, with no
-`--skill` flag and a reason naming `delegate=` and the credited parts). Parts
-that run on the host model, including fell-back parts, keep their Agent
-dispatch, and a cycle with no credited part waives nothing and meets the item as
-upstream defines it. Never print a narrowed or zero-count selection line or
-dispatch a placeholder Agent to satisfy the item. If upstream's opt-in contract
-hook blocks on the item, answer with the recorded waiver, never a late dispatch;
-upstream counts a waiver as a miss in its follow record. A failed waive call is
-recorded and changes nothing else. When the installed `/review` contains none of
-the item lines (as on the Codex sibling copy), waive nothing. While this section
-is active, record one line in the receipt:
+`specialists-dispatched` item in its `Done means`, a credited delegated
+specialist part (`testing`, `maintainability`, `performance`, `simplification`)
+has no Agent dispatch and cannot meet that item on its own. The
+`specialists-dispatched` waiver is scoped to credited specialist parts, so a
+credited `red-team` or `adversarial` alone waives nothing there. In each cycle
+where the delegate credited at least one specialist part, waive the item once
+after those parts are credited, using the waive command that `/review`'s `Done
+means` gives (`gstack-skill-contract waive specialists-dispatched --reason
+"<why>"`, with no `--skill` flag and a reason naming `delegate=` and the
+credited specialist parts). Specialist parts that run on the host model,
+including fell-back parts, keep their Agent dispatch, and a cycle with no
+credited specialist part waives nothing and meets the item as upstream defines
+it. Never print a narrowed or zero-count selection line or dispatch a
+placeholder Agent to satisfy the item. If upstream's opt-in contract hook blocks
+on the item, answer with the recorded waiver, never a late dispatch; upstream
+counts a waiver as a miss in its follow record. A failed waive call is recorded
+and changes nothing else. When the installed `/review` contains none of the item
+lines (as on the Codex sibling copy), waive nothing. While this section is
+active, record one line in the receipt:
 `specialists-dispatched: waived (delegate; cycles=<n>[,<n>...]; parts=<part>[,<part>...])`,
 `specialists-dispatched: met (delegate; <reason>)`,
 `specialists-dispatched: not declared (delegate)` or
@@ -1480,11 +1552,83 @@ outranks an earlier waiver. When cycles have different outcomes, append
 waiver's parts and each failed call's cause. A later failed call does not erase
 an earlier successful waiver. This preserves the call history even when the
 current result is `met` or `waived`.
+Likewise, where `delegate=adversarial` is active and list (c) in **Activation
+(attacker parts)** is declared in `/review`'s `Done means`, in each pass where a
+delegated `adversarial` part was credited, waive once with
+`gstack-skill-contract waive adversarial-pass --reason "<why>"` (with no
+`--skill` flag and a reason naming `delegate=adversarial` and the provider
+label); a fallback pass meets the item through its host dispatch, and when list
+(c) is not declared, waive nothing. While `delegate=adversarial` is active,
+record one line in the receipt under the same current-result and history rule:
+`adversarial-pass: waived (delegate; cycles=<n>[,<n>...])`,
+`adversarial-pass: met (delegate; <reason>)`,
+`adversarial-pass: not declared (delegate)` or
+`adversarial-pass: unmet (delegate; waive failed: <cause>)`.
 
 Record each part in `voices.jsonl` and the receipt as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's
 `delegate` values. A fallback is the failed delegate attempt, then a host
 attempt that names it as its predecessor, then a `fallback` correction.
+
+### Run a red team where /review has none
+
+**Activation.** Apply this step only when all three conditions hold:
+
+1. The review policy carries `red-team=ensure` or `delegate=` names `red-team`.
+2. The review text the host will execute contains neither `Red Team` nor
+   `red-team`: the review file Step 1 resolved, plus every section it loaded for
+   it, including sections resolved from its source installation. The condition
+   is this text check, never a host name.
+3. List (a) in **Activation (attacker parts)** matches.
+
+When condition 1 holds and condition 2 does not, record
+`Red team: upstream — installed /review carries one` and run as today. When
+condition 1 holds and condition 3 fails (or `delegate=red-team` is the only
+trigger and delegation is inactive), record `Red team: inactive — <reason>` and
+run as today. A run whose policy carries neither `red-team=ensure` nor
+`delegate=red-team` records nothing here and runs as today.
+
+**Gate.** Use the same activation rule as upstream's Red Team: `"Only if
+DIFF_LINES > 200 OR any specialist produced a CRITICAL finding"`. The line count
+is the cycle's frozen scope (merge base or B to S, `--numstat` added plus
+removed). The specialists are those that ran this cycle: delegated parts, host
+fallbacks and folded checklists. The light default's and `repair-cycles=light`'s
+delta-cycle skip (`skipped — light default repair cycle`) and the bounded-wait
+host rule (`skipped — bounded-wait host, cycle 1 only`) apply to this step
+exactly as they do to the Red Team.
+
+**Place and inputs.** Run the step at most once per cycle, after Step 4's core
+pass and any specialist parts and before Step 4.7, and never inside the
+`first-cycle=overlap` window. Its inputs are:
+
+- the checklist path `<gstack-root>/review/specialists/red-team.md`;
+- the already-caught list: the findings the core pass and the specialist parts
+  recorded so far this cycle, one line each, because on a review text without
+  Review Army the core pass is the review that precedes it;
+- diff commands comparing `"<base>" "S"`.
+
+When `delegate=red-team` is active, run it through the runner as **Delegate
+named specialist parts** defines. Otherwise dispatch one host subagent whose
+extension-owned prompt follows upstream's Red Team dispatch: state the defensive
+framing, instruct it to find what the earlier parts missed, read
+`<gstack-root>/review/specialists/red-team.md`, inspect fixtures in summary
+mode, and output JSON lines in the checklist's schema tagged
+`"specialist":"red-team"` or `NO FINDINGS` alone.
+
+**Results.** Findings join Step 5's combine as specialist findings tagged
+`red-team` (`found_by: red-team`). Record `red-team` as dispatched in the
+`specialists` object, as the sibling rule does for delegated parts. A failed or
+timed-out step records the red-team review as incomplete, which is missing
+coverage, as upstream states for its Red Team. Every reviewer `/review` selects,
+its order, the cap, the stop, `converged`/`cycles`, the provider-failure rule
+and upstream's own Red Team (never doubled) are unchanged, and no upstream file
+is edited.
+
+**Receipt line.** When the policy carries `red-team=ensure` or `delegate=` names
+`red-team`, record one line at all three receipt sites:
+`Red team: wrapper (source=<red-team=ensure|delegate=red-team>; cycles=<n>:<ran|not activated|skipped — <reason>>[,...])`,
+`Red team: upstream — installed /review carries one` or
+`Red team: inactive — <reason>`.
 
 ### Fold specialist checklists into cycle 1
 
@@ -2159,7 +2303,10 @@ shapes the prompt below, so the continuation starts in a fresh session.
    line with the policy line that authorized them; a recorded gap is not listed
    under `Unresolved:`. Add the `Review overlap:` line when the policy carries
    `first-cycle=overlap`. Add the `specialists-dispatched:` line only while the
-   policy's `delegate=` or `specialists=fold` section is active. Add the `Review arm:` line and every `Folded checklist:`
+   policy's `delegate=` or `specialists=fold` section is active. Add the
+   `adversarial-pass:` line only while `delegate=adversarial` is active. Add the
+   `Red team:` line only when the policy carries `red-team=ensure` or `delegate=`
+   names `red-team`. Add the `Review arm:` line and every `Folded checklist:`
    line. Add the `delegation:` status and every `Delegated part:`
    line. Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
@@ -3346,7 +3493,7 @@ Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
 that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active. Record the `Review arm:` line and every `Folded checklist:` line the same way.
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active. Record the `adversarial-pass:` line only while `delegate=adversarial` is active. Record the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`. Record the `Review arm:` line and every `Folded checklist:` line the same way.
 Record the `delegation:` status and every `Delegated part:` line the same way.
 When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
@@ -3998,7 +4145,7 @@ line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
 review evidence; the receipt names the configuration's SHA-256 and labels,
 never its path), the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
 line when the policy carries `specialists=fold`, the `specialists-dispatched:`
-line only while the policy's `delegate=` or `specialists=fold` section is active, the `Review overlap:` line when
+line only while the policy's `delegate=` or `specialists=fold` section is active, the `adversarial-pass:` line only while `delegate=adversarial` is active, the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`, the `Review overlap:` line when
 the policy carries `first-cycle=overlap`, every `External gate attestation:`
 row (each accepted result line adds one), the `pregate-narrowing:` status line and
 each `Pregate lane not run:` line, and the elapsed

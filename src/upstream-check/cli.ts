@@ -38,6 +38,9 @@ export const FOLD_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed0666
 /** Upstream revision at which the anchors behind `first-cycle=overlap` were qualified; the sibling layout's revision is unknown. */
 export const OVERLAP_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
 
+/** Upstream revision at which the attacker-part anchors behind `red-team=ensure` and `delegate=adversarial|red-team` were qualified in the nested checkout and the Cursor and Codex sibling copies generated from it. */
+export const ATTACKER_QUALIFIED = { revision: '297f50c7e1d46aab1404f5f2e8a9584af76ad6b2', version: '1.97.0.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -61,6 +64,10 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
   { file: 'skills/review-and-prep.md', includes: "grep -F 'Narrow the pregate",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its section heading, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'delegate=<part>'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'delegate=adversarial,red-team'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its attacker policy values, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'red-team=ensure'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'specialists=fold'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
@@ -114,6 +121,8 @@ export const FOLD_CHECKLISTS = [
 export type FoldName = typeof FOLD_CHECKLISTS[number]['name'];
 const OVERLAP_HEADING = '**Activation (`first-cycle=overlap`).**';
 const OVERLAP_ADVERSARIAL_MARK = 'and its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain,';
+const ATTACKER_HEADING = '**Activation (attacker parts).**';
+const ATTACKER_ADVERSARIAL_MARK = 'its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain,';
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -172,6 +181,7 @@ export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; in
 export type DelegateInventory = { ok: true; file: string; review: string[]; dispatchItem: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
 export type FoldInventory = { ok: true; file: string; review: string[]; dispatchItem: string[]; checklists: Record<FoldName, string[]> } | { ok: false; file: string; reason: string };
 export type OverlapInventory = { ok: true; file: string; review: string[]; adversarial: string[] } | { ok: false; file: string; reason: string };
+export type AttackerInventory = { ok: true; file: string; 'red-team': string[]; adversarial: string[]; 'adversarial-item': string[] } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
@@ -332,6 +342,20 @@ export function overlapInventory(extendRootPath: string): OverlapInventory {
   return { ok: true, file: found.file, review, adversarial };
 }
 
+/**
+ * The anchors behind the red-team step and `delegate=adversarial|red-team`:
+ * the backtick spans of the attacker-parts activation paragraph, three lists
+ * (`review/specialists/red-team.md`, the adversarial instructions, and `/review`'s
+ * all-or-none `adversarial-pass` item list), each opened by "byte for byte,".
+ */
+export function attackerInventory(extendRootPath: string): AttackerInventory {
+  const found = activationLists(extendRootPath, ATTACKER_HEADING,
+    [ATTACKER_ADVERSARIAL_MARK, DISPATCH_ITEM_MARK, ANCHOR_LIST_TO], ['red-team', 'adversarial', 'adversarial-item']);
+  if (!found.ok) return found;
+  const [redTeam, adversarial, adversarialItem] = found.lists as [string[], string[], string[]];
+  return { ok: true, file: found.file, 'red-team': redTeam, adversarial, 'adversarial-item': adversarialItem };
+}
+
 /** The repair-review activation paragraph also requires the in-cap paragraph's "first two anchors". */
 const REPAIR_REVIEW_INCAP_ANCHORS = 2;
 
@@ -350,6 +374,8 @@ const STAGE = {
   foldList: '/review-and-prep: the fold anchors cannot be listed, so specialists=fold is unverified and stays inactive',
   overlap: '/review-and-prep: first-cycle=overlap is inactive, so cycle 1 runs in today\'s order and the receipt says so',
   overlapList: '/review-and-prep: the overlap anchors cannot be listed, so first-cycle=overlap is unverified and stays inactive',
+  attacker: '/review-and-prep: the red-team step and delegate=adversarial|red-team are inactive, so the red team and the adversarial pass run on the host as today and the receipt says so',
+  attackerList: '/review-and-prep: the attacker-part anchors cannot be listed, so the red-team step and delegate=adversarial|red-team are unverified and stay inactive',
   findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
@@ -379,6 +405,7 @@ interface Layout {
   name: 'nested' | 'sibling';
   review: string;
   adversarial: string;
+  redTeam: string;
   checklist: string;
   testing: string;
   maintainability: string;
@@ -401,16 +428,17 @@ function chooseLayout(root: string, skillsDir: string): Layout {
   const fold = { security: join(root, 'review', 'specialists', 'security.md'), dataMigration: join(root, 'review', 'specialists', 'data-migration.md'),
     apiContract: join(root, 'review', 'specialists', 'api-contract.md'), stateMachines: join(root, 'review', 'specialists', 'state-machines.md'),
     design: join(root, 'review', 'design-checklist.md') };
+  const redTeam = join(root, 'review', 'specialists', 'red-team.md');
   // The pregate lives under the gstack root in both layouts.
   const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts'), pregateSecrets: join(root, 'lib', 'pregate', 'checks', 'secrets.ts') };
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
-    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), adversarial: join(root, 'review', 'sections', 'adversarial.md'),
+    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), adversarial: join(root, 'review', 'sections', 'adversarial.md'), redTeam,
       checklist: join(root, 'review', 'checklist.md'),
       testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
       performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
       ...fold, coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate };
   }
-  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), adversarial: join(skillsDir, 'gstack-review', 'SKILL.md'),
+  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), adversarial: join(skillsDir, 'gstack-review', 'SKILL.md'), redTeam,
     checklist: join(root, 'review', 'checklist.md'),
     testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
     performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
@@ -590,6 +618,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
   info('inspected', `fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`);
   info('inspected', `overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`);
+  info('inspected', `attacker ${ATTACKER_QUALIFIED.revision} ${ATTACKER_QUALIFIED.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports and classifier cases matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
 
@@ -642,6 +671,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const overlap = overlapInventory(extend);
   if (overlap.ok) ok('inventory', 'review-and-prep.overlap');
   else drift('inventory', 'review-and-prep.overlap', `${overlap.reason} (${overlap.file})`, { effect: STAGE.overlapList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
+
+  const attacker = attackerInventory(extend);
+  if (attacker.ok) ok('inventory', 'review-and-prep.attacker');
+  else drift('inventory', 'review-and-prep.attacker', `${attacker.reason} (${attacker.file})`, { effect: STAGE.attackerList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
@@ -734,6 +767,15 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     const adversarial = rootOk ? readOnce(layout.adversarial, 'review adversarial section', 'adversarial') : undefined;
     overlap.review.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.review.${i + 1}`, review, anchor, reviewReason, inactive));
     overlap.adversarial.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.adversarial.${i + 1}`, adversarial, anchor, reviewReason, inactive));
+  }
+  if (attacker.ok) {
+    const inactive = { effect: STAGE.attacker, fix: UPGRADE_FIX };
+    const review = reviewRead();
+    const redTeam = rootOk ? readOnce(layout.redTeam, 'review red-team specialist', 'red-team') : undefined;
+    const adversarial = rootOk ? readOnce(layout.adversarial, 'review adversarial section', 'adversarial') : undefined;
+    attacker['red-team'].forEach((anchor, i) => checkAnchor(`review-and-prep.attacker.red-team.${i + 1}`, redTeam, anchor, undefined, inactive));
+    attacker.adversarial.forEach((anchor, i) => checkAnchor(`review-and-prep.attacker.adversarial.${i + 1}`, adversarial, anchor, reviewReason, inactive));
+    checkDispatchItem('review-and-prep.attacker.adversarial-item', review, attacker['adversarial-item'], reviewReason, inactive);
   }
   {
     const secrets = rootOk ? readOnce(layout.pregateSecrets, 'pregate secrets check', 'pregate.secrets') : undefined;
