@@ -199,17 +199,6 @@
 - **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
 - **Effort:** ? (user triages in /roadmap)
 
-### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: newline worktree porcelain fallback for git before 2.36
-
-- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
-- **Description:** The fallback that reruns `git worktree list --porcelain` without `-z` (only on git's usage exit 129), and its rethrow on other failures, is covered only through the parser.
-- **Hypothesis (untested):** A PATH git shim that exits 129 for `worktree list ... -z` should leave the part credited with the checkout still hidden; a shim exiting 1 should fail setup at `worktree-list`. Re-verify the gap first.
-- **Upstream severity:** INFORMATIONAL
-- **Found in:** `src/review-delegate/cli.ts` (`prepareRepoCopy` worktree list).
-- **Evidence:** Cycle-3 testing specialist; no failure was reproduced.
-- **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
-- **Effort:** ? (user triages in /roadmap)
-
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

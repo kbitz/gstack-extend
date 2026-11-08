@@ -49,11 +49,11 @@ See [Repository access in `docs/delegated-review.md`](../delegated-review.md#rep
 for the complete contract:
 
 - **Enforced by `bin/review-delegate` (Linux + bubblewrap):** `--unshare-all
-  --share-net --die-with-parent --new-session`, `--ro-bind / /`, `--tmpfs` over
+  --share-net --die-with-parent --new-session`, a `--seccomp` filter blocking the
+  kernel keyring calls, `--ro-bind / /`, `--tmpfs` over
   `/tmp`, `/var` (with `/var/tmp` empty and `/var/run` linked to `../run`),
   `/run` (re-binding the DNS resolver directory read-only when
-  `realpath('/etc/resolv.conf')` is under `/run/`, or the file alone under
-  `/var/`), `$HOME`, the
+  `realpath('/etc/resolv.conf')` is under `/run/` or `/var/`), `$HOME`, the
   passwd home and the runner's temporary directory,
   throwaway overlays or staged copies for `expose` paths and read-write binds
   for `keep` paths (a parent before any listed path inside it), `--tmpfs` over
@@ -63,15 +63,20 @@ for the complete contract:
   repository that fetches only `--candidate` (a frozen snapshot commit no ref
   reaches included) and checks it out detached, with hooks, LFS filters and the
   host's global and system git configuration off. `expose` and `keep` entries
-  at or above a hidden root or inside `XDG_RUNTIME_DIR`, and an `argv[0]` with a
-  hidden link hop no entry covers, refuse as `config-malformed`. The before-and-after
+  at or above a hidden root, inside a runtime dir or the reviewed repository,
+  nested inside a `keep` entry or behind a symlink below a hidden root, a `keep`
+  entry around the runner's own code or configuration or the repository, and an
+  `argv[0]` with a hidden link hop no entry covers, refuse as
+  `config-malformed`; uid 0 and architectures without a keyring seccomp table
+  refuse as `sandbox-unavailable`. The before-and-after
   `worktreeState` check on the real repository still holds and discards every
   dispatched part on any change (`worktree-changed`).
 - **Configured by the caller's command (unobservable to the runner):** the
   network namespace remains shared (`--share-net`) so the provider command can
   reach its API; bounding tool network access to that API and starting no agents
-  belong to the command's own sandbox configuration. Code from the reviewed head
-  can run when the model runs commands. Abstract-namespace Unix sockets and path
+  belong to the command's own sandbox configuration, and so does ignoring the
+  candidate's project settings (such as `.claude/settings.json` hooks). Code from
+  the reviewed head can run when the model runs commands. Abstract-namespace Unix sockets and path
   sockets outside the hidden paths, reads of non-hidden world-readable host paths
   (`/etc`, `/sys`), reads of `expose`/`keep` paths, writes to `keep` paths,
   unsized temporary mounts, prompt injection inside the sandbox, and findings

@@ -202,10 +202,19 @@ runs every part on the host.
   sandbox hides, never at it or above it: an entry that is `/`, `HOME`, the
   account's passwd home (read from the passwd database, since Bun's
   `os.userInfo()` follows `HOME`), `/tmp`, `/var`, `/run`, the runner's
-  temporary directory, `XDG_RUNTIME_DIR` or an ancestor of any of them, or that
-  lies inside `XDG_RUNTIME_DIR` (its session bus and agents, whose tmpfs would
-  cover the entry at run time), is `config-malformed`, compared both as written
-  and with its symlinks resolved. At run time each listed path is
+  temporary directory, `XDG_RUNTIME_DIR` or `/run/user/<uid>`, `/proc`, `/dev`,
+  `/sys`, `/var/tmp` or an ancestor of any of them, or that lies inside a runtime
+  dir (its session bus and agents, whose tmpfs would cover the entry at run time)
+  or inside the reviewed repository or `--calls`, is `config-malformed`, compared
+  both as written and with its symlinks resolved. So is an entry with a symlink
+  component below a hidden directory (that symlink vanishes with the tmpfs, so
+  bwrap would mount at the written spelling), any entry nested inside a `keep`
+  entry (its writable contents could hold a planted symlink that redirects the
+  inner mount), and a `keep` entry at, above or inside the runner's own code and
+  configuration (`--gstack-root`, the gstack-extend install, `--config`,
+  `--adversarial`, `--caught`) or at or above the reviewed repository or
+  `--calls`. At run, a `keep` entry at, above or inside any hidden repository
+  path (worktrees and the common git dir included) fails setup (`keep`). At run time each listed path is
   checked with `lstat`: an `expose` directory becomes a throwaway overlay, an
   `expose` regular file is staged into `<tmp>/staged/<n>` and bound read-write
   at its path, and a `keep` directory or regular file is bound read-write.
@@ -214,8 +223,8 @@ runs every part on the host.
   `/tmp`, `/var`, `/run` and the runner's temporary directory. The runner
   follows `argv[0]`'s link chain (at most 16 hops) and compares each hop, with
   its ancestor directories resolved, against each entry's resolved path: every
-  hop under a hidden directory must lie inside some entry, or the provider is
-  `config-malformed` at `check`. The runner cannot see the command's other
+  hop under a hidden directory must lie inside some entry, with no symlink below
+  that directory, or the provider is `config-malformed` at `check`. The runner cannot see the command's other
   needs: an interpreter's script, a runtime under `HOME` (for example an
   `npm`, `bun` or `mise` install), its configuration and its login. List each in
   `expose` or `keep`, or the part fails on every call.
@@ -236,14 +245,17 @@ runs every part on the host.
   asynchronously, is bounded by the provider's `timeout_s` and counted in
   `wall_ms`, and never delays another part's deadline. It then spawns the
   provider through `bwrap` in this order:
-  - `--unshare-all --share-net --die-with-parent --new-session`
+  - `--unshare-all --share-net --die-with-parent --new-session`, and a
+    `--seccomp` filter that makes `add_key`, `request_key` and `keyctl` fail
+    (`EPERM`), so sandboxed code cannot read or change the account's kernel
+    keyrings (the session keyring is otherwise inherited)
   - `--ro-bind / /`, `--dev /dev`, `--proc /proc`
   - `--tmpfs` over `/tmp`, `/var` (with an empty `/var/tmp` and
     `/var/run` linked to `../run`), `/run`, `$HOME`, the passwd home when it
     differs and the runner's temporary directory when it lies elsewhere,
-    followed by a read-only `--ro-bind` of the DNS resolver configuration when
-    `realpath('/etc/resolv.conf')` resolves under `/run/` (its directory) or
-    `/var/` (the file alone, since `/var` directories may hold daemons' sockets)
+    followed by a read-only `--ro-bind` of the DNS resolver configuration file
+    alone when `realpath('/etc/resolv.conf')` resolves under `/run/` or `/var/`
+    (directories there hold daemons' sockets)
   - the `expose` layers (`--overlay-src <dir> --tmp-overlay <dir>` for
     directories; `--bind <staged> <file>` for files) and the `keep` binds
     (`--bind <path> <path>`), a parent path before any listed path inside it,
@@ -252,10 +264,10 @@ runs every part on the host.
   - `--tmpfs` over each hidden path that exists: the real repository's
     `git rev-parse --show-toplevel`, `--absolute-git-dir` and
     `--git-common-dir` (made absolute), every worktree `git worktree list`
-    names (the main checkout and each linked worktree; `--porcelain -z`, or the
-    newline form only when git answers `-z` with its usage exit, 129), the
-    `--calls` directory, and `XDG_RUNTIME_DIR` (written and resolved) when it
-    resolves outside `/run` or an `expose` or `keep` entry lies under `/run`;
+    names (the main checkout and each linked worktree; `--porcelain -z`, which
+    needs git 2.36 or later), the `--calls` directory, and `XDG_RUNTIME_DIR`
+    (written and resolved) when it resolves outside `/run`, plus it and
+    `/run/user/<uid>` when an `expose` or `keep` entry lies under `/run`;
     each hidden path is mounted both as written and resolved; these come after
     the `expose` and `keep` mounts, so they also hide any repository path inside
     a listed directory
@@ -265,7 +277,9 @@ runs every part on the host.
   repo-mode provider, `check` and `run` require `linux`, an executable at the
   first existing path in `['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap']`
   (never a `PATH` lookup), and a 10 s probe that verifies user namespaces and
-  `--tmp-overlay`. If any check fails, the whole invocation refuses before any
+  `--tmp-overlay`, and it refuses as uid 0 (the sandbox could read root-only
+  files) or on an architecture without a keyring seccomp table (anything but
+  x86_64 and aarch64). If any check fails, the whole invocation refuses before any
   call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
   every part of that call (including diff-mode parts named in the same command)
   runs on the host model.
@@ -274,7 +288,8 @@ runs every part on the host.
   untracked, nonignored files it captured) and that commit's history. Other
   branches and tags, ignored files (such as `.env` or `node_modules`), build
   outputs and submodule contents are absent, and Git LFS files contain pointer
-  text only. Each repo-mode part fetches its own copy into the runner's
+  text only. A partial clone (`--filter`) cannot serve the fetch and fails setup.
+  Each repo-mode part fetches its own copy into the runner's
   temporary directory, which may be a RAM-backed tmpfs (as on Arch or Fedora),
   and holds it until its call ends, so concurrent repo-mode parts hold one copy
   each.
@@ -291,9 +306,23 @@ runs every part on the host.
   land in a throwaway layer and vanish when the call ends. If a provider CLI
   rotates its refresh token during a call, discarding that write under `expose`
   can lose the refreshed token and may invalidate the host's stored login (not
-  established here). Use a dedicated delegate login under `keep` for credentials
-  that rotate, and never list a directory in `expose` or `keep` that holds
-  unrelated credentials or SSH keys.
+  established here). Use a dedicated delegate login in its own directory under
+  `keep` for credentials that rotate: not the credential file alone (inside the
+  sandbox a listed file is a mount point, so a CLI's atomic rename onto it
+  fails), and never the host's own agent configuration directory (such as
+  `~/.claude` or `~/.codex`), where sandboxed code could plant hooks or skills
+  that the host runs later. The environment allowlist passes no
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; point the CLI at the dedicated directory
+  through `argv`, for example `["/usr/bin/env", "CLAUDE_CONFIG_DIR=/path/to/delegate-login", "/path/to/claude", ...]`.
+  Never list a directory in `expose` or `keep` that holds unrelated credentials
+  or SSH keys.
+- **The provider reads project configuration from the copy.** The working
+  directory is the candidate's checkout, and a CLI may load project settings
+  from it before the model reads anything (Claude Code: `.claude/settings.json`
+  hooks and permissions, `.mcp.json`, `CLAUDE.md`). Configure repo-mode `argv`
+  to ignore project settings (for Claude Code, `--setting-sources user` and
+  `--strict-mcp-config`); otherwise the reviewed head's configuration runs
+  inside the sandbox and can widen its tools.
 - **Code from the reviewed head runs.** `REPO_POLICY` lets the model run
   commands in the copy to reproduce a defect, and those commands can execute
   code from the reviewed head (its tests, build or install scripts). That code
@@ -312,8 +341,9 @@ runs every part on the host.
     on a read-only mount, and the sandbox keeps the account's supplementary
     groups, so a group that grants a privileged daemon's socket outside the
     hidden paths makes repo mode host access for that account.
-  - Reads of world-readable host paths that are not hidden by a `--tmpfs`, such
-    as `/etc`, `/usr`, `/sys` and other non-hidden mounts.
+  - Reads of any path the account can read that is not hidden by a `--tmpfs`,
+    such as `/etc`, `/usr`, `/sys`, `/srv`, `/opt` and other mounts, including
+    the account's own files there.
   - Reads of paths the caller listed in `expose` or `keep`, and writes to paths
     the caller listed in `keep`.
   - Prompt injection from the reviewed diff or repository files steering tools

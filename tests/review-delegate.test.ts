@@ -157,6 +157,11 @@ else if (mode === 'inspect') {
     severity: 'CRITICAL', confidence: 9, path: 'changed.txt', line: 2, category: 'adversarial',
     summary: 'verified in clone', fix: 'guard it', evidence: 'git rev-parse HEAD -> ' + head,
   }) + '\\nRecommendation: fix because reproduced in clone.');
+} else if (mode === 'keyring') {
+  // Ask the kernel for the session keyring id (KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING); the sandbox's seccomp filter must refuse it.
+  const r = spawnSync('/usr/bin/python3', ['-c', 'import ctypes,os;libc=ctypes.CDLL(None,use_errno=True);nr={"x86_64":250,"aarch64":219}[os.uname().machine];r=libc.syscall(nr,0,-3,0);print(r,ctypes.get_errno())'], { encoding: 'utf8' });
+  writeFileSync(join(state, 'keyring.txt'), (r.stdout ?? '').trim());
+  console.log('NO_FINDINGS: none\\nRecommendation: merge because keyring probed.');
 } else if (mode === 'escape-write') {
   const realRepo = readFileSync(join(state, 'repo.txt'), 'utf8').trim();
   const attempts: Record<string, string> = {};
@@ -1274,9 +1279,63 @@ describe('repository-mode sandbox and check', () => {
     expect(args.indexOf('/scratch/tmp')).toBeLessThan(args.indexOf('--overlay-src'));
   });
 
-  test('parseWorktreeList also reads newline porcelain, the form git before 2.36 prints without -z', () => {
-    expect(parseWorktreeList('worktree /a/main\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\nworktree /b/linked\nHEAD 2222222222222222222222222222222222222222\ndetached\n'))
-      .toEqual(['/a/main', '/b/linked']);
+  // Value: protects=a keep entry never covers the runner's own code, configuration or the reviewed repository; fails_when=keep is checked only against HOME and the tmpfs roots; why_new=continuation cycle-1 findings (security, red team, Codex); seam=none
+  test('a keep entry at, above or inside the runner code, its configuration or the reviewed repository refuses with config-malformed', async () => {
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
+    const withKeep = (keep: string) => { const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.keep = [keep]; writeFileSync(s.config, JSON.stringify(cfg)); };
+    mkdirSync(join(s.repo, 'sub'), { recursive: true });
+    for (const keep of [dirname(s.root), join(s.root, 'lib'), dirname(s.config)]) {
+      withKeep(keep);
+      expect((await runInProcess(checkArgs(s, 'testing'))).json, keep).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    }
+    for (const keep of [s.repo, join(s.repo, 'sub')]) {
+      withKeep(keep);
+      expect((await runInProcess(runArgs(s, 'testing'))).json, keep).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    }
+  });
+
+  // Value: protects=nothing nests inside a keep entry (a planted symlink could redirect it) and no symlink below a hidden root is trusted (bwrap mounts the written spelling); fails_when=nested entries or symlinked ancestors pass; why_new=continuation cycle-1 findings (security, Codex); seam=none
+  test('an entry nested inside a keep entry, or a path with a symlink below a hidden root, refuses with config-malformed', async () => {
+    const h = fresh('home-nested');
+    mkdirSync(join(h, 'kept', 'a'), { recursive: true });
+    put(join(h, 'real', 'bin', 'tool'), '#!/bin/sh\n');
+    chmodSync(join(h, 'real', 'bin', 'tool'), 0o755);
+    symlinkSync(join(h, 'real'), join(h, 'link'));
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    const cases: [Record<string, unknown>, string[]][] = [
+      [{ keep: [join(h, 'kept')], expose: [join(h, 'kept', 'a')] }, [process.execPath]],
+      [{ expose: [join(h, 'link', 'bin')] }, [process.execPath]],
+      [{ expose: [join(h, 'link', 'bin')] }, [join(h, 'real', 'bin', 'tool')]],
+    ];
+    for (const [lists, argv] of cases) {
+      const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+      cfg.providers.p = { ...cfg.providers.p, argv: [...argv, ...cfg.providers.p.argv.slice(1)], ...lists };
+      writeFileSync(s.config, JSON.stringify(cfg));
+      expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: h })).json, JSON.stringify(lists)).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    }
+  });
+
+  // Value: protects=procfs, devices, the shared /var/tmp and the account's runtime dir cannot be re-bound, with or without XDG_RUNTIME_DIR; fails_when=those roots are missing from the guard; why_new=continuation cycle-1 finding (adversarial); seam=none
+  test('an entry at /proc, /dev, /sys, /var/tmp or the account runtime dir refuses with config-malformed even without XDG_RUNTIME_DIR', async () => {
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
+    for (const keep of ['/proc', '/dev', '/sys', '/var/tmp', `/run/user/${process.getuid?.() ?? 0}`]) {
+      const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.p.keep = [keep]; writeFileSync(s.config, JSON.stringify(cfg));
+      expect((await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: undefined })).json, keep).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    }
+  });
+
+  // Value: protects=sandboxed code cannot read or change keys in the account's kernel keyrings; fails_when=no seccomp filter blocks keyctl; why_new=continuation cycle-1 finding (Codex reproduced); seam=python3 ctypes syscall
+  test.if(probe && existsSync('/usr/bin/python3'))('repo mode refuses kernel keyring system calls inside the sandbox', () => {
+    const s = setup('nested', { k: { mode: 'keyring', access: 'repo', expose: [FAKE], keep: [fresh('keep-keyring')] } }, { testing: 'k' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8')); cfg.providers.k.keep = [s.state]; writeFileSync(s.config, JSON.stringify(cfg));
+    const r = cli(runArgs(s, 'testing'));
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited', fallback_reason: null });
+    expect(readFileSync(join(s.state, 'keyring.txt'), 'utf8').trim()).toBe('-1 1');
+  });
+
+  test('sandboxArgs skips the HOME tmpfs when HOME is empty (a HOME that does not exist has nothing to hide)', () => {
+    const args = sandboxArgs({ home: '', hidden: [], resolvDir: null, expose: [], keep: [], copy: '/tmp/c/repo' });
+    for (let i = 0; i < args.length - 1; i++) if (args[i] === '--tmpfs') expect(args[i + 1]).not.toBe('');
   });
 
   // Value: protects=an earlier part's deadline and output handling while a later repo-mode part prepares its copy; fails_when=repository setup blocks the event loop; why_new=cycle-1 finding (Codex reproduced); seam=PATH git shim

@@ -6,16 +6,17 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { copyFile, rm } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
 import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
 import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  ATTACKER_PARTS, CONFIG_LIMIT, CONTROL_RE, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, sandboxArgs, validateConfig,
+  ATTACKER_PARTS, CONFIG_LIMIT, CONTROL_RE, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, keyringSeccomp, sandboxArgs, validateConfig,
   type DelegateConfig, type Part, type PartResult, type RefusalReason, type SandboxExpose, type SandboxInput, type SpecialistPart, type Spawned,
 } from './delegate';
 
@@ -54,7 +55,7 @@ function realpathBelow(path: string): string {
     try { return join(realpathSync(head), ...tail.reverse()); } catch { /* try the parent */ }
     const parent = resolve(head, '..');
     if (parent === head) return path;
-    tail.push(head.slice(parent.length + 1));
+    tail.push(basename(head));
     head = parent;
   }
 }
@@ -228,6 +229,8 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   let home: string | undefined;
   let privateDirs: string[] = [];
   if (repoProviders.length > 0) {
+    // As uid 0 the sandbox could read every root-only file, and without a seccomp table the kernel keyrings stay reachable.
+    if (process.getuid?.() === 0 || !keyringSeccomp(process.arch)) return refuse('sandbox-unavailable');
     const rawHome = process.env.HOME;
     if (!rawHome || !isAbsolute(rawHome) || CONTROL_RE.test(rawHome)) return refuse('config-malformed');
     home = resolve(rawHome);
@@ -241,24 +244,52 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
     // Every private directory beyond HOME gets its own tmpfs; one that does not exist holds nothing and could not take a mount point.
     privateDirs = [...new Set([...homes, ...temp])]
       .filter((path) => path !== home && !['/tmp', '/var', '/var/tmp', '/run'].includes(path) && existsSync(path));
+    // The account's runtime dirs (session bus, agents): XDG_RUNTIME_DIR when set, and /run/user/<uid> whether or not it is.
     const rawXdg = process.env.XDG_RUNTIME_DIR;
-    const xdg = rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/' ? forms(resolve(rawXdg)) : [];
-    // Every directory the sandbox hides: HOME and the passwd home, the system roots, the runner's temporary directory and XDG_RUNTIME_DIR.
-    const hiddenRoots = [...new Set([...homes, ...temp, ...xdg, ...['/tmp', '/var', '/run'].flatMap((path) => forms(path))])];
+    const uid = process.getuid?.();
+    const runtimeDirs = [...(rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/' ? [resolve(rawXdg)] : []),
+      ...(uid !== undefined ? [`/run/user/${uid}`] : [])].flatMap(forms);
+    // Every directory the sandbox hides or replaces: the homes, the system roots, the runner's temporary directory and the runtime dirs.
+    const hiddenRoots = [...new Set([...homes, ...temp, ...runtimeDirs,
+      ...['/tmp', '/var', '/var/tmp', '/run', '/proc', '/dev', '/sys'].flatMap((path) => forms(path))])];
+    // The runner's own code and configuration and the reviewed repository: a writable keep there would let sandboxed code change what
+    // the host runs next, or move the real checkout from under its hiding mount.
+    const runnerPaths = [options.root, extendRoot(), options.config, options.adversarial, options.caught].filter(Boolean).flatMap(forms);
+    const repoPaths = [options.repo, options.calls].filter(Boolean).flatMap(forms);
+    // A symlink below the deepest hidden root around a path vanishes with that tmpfs, so bwrap would mount or exec at the written
+    // spelling, not the target (the spelling of the root itself is recreated by its own tmpfs).
+    const symlinkBelowHiddenRoot = (path: string) => {
+      const root = hiddenRoots.filter((dir) => dir !== path && isWithin(dir, path)).sort((a, b) => b.length - a.length)[0];
+      if (root === undefined) return false;
+      const parts = relative(root, path).split(sep);
+      for (let i = 1; i < parts.length; i++) {
+        try { if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true; } catch { return false; }
+      }
+      return false;
+    };
     for (const provider of repoProviders) {
-      const entries = [...(provider.expose ?? []), ...(provider.keep ?? [])];
+      const keeps = provider.keep ?? [];
+      const entries = [...(provider.expose ?? []), ...keeps];
+      const atOrAbove = (path: string, targets: string[]) => forms(path).some((form) => targets.some((target) => isWithin(form, target)));
+      const atOrInside = (path: string, targets: string[]) => forms(path).some((form) => targets.some((target) => isWithin(target, form)));
       for (const entry of entries) {
         // An entry may sit inside a hidden root, never at one or above one: that would re-bind the whole root. Nothing may sit
-        // inside XDG_RUNTIME_DIR (its session bus and agents), whose tmpfs would also cover the entry at run time.
-        if (forms(entry).some((form) => form === '/' || hiddenRoots.some((root) => isWithin(form, root)) || xdg.some((dir) => isWithin(dir, form)))) {
+        // inside a runtime dir, whose tmpfs would also cover the entry at run time, or inside the reviewed repository.
+        if (forms(entry).includes('/') || atOrAbove(entry, hiddenRoots) || atOrInside(entry, runtimeDirs) || atOrInside(entry, repoPaths)
+          || symlinkBelowHiddenRoot(entry)) {
           return refuse('config-malformed');
         }
+        // Nothing nests inside a keep entry, whose writable contents (a planted symlink) could redirect the inner mount.
+        if (keeps.some((keep) => keep !== entry && atOrInside(entry, [keep]))) return refuse('config-malformed');
       }
-      // Every hop of argv[0]'s link chain that lies under a hidden root needs an entry around it, compared with ancestors resolved.
+      for (const keep of keeps) {
+        if (atOrAbove(keep, [...runnerPaths, ...repoPaths]) || atOrInside(keep, runnerPaths)) return refuse('config-malformed');
+      }
+      // Every hop of argv[0]'s link chain that lies under a hidden root needs an entry around it, with no symlink below that root.
       const entryPaths = entries.map((entry) => realpathBelow(entry));
-      const uncovered = linkChain(provider.argv[0]!)
-        .some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
-      if (uncovered) return refuse('config-malformed');
+      const hops = linkChain(provider.argv[0]!);
+      const uncovered = hops.some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
+      if (uncovered || [provider.argv[0]!, ...hops].some(symlinkBelowHiddenRoot)) return refuse('config-malformed');
     }
   }
 
@@ -320,7 +351,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       classify: classify as Classifier, checklists,
       ...(caught !== undefined ? { caught } : {}),
       ...(bwrap !== undefined ? { bwrap } : {}),
-      ...(home !== undefined ? { home, privateDirs } : {}),
+      ...(home !== undefined ? { home: existsSync(home) ? home : '', privateDirs } : {}),
     },
   };
 }
@@ -413,10 +444,9 @@ function runSetupGit(args: string[], step: string, emptyHome: string, remainingM
   });
 }
 
-/** Paths from `git worktree list --porcelain` (NUL-separated with -z, newline-separated before git 2.36): the main checkout and every linked worktree. */
+/** Paths from `git worktree list --porcelain -z`: the main checkout and every linked worktree. */
 export function parseWorktreeList(output: string): string[] {
-  return output.split(output.includes('\0') ? '\0' : '\n').filter((field) => field.startsWith('worktree '))
-    .map((field) => field.slice('worktree '.length)).filter(Boolean);
+  return output.split('\0').filter((field) => field.startsWith('worktree ')).map((field) => field.slice('worktree '.length)).filter(Boolean);
 }
 
 /**
@@ -431,12 +461,8 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   const lines = rev.replace(/\r\n/g, '\n').trimEnd().split('\n');
   if (lines.length !== 3 || lines.some((line) => !line)) throw new SetupFailure('rev-parse');
   const [top, gitDir, commonDir] = lines as [string, string, string];
-  const worktreeList = (z: boolean) => git(['-C', spec.repo, 'worktree', 'list', '--porcelain', ...(z ? ['-z'] : [])], 'worktree-list', true);
-  // Only git's usage exit (129, a git before 2.36 without -z) falls back to newline porcelain; any other failure fails setup.
-  const worktrees = parseWorktreeList(await worktreeList(true).catch((error: unknown) => {
-    if (error instanceof SetupFailure && !error.timedOut && error.code === 129) return worktreeList(false);
-    throw error;
-  }));
+  // NUL-separated porcelain (git 2.36 or later) is the only form that carries every path unambiguously; an older git fails setup.
+  const worktrees = parseWorktreeList(await git(['-C', spec.repo, 'worktree', 'list', '--porcelain', '-z'], 'worktree-list', true));
   const hidden: string[] = [];
   const hide = (path: string) => {
     // A path that does not exist holds nothing to hide, and the read-only root could not take its mount point.
@@ -446,24 +472,27 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
     if (real !== path) hidden.push(real);
   };
   for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
+  // A keep entry at, above or inside any hidden repository path (linked worktrees and the common git dir included) would let
+  // sandboxed code move the real checkout from under its mount or write into it.
+  const forms = (path: string) => [path, realpathBelow(path)];
+  if (spec.keep.some((keep) => forms(keep).some((form) => hidden.some((path) => isWithin(form, path) || isWithin(path, form))))) {
+    throw new SetupFailure('keep');
+  }
   const rawXdg = process.env.XDG_RUNTIME_DIR;
-  if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg)) {
+  const entriesUnderRun = [...spec.expose, ...spec.keep].some((path) => [path, realpathBelow(path)].some((form) => isWithin('/run', form)));
+  const uid = process.getuid?.();
+  if (entriesUnderRun && uid !== undefined) hide(`/run/user/${uid}`);
+  if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/') {
     // The /run tmpfs already hides a runtime dir that resolves under /run, unless an entry (in any spelling) brings part of /run
     // back; otherwise hide it in both spellings (hide() adds the resolved one).
-    const underRun = (path: string) => [path, realpathBelow(path)].some((form) => isWithin('/run', form));
-    if (!isWithin('/run', realpathBelow(resolve(rawXdg))) || [...spec.expose, ...spec.keep].some(underRun)) hide(resolve(rawXdg));
+    if (!isWithin('/run', realpathBelow(resolve(rawXdg))) || entriesUnderRun) hide(resolve(rawXdg));
   }
   let resolvDir: string | null = null;
   try {
-    // The resolver configuration may live under /run or /var, both behind a tmpfs: bring it back read-only (its directory under
-    // /run, only the file under /var, whose directories may hold daemons' sockets).
+    // The resolver configuration may live under /run or /var, both behind a tmpfs: bring back the file alone, read-only, since
+    // the directories there hold daemons' sockets.
     const realResolv = realpathSync('/etc/resolv.conf');
-    if (realResolv.startsWith('/run/')) {
-      const dir = dirname(realResolv);
-      resolvDir = dir === '/run' ? realResolv : dir;
-    } else if (realResolv.startsWith('/var/')) {
-      resolvDir = realResolv;
-    }
+    if (realResolv.startsWith('/run/') || realResolv.startsWith('/var/')) resolvDir = realResolv;
   } catch { resolvDir = null; }
 
   const expose: SandboxExpose[] = [];
@@ -478,7 +507,7 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
       } else if (stat.isFile()) {
         mkdirSync(stagedDir, { recursive: true, mode: 0o700 });
         const staged = join(stagedDir, String(i));
-        copyFileSync(entry, staged);
+        await copyFile(entry, staged);
         expose.push({ kind: 'file', path: entry, staged });
       } else {
         throw new SetupFailure('expose');
@@ -523,6 +552,7 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
     let grace: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let child: ReturnType<typeof spawn> | undefined;
+    let seccompFd: number | undefined;
     const killGroup = () => { try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
     const finish = (code: number | null, signal: string | null) => {
       if (finished) return;
@@ -531,17 +561,24 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
       clearTimeout(grace);
       child?.stdout?.destroy();
       child?.stderr?.destroy();
-      try { rmSync(cwd, { recursive: true, force: true }); }
-      catch {
-        try {
-          spawnSync('chmod', ['-R', 'u+rwx', cwd], { stdio: 'ignore' });
-          rmSync(cwd, { recursive: true, force: true });
-        } catch { spawnError = true; }
-      }
-      settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
-        stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: setupNote + Buffer.concat(err, errSize).toString('utf8'), wall_ms: Date.now() - started });
+      if (seccompFd !== undefined) { try { closeSync(seccompFd); } catch { /* already closed */ } }
+      // Asynchronous cleanup, so removing a large copy never delays another part's deadline or output handling.
+      const cleanup = async () => {
+        try { await rm(cwd, { recursive: true, force: true }); return; } catch { /* make it writable, then retry */ }
+        await new Promise<void>((done) => {
+          let chmod: ReturnType<typeof spawn>;
+          try { chmod = spawn('chmod', ['-R', 'u+rwx', cwd], { stdio: 'ignore' }); } catch { done(); return; }
+          const limit = setTimeout(() => { try { chmod.kill('SIGKILL'); } catch { /* gone */ } }, 10_000);
+          chmod.on('error', () => { clearTimeout(limit); done(); });
+          chmod.on('close', () => { clearTimeout(limit); done(); });
+        });
+        try { await rm(cwd, { recursive: true, force: true }); } catch { spawnError = true; }
+      };
+      void cleanup().then(() => settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow,
+        spawn_error: spawnError, stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: setupNote + Buffer.concat(err, errSize).toString('utf8'),
+        wall_ms: Date.now() - started }));
     };
-    const launch = (command: string, args: string[]) => {
+    const launch = (command: string, args: string[], extraFd?: number) => {
       const rem = remainingMs();
       if (rem <= 0) {
         timedOut = true;
@@ -550,7 +587,7 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
       }
       deadline = setTimeout(() => { timedOut = true; killGroup(); }, rem);
       try {
-        child = spawn(command, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+        child = spawn(command, args, { cwd, env, detached: true, stdio: extraFd !== undefined ? ['pipe', 'pipe', 'pipe', extraFd] : ['pipe', 'pipe', 'pipe'] });
       } catch {
         spawnError = true;
         finish(null, null);
@@ -579,7 +616,19 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
     }
     prepareRepoCopy(repoSpec, cwd, remainingMs).then((input) => {
       env.TMPDIR = '/tmp';
-      launch(repoSpec.bwrap, [...sandboxArgs(input), '--', ...argv]);
+      // The keyring seccomp program reaches bwrap as descriptor 3 (prepare() refused an architecture without one).
+      const program = keyringSeccomp(process.arch)!;
+      try {
+        const file = join(cwd, 'keyring.bpf');
+        writeFileSync(file, program, { mode: 0o600 });
+        seccompFd = openSync(file, 'r');
+      } catch {
+        spawnError = true;
+        setupNote = 'review-delegate: repo-mode setup failed (seccomp)\n';
+        finish(null, null);
+        return;
+      }
+      launch(repoSpec.bwrap, [...sandboxArgs({ ...input, seccompFd: 3 }), '--', ...argv], seccompFd);
     }, (error: unknown) => {
       const failure = error instanceof SetupFailure ? error : new SetupFailure('setup');
       if (failure.timedOut) timedOut = true;
