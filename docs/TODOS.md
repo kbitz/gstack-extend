@@ -58,6 +58,50 @@
 - **Revisit when:** The next Track touches either tagged path or the adversarial extraction rule.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=tests/review-delegate.test.ts|src/review-delegate/cli.ts] Test gap: repo-mode hiding of linked worktrees end to end
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Repo mode hides every path `git worktree list` names, but only `parseWorktreeList` is unit-tested; nothing runs a sandboxed delegate that checks a linked worktree is empty inside the sandbox.
+- **Hypothesis (untested):** Create a linked worktree inside a `keep` directory (so only the worktree tmpfs can hide it), run the `repo-probe` fake and assert its listing is empty. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/review-delegate.test.ts` (parseWorktreeList test), `src/review-delegate/cli.ts` (`prepareRepoCopy` hide list).
+- **Evidence:** Cycle-2 testing specialist of the delegate repo-access review; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: repo-mode setup step that times out or fails in git
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Only the `expose` setup failure is asserted; no test drives a setup `git` step past the part's deadline (`setup failed (<step>: timeout)`, `timeout`) or a failing `git` step (`failed`).
+- **Hypothesis (untested):** Reuse the PATH git shim from the slow-setup test so `fetch` sleeps past a short `timeout_s`, then assert `fallback_reason: timeout` and the saved stderr step name. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`runSetupGit`, `prepareRepoCopy`).
+- **Evidence:** Cycle-2 testing specialist; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: runner temporary directory reaches the sandbox's private tmpfs list
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** `sandboxArgs` is tested to mount the private directories it is given, but no test proves `prepare()` puts a TMPDIR outside `/tmp` into that list.
+- **Hypothesis (untested):** Pass `deps.bwrapPaths` a shim that logs its argv and execs the real bwrap, set TMPDIR to a fresh directory, and assert `--tmpfs <TMPDIR>` precedes the expose and keep mounts. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepare`, `privateDirs`).
+- **Evidence:** Cycle-3 testing specialist; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: newline worktree porcelain fallback for git before 2.36
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The fallback that reruns `git worktree list --porcelain` without `-z` (only on git's usage exit 129), and its rethrow on other failures, is covered only through the parser.
+- **Hypothesis (untested):** A PATH git shim that exits 129 for `worktree list ... -z` should leave the part credited with the checkout still hidden; a shim exiting 1 should fail setup at `worktree-list`. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepareRepoCopy` worktree list).
+- **Evidence:** Cycle-3 testing specialist; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2c6f332d` (delegate repo access) at the cycle-cap stop (2026-11-08).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

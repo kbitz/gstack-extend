@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
 import { snapshotDiff, type Request } from '../outside-review/prompt';
@@ -66,7 +66,7 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 /** The account's home from the passwd database: Bun's os.userInfo() reports $HOME instead, so it cannot see a HOME override. */
-function passwdHome(): string {
+export function passwdHome(): string {
   const uid = process.getuid?.();
   if (uid === undefined) return '';
   try {
@@ -81,6 +81,25 @@ function passwdHome(): string {
     }
   } catch { /* no passwd file */ }
   return '';
+}
+
+/** A path with its ancestors resolved and its last component as written, which is where bwrap finds a link or mounts an entry. */
+const linkLocation = (path: string) => join(realpathBelow(dirname(path)), basename(path));
+
+/** `path` and every link it passes through (at most 16 hops), each as a location. */
+function linkChain(path: string): string[] {
+  const hops = [linkLocation(path)];
+  let current = hops[0]!;
+  for (let i = 0; i < 16; i++) {
+    let target: string;
+    try {
+      if (!lstatSync(current).isSymbolicLink()) break;
+      target = readlinkSync(current);
+    } catch { break; }
+    current = linkLocation(resolve(dirname(current), target));
+    hops.push(current);
+  }
+  return hops;
 }
 
 function parseArgs(argv: string[]): 'help' | Options {
@@ -229,12 +248,17 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
     for (const provider of repoProviders) {
       const entries = [...(provider.expose ?? []), ...(provider.keep ?? [])];
       for (const entry of entries) {
-        // An entry may sit inside a hidden root, never at one or above one: that would re-bind the whole root.
-        if (forms(entry).some((form) => form === '/' || hiddenRoots.some((root) => isWithin(form, root)))) return refuse('config-malformed');
+        // An entry may sit inside a hidden root, never at one or above one: that would re-bind the whole root. Nothing may sit
+        // inside XDG_RUNTIME_DIR (its session bus and agents), whose tmpfs would also cover the entry at run time.
+        if (forms(entry).some((form) => form === '/' || hiddenRoots.some((root) => isWithin(form, root)) || xdg.some((dir) => isWithin(dir, form)))) {
+          return refuse('config-malformed');
+        }
       }
-      // bwrap mounts each entry at its written path, so every hidden form of argv[0] (the link and its target) needs an entry around it.
-      const hiddenCommand = forms(provider.argv[0]!).filter((form) => hiddenRoots.some((root) => isWithin(root, form)));
-      if (hiddenCommand.some((form) => !entries.some((entry) => isWithin(entry, form)))) return refuse('config-malformed');
+      // Every hop of argv[0]'s link chain that lies under a hidden root needs an entry around it, compared with ancestors resolved.
+      const entryPaths = entries.map((entry) => realpathBelow(entry));
+      const uncovered = linkChain(provider.argv[0]!)
+        .some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
+      if (uncovered) return refuse('config-malformed');
     }
   }
 
@@ -352,7 +376,7 @@ interface RepoSandboxSpec {
 
 /** A repo-mode setup step that failed before the provider started; `timedOut` when the part's deadline ran out first. */
 class SetupFailure extends Error {
-  constructor(readonly step: string, readonly timedOut = false) { super(step); }
+  constructor(readonly step: string, readonly timedOut = false, readonly code: number | null = null) { super(step); }
 }
 
 /**
@@ -383,7 +407,7 @@ function runSetupGit(args: string[], step: string, emptyHome: string, remainingM
     proc.on('close', (code, signal) => {
       clearTimeout(timer);
       if (expired || remainingMs() <= 0) rejectGit(new SetupFailure(step, true));
-      else if (code !== 0 || signal || tooLong) rejectGit(new SetupFailure(step));
+      else if (code !== 0 || signal || tooLong) rejectGit(new SetupFailure(step, false, code));
       else resolveGit(output);
     });
   });
@@ -408,9 +432,10 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   if (lines.length !== 3 || lines.some((line) => !line)) throw new SetupFailure('rev-parse');
   const [top, gitDir, commonDir] = lines as [string, string, string];
   const worktreeList = (z: boolean) => git(['-C', spec.repo, 'worktree', 'list', '--porcelain', ...(z ? ['-z'] : [])], 'worktree-list', true);
+  // Only git's usage exit (129, a git before 2.36 without -z) falls back to newline porcelain; any other failure fails setup.
   const worktrees = parseWorktreeList(await worktreeList(true).catch((error: unknown) => {
-    if (error instanceof SetupFailure && error.timedOut) throw error;
-    return worktreeList(false);
+    if (error instanceof SetupFailure && !error.timedOut && error.code === 129) return worktreeList(false);
+    throw error;
   }));
   const hidden: string[] = [];
   const hide = (path: string) => {
@@ -423,17 +448,21 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
   const rawXdg = process.env.XDG_RUNTIME_DIR;
   if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg)) {
-    // The /run tmpfs already hides a runtime dir under /run, unless an entry (in any spelling) brings part of /run back.
+    // The /run tmpfs already hides a runtime dir that resolves under /run, unless an entry (in any spelling) brings part of /run
+    // back; otherwise hide it in both spellings (hide() adds the resolved one).
     const underRun = (path: string) => [path, realpathBelow(path)].some((form) => isWithin('/run', form));
-    if (!underRun(resolve(rawXdg)) || [...spec.expose, ...spec.keep].some(underRun)) hide(resolve(rawXdg));
+    if (!isWithin('/run', realpathBelow(resolve(rawXdg))) || [...spec.expose, ...spec.keep].some(underRun)) hide(resolve(rawXdg));
   }
   let resolvDir: string | null = null;
   try {
-    // The resolver configuration may live under /run or /var, both behind a tmpfs: bring back its directory read-only.
+    // The resolver configuration may live under /run or /var, both behind a tmpfs: bring it back read-only (its directory under
+    // /run, only the file under /var, whose directories may hold daemons' sockets).
     const realResolv = realpathSync('/etc/resolv.conf');
-    if (realResolv.startsWith('/run/') || realResolv.startsWith('/var/')) {
+    if (realResolv.startsWith('/run/')) {
       const dir = dirname(realResolv);
-      resolvDir = dir === '/run' || dir === '/var' ? realResolv : dir;
+      resolvDir = dir === '/run' ? realResolv : dir;
+    } else if (realResolv.startsWith('/var/')) {
+      resolvDir = realResolv;
     }
   } catch { resolvDir = null; }
 

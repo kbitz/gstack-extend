@@ -52,7 +52,8 @@ for the complete contract:
   --share-net --die-with-parent --new-session`, `--ro-bind / /`, `--tmpfs` over
   `/tmp`, `/var` (with `/var/tmp` empty and `/var/run` linked to `../run`),
   `/run` (re-binding the DNS resolver directory read-only when
-  `realpath('/etc/resolv.conf')` is under `/run/` or `/var/`), `$HOME`, the
+  `realpath('/etc/resolv.conf')` is under `/run/`, or the file alone under
+  `/var/`), `$HOME`, the
   passwd home and the runner's temporary directory,
   throwaway overlays or staged copies for `expose` paths and read-write binds
   for `keep` paths (a parent before any listed path inside it), `--tmpfs` over
@@ -62,8 +63,8 @@ for the complete contract:
   repository that fetches only `--candidate` (a frozen snapshot commit no ref
   reaches included) and checks it out detached, with hooks, LFS filters and the
   host's global and system git configuration off. `expose` and `keep` entries
-  at or above a hidden root (`XDG_RUNTIME_DIR` included), and an `argv[0]` with
-  a hidden form no entry's written path covers, refuse as `config-malformed`. The before-and-after
+  at or above a hidden root or inside `XDG_RUNTIME_DIR`, and an `argv[0]` with a
+  hidden link hop no entry covers, refuse as `config-malformed`. The before-and-after
   `worktreeState` check on the real repository still holds and discards every
   dispatched part on any change (`worktree-changed`).
 - **Configured by the caller's command (unobservable to the runner):** the

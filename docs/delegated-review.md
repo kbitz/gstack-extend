@@ -202,18 +202,20 @@ runs every part on the host.
   sandbox hides, never at it or above it: an entry that is `/`, `HOME`, the
   account's passwd home (read from the passwd database, since Bun's
   `os.userInfo()` follows `HOME`), `/tmp`, `/var`, `/run`, the runner's
-  temporary directory, `XDG_RUNTIME_DIR` or an ancestor of any of them is
-  `config-malformed`, compared both as written and with its symlinks resolved. At run time each listed path is
+  temporary directory, `XDG_RUNTIME_DIR` or an ancestor of any of them, or that
+  lies inside `XDG_RUNTIME_DIR` (its session bus and agents, whose tmpfs would
+  cover the entry at run time), is `config-malformed`, compared both as written
+  and with its symlinks resolved. At run time each listed path is
   checked with `lstat`: an `expose` directory becomes a throwaway overlay, an
   `expose` regular file is staged into `<tmp>/staged/<n>` and bound read-write
   at its path, and a `keep` directory or regular file is bound read-write.
   Missing paths, symlinks, sockets or other file types fail that part (`failed`).
 - **The command must be visible.** The sandbox hides `HOME`, the passwd home,
-  `/tmp`, `/var`, `/run` and the runner's temporary directory. bwrap mounts each
-  `expose` or `keep` entry at its written path, so when `argv[0]` lies under a
-  hidden directory, every hidden form of it (the path as written and, for a
-  symlink, its resolved target) must lie inside some entry's written path, or
-  the provider is `config-malformed` at `check`. The runner cannot see the command's other
+  `/tmp`, `/var`, `/run` and the runner's temporary directory. The runner
+  follows `argv[0]`'s link chain (at most 16 hops) and compares each hop, with
+  its ancestor directories resolved, against each entry's resolved path: every
+  hop under a hidden directory must lie inside some entry, or the provider is
+  `config-malformed` at `check`. The runner cannot see the command's other
   needs: an interpreter's script, a runtime under `HOME` (for example an
   `npm`, `bun` or `mise` install), its configuration and its login. List each in
   `expose` or `keep`, or the part fails on every call.
@@ -239,8 +241,9 @@ runs every part on the host.
   - `--tmpfs` over `/tmp`, `/var` (with an empty `/var/tmp` and
     `/var/run` linked to `../run`), `/run`, `$HOME`, the passwd home when it
     differs and the runner's temporary directory when it lies elsewhere,
-    followed by a read-only `--ro-bind` of the DNS resolver directory when
-    `realpath('/etc/resolv.conf')` resolves under `/run/` or `/var/`
+    followed by a read-only `--ro-bind` of the DNS resolver configuration when
+    `realpath('/etc/resolv.conf')` resolves under `/run/` (its directory) or
+    `/var/` (the file alone, since `/var` directories may hold daemons' sockets)
   - the `expose` layers (`--overlay-src <dir> --tmp-overlay <dir>` for
     directories; `--bind <staged> <file>` for files) and the `keep` binds
     (`--bind <path> <path>`), a parent path before any listed path inside it,
@@ -250,9 +253,10 @@ runs every part on the host.
     `git rev-parse --show-toplevel`, `--absolute-git-dir` and
     `--git-common-dir` (made absolute), every worktree `git worktree list`
     names (the main checkout and each linked worktree; `--porcelain -z`, or the
-    newline form before git 2.36), the `--calls` directory, and
-    `XDG_RUNTIME_DIR` when it lies outside `/run` or an `expose` or `keep`
-    entry lies under `/run`; these come after
+    newline form only when git answers `-z` with its usage exit, 129), the
+    `--calls` directory, and `XDG_RUNTIME_DIR` (written and resolved) when it
+    resolves outside `/run` or an `expose` or `keep` entry lies under `/run`;
+    each hidden path is mounted both as written and resolved; these come after
     the `expose` and `keep` mounts, so they also hide any repository path inside
     a listed directory
   - a read-write `--bind` of the disposable copy and `--chdir` into it, with

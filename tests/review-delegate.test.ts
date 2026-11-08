@@ -4,7 +4,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +14,7 @@ import {
   ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, REPO_POLICY, SPECIALIST_PARTS,
   buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, sandboxArgs, validateConfig, type Access,
 } from '../src/review-delegate/delegate';
-import { main, parseWorktreeList, probeSandbox, type Deps } from '../src/review-delegate/cli';
+import { main, parseWorktreeList, passwdHome, probeSandbox, type Deps } from '../src/review-delegate/cli';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'review-delegate');
@@ -91,7 +91,6 @@ function repository() {
 const FAKE = join(fresh('fake'), 'delegate.ts');
 put(FAKE, `import { appendFileSync, existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
-import { userInfo } from 'node:os';
 import { join } from 'node:path';
 const [, , mode, state] = process.argv;
 const prompt = await Bun.stdin.text();
@@ -145,8 +144,8 @@ else if (mode === 'inspect') {
   const tmpBack = readFileSync('/tmp/probe-tmp.txt', 'utf8');
   const snapshotOnly = existsSync(join(process.cwd(), 'snapshot-only.txt'));
   const varLib = existsSync('/var/lib');
-  // Bun's userInfo().homedir follows $HOME, so read the passwd database by uid.
-  const passwdHome = spawnSync('getent', ['passwd', String(process.getuid())], { encoding: 'utf8' }).stdout.split('\\n')[0]?.split(':')[5] ?? '';
+  // The host reads the passwd home (a lookup inside the sandbox can miss accounts served from /run or /var).
+  const passwdHome = existsSync(join(state, 'passwd-home.txt')) ? readFileSync(join(state, 'passwd-home.txt'), 'utf8').trim() : '';
   const passwdHomeEntries = passwdHome && passwdHome !== process.env.HOME && existsSync(passwdHome) ? readdirSync(passwdHome) : [];
   writeFileSync(join(state, 'repo-probe.json'), JSON.stringify({
     cwd: process.cwd(), head, status, log, remotes, pushStatus, outside, realRepoEntries, callsEntries,
@@ -192,7 +191,7 @@ else if (mode === 'inspect') {
 interface Setup { layout: 'nested' | 'sibling'; root: string; repo: string; base: string; candidate: string; state: string; calls: string; config: string }
 type Provider = { mode: string; timeout_s?: number; model?: string; access?: Access; expose?: string[]; keep?: string[] };
 /** The bun runtime runs every fake delegate; when the sandbox would hide it (bun under a home, /tmp, /var or /run), repo-mode providers expose it. */
-const PASSWD_HOME = spawnSync('getent', ['passwd', String(process.getuid?.() ?? '')], { encoding: 'utf8' }).stdout.split('\n')[0]?.split(':')[5] ?? '';
+const PASSWD_HOME = passwdHome();
 const RUNTIME_DIR = dirname(realpathSync(process.execPath));
 const RUNTIME_EXPOSE = [process.env.HOME ?? '', PASSWD_HOME, tmpdir(), '/tmp', '/var', '/run']
   .some((root) => root && (RUNTIME_DIR === root || RUNTIME_DIR.startsWith(`${root}/`))) ? [RUNTIME_DIR] : [];
@@ -201,6 +200,7 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
   const { repo, base, candidate } = repository();
   const state = fresh('state');
   writeFileSync(join(state, 'repo.txt'), repo);
+  writeFileSync(join(state, 'passwd-home.txt'), PASSWD_HOME);
   const config = join(fresh('config'), 'delegates.json');
   put(config, JSON.stringify({ schema: CONFIG_SCHEMA, parts, providers: Object.fromEntries(Object.entries(providers).map(([label, p]) =>
     [label, {
@@ -1141,7 +1141,7 @@ describe('repository-mode sandbox and check', () => {
     mkdirSync(realHome, { recursive: true });
     symlinkSync(join('var', 'home'), join(base, 'home'));
     const entries: [string, string][] = [['keep', join(base, 'home', 'kb')], ['expose', join(base, 'home')], ['keep', '/tmp'], ['expose', '/var'], ['keep', '/run'], ['keep', tmpdir()]];
-    if (userInfo().homedir && userInfo().homedir !== '/') entries.push(['keep', userInfo().homedir]);
+    if (PASSWD_HOME && PASSWD_HOME !== '/') entries.push(['keep', PASSWD_HOME]);
     for (const [list, entry] of entries) {
       const s = setup('nested', { p: { mode: 'clean', access: 'repo', [list]: [entry] } }, { testing: 'p' });
       const r = await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: realHome });
@@ -1215,6 +1215,44 @@ describe('repository-mode sandbox and check', () => {
     cfg.providers.p.expose = [join(fakeHome, 'bin'), join(fakeHome, 'share')];
     writeFileSync(s.config, JSON.stringify(cfg));
     expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: fakeHome })).json.reason).not.toBe('config-malformed');
+  });
+
+  // Value: protects=every link hop of argv[0] must be visible, and a symlinked ancestor of HOME does not refuse a visible command; fails_when=only the written and fully resolved forms are compared; why_new=cycle-3 findings (security, adversarial); seam=none
+  test('argv[0] coverage follows each link hop and resolves symlinked ancestors before comparing', async () => {
+    const h = fresh('home-hops');
+    put(join(h, 'share', 'tool'), '#!/bin/sh\n');
+    chmodSync(join(h, 'share', 'tool'), 0o755);
+    mkdirSync(join(h, 'bin'), { recursive: true });
+    symlinkSync(join(h, 'share', 'tool'), join(h, 'bin', 'tool'));
+    const outerDir = fresh('outer-bin');
+    symlinkSync(join(h, 'bin', 'tool'), join(outerDir, 'tool'));
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.p.argv = [join(outerDir, 'tool')];
+    cfg.providers.p.expose = [outerDir, join(h, 'share')];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    // The middle hop (h/bin/tool) is hidden and no entry contains it.
+    expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: h })).json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    // HOME written through a symlinked ancestor: the command is visible through its entry, so check does not refuse it.
+    const base = fresh('symhome-argv');
+    mkdirSync(join(base, 'var', 'home', 'kb', '.tool', 'bin'), { recursive: true });
+    symlinkSync(join('var', 'home'), join(base, 'home'));
+    const home = join(base, 'home', 'kb');
+    put(join(home, '.tool', 'bin', 'run'), '#!/bin/sh\n');
+    chmodSync(join(home, '.tool', 'bin', 'run'), 0o755);
+    cfg.providers.p.argv = [join(home, '.tool', 'bin', 'run')];
+    cfg.providers.p.expose = [join(home, '.tool')];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    expect((await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: home })).json.reason).not.toBe('config-malformed');
+  });
+
+  // Value: protects=an entry inside XDG_RUNTIME_DIR is refused, since the runtime dir's tmpfs would cover it at run time; fails_when=inside entries pass check; why_new=cycle-3 findings (security, adversarial); seam=none
+  test('an expose or keep entry inside XDG_RUNTIME_DIR refuses with config-malformed', async () => {
+    const xdg = fresh('xdg-inside');
+    mkdirSync(join(xdg, 'provider'), { recursive: true });
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', keep: [join(xdg, 'provider')] } }, { testing: 'p' });
+    const r = await runInProcess(checkArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: xdg });
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
   });
 
   // Value: protects=XDG_RUNTIME_DIR (session bus, agents) cannot be re-bound through another spelling; fails_when=the runtime dir is not a hidden root; why_new=cycle-2 finding (security, adversarial); seam=none
