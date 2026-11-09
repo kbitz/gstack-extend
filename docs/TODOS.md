@@ -2,6 +2,103 @@
 
 ## Unprocessed
 
+### [review:files=skills/pair-review.md] Test gap: pair-review installed handoff planning
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Validate repository/PR/branch identity and retain every required Check ID while narrowing human checks.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:446`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed preparation and build freshness
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise owned build reuse, changed tracked or untracked inputs, unknown ownership, blocked shared targets and attached current evidence.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:639`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed tracked-file blocker recovery
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Observe a tracked-content mutation, persist the blocker across resume and refuse observations/commits until explicit confirmation and clean paths.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:671`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed verified-fix retest loop
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise reproduction, non-reproduction, verification success/failure/unavailability, escalation and human pass/fail/skip while retaining failed history.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:777`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed interrupted and deferred recovery
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Interrupt fixes and retests, change the build, and distinguish pending work from deliberate deferrals without duplicating history or attempts.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:695`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed shared-state batching
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise shared versus distinct state, short batches and mixed results with one appended history entry per human verdict.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:989`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed parked-bug fix routes
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise both parked-bug entry points through verification and linked-item human retest, failed retest reopening and completed-group recomputation.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:1062`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/pair-review.md] Test gap: pair-review installed legacy report and handoff rollup
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise old and new sessions through reports and H-C counts, preserving legacy passes and unresolved Check IDs without automatic passes.
+- **Hypothesis (untested):** Add this case to Track 76B installed-agent acceptance; re-verify first. Static prompt locks do not execute the agent workflow.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/pair-review.md:1297`.
+- **Evidence:** The coverage audit read the changed source, declared contracts and tests; current protocol checks pass. No installed-agent failure was reproduced for this scenario.
+- **Context:** Filed by `/review-and-prep` on https://github.com/kbitz/gstack-extend/pull/227 at `175d6f3` (2026-11-09).
+- **Revisit when:** Track 76B gathers real-run acceptance for pair-review.
+- **Effort:** ? (user triages in `/roadmap`)
+
+
 ### [review:files=src/upstream-check/probe.ts|tests/upstream-check.test.ts] Test gap: probe typed writes and callbacks
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
