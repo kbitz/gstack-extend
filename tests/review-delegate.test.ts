@@ -5,7 +5,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from './helpers/child-stdio';
 import { createServer, type Socket } from 'node:net';
@@ -232,6 +232,9 @@ const PASSWD_HOME = passwdHome();
 const RUNTIME_DIR = dirname(realpathSync(process.execPath));
 const RUNTIME_EXPOSE = [process.env.HOME ?? '', PASSWD_HOME, tmpdir(), '/tmp', '/var', '/run']
   .some((root) => root && (RUNTIME_DIR === root || RUNTIME_DIR.startsWith(`${root}/`))) ? [RUNTIME_DIR] : [];
+/** The passwd home's entries a sandboxed call may see: only the top directories of an exposed runtime (such as `.bun`) that lies under it. */
+const PASSWD_HOME_EXPOSED = [...new Set(RUNTIME_EXPOSE.filter((dir) => PASSWD_HOME && dir.startsWith(`${PASSWD_HOME}/`))
+  .map((dir) => relative(PASSWD_HOME, dir).split('/')[0]!))].sort();
 /** A configuration whose providers are fake delegates; `parts` maps each part to a provider label. */
 function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>, parts: Record<string, string>): Setup {
   const { repo, base, candidate } = repository();
@@ -920,7 +923,7 @@ describe('repository-mode sandbox and check', () => {
     });
   });
 
-  test('expose equal to HOME or an ancestor of HOME, or relative HOME, refuses with config-malformed', async () => {
+  test('expose equal to HOME or an ancestor of HOME refuses with config-malformed', async () => {
     const homeDir = fresh('fake-home');
     const sHome = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [homeDir] } }, { testing: 'p' });
     const r1 = await runInProcess(checkArgs(sHome, 'testing'), undefined, { HOME: homeDir });
@@ -932,10 +935,38 @@ describe('repository-mode sandbox and check', () => {
     expect(r2.status).toBe(1);
     expect(r2.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
 
-    const sRelHome = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
-    const r3 = await runInProcess(checkArgs(sRelHome, 'testing'), undefined, { HOME: 'relative/home' });
-    expect(r3.status).toBe(1);
-    expect(r3.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+  });
+
+  // Value: protects=an unusable HOME is a host fault (sandbox-unavailable, so the host model runs the part) found after the configuration's own checks; fails_when=it reads config-malformed, or runs before a malformed expose entry is reported; why_new=continuation-3 cycle-1 finding (adversarial); seam=none
+  test('a relative or root HOME refuses with sandbox-unavailable after the configuration checks', async () => {
+    const good = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    for (const HOME of ['relative/home', '/']) {
+      const r = await runInProcess(checkArgs(good, 'testing'), undefined, { HOME });
+      expect(r.status).toBe(1);
+      expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+      expect(r.stderr).toContain('HOME must be an absolute path other than /');
+    }
+    const bad = setup('nested', { p: { mode: 'clean', access: 'repo', expose: ['/'] } }, { testing: 'p' });
+    expect((await runInProcess(checkArgs(bad, 'testing'), undefined, { HOME: 'relative/home' })).json)
+      .toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+  });
+
+  // Value: protects=the bubblewrap probe launches with the real call's flags, so a host that refuses one of them refuses at check instead of failing every call; fails_when=the probe omits --seccomp on descriptor 3 or --new-session; why_new=continuation-3 cycle-1 finding (adversarial); seam=Deps.bwrapPaths
+  test.if(process.platform === 'linux' && process.getuid?.() !== 0 && ['x64', 'arm64'].includes(process.arch))('the sandbox probe passes the seccomp program on descriptor 3 and a new session', () => {
+    const fakeBwrap = join(fresh('fake-bwrap'), 'bwrap');
+    put(fakeBwrap, [
+      '#!/bin/sh',
+      'seccomp=0; session=0; prev=',
+      'for a in "$@"; do',
+      '  if [ "$prev" = --seccomp ] && [ "$a" = 3 ] && [ -s /dev/fd/3 ]; then seccomp=1; fi',
+      '  if [ "$a" = --new-session ]; then session=1; fi',
+      '  prev=$a',
+      'done',
+      '[ "$seccomp" = 1 ] && [ "$session" = 1 ]',
+      '',
+    ].join('\n'));
+    chmodSync(fakeBwrap, 0o755);
+    expect(probeSandbox({ bwrapPaths: [fakeBwrap] })).toBe(true);
   });
 
   test.if(probe)('check emits access: "repo" only on repo-mode parts and keeps diff-mode part rows at 3 keys', () => {
@@ -1016,7 +1047,7 @@ describe('repository-mode sandbox and check', () => {
     expect(report.varLib).toBe(false);
     expect(report.passwdHome).toBeTruthy();
     expect(report.passwdHome).not.toBe(fakeHome);
-    expect(report.passwdHomeEntries).toEqual([]);
+    expect([...report.passwdHomeEntries].sort()).toEqual(PASSWD_HOME_EXPOSED);
     expect(report.prompt.startsWith(REPO_POLICY)).toBe(true);
     // Host state after the run: every exposed path is untouched (no write persists), the host repo has no clone-only.txt and still
     // has origin, and the disposable root is removed.
@@ -1171,7 +1202,7 @@ describe('repository-mode sandbox and check', () => {
     // The launcher starts with a HOME override (cli() sets a fresh one), the case where Bun's userInfo() reports HOME, not the passwd home.
     expect(report.passwdHome).toBeTruthy();
     expect(report.passwdHome).not.toBe(report.home);
-    expect(report.passwdHomeEntries).toEqual([]);
+    expect([...report.passwdHomeEntries].sort()).toEqual(PASSWD_HOME_EXPOSED);
   });
   test.if(!probe)('mixed call twin refuses with sandbox-unavailable when probe is false', () => {
     const s = setup(
@@ -1426,6 +1457,10 @@ describe('repository-mode sandbox and check', () => {
     const mac = await runInProcess(checkArgs(s, 'testing'), { platform: 'darwin', accountHome: () => '' });
     expect(mac.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
     expect(mac.stderr).not.toContain('passwd');
+    // A passwd home of / would hide nothing: refused the same way (continuation-3 cycle-1 finding, Codex).
+    const root = await runInProcess(checkArgs(s, 'testing'), { accountHome: () => '/' });
+    expect(root.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+    expect(root.stderr).toContain('the account home could not be read from the passwd database, or is /');
   });
 
   // Value: protects=a malformed repo-mode config reads config-malformed for any uid or architecture, while uid 0 or an architecture without a seccomp table refuses sandbox-unavailable and fails the probe; fails_when=the uid/architecture refusal runs before config validation, or the probe ignores it; why_new=continuation-2 cycle-1 finding (Codex: tests failed under root); seam=Deps.uid, Deps.arch
@@ -1462,6 +1497,16 @@ describe('repository-mode sandbox and check', () => {
     const r = await runInProcess(runArgs(s, 'testing'));
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
     expect(reportOf(s, r.json, 'testing').baseType).toBe('commit');
+  });
+
+  // Value: protects=a --repo naming a subdirectory of the checkout still builds the copy, because the fetch reads the repository's top level; fails_when=setup fetches from --repo as given; why_new=continuation-3 cycle-1 finding (adversarial); seam=none
+  test.if(probe)('a --repo that names a subdirectory of the checkout is credited', async () => {
+    const s = setup('nested', { b: { mode: 'base-probe', access: 'repo', expose: [FAKE] } }, { testing: 'b' });
+    mkdirSync(join(s.repo, 'sub'));
+    s.repo = join(s.repo, 'sub');
+    const r = await runInProcess(runArgs(s, 'testing'));
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
+    expect(reportOf(s, r.json, 'testing')).toEqual({ baseType: 'commit', logOk: true });
   });
 
   // Value: protects=the empty file covers only the procfs key files present on the host, since bwrap cannot create a file inside procfs; fails_when=both masks are bound unconditionally; why_new=continuation-2 cycle-1 QA finding (bwrap: Can't create file); seam=none

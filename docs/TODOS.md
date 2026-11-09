@@ -316,6 +316,24 @@
 - **Revisit when:** Repo mode is used on a host that runs unauthenticated loopback services, or a provider offers an API-only network mode.
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
 
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: stalled repository-path checks and the runner's exit
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Repo-mode setup now checks the repository and worktree paths asynchronously under the part's deadline, and the CLI exits once its result is written; neither a stalled path check nor a filesystem call still pending at exit is tested.
+- **Hypothesis (untested):** Inject the path check (or the remaining-time function) to stall one worktree path and assert the part fails at its deadline while a sibling part is credited; spawn the CLI with a pending stalled call and assert it exits after printing. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepareRepoCopy`, the `import.meta.main` entry).
+- **Evidence:** Continuation-3 cycle-1 fix of two outside-challenge findings (Codex); a stalled network mount was not reproduced on this host.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 27be902 (2026-11-09).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/delegate.ts|docs/delegated-review.md] Repo mode: cap tmpfs and overlay sizes
+
+- **What:** Every tmpfs and `--tmp-overlay` upper layer in the sandbox takes memory without a size limit, so a provider (or code it runs from the reviewed head) can fill host memory within its timeout. Cap them with bwrap's `--size` and bound the disposable copy.
+- **Why deferred:** `--size` support across the bubblewrap versions repo mode accepts, and a bound that fits a large repository's checkout, need checking first. Auto-chosen at the continuation-3 cycle-1 review.
+- **Revisit when:** A repo-mode call is seen using significant memory, or the next Track touches the sandbox mounts.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 27be902 (2026-11-09).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

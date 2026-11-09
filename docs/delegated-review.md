@@ -241,7 +241,8 @@ runs every part on the host.
   first hides the real repository and stages the listed paths, then creates a
   disposable copy: `git init --template=` of an empty repository, a
   `git fetch --no-tags --no-recurse-submodules` of `--candidate` and `--base`
-  from the real repository (through `upload-pack` with
+  from the real repository's top level (so a `--repo` that names a
+  subdirectory works too; through `upload-pack` with
   `uploadpack.allowAnySHA1InWant`, so frozen snapshot commits that no ref
   reaches are fetched too), and a detached
   checkout with hooks and LFS smudge/process filters disabled
@@ -258,7 +259,8 @@ runs every part on the host.
   filesystem call cannot be cancelled: the part fails at its deadline while the
   call keeps running in the background, and removing the disposable root is
   awaited for at most 30 s, after which the part is recorded `failed` and the
-  root may remain in the temporary directory. A setup failure is saved like any
+  root may remain in the temporary directory. The runner exits once it has
+  written its result, so a call still stalled then cannot hold the process. A setup failure is saved like any
   failed call, so the same frozen scope replays it; the next candidate's call
   dispatches again. Host helpers (`getent`, `chmod`) run by fixed path, and
   setup `git` keeps only absolute `PATH` entries. The runner's other `git`
@@ -300,12 +302,15 @@ runs every part on the host.
 - **Platform rule and `sandbox-unavailable`.** When any named part maps to a
   repo-mode provider, `check` and `run` require `linux`, an executable at the
   first existing path in `['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap']`
-  (never a `PATH` lookup), and a 10 s probe that verifies user namespaces and
-  `--tmp-overlay` (bubblewrap 0.10 or later; an older one fails the probe), and it refuses as uid 0 (the sandbox could read root-only
+  (never a `PATH` lookup), and a 10 s probe that launches `/bin/true` with the
+  real launch's flags (user namespaces, `--new-session`, the seccomp filter,
+  the `/proc` key masks, the `/tmp`, `/var` and `/run` mounts and
+  `--tmp-overlay`, which needs bubblewrap 0.10 or later), and it refuses as uid 0 (the sandbox could read root-only
   files), on an architecture without a keyring seccomp table (anything but
-  x86_64 and aarch64), or when the account's home cannot be read from the
-  passwd database (an overridden `HOME` would then leave the real home
-  unhidden). These checks run after the configuration's own checks, so a
+  x86_64 and aarch64), when `HOME` is not an absolute path other than `/`
+  without control characters, or when the account's home cannot be read from
+  the passwd database or is `/` (an overridden `HOME` would then leave the
+  real home unhidden). These checks run after the configuration's own checks, so a
   malformed configuration is `config-malformed` on any host. If any check
   fails, the whole invocation refuses before any
   call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
@@ -485,12 +490,11 @@ line does not directly follow the one `Subagent prompt:` line, or the prompt or
 criteria line does not occur once) or `sandbox-unavailable` (a named part maps
 to a repo-mode provider and the host is not Linux, has no executable at the
 fixed `bwrap` paths, fails the 10 s bubblewrap probe, runs the runner as uid 0,
-has an architecture without a keyring seccomp table, or cannot read the
-account's home from the passwd database; that last case writes its detail to
-standard error). A `config-malformed`
+has an architecture without a keyring seccomp table, has an unusable `HOME`, or
+cannot read a usable account home from the passwd database; those last two
+cases write their detail to standard error). A `config-malformed`
 refusal also writes one detail line to standard error naming what is at fault:
-the unreadable or oversized file, the key or value (such as a `keep` key), an
-invalid `HOME`, or the provider and the `expose` entry or `argv[0]` that breaks a
+the unreadable or oversized file, the key or value (such as a `keep` key), or the provider and the `expose` entry or `argv[0]` that breaks a
 path rule. Exit 2 is a usage error decided before
 any work (an unknown flag, a part outside the six, a repeated part, a missing or
 extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`

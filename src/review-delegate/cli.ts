@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { copyFile, lstat, rm } from 'node:fs/promises';
+import { access, copyFile, lstat, realpath, rm } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
 import { snapshotDiff, type Request } from '../outside-review/prompt';
@@ -22,7 +22,7 @@ import {
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
 export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'] as const;
-/** The repo-mode host helpers run by fixed path. The runner's other git calls and its launcher still use the caller's PATH. */
+/** Host programs repo mode runs by fixed path, never a PATH lookup: bwrap above, and these two helpers. */
 const GETENT_PATHS = ['/usr/bin/getent', '/bin/getent'] as const;
 const CHMOD_PATHS = ['/usr/bin/chmod', '/bin/chmod'] as const;
 const firstExisting = (paths: readonly string[]) => paths.find((path) => existsSync(path));
@@ -75,6 +75,12 @@ function isWithin(parent: string, child: string): boolean {
 
 /** A path as written and with its symlinks resolved, so a symlinked ancestor cannot disguise a hidden path. */
 const pathForms = (path: string) => [...new Set([path, realpathBelow(path)])];
+
+/** XDG_RUNTIME_DIR resolved when it is usable (absolute, no control characters, not `/`); prepare() and setup must agree on it. */
+const runtimeDirFromEnv = (): string | undefined => {
+  const raw = process.env.XDG_RUNTIME_DIR;
+  return raw && isAbsolute(raw) && !CONTROL_RE.test(raw) && resolve(raw) !== '/' ? resolve(raw) : undefined;
+};
 
 /** The account's home from the passwd database: Bun's os.userInfo() reports $HOME instead, so it cannot see a HOME override. */
 export function passwdHome(): string {
@@ -190,7 +196,8 @@ function resolveSandboxBwrap(deps: Deps = {}): string | null {
   const platform = deps.platform ?? process.platform;
   if (platform !== 'linux') return null;
   // As uid 0 the sandbox could read every root-only file, and without a seccomp table the kernel keyrings stay reachable.
-  if ((deps.uid ?? process.getuid?.()) === 0 || !keyringSeccomp(deps.arch ?? process.arch)) return null;
+  const program = keyringSeccomp(deps.arch ?? process.arch);
+  if ((deps.uid ?? process.getuid?.()) === 0 || !program) return null;
   const paths = deps.bwrapPaths ?? BWRAP_PATHS;
   let bwrap: string | null = null;
   for (const candidate of paths) {
@@ -205,17 +212,28 @@ function resolveSandboxBwrap(deps: Deps = {}): string | null {
     try { probeDir = mkdtempSync(join(tmpdir(), 'extend-bwrap-probe-')); }
     catch { probeDir = mkdtempSync('/tmp/extend-bwrap-probe-'); }
   } catch { return null; }
+  let seccompFd: number | undefined;
   try {
+    // The probe uses the real launch's flags (seccomp on descriptor 3, a new session, the /proc key masks, the /var stack), so a
+    // host that refuses one of them refuses here instead of failing every call.
+    const programFile = join(probeDir, 'keyring.bpf');
+    const emptyFile = join(probeDir, 'empty');
+    writeFileSync(programFile, program, { mode: 0o600 });
+    writeFileSync(emptyFile, '', { mode: 0o600 });
+    seccompFd = openSync(programFile, 'r');
+    const masks = ['/proc/keys', '/proc/key-users'].filter((path) => existsSync(path)).flatMap((path) => ['--ro-bind', emptyFile, path]);
     const res = spawnSync(bwrap, [
-      '--unshare-all', '--share-net', '--die-with-parent',
-      '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
-      '--tmpfs', '/tmp', '--overlay-src', probeDir, '--tmp-overlay', probeDir,
+      '--unshare-all', '--share-net', '--die-with-parent', '--new-session', '--seccomp', '3',
+      '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', ...masks,
+      '--tmpfs', '/tmp', '--tmpfs', '/var', '--tmpfs', '/var/tmp', '--symlink', '../run', '/var/run', '--tmpfs', '/run',
+      '--overlay-src', probeDir, '--tmp-overlay', probeDir,
       '--', '/bin/true',
-    ], { stdio: 'ignore', timeout: 10_000 });
+    ], { stdio: ['ignore', 'ignore', 'ignore', seccompFd], timeout: 10_000 });
     return res.status === 0 && !res.error && !res.signal ? bwrap : null;
   } catch {
     return null;
   } finally {
+    if (seccompFd !== undefined) { try { closeSync(seccompFd); } catch { /* already closed */ } }
     try { rmSync(probeDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
@@ -248,27 +266,27 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   let home: string | undefined;
   let privateDirs: string[] = [];
   let accountHomeOk = true;
+  let homeOk = true;
   if (repoProviders.length > 0) {
     const rawHome = process.env.HOME;
-    const badHome = 'HOME must be an absolute path other than /, without control characters, for a repo-mode provider';
-    if (!rawHome || !isAbsolute(rawHome) || CONTROL_RE.test(rawHome)) return refuse('config-malformed', badHome);
-    home = resolve(rawHome);
-    if (home === '/') return refuse('config-malformed', badHome);
+    // An unusable HOME is a host fault, refused as sandbox-unavailable after the configuration's own checks.
+    homeOk = !!rawHome && isAbsolute(rawHome) && !CONTROL_RE.test(rawHome) && resolve(rawHome) !== '/';
+    home = homeOk ? resolve(rawHome!) : undefined;
     const accountHome = (deps.accountHome ?? passwdHome)();
     // Without the account's home from the passwd database, an overridden HOME would leave the real home unhidden: refused below.
-    accountHomeOk = !!accountHome && isAbsolute(accountHome) && !CONTROL_RE.test(accountHome);
+    // A passwd home of / would leave every account-readable path under / unhidden.
+    accountHomeOk = !!accountHome && isAbsolute(accountHome) && !CONTROL_RE.test(accountHome) && resolve(accountHome) !== '/';
     const forms = pathForms;
-    const homes = [home, ...(accountHomeOk ? [resolve(accountHome)] : [])]
+    const homes = [...(home !== undefined ? [home] : []), ...(accountHomeOk ? [resolve(accountHome)] : [])]
       .filter((path) => path !== '/').flatMap(forms);
     const temp = forms(resolve(tmpdir())).filter((path) => path !== '/');
     // Every private directory beyond HOME gets its own tmpfs; one that does not exist holds nothing and could not take a mount point.
     privateDirs = [...new Set([...homes, ...temp])]
       .filter((path) => path !== home && !['/tmp', '/var', '/var/tmp', '/run'].includes(path) && existsSync(path));
     // The account's runtime dirs (session bus, agents): XDG_RUNTIME_DIR when set, and /run/user/<uid> whether or not it is.
-    const rawXdg = process.env.XDG_RUNTIME_DIR;
+    const xdg = runtimeDirFromEnv();
     const uid = process.getuid?.();
-    const runtimeDirs = [...(rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/' ? [resolve(rawXdg)] : []),
-      ...(uid !== undefined ? [`/run/user/${uid}`] : [])].flatMap(forms);
+    const runtimeDirs = [...(xdg !== undefined ? [xdg] : []), ...(uid !== undefined ? [`/run/user/${uid}`] : [])].flatMap(forms);
     // Every directory the sandbox hides or replaces: the homes, the system roots, the runner's temporary directory and the runtime dirs.
     const hiddenRoots = [...new Set([...homes, ...temp, ...runtimeDirs,
       ...['/tmp', '/var', '/var/tmp', '/run', '/proc', '/dev', '/sys'].flatMap((path) => forms(path))])];
@@ -359,7 +377,8 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   if (repoProviders.length > 0) {
     // The platform first, so a host without bwrap support is not told its passwd database is at fault.
     if ((deps.platform ?? process.platform) !== 'linux') return refuse('sandbox-unavailable');
-    if (!accountHomeOk) return refuse('sandbox-unavailable', 'the account home could not be read from the passwd database, so the sandbox cannot hide it');
+    if (!homeOk) return refuse('sandbox-unavailable', 'HOME must be an absolute path other than /, without control characters, for a repo-mode provider');
+    if (!accountHomeOk) return refuse('sandbox-unavailable', 'the account home could not be read from the passwd database, or is /, so the sandbox cannot hide it');
     const resolvedBwrap = resolveSandboxBwrap(deps);
     if (!resolvedBwrap) return refuse('sandbox-unavailable');
     bwrap = resolvedBwrap;
@@ -433,7 +452,7 @@ interface RepoSandboxSpec {
 
 /** A repo-mode setup step that failed before the provider started; `timedOut` when the part's deadline ran out first. */
 export class SetupFailure extends Error {
-  constructor(readonly step: string, readonly timedOut = false, readonly code: number | null = null) { super(step); }
+  constructor(readonly step: string, readonly timedOut = false) { super(step); }
 }
 
 /** Settle with the operation, or fail the setup step once the part's time runs out, so a stalled filesystem call cannot hold the part. */
@@ -478,7 +497,7 @@ function runSetupGit(args: string[], step: string, emptyHome: string, remainingM
     proc.on('close', (code, signal) => {
       clearTimeout(timer);
       if (expired || remainingMs() <= 0) rejectGit(new SetupFailure(step, true));
-      else if (code !== 0 || signal || tooLong) rejectGit(new SetupFailure(step, false, code));
+      else if (code !== 0 || signal || tooLong) rejectGit(new SetupFailure(step));
       else resolveGit(output);
     });
   });
@@ -511,21 +530,31 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
     const real = realpathBelow(path);
     if (real !== path) hidden.push(real);
   };
-  for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
+  // Repository and worktree paths may sit on a network filesystem: check them asynchronously under the part's deadline, so a
+  // stalled mount cannot block the event loop for every part.
+  const hideRepoPath = async (path: string) => {
+    if (!await withinDeadline(() => access(path).then(() => true, () => false), remainingMs, 'worktree-list')) return;
+    hidden.push(path);
+    const real = await withinDeadline(() => realpath(path).catch(() => path), remainingMs, 'worktree-list');
+    if (real !== path) hidden.push(real);
+  };
+  for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) {
+    await hideRepoPath(path);
+  }
   // A listed path at or inside a hidden repository path (a linked worktree or the common git dir) would show the live checkout.
   // One above it is fine: the --tmpfs mounts over those paths come after every expose layer.
   const forms = pathForms;
   if (spec.expose.some((entry) => forms(entry).some((form) => hidden.some((path) => isWithin(path, form))))) {
     throw new SetupFailure('expose');
   }
-  const rawXdg = process.env.XDG_RUNTIME_DIR;
+  const xdg = runtimeDirFromEnv();
   const entriesUnderRun = spec.expose.some((path) => pathForms(path).some((form) => isWithin('/run', form)));
   const uid = process.getuid?.();
   if (entriesUnderRun && uid !== undefined) hide(`/run/user/${uid}`);
-  if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/') {
+  if (xdg !== undefined) {
     // The /run tmpfs already hides a runtime dir that resolves under /run, unless an entry (in any spelling) brings part of /run
     // back; otherwise hide it in both spellings (hide() adds the resolved one).
-    if (!isWithin('/run', realpathBelow(resolve(rawXdg))) || entriesUnderRun) hide(resolve(rawXdg));
+    if (!isWithin('/run', realpathBelow(xdg)) || entriesUnderRun) hide(xdg);
   }
   let resolvDir: string | null = null;
   try {
@@ -559,7 +588,7 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   await git(['init', '--quiet', '--template=', copy], 'init');
   // --update-shallow keeps a shallow source's boundary, so history commands work in the copy.
   await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--update-shallow',
-    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.repo, spec.candidate, ...(spec.base !== spec.candidate ? [spec.base] : [])], 'fetch');
+    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', resolve(top), spec.candidate, ...(spec.base !== spec.candidate ? [spec.base] : [])], 'fetch');
   await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false',
     'checkout', '--quiet', '--detach', spec.candidate], 'checkout');
   const emptyFile = join(cwd, 'empty');
@@ -823,9 +852,13 @@ export async function main(argv: string[], io: CliIo, deps: Deps = {}): Promise<
 }
 
 if (import.meta.main) {
-  process.exitCode = await main(process.argv.slice(2), { stdout: (t) => process.stdout.write(t), stderr: (t) => process.stderr.write(t) })
+  const code = await main(process.argv.slice(2), { stdout: (t) => process.stdout.write(t), stderr: (t) => process.stderr.write(t) })
     .catch(() => {
       console.error('review-delegate failed internally: rerun check, and never retry an unresolved claim.');
       return 1;
     });
+  // A filesystem call still stalled past its limit (cleanup or staging) must not keep the process alive after the result is written.
+  await new Promise<void>((done) => process.stdout.write('', () => done()));
+  await new Promise<void>((done) => process.stderr.write('', () => done()));
+  process.exit(code);
 }
