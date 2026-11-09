@@ -1262,7 +1262,7 @@ describe('(C) doc and producers agree', () => {
   test('receipt-present fields are still published by the producer', () => {
     const rp = squash(SKILLS['review-and-prep']);
     expect(has(rp, 'Keep Git tree IDs and gstack `wtree` fingerprints distinctly labeled')).toBe(true);
-    expect(has(rp, 'Include the complete completion matrix and its source fingerprint in this receipt')).toBe(true);
+    expect(has(rp, 'Include the complete completion matrix and its source fingerprint in the full receipt')).toBe(true);
     expect(has(DOC, '`wtree`')).toBe(true);
     expect(has(rp, 'Include the `Review default:` line, every `Auto-chosen (veto by replying on this PR):` line')).toBe(true);
     expect(has(DOC, '`Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present')).toBe(true);
@@ -1489,16 +1489,50 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(has(prep, 'Full-review evidence: unavailable')).toBe(true);
   });
 
-  // Value: protects=the skill and the handoff contract doc publish the same 45,000-character PR-body budget and state that neither the budget nor the late-record provenance adds a consumer binding; fails_when=the budget numbers diverge or either paragraph stops stating that no consumer binding is added; why_new=PR-body budget and late-record provenance contract documentation; seam=none; no_claim=installed-agent execution
-  test('the skill and the doc name the same PR-body budget and state that no consumer binding is added', () => {
+  // Value: protects=the skill and the handoff contract doc publish the same 3,000-character PR-body budget, the kept marker set, hash-chained provenance and legacy-receipt rules, and B-COMPACT-RECEIPT parity with B-TRUSTED; fails_when=the budget numbers diverge, a kept marker or label is dropped from the doc table, or a compact receipt comment changes the H-B outcome; why_new=readable PRs 3,000-character budget and kept marker set contract; seam=none; no_claim=installed-agent execution
+  test('the skill and the doc name the same PR-body budget, pin the kept marker set and prove B-COMPACT-RECEIPT parity', () => {
     const doc = squash(DOC);
-    const skillBudget = /the (\d{2},\d{3})-character budget/.exec(prep)?.[1];
-    const docBudget = /at or under (\d{2},\d{3}) characters/.exec(doc)?.[1];
-    expect(skillBudget).toBe('45,000');
+    const ship = squash(SKILLS['ship-and-land']);
+    const skillBudget = /\b(\d,\d{3})-character budget/.exec(prep)?.[1];
+    const docBudget = /at or under (\d,\d{3}) characters/.exec(doc)?.[1];
+    expect(skillBudget).toBe('3,000');
     expect(docBudget).toBe(skillBudget);
     expect(has(doc, 'a record written there carries `provenance: late`, named in the stop\'s internal record and the dedicated evidence comment. The stopped receipt\'s portable row stays `Full-review evidence: unavailable`, the four reasons are unchanged and the H-E prompt is unchanged, so this adds no binding for a consumer.')).toBe(true);
-    expect(has(doc, 'The producer keeps every PR body it writes at or under 45,000 characters (counted as the JavaScript string length of `--body-file`), moving bulky evidence')).toBe(true);
     expect(has(doc, 'Because consumers read the marked receipt comment first and already accept a linked completion matrix, this adds no binding for a consumer.')).toBe(true);
+    const keptSection = squash(DOC.split('### Receipt layout and kept marker set')[1]?.split('\n## ')[0] ?? '');
+    const producerMarkers = new Set(
+      Object.values(SKILLS).flatMap((s) => [...s.matchAll(/<!-- review-and-prep:([a-z-]+):/g)].map((m) => m[1])),
+    );
+    expect([...producerMarkers].sort()).toEqual([
+      'continuation',
+      'greptile',
+      'greptile-reservation',
+      'paused',
+      'receipt',
+      'stopped',
+    ]);
+    for (const m of producerMarkers) {
+      expect(keptSection, `missing marker ${m}`).toContain(`<!-- review-and-prep:${m}:`);
+    }
+    const receiptTemplate = SKILLS['review-and-prep']
+      .split('<!-- review-and-prep:receipt:<full-sha> -->\n')[1]
+      .split('\n```')[0];
+    for (const line of receiptTemplate.split('\n')) {
+      const label = /^(- [a-z]+|[A-Za-z][A-Za-z -]*):/.exec(line)?.[0];
+      expect(label, line).toBeDefined();
+      expect(keptSection, `missing compact label ${label}`).toContain(label!);
+    }
+    expect(keptSection).toContain('Skipped pregate lanes:');
+    expect(keptSection).toContain('A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.');
+    expect(keptSection).toContain('so no section version bumps (per `## Versioning and compatibility`)');
+    expect(ship).toContain('Full receipt: <~-relative path>; sha256: <64 hex>');
+    expect(ship).toContain('A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.');
+    const trusted = run('B-TRUSTED');
+    const compact = run('B-COMPACT-RECEIPT');
+    expect(compact.outcome).toBe(trusted.outcome);
+    expect(compact.mismatches).toEqual(trusted.mismatches);
+    expect(compact.parsed).toEqual(trusted.parsed);
+    expect(compact.releaseOnlyEligible).toBe(trusted.releaseOnlyEligible);
   });
 });
 

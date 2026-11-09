@@ -3548,7 +3548,10 @@ describe('review-and-prep PR body size budget', () => {
   const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
   const step3Raw = skillSection(prep, '## 3. Push and create or update the draft');
   const step3 = step3Raw.replace(/\s+/g, ' ');
-  const step6 = skillSection(prep, '## 6. Final readiness gate and handoff').replace(/\s+/g, ' ');
+  const step6Raw = skillSection(prep, '## 6. Final readiness gate and handoff');
+  const step6 = step6Raw.replace(/\s+/g, ' ');
+  const stopSection = prep.split('### When /review stops at its cycle cap')[1].split('\n## ')[0].replace(/\s+/g, ' ');
+  const pauseSection = step3Raw.split('### Manual testing checkpoint and resume')[1].replace(/\s+/g, ' ');
   const fences = extractFences(step3Raw).filter((f) => f.body.includes('PR_BODY_SIZE:'));
   const block = fences[0]?.body ?? '';
   const tmp = makeBaseTmp('skill-protocols-pr-body-');
@@ -3557,59 +3560,103 @@ describe('review-and-prep PR body size budget', () => {
   mkdirSync(home, { recursive: true });
   const env = scopedEnv(home);
 
-  // Value: protects=Step 3 and Step 6 agree on the 45,000-character budget, replace the 65,536-only matrix trigger, and keep the required lines in the body; fails_when=the budget number drifts, the old 65,536-only trigger returns, or a never-move item is dropped; why_new=PR-body budget contract; seam=none; no_claim=installed-agent execution
-  test('prose and fence name the same 45,000 budget, remove the 65,536-only trigger and lock the move and never-move rules', () => {
+  // Value: protects=Step 3 and Step 6 agree on the 3,000-character budget, define the human-readable body section, and lock the never-shorten rules; fails_when=the budget number drifts, the old 45,000/65,536 move rules return, or a never-shorten item is dropped; why_new=PR-body 3,000-character budget contract; seam=none; no_claim=installed-agent execution
+  test('prose and fence name the same 3,000 budget, remove the 45,000 move order and lock the body section and never-shorten rules', () => {
     expect(fences.length).toBe(1);
     const fenceBudget = /budget (\d+)/.exec(block)?.[1];
-    expect(fenceBudget).toBe('45000');
-    expect(step3).toContain('45,000-character budget');
-    expect(step6).toContain('45,000-character budget');
-    expect(step6).toContain('over the 45000 budget after moving evidence');
-    expect(prep).not.toContain("If the rendered body would exceed GitHub's 65,536-character limit, put the full matrix in one dedicated PR comment");
+    expect(fenceBudget).toBe('3000');
+    expect(step3).toContain('3,000-character budget');
+    expect(step6).toContain('3,000-character budget');
+    expect(step6).toContain('over the 3000 budget');
+    expect(prep).not.toContain('45,000');
+    expect(prep).not.toContain('45000');
+    expect(prep).not.toContain('(1) the completion matrix, (2) per-review and per-specialist outcome detail and finding-disposition tables, and (3) sanitized output excerpts, into one dedicated PR comment');
+    expect( prep).not.toContain("If the rendered body would exceed GitHub's 65,536-character limit, put the full matrix in one dedicated PR comment");
     expect(step3).toContain('Before every title/body write (creation, later refreshes, and the Step 6 receipt, including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt)');
-    expect(step3).toContain('For draft creation, prepare a concise body within the budget without moving evidence; after the PR exists, post any needed evidence comment before refreshing the body with its permalink.');
+    expect(step3).toContain('When `PR_BODY_SIZE` reports `over`, shorten producer prose in the body by leaving detail to `full-receipt-<n>.md` under Step 6\'s budget rule, never shortening protected content.');
     expect(step6).toContain('The budget exception never excuses a failed GitHub body or comment write: preparation stays incomplete if the API rejects it');
-    expect(step6).toContain('(1) the completion matrix, (2) per-review and per-specialist outcome detail and finding-disposition tables, and (3) sanitized output excerpts, into one dedicated PR comment, leaving in the receipt each moved item\'s location and the SHA-256 the receipt already names.');
+    for (const item of [
+      'what changed and why (two to four sentences)',
+      'the `Review default:` line and every `Auto-chosen (veto by replying on this PR):` line verbatim at line start, plus other decisions open to veto',
+      'one `Tests:` line (suite result and selection, pregate verdict, Greptile state)',
+      'risks and open checks (pending user checks on a pause)',
+      '`Receipt:` the receipt, paused or stopped comment permalink (none yet on a BLOCKED exit) and `Evidence:` the evidence directory and `full-receipt-<n>.md` path with its SHA-256',
+    ]) {
+      expect(step6).toContain(item);
+    }
     for (const keep of [
       'the `## Review and prep` heading and status line',
       '`PAUSED — manual testing required`',
       '`STOPPED — review cycle cap`',
       '`BLOCKED — provider failures`',
-      'markers',
-      'the five stopped labels',
-      '`reviewRestrictionResolved: true`',
-      'every `Auto-chosen` line',
-      'every labeled line the stage-handoff contract lists as validated or receipt-present (including `Ship gates` with the documentation section\'s exact text, which `/ship-and-land` may rebuild from receipt text)',
+      'the `Review default:` line and every `Auto-chosen` line',
       'user decisions and quotes',
       'human-authored text',
+      'the `Receipt:` and `Evidence:` links',
     ]) {
       expect(step6).toContain(keep);
     }
   });
 
+  // Value: protects=the Step 6 compact receipt comment template carries only the ordered machine-read labels (including Delegated part and Unresolved) with no prose, and paused/stopped comments keep their compact shape and markers; fails_when=a label is dropped, reordered or prose is added to the compact receipt template; why_new=AC2 and AC8 compact receipt comment shape; seam=none
+  test('compact receipt template carries only the ordered machine-read labels and paused/stopped comments keep their compact shape', () => {
+    const receiptFence = Array.from(step6Raw.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '').find((b) =>
+      b.startsWith('<!-- review-and-prep:receipt:<full-sha> -->'),
+    );
+    expect(receiptFence).toBeDefined();
+    const lines = receiptFence!.trim().split('\n');
+    expect(lines[0]).toBe('<!-- review-and-prep:receipt:<full-sha> -->');
+    const labels = lines.slice(1).map((line) => {
+      const m = /^(- [a-z]+|[A-Za-z][A-Za-z -]*): /.exec(line);
+      expect(m, `unlabeled line in compact receipt template: ${line}`).not.toBeNull();
+      return m![1];
+    });
+    expect(labels).toEqual([
+      'Status',
+      'Prepared HEAD',
+      'Review policy',
+      'Plan',
+      'Greptile',
+      'Checks not run',
+      'Ship gates',
+      '- pregate',
+      '- coverage',
+      '- documentation',
+      'Delegated part',
+      'Unresolved',
+      'reviewRestrictionResolved',
+      'Full receipt',
+    ]);
+    expect(pauseSection).toContain('<!-- review-and-prep:paused:<full-sha> -->');
+    expect(pauseSection).toContain('Full receipt: <~-relative path>; sha256: <64 hex>');
+    expect(stopSection).toContain('<!-- review-and-prep:stopped:<full-sha> -->');
+    expect(stopSection).toContain('its one `Skipped pregate lanes:` or `Ship gates:` line');
+    expect(stopSection).toContain('Full receipt: <~-relative path>; sha256: <64 hex>');
+  });
+
   for (const sh of agentShells()) {
-    // Value: protects=exact JS string-length measurement at 45,000/45,001, astral character surrogate-pair counting and missing-file rejection; fails_when=byte length or code-point count replaces JS length, the boundary is off by one, or a missing file exits 0 or prints within; why_new=executable PR_BODY_SIZE fence; seam=none
-    test(`${sh.shell}: body fence enforces 45000 JS characters, counts astral chars as 2, and rejects a missing file`, () => {
+    // Value: protects=exact JS string-length measurement at 3,000/3,001, astral character surrogate-pair counting and missing-file rejection; fails_when=byte length or code-point count replaces JS length, the boundary is off by one, or a missing file exits 0 or prints within; why_new=executable PR_BODY_SIZE fence at 3,000 budget; seam=none
+    test(`${sh.shell}: body fence enforces 3000 JS characters, counts astral chars as 2, and rejects a missing file`, () => {
       const runBody = (file: string) => runShell(sh.shell, sh.args, block.replaceAll('<body-file>', file), env, tmp);
 
-      const f45000 = join(tmp, `body-45000-${sh.shell}.md`);
-      writeFileSync(f45000, 'a'.repeat(45_000));
-      const rWithin = runBody(f45000);
+      const f3000 = join(tmp, `body-3000-${sh.shell}.md`);
+      writeFileSync(f3000, 'a'.repeat(3_000));
+      const rWithin = runBody(f3000);
       expect(rWithin.status, rWithin.stderr).toBe(0);
-      expect(rWithin.stdout.trim()).toBe('PR_BODY_SIZE: 45000 characters; budget 45000; within');
+      expect(rWithin.stdout.trim()).toBe('PR_BODY_SIZE: 3000 characters; budget 3000; within');
 
-      const f45001 = join(tmp, `body-45001-${sh.shell}.md`);
-      writeFileSync(f45001, 'a'.repeat(45_001));
-      const rOver = runBody(f45001);
+      const f3001 = join(tmp, `body-3001-${sh.shell}.md`);
+      writeFileSync(f3001, 'a'.repeat(3_001));
+      const rOver = runBody(f3001);
       expect(rOver.status).toBe(1);
-      expect(rOver.stdout.trim()).toBe('PR_BODY_SIZE: 45001 characters; budget 45000; over');
+      expect(rOver.stdout.trim()).toBe('PR_BODY_SIZE: 3001 characters; budget 3000; over');
 
-      // 44,999 ASCII + 1 astral character ('😀' = 2 UTF-16 code units) => 45,001 JS length (over).
+      // 2,999 ASCII + 1 astral character ('😀' = 2 UTF-16 code units) => 3,001 JS length (over).
       const fAstral = join(tmp, `body-astral-${sh.shell}.md`);
-      writeFileSync(fAstral, 'a'.repeat(44_999) + '😀');
+      writeFileSync(fAstral, 'a'.repeat(2_999) + '😀');
       const rAstral = runBody(fAstral);
       expect(rAstral.status).toBe(1);
-      expect(rAstral.stdout.trim()).toBe('PR_BODY_SIZE: 45001 characters; budget 45000; over');
+      expect(rAstral.stdout.trim()).toBe('PR_BODY_SIZE: 3001 characters; budget 3000; over');
 
       const rMissing = runBody(join(tmp, 'no-such-body-file.md'));
       expect(rMissing.status).not.toBe(0);
