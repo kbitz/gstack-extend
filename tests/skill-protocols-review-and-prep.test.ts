@@ -1697,6 +1697,65 @@ describe('review-and-prep final-gate repair', () => {
         expect(cCorrupt.stdout.trim()).toBe('FULL_REVIEW_RECORD: unreadable cycle-1-baseline: json');
       });
 
+      // Value: protects=miss persistence failures cannot masquerade as a saved lock; fails_when=an absent evidence directory prints missed or write emits an unstructured exception; why_new=reproduced miss-lock I/O failure; seam=none
+      test(`${sh.shell}: record I/O failures are explicit and never report a persisted miss`, () => {
+        const { evDir, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const absent = join(evDir, 'absent');
+        const miss = runFence('check', 'cycle-1-baseline', 'next-cycle', absent);
+        expect(miss.status).toBe(1);
+        expect(miss.stdout.trim()).toBe('FULL_REVIEW_RECORD: unreadable cycle-1-baseline: miss record (ENOENT)');
+        expect(miss.stderr).toBe('');
+        expect(existsSync(join(absent, 'cycle-1-baseline.missed.json'))).toBe(false);
+        const write = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), absent);
+        expect(write.status).toBe(3);
+        expect(write.stdout.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: record write (ENOENT)');
+        expect(write.stderr).toBe('');
+      });
+
+      // Value: protects=late evidence must be separate from the assembled input and generated records; fails_when=a record certifies itself or a generated record qualifies as review evidence; why_new=late-source self-corroboration regression; seam=none
+      test(`${sh.shell}: late records cannot use their own input or generated record files as sources`, () => {
+        const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);
+        expect(runFence('check', 'cycle-1-baseline', 'next-cycle').status).toBe(1);
+        const input = join(evDir, 'assembled.json');
+        writeFileSync(input, JSON.stringify(baseRecord({ provenance: 'late', sources: ['assembled.json'] })));
+        const self = runFence('write', 'cycle-1-baseline', input);
+        expect(self.status).toBe(3);
+        expect(self.stdout).toContain('is not review evidence');
+        writeFileSync(join(evDir, 'cycle-1-fix-review.json'), JSON.stringify({ cycle_2_snapshot: s1 }));
+        const generated = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['cycle-1-fix-review.json'] })));
+        expect(generated.status).toBe(3);
+        expect(generated.stdout).toContain('is not review evidence');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+        writeFileSync(join(evDir, '..notes.txt'), `core reviewed ${s1}\n`);
+        const retained = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['..notes.txt'] })));
+        expect(retained.status, retained.stderr).toBe(0);
+      });
+
+      // Value: protects=completion flags retain the documented probe outcome rules; fails_when=a passed baseline or fix review contains an incomplete probe or pending-fix-review contains no reproduced probe; why_new=completion consistency regression; seam=none
+      test(`${sh.shell}: completion flags reject inconsistent probe outcomes`, () => {
+        const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);
+        for (const outcome of ['blocked', 'inconclusive', 'not-run', 'reproduced']) {
+          const probes = [{ id: '0123456789ab', key: 'cli:bun test', outcome, fingerprint: 'app.ts:1:contract' }];
+          const baseline = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ probes })));
+          expect(baseline.status).toBe(3);
+          expect(baseline.stdout).toContain('invalid cycle-1-baseline: completed');
+          if (outcome !== 'reproduced') {
+            const fix = runFence('write', 'cycle-1-fix-review', writeInput({
+              schema: 'review-and-prep-cycle-1-fix-review/v1', provenance: 'write-point',
+              cycle_1_snapshot: s1, cycle_2_snapshot: s1, scope: `delta from ${s1}`,
+              stages: [{ name: 'core', result: 'completed' }], probes, fix_reviewed: 'true',
+            }));
+            expect(fix.status).toBe(3);
+            expect(fix.stdout).toContain('invalid cycle-1-fix-review: fix_reviewed');
+          }
+        }
+        const pending = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: 'pending-fix-review', cause: 'no reproduced probe' })));
+        expect(pending.status).toBe(3);
+        expect(pending.stdout).toContain('invalid cycle-1-baseline: completed');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+        expect(existsSync(join(evDir, 'cycle-1-fix-review.json'))).toBe(false);
+      });
+
       // Value: protects=cycle-1-fix-review checkpoints and late-write verification bound to cycle_2_snapshot; fails_when=fix-review skips cycle_2_snapshot verification or reports the wrong check summary; why_new=paired fix-review record path; seam=none
       test(`${sh.shell}: cycle-1-fix-review supports before-fix, next-cycle and late write naming cycle_2_snapshot`, () => {
         const { cwd, evDir, s1, runFence, writeInput, takeSnap } = setupRepo(sh);
@@ -3489,6 +3548,8 @@ describe('review-and-prep PR body size budget', () => {
     expect(step6).toContain('over the 45000 budget after moving evidence');
     expect(prep).not.toContain("If the rendered body would exceed GitHub's 65,536-character limit, put the full matrix in one dedicated PR comment");
     expect(step3).toContain('Before every title/body write (creation, later refreshes, and the Step 6 receipt, including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt)');
+    expect(step3).toContain('For draft creation, prepare a concise body within the budget without moving evidence; after the PR exists, post any needed evidence comment before refreshing the body with its permalink.');
+    expect(step6).toContain('The budget exception never excuses a failed GitHub body or comment write: preparation stays incomplete if the API rejects it');
     expect(step6).toContain('(1) the completion matrix, (2) per-review and per-specialist outcome detail and finding-disposition tables, and (3) sanitized output excerpts, into one dedicated PR comment, leaving in the receipt each moved item\'s location and the SHA-256 the receipt already names.');
     for (const keep of [
       'the `## Review and prep` heading and status line',

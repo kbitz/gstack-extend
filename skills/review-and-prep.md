@@ -2262,6 +2262,8 @@ paragraph's inventory already covers this one). A missing anchor writes
   cycle's readers or probes start. `missed` there records the miss at once:
   print `Full-review record missed: <kind> — detected at cycle <n>'s start`,
   and from then on only the late write below can make the record available.
+  If the fence cannot persist the miss record, stop before any reader, probe
+  or record write; repair that I/O failure before resuming the checkpoint.
   (3) `stop`: the cap stop reads both records only through this action. The
   fix-review checkpoints run only when the baseline says `pending-fix-review`
   and cycle 2 runs as the in-cap delta from cycle 1's snapshot, matching
@@ -2278,6 +2280,8 @@ paragraph's inventory already covers this one). A missing anchor writes
   reports `record-missing`. A late record has the same fields and completion
   rules, so it proves the same coverage; `provenance` records only when it was
   assembled. There is no late write at the stop or at any later boundary.
+  The assembled input and either kind's generated record or miss file are not
+  review evidence and cannot be a source.
 - **Files and write-once.** Write the records as `cycle-1-baseline.json` and
   `cycle-1-fix-review.json`, each with a `schema` field
   (`review-and-prep-cycle-1-baseline/v1`,
@@ -2354,6 +2358,8 @@ const validate = (r, mode) => {
   if (!Array.isArray(r.probes) || !r.probes.every(p => p && typeof p.id === "string" && /^[0-9a-f]{12}$/.test(p.id) && typeof p.key === "string" && p.key && typeof p.outcome === "string" && /^(passed|reproduced|blocked|inconclusive|not-run)\b/.test(p.outcome) && (!p.outcome.startsWith("reproduced") || (typeof p.fingerprint === "string" && p.fingerprint)) && (isBase || p.evidence === undefined || (typeof p.evidence === "string" && p.evidence)))) return "probes";
   if (isBase) {
     if (r.completed !== "true" && r.completed !== "pending-fix-review" && r.completed !== "false") return "completed";
+    if (r.completed === "true" && r.probes.some(p => !p.outcome.startsWith("passed"))) return "completed";
+    if (r.completed === "pending-fix-review" && (!r.probes.some(p => p.outcome.startsWith("reproduced")) || r.probes.some(p => !/^(passed|reproduced)\b/.test(p.outcome)))) return "completed";
     if (!hex40(r.b)) return "b";
     if (!hex40(r.t)) return "t";
     if (!(hex40(r.snapshot) || (r.snapshot === null && r.completed === "false"))) return "snapshot";
@@ -2370,6 +2376,7 @@ const validate = (r, mode) => {
     if (!hex40(r.cycle_2_snapshot)) return "cycle_2_snapshot";
     if (typeof r.scope !== "string" || !r.scope.startsWith("delta from ")) return "scope";
     if (r.fix_reviewed !== "true" && r.fix_reviewed !== "false") return "fix_reviewed";
+    if (r.fix_reviewed === "true" && r.probes.some(p => !/^(passed|reproduced)\b/.test(p.outcome))) return "fix_reviewed";
     if (r.fix_reviewed !== "true" && (typeof r.cause !== "string" || !r.cause)) return "cause";
   }
   if (mode === "check" && r.provenance === "late") {
@@ -2394,11 +2401,12 @@ if (action === "write") {
     for (const src of r.sources) {
       const abs = path.resolve(evRoot, src);
       const rel = path.relative(evRoot, abs);
-      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
+      if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) out("refused " + kind + ": source " + src + " missing", 3);
       const real = fs.realpathSync(abs);
       const realRel = path.relative(evRoot, real);
-      if (!realRel || realRel.startsWith("..") || path.isAbsolute(realRel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
+      if (!realRel || realRel === ".." || realRel.startsWith(".." + path.sep) || path.isAbsolute(realRel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
+      if (real === fs.realpathSync(arg) || /^cycle-1-(baseline|fix-review)(\.missed)?\.json$/.test(path.basename(real))) out("refused " + kind + ": source " + src + " is not review evidence", 3);
       const buf = fs.readFileSync(real);
       if (!buf.toString("utf8").includes(snap)) out("refused " + kind + ": source " + src + " does not name the snapshot", 3);
       sources.push({path: src, sha256: sha256(buf)});
@@ -2409,7 +2417,10 @@ if (action === "write") {
     out("invalid " + kind + ": provenance", 3);
   }
   const body = Buffer.from(JSON.stringify(r, null, 2) + "\n", "utf8");
-  try { fs.writeFileSync(recPath, body, {flag: "wx"}); } catch (e) { if (e && e.code === "EEXIST") out("exists " + kind, 2); throw e; }
+  try { fs.writeFileSync(recPath, body, {flag: "wx"}); } catch (e) {
+    if (e && e.code === "EEXIST") out("exists " + kind, 2);
+    out("invalid " + kind + ": record write (" + ((e && e.code) || "unknown") + ")", 3);
+  }
   out("written " + kind + "; provenance=" + r.provenance + "; sha256=" + sha256(body), 0);
 } else if (action === "check") {
   if (arg !== "before-fix" && arg !== "next-cycle" && arg !== "stop") out("invalid " + kind + ": boundary", 3);
@@ -2425,7 +2436,9 @@ if (action === "write") {
   if (arg === "next-cycle") {
     if (!miss) {
       const m = JSON.stringify({schema: "review-and-prep-record-miss/v1", kind, boundary: "next-cycle", detected_at: new Date().toISOString()}, null, 2) + "\n";
-      try { fs.writeFileSync(missPath, m, {flag: "wx"}); } catch {}
+      try { fs.writeFileSync(missPath, m, {flag: "wx"}); } catch (e) {
+        if (!e || e.code !== "EEXIST") out("unreadable " + kind + ": miss record (" + ((e && e.code) || "unknown") + ")", 1);
+      }
     }
     out("missed " + kind + " at " + ((miss && miss.data.boundary) || "next-cycle"), 1);
   }
@@ -3675,6 +3688,9 @@ process.exit(within ? 0 : 1);
 
 When `PR_BODY_SIZE` reports `over`, move bulky evidence out of the body into a
 linked dedicated PR comment under Step 6's budget order before writing the body.
+For draft creation, prepare a concise body within the budget without moving
+evidence; after the PR exists, post any needed evidence comment before refreshing
+the body with its permalink.
 Use a temporary body file and the explicit base/head, for example:
 
 ```bash
@@ -4433,7 +4449,9 @@ one dedicated PR comment, leaving in the receipt each moved item's location and
 the SHA-256 the receipt already names. Post that comment before the body edit,
 scan it through Step 6's credential and PII scan, corroborate its author and
 every editor as for the full-review evidence comment, and link it by permalink.
-Post a new comment when its content changed; never edit an earlier one. Split
+Save any moved detail or excerpt without an existing evidence hash to an evidence
+file and record its SHA-256 before the move. Post a new comment when its content
+changed; never edit an earlier one. Split
 it into numbered parts if one comment would exceed GitHub's limit. Never move:
 the `## Review and prep` heading and status line (including
 `PAUSED — manual testing required`, which `/pair-review` and `B-BODY-PAUSED`
@@ -4452,7 +4470,10 @@ repositories keep confidential requirement text out of the body: cite the
 scope source by path and SHA-256 and keep the full text in access-controlled
 storage. Local-only plan paths are supplementary: the portable
 record must preserve enough scope and evidence to check completion when the
-original workspace is gone. Keep per-specialist outcomes alongside the matrix.
+original workspace is gone. Keep per-specialist outcomes alongside the matrix
+unless the budget's ordered move leaves them in the body. The budget exception
+never excuses a failed GitHub body or comment write: preparation stays incomplete
+if the API rejects it, including at GitHub's 65,536-character hard limit.
 
 Recheck the final head/base/draft state and new feedback after the receipt
 update. Only when the gate still passes, perform the final mutation:

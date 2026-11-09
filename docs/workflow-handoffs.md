@@ -1411,7 +1411,10 @@ evidence (first the completion matrix, then per-review and per-specialist
 outcome detail and finding-disposition tables, then sanitized output excerpts)
 into a linked dedicated PR comment while keeping every validated and
 receipt-present line, the markers, the pause or stop status lines, user
-decisions and quotes, and human-authored text in the body. Because consumers
+decisions and quotes, and human-authored text in the body. If only protected
+content remains over budget, the producer reports the overage without blocking
+readiness; a rejected GitHub body or comment write still keeps preparation
+incomplete. Because consumers
 read the marked receipt comment first and already accept a linked completion
 matrix, this adds no binding for a consumer.
 
