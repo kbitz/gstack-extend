@@ -1,7 +1,7 @@
 /**
  * review-delegate: runs named `/review-and-prep` specialist parts through the
  * provider commands a caller configures. `check` validates without any call;
- * `run` makes one bounded, read-only call per part and reports which parts the
+ * `run` makes one bounded call per part and reports which parts the
  * host must run itself. Contract and recovery: docs/delegated-review.md.
  */
 import { execFile, spawn, spawnSync } from 'node:child_process';
@@ -28,7 +28,7 @@ const CLEANUP_LIMIT_MS = 30_000;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void }
-export interface Deps { cleanupRm?: (path: string) => Promise<void>; cleanupLimitMs?: number }
+export interface Deps { rmDir?: (path: string) => Promise<void>; cleanupLimitMs?: number }
 
 class UsageError extends Error {
   constructor(message: string, readonly fix: string) { super(message); }
@@ -275,13 +275,13 @@ function setupGitEnv(): Record<string, string> {
   return gitEnv({ PATH: pathEntries.join(':'), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' });
 }
 
-async function runSetupGit(step: SetupStep, args: string[], remainingMs: () => number, env = setupGitEnv()): Promise<void> {
+async function runSetupGit(step: SetupStep, args: string[], remainingMs: () => number, cwd: string, env: Record<string, string>): Promise<void> {
   const limitMs = remainingMs();
   if (limitMs <= 0) throw new SetupFailure(step, 'timeout');
   let child: ReturnType<typeof spawn> | undefined;
   const killGroup = () => { try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
   const outcome = await withinDeadline(new Promise<boolean>((resolve) => {
-    try { child = spawn('git', args, { env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] }); }
+    try { child = spawn('git', args, { cwd, env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] }); }
     catch { resolve(false); return; }
     child.on('error', () => resolve(false));
     child.on('close', (code, signal) => resolve(code === 0 && signal === null));
@@ -295,10 +295,12 @@ async function prepareCopy(spec: CopySpec, parentDir: string, remainingMs: () =>
   const copy = join(parentDir, 'copy');
   mkdirSync(copy, { mode: 0o700 });
   const env = setupGitEnv();
-  await runSetupGit('init', ['init', '-q', copy], remainingMs, env);
-  await runSetupGit('fetch', ['-C', copy, 'fetch', '-q', '--depth=1',
-    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.top, spec.base, spec.candidate], remainingMs, env);
-  await runSetupGit('checkout', ['-C', copy, 'checkout', '-q', '--detach', spec.candidate], remainingMs, env);
+  await runSetupGit('init', ['init', '--quiet', '--template=', copy], remainingMs, parentDir, env);
+  await runSetupGit('fetch', ['-C', copy, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--depth=1',
+    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.top, spec.candidate,
+    ...(spec.base !== spec.candidate ? [spec.base] : [])], remainingMs, parentDir, env);
+  await runSetupGit('checkout', ['-C', copy, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=',
+    '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false', 'checkout', '--quiet', '--detach', spec.candidate], remainingMs, parentDir, env);
   return copy;
 }
 
@@ -321,20 +323,23 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, copySpe
       if (!copySpec) {
         try { rmSync(cwd, { recursive: true, force: true }); return true; } catch { return false; }
       }
-      const attempt = async () => { try { await removeDir(cwd); return true; } catch { return false; } };
-      const repairAndRetry = async () => {
-        if (await attempt()) return true;
-        await new Promise<void>((resolve) => {
-          try {
-            const fixer = spawn('chmod', ['-R', 'u+rwx', cwd], { stdio: 'ignore' });
-            fixer.on('error', () => resolve());
-            fixer.on('close', () => resolve());
-          } catch { resolve(); }
-        });
-        return attempt();
+      const cleanupStarted = Date.now();
+      const remaining = () => cleanupLimitMs - (Date.now() - cleanupStarted);
+      const attempt = async () => {
+        if (remaining() <= 0) return false;
+        const work = async () => { try { await removeDir(cwd); return true; } catch { return false; } };
+        const result = await withinDeadline(work(), remaining());
+        return result.ok && result.value;
       };
-      const bounded = await withinDeadline(repairAndRetry(), cleanupLimitMs);
-      return bounded.ok && bounded.value;
+      if (await attempt()) return true;
+      const chmod = firstExisting(CHMOD_PATHS);
+      const left = remaining();
+      if (!chmod || left <= 0) return false;
+      await new Promise<void>((resolve) => {
+        execFile(chmod, ['-R', 'u+rwx', cwd], { cwd: '/', env: { PATH: '/usr/bin:/bin' },
+          timeout: left, killSignal: 'SIGKILL' }, () => resolve());
+      });
+      return attempt();
     };
     let setupNote = '';
     const out: Buffer[] = [];
@@ -354,7 +359,10 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, copySpe
       child?.stdout?.destroy();
       child?.stderr?.destroy();
       void cleanupCopy().then((cleaned) => {
-        if (!cleaned && !copySpec) spawnError = true;
+        if (!cleaned) {
+          spawnError = true;
+          if (copySpec) setupNote += `review-delegate: tools-mode cleanup incomplete: ${cwd}\n`;
+        }
         const rawStderr = Buffer.concat(err, errSize).toString('utf8');
         const stderr = setupNote ? `${setupNote}${rawStderr}`.slice(0, STDERR_LIMIT) : rawStderr;
         settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
@@ -558,7 +566,9 @@ export async function main(argv: string[], io: CliIo, deps?: Deps): Promise<numb
   for (const result of results) {
     const provider = config.providers[result.provider];
     if (result.outcome === 'fell-back' && provider?.access === 'tools') {
-      io.stderr(`review-delegate: ${result.part} fell back (${result.fallback_reason}); saved result: ${join(options.calls, `${result.call_id}.json`)}\n`);
+      const saved = join(options.calls, `${result.call_id}.json`);
+      const diagnostic = existsSync(saved) ? `saved result: ${saved}` : `result not saved; call: ${result.call_id}`;
+      io.stderr(`review-delegate: ${result.part} fell back (${result.fallback_reason}); ${diagnostic}\n`);
     }
   }
   print({ status: 'ran', config_sha256: sha, parts: results });

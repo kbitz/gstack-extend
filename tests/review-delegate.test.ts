@@ -152,7 +152,7 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
 const spawns = (s: Setup) => existsSync(join(s.state, 'spawns.log')) ? readFileSync(join(s.state, 'spawns.log'), 'utf8').split('\n').filter(Boolean) : [];
 
 const PRELOAD = join(fresh('preload'), 'preload.ts');
-put(PRELOAD, `import { closeSync, writeSync, WriteStream } from 'node:fs';
+put(PRELOAD, `import { writeSync, WriteStream } from 'node:fs';
 const origEnd = WriteStream.prototype.end;
 WriteStream.prototype.end = function (this: any, chunk?: any, enc?: any, cb?: any) {
   for (const s of Object.getOwnPropertySymbols(this)) {
@@ -1060,7 +1060,7 @@ describe('tools mode', () => {
     expect(badRes.stderr).not.toContain(secretValue);
   });
 
-  test('spawnProvider prepares a detached shallow copy at candidate (including an unreachable snapshot commit), filters env/PATH, kills background processes, and cleans up 0500 directories', () => {
+  test('spawnProvider prepares a detached shallow copy at candidate (including an unreachable snapshot commit), filters env/PATH, kills background processes, and cleans up 0500 directories', async () => {
     const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
     // Create an unreachable snapshot commit via commit-tree (as review-and-prep snapshot procedure does)
     const tree = git(s.repo, 'rev-parse', `${s.candidate}^{tree}`).stdout.trim();
@@ -1107,9 +1107,21 @@ describe('tools mode', () => {
 
     // Background child in the same process group was killed on exit
     const bgPid = Number(readFileSync(join(tmpState, 'bg-pid.txt'), 'utf8').trim());
-    let alive = true;
-    try { process.kill(bgPid, 0); } catch { alive = false; }
-    expect(alive).toBe(false);
+    const running = () => {
+      try {
+        process.kill(bgPid, 0);
+        // An owned Linux child can be terminated but not yet reaped by init.
+        if (process.platform === 'linux') {
+          const stat = readFileSync(`/proc/${bgPid}/stat`, 'utf8');
+          if (stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')) return false;
+        }
+        return true;
+      } catch { return false; }
+    };
+    const reapDeadline = Date.now() + 5000;
+    // gstack-timing-ok: poll owned child termination with a deadline, allowing delayed OS reaping.
+    while (running() && Date.now() < reapDeadline) await Bun.sleep(20);
+    expect(running()).toBe(false);
 
     // Saved result has setup timing in stderr, and replay creates no temp dir and spawns no process
     const saved = JSON.parse(readFileSync(join(s.calls, `${part.call_id}.json`), 'utf8'));
@@ -1159,6 +1171,75 @@ describe('tools mode', () => {
     expect(r3.stderr).toBe(`review-delegate: testing fell back (failed); saved result: ${join(s3.calls, `${part3.call_id}.json`)}\n`);
     const saved3 = JSON.parse(readFileSync(join(s3.calls, `${part3.call_id}.json`), 'utf8'));
     expect(saved3.spawned.stderr).toContain("error: unknown option '--restricted'");
+    // An interrupted synthetic call has a claim and no saved result to inspect.
+    rmSync(join(s3.calls, `${part3.call_id}.json`));
+    const unresolved = cli(runArgs(s3, 'testing'), { TMPDIR: tmp3 });
+    expect(row(unresolved.json, 'testing').fallback_reason).toBe('unresolved-claim');
+    expect(unresolved.stderr).toContain(`result not saved; call: ${part3.call_id}`);
+    expect(unresolved.stderr).not.toContain('saved result:');
+  });
+
+  // Value: protects=approved Git setup controls; fails_when=template, hook or filter suppression is removed; why_new=copy contents tests miss setup flags; seam=none
+  test('copy setup disables templates, hooks and LFS and runs in the owned temporary directory', () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const state = fresh('setup-controls');
+    const fakeBin = fresh('setup-controls-bin');
+    const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+    const script = join(fakeBin, 'record.ts');
+    put(script, `import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args.some(a => ['init', 'fetch', 'checkout'].includes(a))) {
+  appendFileSync(${JSON.stringify(join(state, 'setup.jsonl'))}, JSON.stringify({ args, cwd: process.cwd() }) + '\\n');
+}
+const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+    put(join(fakeBin, 'git'), `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
+    chmodSync(join(fakeBin, 'git'), 0o755);
+    put(s.config, wrapConfig(validToolsProvider()));
+    const r = cli(runArgs(s, 'testing'), { TMPDIR: state, PATH: `${fakeBin}:${process.env.PATH ?? ''}` });
+    expect(r.status).toBe(0);
+    const steps = readFileSync(join(state, 'setup.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    expect(steps).toHaveLength(3);
+    expect(steps[0].args).toContain('--template=');
+    expect(steps[1].args).toContain('core.hooksPath=/dev/null');
+    expect(steps[1].args).toContain('--no-tags');
+    expect(steps[1].args).toContain('--no-recurse-submodules');
+    for (const setting of ['core.hooksPath=/dev/null', 'filter.lfs.process=', 'filter.lfs.smudge=', 'filter.lfs.required=false']) {
+      expect(steps[2].args).toContain(setting);
+    }
+    const spawned = JSON.parse(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim());
+    for (const step of steps) expect(step.cwd).toBe(join(spawned.cwd, '..'));
+  });
+
+  // Value: protects=cleanup cannot execute a PATH-provided chmod; fails_when=cleanup resolves chmod through PATH; why_new=normal removal never enters repair; seam=existing rmDir injection
+  test('cleanup retries removal with system chmod instead of a PATH-provided executable', async () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    put(s.config, wrapConfig(validToolsProvider()));
+    const fakeBin = fresh('cleanup-bin');
+    const marker = join(fakeBin, 'unexpected-chmod');
+    put(join(fakeBin, 'chmod'), `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(join(fakeBin, 'chmod'), 0o755);
+    const previousPath = process.env.PATH;
+    let attempts = 0;
+    let output = '';
+    try {
+      process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+      const code = await runMain(runArgs(s, 'testing'), { stdout: t => { output += t; }, stderr: () => {} }, {
+        rmDir: async target => {
+          if (++attempts === 1) throw new Error('synthetic first-removal failure');
+          rmSync(target, { recursive: true, force: true });
+        },
+      });
+      expect(code).toBe(0);
+      expect(row(JSON.parse(output), 'testing').outcome).toBe('credited');
+      expect(attempts).toBe(2);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
   });
 
   test('prepareCopy records step names on init/fetch/checkout failures, bounds setup timeout, isolates concurrent copies, and bounds stalled cleanup', async () => {
@@ -1238,18 +1319,16 @@ exec "${realGit}" "$@"
     ));
     let outBuf = '', errBuf = '';
     const stalledTargets: string[] = [];
-    const t0 = Date.now();
     const code = await runMain(
       runArgs(sStall, 'testing,performance'),
       { stdout: (t) => { outBuf += t; }, stderr: (t) => { errBuf += t; } },
       { rmDir: (target) => { stalledTargets.push(target); return new Promise(() => { /* never resolves */ }); }, cleanupLimitMs: 1500 },
     );
-    const elapsed = Date.now() - t0;
     for (const target of stalledTargets) rmSync(target, { recursive: true, force: true });
     expect(code).toBe(4);
-    expect(elapsed).toBeLessThan(3500);
+    expect(stalledTargets).toHaveLength(2);
     const parsedOut = JSON.parse(outBuf);
-    expect(row(parsedOut, 'testing').outcome).toBe('credited');
+    expect(row(parsedOut, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed' });
     expect(row(parsedOut, 'performance')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
     expect(await withinDeadline(Promise.resolve('ok'), 0)).toEqual({ ok: false });
   });

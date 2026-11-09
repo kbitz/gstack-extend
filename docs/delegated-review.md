@@ -126,7 +126,7 @@ A delegated part is one bounded call:
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
   TZ`, and only those that are set (plus `DISABLE_AUTOUPDATER=1` and `PATH`
   filtered to absolute entries in [Tools mode](#tools-mode)). No key or
-  credential is passed; a command keeps its own login under `HOME`.
+  credential variable is passed; a command keeps its own login under `HOME`.
 - **Where it runs.** In diff mode, a fresh, empty, private temporary directory
   as its working directory, removed afterwards, in its own process group (in
   [Tools mode](#tools-mode), a detached shallow copy of the repository at
@@ -403,8 +403,11 @@ verify hypotheses before emitting findings.
 
 **Prerequisite:** Enable tools mode only on candidates whose tests you would run
 on the host. Its exposure is the same as a host subagent running the diff's
-tests: the delegate CLI runs with the caller's normal environment and sign-in,
-without an OS sandbox.
+tests, including code the delegate writes or edits before running them. An
+allowed test runner or installer executes that code with the account's full
+filesystem, network and credential access. The CLI tool limits stop tool-level
+misuse; they do not confine executed code. The delegate retains normal `HOME`
+and stored sign-in through the environment allowlist below, without an OS sandbox.
 
 ### Quickstart
 
@@ -418,8 +421,9 @@ without an OS sandbox.
    "<extend-root>/bin/review-delegate" --help | grep -qF '"access": "tools"'
    ```
    Exit `0` means the installed `review-delegate` supports `"access": "tools"`;
-   exit `1` means an older install is loaded (keep diff-only providers or omit
-   `delegate=`).
+   exit `1` means an older install is loaded, which refuses the whole file:
+   point `Review delegates:` at a diff-only file. `check` validates configuration,
+   not the installed CLI's runtime permission behavior.
 3. **Configure a tools-mode provider:**
 
 ```json
@@ -466,6 +470,10 @@ without an OS sandbox.
 ### Configuration grammar (`"access": "tools"`)
 
 - `"access"` is optional on a provider (`"diff"` default, or `"tools"`).
+- `cli` is the caller's trusted declaration of what `argv[0]` runs; the runner
+  does not inspect that executable. One invalid provider refuses the whole file,
+  even when no requested part maps to it. `cli` or `commands` without tools
+  access is malformed.
 - When `"access": "tools"`:
   - `"cli"` is required (`[a-z][a-z0-9-]{0,31}`). Structural validation runs
     first; any structurally valid `"cli"` other than `"claude-code"` refuses
@@ -491,53 +499,66 @@ without an OS sandbox.
   ```
   `callId` hashes `[prompt, effectiveArgv(provider), provider.model, label]`, so
   any change to `commands` or runner-owned flags produces a distinct call id.
+  Diff-mode prompt, argv and call-id bytes remain unchanged.
 - **Prompt (`TOOLS_POLICY`):** Replaces the diff-only no-tools lines while
   keeping the response format (`POLICY_FORMAT`) identical. The prompt names each
-  allowed `Bash(<entry>)` pattern, instructs the delegate to clean up
-  reproduction edits or include a unified diff in the finding's `evidence`
-  field, and requires the host to re-verify reproduction claims:
+  allowed `Bash(<entry>)` pattern and asks for the command, observed result and
+  a unified diff (at most 200 lines) of reproduction edits in `evidence`, or
+  `summary` when the checklist has no evidence field. Reproduction claims need
+  host verification in a fresh copy after inspecting the patch and command:
   `A tools-mode finding's reproduction evidence is the delegate's claim: re-run it, after applying any reproduction patch it carries, before relying on it.`
 - **Disposable copy (`prepareCopy`):** Inside `$TMPDIR/extend-delegate-*/copy`,
   the runner executes three async steps under the part's `timeout_s` budget:
-  1. `git init -q <copy>`
-  2. `git -C <copy> fetch -q --depth=1 --upload-pack="git -c uploadpack.allowAnySHA1InWant=true upload-pack" <real-top> <base> <candidate>`
-  3. `git -C <copy> checkout -q --detach <candidate>`
+  1. `git init --quiet --template= <copy>`
+  2. `git -C <copy> -c core.hooksPath=/dev/null fetch --quiet --no-tags --no-recurse-submodules --depth=1 --upload-pack="git -c uploadpack.allowAnySHA1InWant=true upload-pack" <real-top> <candidate> [<base> when different]`
+  3. `git -C <copy> -c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false checkout --quiet --detach <candidate>`
   Requires git 2.32+. `GIT_*` variables are stripped, `GIT_CONFIG_GLOBAL=/dev/null`,
   `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, and `PATH` is filtered to
   absolute entries. Git LFS pointer files are not hydrated unless an allowed
   command fetches them; repositories requiring submodules or partial-clone
   promisor fetches that cannot shallow-fetch `<base>` and `<candidate>` locally
-  fail setup cleanly (`failed`). Concurrent tools-mode parts each fetch into
-  their own copy and count against their `timeout_s`.
+  fail setup cleanly (`failed`). No submodule contents or ignored dependencies
+  are copied. LFS files stay pointers. A repository that relies on a global
+  `safe.directory` fails setup. The copy owns its objects: no linked worktree,
+  alternates or shared object store. Its shallow history contains only candidate
+  and base, so `git log` or `git blame` sees little even when allowed.
+  Concurrent parts each fetch, checkout, install and test independently; setup
+  time counts against `timeout_s`, and grows with the tree and machine load.
 - **Environment and sign-in:** `CHILD_ENV` (`HOME`, `PATH` filtered to absolute
   entries, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`,
   `TZ`) plus `DISABLE_AUTOUPDATER=1`. Supported sign-in is Claude Code's stored
   login under the caller's normal `HOME`. Unsupported sign-in methods
   (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, a relocated
-  `CLAUDE_CONFIG_DIR`, or settings-file `apiKeyHelper`/`env` entries requiring
-  stripped variables) are not passed. Qualified on Linux with Claude Code
+  `CLAUDE_CONFIG_DIR`, or settings-file `apiKeyHelper`/`env` entries) are not
+  supported (`--restricted` ignores settings files). Qualified on Linux with Claude Code
   `2.1.319`; macOS Keychain sign-in is unexercised. When upgrading Claude Code,
   re-run the behavioral permission probe in
   [docs/acceptance/delegate-tools-mode.md](acceptance/delegate-tools-mode.md).
+  A macOS Keychain prompt in the noninteractive child could stall until timeout.
 - **Exit and cleanup:** On normal exit or timeout, the runner sends `SIGKILL` to
   the child's process group (`-pid`) and removes the temporary directory
   asynchronously (`rm`, retrying once after `chmod -R u+rwx <cwd>`, bounded by
-  5 s) so a read-only mode-`0500` artifact or a slow removal does not stall
-  sibling parts.
+  30 s total). The chmod executable uses an absolute system path and a kill
+  deadline. A removal failure or deadline falls back `failed`, with an incomplete
+  cleanup note in the saved stderr; `$TMPDIR/extend-delegate-*` may remain and
+  can be removed by hand after the run exits. Removal is asynchronous so a
+  read-only mode-`0500` artifact or a slow removal does not stall sibling timers.
 
 ### Trust boundary
 
 - **Protects against:**
-  - `Edit` or `Write` tool calls modifying files outside the disposable copy or
-    creating new files (`--restricted`, `Edit(./**)` in `--allowedTools`, and
-    `Write` omitted from `--allowedTools`), including symlink targets outside
-    the copy and protected `.git/` or `.claude/` paths inside the copy.
+  - File-tool reads and writes outside the disposable copy (`--restricted`,
+    with `Edit(./**)` governing both Edit and Write), including symlink targets
+    outside it. In-copy new files and edits are allowed; protected `.git/` and
+    `.claude/` writes are denied. See the qualification record for evidence.
   - `Bash` tool calls outside the configured `commands` allowlist.
-  - Candidate repository `.claude/settings.local.json`, MCP servers, slash
-    commands, or hooks widening permissions (`--safe-mode --strict-mcp-config
-    --disable-slash-commands`).
-  - Relative `PATH` entries or version-manager shims hijacking `git` or
-    `claude`.
+  - Account/candidate `CLAUDE.md`, skills, plugins, custom agents, MCP servers,
+    slash commands, settings or hooks widening permissions (`--safe-mode`,
+    `--restricted`, `--strict-mcp-config`, `--disable-slash-commands`). Memory
+    exclusion was probed; settings/hook exclusion is also documented by CLI help.
+  - Relative `PATH` entries hijacking copy-setup git or commands in the child.
+    Version-manager shims can still inspect the candidate and fail or switch
+    versions; choose the real binary rather than relying on the runner to detect one.
   - Unverified reproduction claims being trusted without host re-run.
   - Mutations to the real repository's `HEAD`, index, tracked files, or
     nonignored untracked files (`worktreeState` before-and-after check ->
@@ -545,15 +566,20 @@ without an OS sandbox.
 - **Does not protect against:**
   - Arbitrary actions by code executed inside an allowed `Bash(<entry>)` command
     (such as `bun test *` or `bun install --frozen-lockfile` running candidate
-    tests or package scripts with the caller's `HOME` and network).
+    tests, package scripts or delegate-authored edits with full account rights).
+    An entry ending in ` *` allows any options; even a named read-only command
+    can access outside paths through its arguments. A named install command
+    can reach the network. A reply can quote anything the delegate read or an
+    allowed command printed.
   - Background processes that call `setsid` to escape the child's process group
     before exit-time `SIGKILL`.
-  - Reads outside the copy (`--restricted` bounds writes to the working
-    directory, not reads; `a reply can quote anything the delegate read or an
-    allowed command printed`).
   - Writes outside the real repository's `worktreeState` check: `--calls`
-    (including planted saved results), the gstack root, the extend root,
-    `~/.claude`, or gitignored files in the real repository.
+    (including planted saved results that replay), the gstack root and its
+    loaded classifier, the extend root, `~/.claude` settings/hooks, the real
+    repository's Git config/hooks, or ignored files there. The check compares
+    HEAD, the index, git status and tracked/nonignored untracked file bytes;
+    it cannot see ignored files, other Git metadata, or writes restored before
+    the second check.
 
 ### Pre-enable checklist
 
@@ -565,7 +591,8 @@ without an OS sandbox.
 3. `commands` pins install commands without ` *` (for example `"bun install
    --frozen-lockfile"`) and scopes test runners narrowly.
 4. `--max-budget-usd` and `timeout_s` are sized for shallow fetch + install +
-   test execution.
+   test execution. An entry such as `bun install *` also permits installing
+   packages whose scripts run with the account's rights; prefer the pinned entry.
 
 ### Diagnosing a tools-mode fallback
 
@@ -580,10 +607,20 @@ jq -r .spawned.stderr "<calls>/<call_id>.json"
 
 | Symptom in `.spawned.stderr` or `.spawned.stdout` | Meaning and fix |
 |---|---|
-| `review-delegate: tools-mode setup failed (init\|fetch\|checkout)` | Disposable copy setup failed (for example git < 2.32, missing commit, or submodule/promisor fetch). Fix the repository state; remove the saved `<call_id>.claim` and `<call_id>.json` only when intentionally resetting a by-hand smoke run. |
-| `review-delegate: tools-mode setup failed (<step>: timeout)` | Copy setup exceeded `timeout_s`. Increase `timeout_s` in the provider config (which changes `config_sha256`, or if `argv`/`commands` change, `call_id`). |
+| `review-delegate: tools-mode setup failed (init\|fetch\|checkout)` | Disposable copy setup failed (for example git < 2.32 or missing blobs). Fix the repository state for future calls; finish this part on the host. Do not delete its claim or result to retry. |
+| `review-delegate: tools-mode setup failed (<step>: timeout)` | Copy setup exceeded `timeout_s`; a model deadline also reports `timeout`. Increase the timeout for future inputs, but it is not in `callId`: the same input replays the saved failure. Finish this part on the host. |
 | `error: unknown option '--restricted'` (or another runner-owned flag) | The configured `claude` binary predates the qualified CLI flags. Point `argv[0]` at Claude Code `2.1.319`+. |
-| Authentication / login error in stdout or stderr | Stored login under `HOME` is missing or expired, or sign-in relies on an unsupported env var (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`). Run `claude` interactively under normal `HOME` to refresh stored sign-in. |
+| Authentication / login error in stdout or stderr | Stored login is missing/expired or uses an unsupported method. Refresh it interactively under normal `HOME` for future inputs; the same input still replays, so finish this part on the host. |
 | `"subtype":"error_max_budget_usd"` (`is_error: true`) | The delegate exceeded `--max-budget-usd` during tool turns. Raise `--max-budget-usd` in `argv` (which produces a new `call_id`). |
 | Version-manager shim failure (`mise` / `asdf` env error) | `argv[0]` points to a shim instead of the real binary. Replace `argv[0]` with the output of `mise which claude`. |
 | `fallback_reason: "worktree-changed"` (exit 1) | The real repository's `HEAD`, index, tracked files, or nonignored untracked files changed while parts ran. Stop before any commit, inspect `git status` in the real work tree, and do not delete claims. |
+
+`delegation: active (...; tools=...)` records configuration, not runtime flag
+acceptance; each part's outcome shows that. An old Claude Code rejects an unknown
+flag and falls back `failed`. A saved result replays without a copy, CLI or
+command run, including after login repair, CLI upgrade or a timeout change.
+A new head or changed call inputs dispatch again. Never delete a claim or switch
+calls directories to retry a failed part. A discarded `worktree-changed` result
+stays discarded; use a diff-mode mapping or finish the part on the host.
+If stderr says `result not saved; call: <id>`, no saved JSON exists to inspect;
+the claim still blocks a resend.
