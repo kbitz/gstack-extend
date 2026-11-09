@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.0] - 2026-11-09
+
+### Changed
+
+- `/pair-review` lists only checks that need your judgment or access, prepares each one and attaches what the agent observed, and verifies a fix itself before asking you to retest; it no longer offers coverage bundles, coverage-graph review or coverage editing.
+
+### Upgrade notes
+
+- A session started by an earlier version keeps its recorded results; its `Covers:` links are ignored, so they no longer bundle items or pull them back when a covering item fails.
+
 ## [0.77.0] - 2026-11-08
 
 ### Changed
