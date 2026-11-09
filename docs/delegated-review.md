@@ -261,9 +261,10 @@ runs every part on the host.
   to it. Setup runs asynchronously, is bounded by the provider's `timeout_s` and
   counted in `wall_ms`, and never delays another part's deadline. A stalled
   filesystem call or setup `git` process cannot be cancelled: the part fails
-  at its deadline while the call keeps running in the background, and removing the disposable root is
-  awaited for at most 30 s, after which the part is recorded `failed` and the
-  root may remain in the temporary directory. The runner exits once it has
+  at its deadline (`timeout`) while the call keeps running in the background.
+  Removing the disposable root is awaited for at most 30 s; past that, the root
+  may remain in the temporary directory, and a part that had not timed out is
+  recorded `failed`. The runner exits once it has
   written its result, so a call still stalled then cannot hold the process. A setup failure is saved like any
   failed call, so the same frozen scope replays it; the next candidate's call
   dispatches again. Host helpers (`getent`, `chmod`) run by fixed path, and
