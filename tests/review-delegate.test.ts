@@ -179,6 +179,13 @@ else if (mode === 'inspect') {
     severity: 'CRITICAL', confidence: 9, path: 'changed.txt', line: 2, category: 'adversarial',
     summary: 'verified in clone', fix: 'guard it', evidence: 'git rev-parse HEAD -> ' + head,
   }) + '\\nRecommendation: fix because reproduced in clone.');
+} else if (mode === 'read-path') {
+  // Try to read a host path named in the state dir; the sandbox should hide it.
+  const target = readFileSync(join(state, 'read-path.txt'), 'utf8').trim();
+  let readable = false;
+  try { readFileSync(target); readable = true; } catch {}
+  report({ readable });
+  out('NO_FINDINGS: none\\nRecommendation: merge because the path was checked.');
 } else if (mode === 'base-probe') {
   // The prompt's header line names the frozen scope; the disposable copy should hold both endpoints.
   const header = prompt.split('\\n').find((line) => line.startsWith('{"part"'));
@@ -1543,6 +1550,40 @@ describe('repository-mode sandbox and check', () => {
     const r = await runInProcess(runArgs(s, 'testing'));
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
     expect(reportOf(s, r.json, 'testing')).toEqual({ baseType: 'commit', logOk: true });
+  });
+
+  // Value: protects=a /run/user/<uid> relocated by a symlink is hidden at its target when XDG_RUNTIME_DIR is unset; fails_when=/run/user/<uid> is hidden only when an expose entry lies under /run; why_new=continuation-4 cycle-1 finding (Codex challenge, reproduced with nested bwrap); seam=none
+  test.if(probe && existsSync('/mnt'))('a /run/user/<uid> relocated by a symlink is hidden at its target', () => {
+    const s = setup('nested', { r: { mode: 'read-path', access: 'repo', expose: [FAKE, fresh('state-placeholder')] } }, { testing: 'r' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.r.expose[1] = s.state;
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const target = fresh('runtime-target');
+    put(join(target, 'secret.txt'), 'RUNTIME-SECRET\n');
+    const moved = '/mnt/review-delegate-runtime';
+    writeFileSync(join(s.state, 'read-path.txt'), `${moved}/secret.txt`);
+    const bwrap = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'].find((path) => existsSync(path))!;
+    // An outer namespace where /run/user/<uid> is a symlink to a directory outside /run, with XDG_RUNTIME_DIR unset.
+    const r = spawnSync(bwrap, ['--dev-bind', '/', '/', '--tmpfs', '/mnt', '--bind', target, moved, '--tmpfs', '/run', '--dir', '/run/user',
+      '--symlink', moved, `/run/user/${process.getuid!()}`, '--', LAUNCHER, ...runArgs(s, 'testing')], { encoding: 'utf8', timeout: 60_000,
+      env: { PATH: process.env.PATH ?? '', HOME: fresh('home'), BUN_OPTIONS: `--preload=${PRELOAD}`, ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}) } });
+    const json = JSON.parse(r.stdout);
+    expect(row(json, 'testing')).toMatchObject({ outcome: 'credited' });
+    expect(reportOf(s, json, 'testing')).toEqual({ readable: false });
+  });
+
+  // Value: protects=a setup git step settles at the part's deadline even when its output never closes; fails_when=the deadline waits for the child's close event; why_new=continuation-4 cycle-1 finding (Codex challenge); seam=none
+  test.if(probe)('a setup git step whose output never closes fails at the deadline', () => {
+    const s = setup('nested', { b: { mode: 'clean', access: 'repo', expose: [FAKE], timeout_s: 3 } }, { testing: 'b' });
+    const realGit = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    const shimDir = fresh('git-shim');
+    // The setup rev-parse leaves a detached descendant holding its stdout open, as a child stuck in uninterruptible I/O would.
+    put(join(shimDir, 'git'), `#!/bin/sh\ncase " $* " in *" --absolute-git-dir "*) setsid sleep 20 & ;; esac\nexec ${realGit} "$@"\n`);
+    chmodSync(join(shimDir, 'git'), 0o755);
+    const started = Date.now();
+    const r = cli(runArgs(s, 'testing'), { PATH: `${shimDir}:${process.env.PATH ?? ''}` });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
   });
 
   // Value: protects=a runtime dir whose existence check fails with an error other than ENOENT fails setup instead of staying unhidden; fails_when=the runtime-dir check reads every error as absent; why_new=continuation-3 cycle-3 finding (adversarial), fixed under the owner's convergence rule; seam=none

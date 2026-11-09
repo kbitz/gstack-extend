@@ -258,8 +258,8 @@ runs every part on the host.
   source keeps its boundary (`--update-shallow`), so history commands work back
   to it. Setup runs asynchronously, is bounded by the provider's `timeout_s` and
   counted in `wall_ms`, and never delays another part's deadline. A stalled
-  filesystem call cannot be cancelled: the part fails at its deadline while the
-  call keeps running in the background, and removing the disposable root is
+  filesystem call or setup `git` process cannot be cancelled: the part fails
+  at its deadline while the call keeps running in the background, and removing the disposable root is
   awaited for at most 30 s, after which the part is recorded `failed` and the
   root may remain in the temporary directory. The runner exits once it has
   written its result, so a call still stalled then cannot hold the process. A setup failure is saved like any
@@ -293,9 +293,9 @@ runs every part on the host.
     `git rev-parse --show-toplevel`, `--absolute-git-dir` and
     `--git-common-dir` (made absolute), every worktree `git worktree list`
     names (the main checkout and each linked worktree; `--porcelain -z`, which
-    needs git 2.36 or later), the `--calls` directory, and `XDG_RUNTIME_DIR`
-    (written and resolved) when it resolves outside `/run`, plus it and
-    `/run/user/<uid>` when an `expose` entry lies under `/run`;
+    needs git 2.36 or later), the `--calls` directory, `XDG_RUNTIME_DIR` (when
+    set) and `/run/user/<uid>`, each written and resolved, when it resolves
+    outside `/run`, plus both when an `expose` entry lies under `/run`;
     each hidden path is mounted both as written and resolved, and a check of a
     repository or worktree path that fails with anything but absent or
     unsearchable (`EIO`, `ESTALE`, `ELOOP`) fails setup. An unsearchable path
@@ -387,6 +387,17 @@ runs every part on the host.
     provider command must reach its API, so the runner cannot tell API traffic
     from tool traffic. Keeping the model's tools off other network hosts and
     starting no agents is the provider command's own sandbox configuration.
+  - A provider tool sandbox that mounts a fresh `/proc`: the empty file bound
+    over `/proc/keys` and `/proc/key-users` leaves procfs partly covered, so
+    the kernel refuses a new procfs mount inside the sandbox (`EPERM`), and a
+    tool sandbox that runs bubblewrap with `--proc` cannot start. The masks
+    stay, because they keep a nested procfs from showing the account's key
+    descriptions again. Configure such a provider to reuse the existing
+    `/proc` (a weaker nested-sandbox or no-proc mode) and turn off any
+    fallback that runs tool commands unsandboxed: with its tool sandbox down,
+    such a fallback runs code from the reviewed head with the shared network
+    and no tool network bound. A provider that fails every tool command
+    instead usually falls back to the host model (`uncredited`).
   - Loopback TCP services: `--share-net` keeps `127.0.0.1` and `::1`, so code
     from the reviewed head can reach local databases, development servers,
     orchestrator daemons and a signed-in browser's debugging port. One that

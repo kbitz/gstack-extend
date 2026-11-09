@@ -532,7 +532,13 @@ function runSetupGit(args: string[], step: string, emptyHome: string, remainingM
     catch { rejectGit(new SetupFailure(step)); return; }
     let output = '';
     let expired = false, tooLong = false;
-    const timer = setTimeout(() => { expired = true; try { if (proc.pid) process.kill(-proc.pid, 'SIGKILL'); } catch { /* already gone */ } }, rem);
+    // The deadline settles the step itself: a git child stuck in uninterruptible I/O (or a descendant holding its stdout open) may
+    // never close, so waiting for 'close' would hold the part past timeout_s.
+    const timer = setTimeout(() => {
+      expired = true;
+      try { if (proc.pid) process.kill(-proc.pid, 'SIGKILL'); } catch { /* already gone */ }
+      rejectGit(new SetupFailure(step, true));
+    }, rem);
     proc.stdout?.setEncoding('utf8');
     proc.stdout?.on('data', (chunk: string) => { if (output.length + chunk.length > STDOUT_LIMIT) tooLong = true; else output += chunk; });
     proc.on('error', () => { clearTimeout(timer); rejectGit(new SetupFailure(step)); });
@@ -606,7 +612,12 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   const xdg = runtimeDirFromEnv();
   const entriesUnderRun = spec.expose.some((path) => pathForms(path).some((form) => isWithin('/run', form)));
   const uid = process.getuid?.();
-  if (entriesUnderRun && uid !== undefined) hide(`/run/user/${uid}`);
+  if (uid !== undefined) {
+    // Like XDG_RUNTIME_DIR below: the /run tmpfs hides /run/user/<uid> only where it resolves under /run, so a runtime dir relocated
+    // by a symlink is hidden at its target too, whether or not XDG_RUNTIME_DIR is set.
+    const runUser = `/run/user/${uid}`;
+    if (entriesUnderRun || !isWithin('/run', realpathBelow(runUser))) hide(runUser);
+  }
   if (xdg !== undefined) {
     // The /run tmpfs already hides a runtime dir that resolves under /run, unless an entry (in any spelling) brings part of /run
     // back; otherwise hide it in both spellings (hide() adds the resolved one).
