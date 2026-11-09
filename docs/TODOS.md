@@ -320,7 +320,7 @@
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
 - **Description:** Repo-mode setup now checks the repository and worktree paths asynchronously under the part's deadline, and the CLI exits once its result is written; neither a stalled path check nor a filesystem call still pending at exit is tested.
-- **Hypothesis (untested):** Inject the path check (or the remaining-time function) to stall one worktree path and assert the part fails at its deadline while a sibling part is credited; spawn the CLI with a pending stalled call and assert it exits after printing. Re-verify the gap first.
+- **Hypothesis (untested):** Inject the path check (or the remaining-time function) to stall one worktree path and assert the part fails at its deadline while a diff-mode sibling is credited (a repo-mode sibling walks the same paths and stalls too); spawn the CLI with a pending stalled call and assert it exits after printing. Re-verify the gap first. Each stalled check also holds one of Bun's filesystem threads (the pool is sized to the CPU count), so enough of them can starve another part's cleanup into its 30 s cap; a timeout on the top level or the calls directory is labelled `worktree-list`.
 - **Upstream severity:** INFORMATIONAL
 - **Found in:** `src/review-delegate/cli.ts` (`prepareRepoCopy`, the `import.meta.main` entry).
 - **Evidence:** Continuation-3 cycle-1 fix of two outside-challenge findings (Codex); a stalled network mount was not reproduced on this host.

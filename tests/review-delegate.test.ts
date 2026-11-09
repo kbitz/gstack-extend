@@ -119,6 +119,7 @@ const rec = 'Recommendation: fix because a gap remains.';
 const envelope = (result, usage) => JSON.stringify({ result, usage });
 if (mode === 'findings') out(envelope(finding('CRITICAL', '[P1]') + '\\n' + finding('INFORMATIONAL', '[P3]') + '\\n' + rec, { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 7, cache_creation_input_tokens: 0 }));
 else if (mode === 'plain') out(finding('CRITICAL', '[P0]') + '\\n' + rec);
+else if (mode === 'many-findings') out(envelope(Array.from({ length: 400 }, (_, i) => '[P3] ' + JSON.stringify({ severity: 'INFORMATIONAL', confidence: 5, path: 'changed.txt', line: i + 1, category: 'testing', summary: 'finding ' + i + ' ' + 'x'.repeat(300) })).join('\\n') + '\\n' + rec, { input_tokens: 10, output_tokens: 10 }));
 else if (mode === 'clean') out(envelope('NO_FINDINGS: none\\nRecommendation: merge because nothing is wrong.', { input_tokens: 90, output_tokens: 4 }));
 else if (mode === 'exit') { err('STDERR-MARKER boom'); process.exit(3); }
 else if (mode === 'sleep') { try { writeFileSync(join(state, 'pid.txt'), String(process.pid)); } catch {} await new Promise((resolve) => setTimeout(resolve, 5000)); try { writeFileSync(join(state, 'finished.txt'), 'natural completion'); } catch {} }
@@ -397,6 +398,18 @@ describe('refused part names and usage errors (exit 2, no work)', () => {
     const r = cli(args as string[]);
     expect([r.status, r.stdout]).toEqual([2, '']);
     expect(r.stderr).toMatch(/^ERROR USAGE: .+\nFIX: .+\n$/);
+  });
+
+  // Value: protects=a --repo naming a subdirectory still refuses a calls directory inside its checkout; fails_when=the inside-repository check compares against --repo as written; why_new=continuation-3 cycle-2 finding (adversarial); seam=none
+  test('a calls directory inside the checkout but outside a subdirectory --repo is a usage error', () => {
+    const sub = join(s.repo, 'sub');
+    mkdirSync(sub, { recursive: true });
+    const args = runArgs(s, 'testing');
+    args[args.indexOf('--repo') + 1] = sub;
+    args[args.length - 1] = join(s.repo, 'calls');
+    const r = cli(args);
+    expect([r.status, r.stdout]).toEqual([2, '']);
+    expect(r.stderr).toContain('--calls is inside --repo');
   });
 
   test('--help prints the contract and exits 0', () => {
@@ -940,7 +953,9 @@ describe('repository-mode sandbox and check', () => {
   // Value: protects=an unusable HOME is a host fault (sandbox-unavailable, so the host model runs the part) found after the configuration's own checks; fails_when=it reads config-malformed, or runs before a malformed expose entry is reported; why_new=continuation-3 cycle-1 finding (adversarial); seam=none
   test('a relative or root HOME refuses with sandbox-unavailable after the configuration checks', async () => {
     const good = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
-    for (const HOME of ['relative/home', '/']) {
+    const rootLink = join(fresh('root-link'), 'home');
+    symlinkSync('/', rootLink);
+    for (const HOME of ['relative/home', '/', rootLink]) {
       const r = await runInProcess(checkArgs(good, 'testing'), undefined, { HOME });
       expect(r.status).toBe(1);
       expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
@@ -1458,9 +1473,13 @@ describe('repository-mode sandbox and check', () => {
     expect(mac.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
     expect(mac.stderr).not.toContain('passwd');
     // A passwd home of / would hide nothing: refused the same way (continuation-3 cycle-1 finding, Codex).
-    const root = await runInProcess(checkArgs(s, 'testing'), { accountHome: () => '/' });
-    expect(root.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
-    expect(root.stderr).toContain('the account home could not be read from the passwd database, or is /');
+    const rootLink = join(fresh('passwd-root-link'), 'home');
+    symlinkSync('/', rootLink);
+    for (const accountHome of ['/', rootLink]) {
+      const root = await runInProcess(checkArgs(s, 'testing'), { accountHome: () => accountHome });
+      expect(root.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+      expect(root.stderr).toContain('the account home could not be read from the passwd database, or is /');
+    }
   });
 
   // Value: protects=a malformed repo-mode config reads config-malformed for any uid or architecture, while uid 0 or an architecture without a seccomp table refuses sandbox-unavailable and fails the probe; fails_when=the uid/architecture refusal runs before config validation, or the probe ignores it; why_new=continuation-2 cycle-1 finding (Codex: tests failed under root); seam=Deps.uid, Deps.arch
@@ -1507,6 +1526,19 @@ describe('repository-mode sandbox and check', () => {
     const r = await runInProcess(runArgs(s, 'testing'));
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
     expect(reportOf(s, r.json, 'testing')).toEqual({ baseType: 'commit', logOk: true });
+  });
+
+  // Value: protects=a repository path whose check fails with an error other than absent fails setup instead of staying unhidden; fails_when=every access() error reads as absent; why_new=continuation-3 cycle-2 finding (adversarial); seam=none
+  test.if(probe)('a linked worktree path that fails its check with ELOOP fails setup', async () => {
+    const s = setup('nested', { b: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'b' });
+    const tree = join(fresh('loop-worktree'), 'wt');
+    expect(git(s.repo, 'worktree', 'add', '-q', '--detach', tree).status).toBe(0);
+    rmSync(tree, { recursive: true, force: true });
+    symlinkSync(tree, tree);
+    const r = await runInProcess(runArgs(s, 'testing'));
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed', dispatched: true });
+    const saved = JSON.parse(readFileSync(join(s.calls, `${row(r.json, 'testing').call_id}.json`), 'utf8'));
+    expect(saved.spawned.stderr).toContain('review-delegate: repo-mode setup failed (worktree-list)');
   });
 
   // Value: protects=the empty file covers only the procfs key files present on the host, since bwrap cannot create a file inside procfs; fails_when=both masks are bound unconditionally; why_new=continuation-2 cycle-1 QA finding (bwrap: Can't create file); seam=none
@@ -1624,6 +1656,21 @@ describe('repository-mode sandbox and check', () => {
 });
 
 describe('reply parsing and the receipt contract', () => {
+  // Value: protects=a run result longer than a pipe buffer reaches a piped reader whole before the runner exits; fails_when=the entry exits before its queued stdout is written; why_new=continuation-3 cycle-2 finding (adversarial, reproduced at 65536 of 200001 bytes); seam=none
+  test('a run result larger than a pipe buffer reaches a slow piped reader whole', () => {
+    const s = setup('nested', { big: { mode: 'many-findings' } }, { testing: 'big' });
+    const out = join(fresh('pipe-out'), 'out.json');
+    // A shell pipe (pipe(2)) to a reader that waits before reading: the runner's stdout is a real pipe, not a capture file.
+    const r = spawnSync('/bin/sh', ['-c', '"$0" "$@" | { sleep 1; cat > "$OUT"; }', LAUNCHER, ...runArgs(s, 'testing')], { encoding: 'utf8', timeout: 60_000,
+      env: { PATH: process.env.PATH ?? '', HOME: fresh('home'), OUT: out, BUN_OPTIONS: `--preload=${PRELOAD}`, ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}) } });
+    expect(r.status).toBe(0);
+    const text = readFileSync(out, 'utf8');
+    expect(text.length).toBeGreaterThan(128 * 1024);
+    const json = JSON.parse(text);
+    expect(row(json, 'testing')).toMatchObject({ outcome: 'credited' });
+    expect(row(json, 'testing').findings).toHaveLength(400);
+  });
+
   test('recover reports needs_context only for a NEEDS_CONTEXT reply', () => {
     const classify = ({ text }: { text: string }) => ({ execution: { state: 'ran' }, findings: { highest: null }, verdict: /NO_FINDINGS/.test(text) ? 'clean' as const : 'unverified' as const });
     const clean = 'NO_FINDINGS: none\nRecommendation: merge because clean.';

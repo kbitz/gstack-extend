@@ -172,12 +172,15 @@ function parseArgs(argv: string[]): 'help' | Options {
     const value = seen.get(flag);
     if (value !== undefined && !/^[0-9a-f]{40}$/.test(value)) throw new UsageError(`${flag} must be a full 40-character SHA`, `pass a full SHA for ${flag}`);
   }
-  const repo = seen.get('--repo');
+  const rawRepo = seen.get('--repo');
+  // A --repo naming a subdirectory stands for its whole checkout: the inside-repository checks, the work-tree check, the hidden
+  // paths and the copy all use the top level.
+  const repo = rawRepo !== undefined ? repoTop(rawRepo) : undefined;
   const calls = seen.get('--calls');
   const caught = seen.get('--caught');
   if (repo !== undefined) {
     // A claim or caught-findings file inside the work tree would read as a write by the delegate or mix with reviewed files.
-    let top = resolve(repo);
+    let top = repo;
     try { top = realpathSync(top); } catch { /* reported as repo-unreadable */ }
     for (const [flag, target, label] of [['--calls', calls, 'calls directory'], ['--caught', caught, 'caught file']] as const) {
       if (target === undefined) continue;
@@ -190,6 +193,19 @@ function parseArgs(argv: string[]): 'help' | Options {
     repo: repo ?? '', base: seen.get('--base') ?? '', candidate: seen.get('--candidate') ?? '', calls: calls ?? '',
     adversarial: seen.get('--adversarial') ? resolve(seen.get('--adversarial')!) : '',
     caught: caught ? resolve(caught) : '' };
+}
+
+/** The top level of the checkout containing `repo`, or `repo` itself when git cannot name one (reported later as repo-unreadable). */
+function repoTop(repo: string): string {
+  const dir = resolve(repo);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  try {
+    const res = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env, timeout: 10_000 });
+    const top = res.status === 0 ? res.stdout.replace(/\n$/, '') : '';
+    return top && isAbsolute(top) && !top.includes('\n') ? top : dir;
+  } catch {
+    return dir;
+  }
 }
 
 function resolveSandboxBwrap(deps: Deps = {}): string | null {
@@ -270,15 +286,15 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   if (repoProviders.length > 0) {
     const rawHome = process.env.HOME;
     // An unusable HOME is a host fault, refused as sandbox-unavailable after the configuration's own checks.
-    homeOk = !!rawHome && isAbsolute(rawHome) && !CONTROL_RE.test(rawHome) && resolve(rawHome) !== '/';
+    homeOk = !!rawHome && isAbsolute(rawHome) && !CONTROL_RE.test(rawHome) && !pathForms(resolve(rawHome)).includes('/');
     home = homeOk ? resolve(rawHome!) : undefined;
     const accountHome = (deps.accountHome ?? passwdHome)();
     // Without the account's home from the passwd database, an overridden HOME would leave the real home unhidden: refused below.
-    // A passwd home of / would leave every account-readable path under / unhidden.
-    accountHomeOk = !!accountHome && isAbsolute(accountHome) && !CONTROL_RE.test(accountHome) && resolve(accountHome) !== '/';
+    // A passwd home of / (written or through a symlink) would leave every account-readable path under / unhidden.
+    accountHomeOk = !!accountHome && isAbsolute(accountHome) && !CONTROL_RE.test(accountHome) && !pathForms(resolve(accountHome)).includes('/');
     const forms = pathForms;
     const homes = [...(home !== undefined ? [home] : []), ...(accountHomeOk ? [resolve(accountHome)] : [])]
-      .filter((path) => path !== '/').flatMap(forms);
+      .flatMap(forms).filter((path) => path !== '/');
     const temp = forms(resolve(tmpdir())).filter((path) => path !== '/');
     // Every private directory beyond HOME gets its own tmpfs; one that does not exist holds nothing and could not take a mount point.
     privateDirs = [...new Set([...homes, ...temp])]
@@ -532,10 +548,20 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   };
   // Repository and worktree paths may sit on a network filesystem: check them asynchronously under the part's deadline, so a
   // stalled mount cannot block the event loop for every part.
+  // A path that is absent, or behind an ancestor this account cannot search (so the sandbox cannot reach it either), needs no
+  // mount; any other error (EIO, ESTALE, ELOOP) fails setup rather than leave a path the sandbox might still read unhidden.
+  const absent = (error: unknown) => ['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException)?.code ?? '');
   const hideRepoPath = async (path: string) => {
-    if (!await withinDeadline(() => access(path).then(() => true, () => false), remainingMs, 'worktree-list')) return;
+    const exists = await withinDeadline(() => access(path).then(() => true, (error: unknown) => {
+      if (absent(error)) return false;
+      throw new SetupFailure('worktree-list');
+    }), remainingMs, 'worktree-list');
+    if (!exists) return;
     hidden.push(path);
-    const real = await withinDeadline(() => realpath(path).catch(() => path), remainingMs, 'worktree-list');
+    const real = await withinDeadline(() => realpath(path).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return path;
+      throw new SetupFailure('worktree-list');
+    }), remainingMs, 'worktree-list');
     if (real !== path) hidden.push(real);
   };
   for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) {
@@ -852,13 +878,18 @@ export async function main(argv: string[], io: CliIo, deps: Deps = {}): Promise<
 }
 
 if (import.meta.main) {
-  const code = await main(process.argv.slice(2), { stdout: (t) => process.stdout.write(t), stderr: (t) => process.stderr.write(t) })
-    .catch(() => {
-      console.error('review-delegate failed internally: rerun check, and never retry an unresolved claim.');
-      return 1;
-    });
-  // A filesystem call still stalled past its limit (cleanup or staging) must not keep the process alive after the result is written.
-  await new Promise<void>((done) => process.stdout.write('', () => done()));
-  await new Promise<void>((done) => process.stderr.write('', () => done()));
+  // Each write's own callback marks its bytes handed to the OS. An empty write's callback can fire while earlier output is still
+  // queued for a pipe, so exiting after one would cut a result line longer than the pipe buffer.
+  let written: Promise<unknown> = Promise.resolve();
+  const writer = (stream: NodeJS.WriteStream) => (text: string) => {
+    written = Promise.all([written, new Promise<void>((done) => { stream.write(text, () => done()); })]);
+  };
+  const io = { stdout: writer(process.stdout), stderr: writer(process.stderr) };
+  const code = await main(process.argv.slice(2), io).catch(() => {
+    io.stderr('review-delegate failed internally: rerun check, and never retry an unresolved claim.\n');
+    return 1;
+  });
+  // A filesystem call still stalled past its limit (cleanup or staging) must not keep the process alive after the result is delivered.
+  await written;
   process.exit(code);
 }

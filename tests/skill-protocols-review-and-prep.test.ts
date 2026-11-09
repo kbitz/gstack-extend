@@ -2462,7 +2462,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(section).toContain('`source:"delegate:<provider label>"` and `completed` true only when the part was credited; a fallback\'s host attempt gets its own token and row, as upstream defines.');
     expect(section).toContain('when `check` reports `"access":"repo"` for any part');
     expect(section).toContain('`delegation: inactive — sandbox-unavailable`');
-    expect(section).toContain('the longest configured provider timeout bounds it (a repo-mode call\'s clone counts inside that timeout), plus the runner\'s overhead outside it: up to 10 s for the sandbox probe and 5 s for the passwd lookup per invocation, and up to 30 s of cleanup per repo-mode call.');
+    expect(section).toContain('The longest configured provider timeout bounds the calls (a repo-mode call\'s clone counts inside that timeout), and the runner\'s own work adds to it: the sandbox probe (up to 10 s) and passwd lookup (up to 5 s), cleanup after the calls (up to 30 s), and the before-and-after work-tree check and diff, which grow with the repository and have no fixed bound. Results are saved only after the second check, so a killed runner leaves its parts as unresolved claims.');
     expect(section).toContain('A repo-mode finding\'s `evidence` (a reproduction\'s command and result) is review data like the rest of the reply, and the host decides its disposition under Fix-First.');
     expect(section).toContain('A policy without the value records nothing here.');
   });

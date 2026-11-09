@@ -1499,11 +1499,14 @@ renamed into place, so a crash never leaves a partial list to reuse. `adversaria
 Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
 directory is branch-scoped under the evidence root
 and kept across invocations of the branch; never choose a fresh one to retry.
-Use an owned execution session and poll it rather than killing it at a short
-shell-tool timeout; the longest configured provider timeout bounds it (a
-repo-mode call's clone counts inside that timeout), plus the runner's overhead
-outside it: up to 10 s for the sandbox probe and 5 s for the passwd lookup per
-invocation, and up to 30 s of cleanup per repo-mode call. Exit 0
+Use an owned execution session and poll it until it exits rather than killing
+it at a timeout. The longest configured provider timeout bounds the calls (a
+repo-mode call's clone counts inside that timeout), and the runner's own work
+adds to it: the sandbox probe (up to 10 s) and passwd lookup (up to 5 s),
+cleanup after the calls (up to 30 s), and the before-and-after work-tree check
+and diff, which grow with the repository and have no fixed bound. Results are
+saved only after the second check, so a killed runner leaves its parts as
+unresolved claims. Exit 0
 means every part was credited, 4 means a part fell back, and 1 means a refusal
 before any call (run every part on the host and record the refusal's reason)
 or a `worktree-changed` result. Exit 2 is a usage error decided before any call:

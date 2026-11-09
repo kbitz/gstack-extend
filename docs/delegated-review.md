@@ -241,8 +241,9 @@ runs every part on the host.
   first hides the real repository and stages the listed paths, then creates a
   disposable copy: `git init --template=` of an empty repository, a
   `git fetch --no-tags --no-recurse-submodules` of `--candidate` and `--base`
-  from the real repository's top level (so a `--repo` that names a
-  subdirectory works too; through `upload-pack` with
+  from the real repository's top level (a `--repo` that names a subdirectory
+  stands for its whole checkout, in the inside-repository checks and the
+  work-tree check too; through `upload-pack` with
   `uploadpack.allowAnySHA1InWant`, so frozen snapshot commits that no ref
   reaches are fetched too), and a detached
   checkout with hooks and LFS smudge/process filters disabled
@@ -294,7 +295,9 @@ runs every part on the host.
     needs git 2.36 or later), the `--calls` directory, and `XDG_RUNTIME_DIR`
     (written and resolved) when it resolves outside `/run`, plus it and
     `/run/user/<uid>` when an `expose` entry lies under `/run`;
-    each hidden path is mounted both as written and resolved; these come after
+    each hidden path is mounted both as written and resolved, and a check of a
+    repository or worktree path that fails with anything but absent or
+    unsearchable (`EIO`, `ESTALE`, `ELOOP`) fails setup; these come after
     the `expose` mounts, so they also hide any repository path inside
     a listed directory
   - a read-write `--bind` of the disposable copy and `--chdir` into it, with
@@ -307,10 +310,10 @@ runs every part on the host.
   the `/proc` key masks, the `/tmp`, `/var` and `/run` mounts and
   `--tmp-overlay`, which needs bubblewrap 0.10 or later), and it refuses as uid 0 (the sandbox could read root-only
   files), on an architecture without a keyring seccomp table (anything but
-  x86_64 and aarch64), when `HOME` is not an absolute path other than `/`
-  without control characters, or when the account's home cannot be read from
-  the passwd database or is `/` (an overridden `HOME` would then leave the
-  real home unhidden). These checks run after the configuration's own checks, so a
+  x86_64 and aarch64), when `HOME` is not an absolute path without control
+  characters that is not `/` (written or through a symlink), or when the
+  account's home cannot be read from the passwd database or is `/` (an
+  overridden `HOME` would then leave the real home unhidden). These checks run after the configuration's own checks, so a
   malformed configuration is `config-malformed` on any host. If any check
   fails, the whole invocation refuses before any
   call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
@@ -498,7 +501,7 @@ the unreadable or oversized file, the key or value (such as a `keep` key), or th
 path rule. Exit 2 is a usage error decided before
 any work (an unknown flag, a part outside the six, a repeated part, a missing or
 extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
-inside `--repo`): standard output is empty and standard error has
+inside the checkout `--repo` names, at its top level): standard output is empty and standard error has
 `ERROR USAGE: ...` and `FIX: ...`.
 
 `run` takes the same flags plus the repository, the frozen scope's two full
