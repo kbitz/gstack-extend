@@ -1712,6 +1712,25 @@ describe('review-and-prep final-gate repair', () => {
         expect(write.stderr).toBe('');
       });
 
+      // Value: protects=corrupt miss records retain structured fail-closed output; fails_when=JSON null or a primitive throws before the fence status or permits write-point recovery; why_new=coverage audit found an uncaught null miss; seam=none
+      test(`${sh.shell}: non-object miss records fail closed with structured output`, () => {
+        const { evDir, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const missPath = join(evDir, 'cycle-1-baseline.missed.json');
+        for (const value of [null, true, 1, 'invalid', []]) {
+          const bytes = JSON.stringify(value);
+          writeFileSync(missPath, bytes);
+          const check = runFence('check', 'cycle-1-baseline', 'next-cycle');
+          expect(check.status).toBe(1);
+          expect(check.stdout.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-baseline at unreadable');
+          expect(check.stderr).toBe('');
+          const write = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()));
+          expect(write.status).toBe(3);
+          expect(write.stdout).toContain('refused cycle-1-baseline: missed at unreadable');
+          expect(readFileSync(missPath, 'utf8')).toBe(bytes);
+          expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+        }
+      });
+
       // Value: protects=late evidence must be separate from the assembled input and generated records; fails_when=a record certifies itself or a generated record qualifies as review evidence; why_new=late-source self-corroboration regression; seam=none
       test(`${sh.shell}: late records cannot use their own input or generated record files as sources`, () => {
         const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);

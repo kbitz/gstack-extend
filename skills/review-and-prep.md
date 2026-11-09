@@ -2347,7 +2347,11 @@ const recPath = path.join(evDir, kind + ".json");
 const missPath = path.join(evDir, kind + ".missed.json");
 const readMiss = () => {
   if (!fs.existsSync(missPath)) return null;
-  try { const raw = fs.readFileSync(missPath); return {raw, data: JSON.parse(raw.toString("utf8"))}; }
+  try {
+    const raw = fs.readFileSync(missPath), data = JSON.parse(raw.toString("utf8"));
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("invalid miss record");
+    return {raw, data};
+  }
   catch { return {raw: Buffer.alloc(0), data: {boundary: "unreadable"}}; }
 };
 const validate = (r, mode) => {
