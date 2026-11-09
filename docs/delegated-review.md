@@ -298,7 +298,12 @@ runs every part on the host.
     `/run/user/<uid>` when an `expose` entry lies under `/run`;
     each hidden path is mounted both as written and resolved, and a check of a
     repository or worktree path that fails with anything but absent or
-    unsearchable (`EIO`, `ESTALE`, `ELOOP`) fails setup; these come after
+    unsearchable (`EIO`, `ESTALE`, `ELOOP`) fails setup. An unsearchable path
+    gets no mount, although that is no proof the sandbox cannot read it: code
+    inside can regain access to the account's own files through a nested user
+    namespace (a known limit, tracked in the backlog). A runtime dir whose
+    check fails with anything but `ENOENT` fails setup too (`runtime-dir`);
+    these come after
     the `expose` mounts, so they also hide any repository path inside
     a listed directory
   - a read-write `--bind` of the disposable copy and `--chdir` into it, with
@@ -314,7 +319,10 @@ runs every part on the host.
   x86_64 and aarch64), when `HOME` is not an absolute path without control
   characters that is not `/` (written or through a symlink), or when the
   account's home cannot be read from the passwd database or is `/` (an
-  overridden `HOME` would then leave the real home unhidden). These checks run after the configuration's own checks, so a
+  overridden `HOME` would then leave the real home unhidden), or when `HOME`,
+  the passwd home or the runner's temporary directory fails its existence
+  check with any error but `ENOENT` (a transient network-filesystem error
+  must not leave it unhidden). These checks run after the configuration's own checks, so a
   malformed configuration is `config-malformed` on any host. If any check
   fails, the whole invocation refuses before any
   call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
@@ -495,9 +503,10 @@ line does not directly follow the one `Subagent prompt:` line, or the prompt or
 criteria line does not occur once) or `sandbox-unavailable` (a named part maps
 to a repo-mode provider and the host is not Linux, has no executable at the
 fixed `bwrap` paths, fails the 10 s bubblewrap probe, runs the runner as uid 0,
-has an architecture without a keyring seccomp table, has an unusable `HOME`, or
-cannot read a usable account home from the passwd database; those last two
-cases write their detail to standard error). A `config-malformed`
+has an architecture without a keyring seccomp table, has an unusable `HOME`,
+cannot read a usable account home from the passwd database, or cannot check
+`HOME`, the passwd home or its temporary directory; those last three cases
+write their detail to standard error). A `config-malformed`
 refusal also writes one detail line to standard error naming what is at fault:
 the unreadable or oversized file, the key or value (such as a `keep` key), or the provider and the `expose` entry or `argv[0]` that breaks a
 path rule. Exit 2 is a usage error decided before

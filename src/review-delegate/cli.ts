@@ -76,6 +76,20 @@ function isWithin(parent: string, child: string): boolean {
 /** A path as written and with its symlinks resolved, so a symlinked ancestor cannot disguise a hidden path. */
 const pathForms = (path: string) => [...new Set([path, realpathBelow(path)])];
 
+/**
+ * Whether a path exists, by stat. Only a definite ENOENT reads as absent: any other error (EIO, ESTALE, EACCES, ELOOP) is thrown,
+ * so a transient network-filesystem failure can never leave a private directory unhidden.
+ */
+function presentStrict(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 /** XDG_RUNTIME_DIR resolved when it is usable (absolute, no control characters, not `/`); prepare() and setup must agree on it. */
 const runtimeDirFromEnv = (): string | undefined => {
   const raw = process.env.XDG_RUNTIME_DIR;
@@ -283,6 +297,8 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   let privateDirs: string[] = [];
   let accountHomeOk = true;
   let homeOk = true;
+  let homePresent = false;
+  let statFailure: string | undefined;
   if (repoProviders.length > 0) {
     const rawHome = process.env.HOME;
     // An unusable HOME is a host fault, refused as sandbox-unavailable after the configuration's own checks.
@@ -297,8 +313,15 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       .flatMap(forms).filter((path) => path !== '/');
     const temp = forms(resolve(tmpdir())).filter((path) => path !== '/');
     // Every private directory beyond HOME gets its own tmpfs; one that does not exist holds nothing and could not take a mount point.
-    privateDirs = [...new Set([...homes, ...temp])]
-      .filter((path) => path !== home && !['/tmp', '/var', '/var/tmp', '/run'].includes(path) && existsSync(path));
+    // A stat error other than ENOENT is refused below (sandbox-unavailable), after the configuration's own checks.
+    try {
+      privateDirs = [...new Set([...homes, ...temp])]
+        .filter((path) => path !== home && !['/tmp', '/var', '/var/tmp', '/run'].includes(path) && presentStrict(path));
+      homePresent = home !== undefined && presentStrict(home);
+    } catch (error) {
+      statFailure = (error as NodeJS.ErrnoException)?.code ?? 'unknown error';
+      privateDirs = [];
+    }
     // The account's runtime dirs (session bus, agents): XDG_RUNTIME_DIR when set, and /run/user/<uid> whether or not it is.
     const xdg = runtimeDirFromEnv();
     const uid = process.getuid?.();
@@ -395,6 +418,9 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
     if ((deps.platform ?? process.platform) !== 'linux') return refuse('sandbox-unavailable');
     if (!homeOk) return refuse('sandbox-unavailable', 'HOME must be an absolute path other than /, without control characters, for a repo-mode provider');
     if (!accountHomeOk) return refuse('sandbox-unavailable', 'the account home could not be read from the passwd database, or is /, so the sandbox cannot hide it');
+    if (statFailure !== undefined) {
+      return refuse('sandbox-unavailable', `a home or temporary directory could not be checked (${statFailure}), so the sandbox cannot be sure it hides it`);
+    }
     const resolvedBwrap = resolveSandboxBwrap(deps);
     if (!resolvedBwrap) return refuse('sandbox-unavailable');
     bwrap = resolvedBwrap;
@@ -412,7 +438,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       classify: classify as Classifier, checklists,
       ...(caught !== undefined ? { caught } : {}),
       ...(bwrap !== undefined ? { bwrap } : {}),
-      ...(home !== undefined ? { home: existsSync(home) ? home : '', privateDirs } : {}),
+      ...(home !== undefined ? { home: homePresent ? home : '', privateDirs } : {}),
     },
   };
 }
@@ -540,16 +566,20 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   const worktrees = parseWorktreeList(await git(['-C', spec.repo, 'worktree', 'list', '--porcelain', '-z'], 'worktree-list', true));
   const hidden: string[] = [];
   const hide = (path: string) => {
-    // A path that does not exist holds nothing to hide, and the read-only root could not take its mount point.
-    if (!existsSync(path)) return;
+    // A path that does not exist holds nothing to hide, and the read-only root could not take its mount point. Only a definite
+    // ENOENT means absent: any other stat error fails setup rather than leave a runtime dir unhidden.
+    let present: boolean;
+    try { present = presentStrict(path); } catch { throw new SetupFailure('runtime-dir'); }
+    if (!present) return;
     hidden.push(path);
     const real = realpathBelow(path);
     if (real !== path) hidden.push(real);
   };
   // Repository and worktree paths may sit on a network filesystem: check them asynchronously under the part's deadline, so a
   // stalled mount cannot block the event loop for every part.
-  // A path that is absent, or behind an ancestor this account cannot search (so the sandbox cannot reach it either), needs no
-  // mount; any other error (EIO, ESTALE, ELOOP) fails setup rather than leave a path the sandbox might still read unhidden.
+  // A path that is absent or behind an ancestor this account cannot search gets no mount; any other error (EIO, ESTALE, ELOOP)
+  // fails setup. EACCES is not proof the sandbox cannot reach the path: code in it can regain access to the account's own files
+  // through a nested user namespace (tracked in docs/TODOS.md).
   const absent = (error: unknown) => ['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException)?.code ?? '');
   const hideRepoPath = async (path: string) => {
     const exists = await withinDeadline(() => access(path).then(() => true, (error: unknown) => {

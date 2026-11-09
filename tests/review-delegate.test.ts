@@ -1482,6 +1482,23 @@ describe('repository-mode sandbox and check', () => {
     }
   });
 
+  // Value: protects=a stat error other than ENOENT on HOME, the passwd home or the temporary directory refuses instead of leaving that directory unhidden; fails_when=the existence checks read every error as absent; why_new=continuation-3 cycle-3 finding (adversarial), fixed under the owner's convergence rule; seam=Deps.accountHome
+  test('a HOME, passwd home or temporary directory that fails its existence check refuses with sandbox-unavailable', async () => {
+    const good = setup('nested', { p: { mode: 'clean', access: 'repo' } }, { testing: 'p' });
+    const loop = join(fresh('stat-loop'), 'loop');
+    symlinkSync(loop, loop);
+    const cases: Array<[Deps | undefined, Record<string, string> | undefined]> = [
+      [undefined, { HOME: loop }],
+      [{ accountHome: () => loop }, undefined],
+      [undefined, { TMPDIR: loop }],
+    ];
+    for (const [deps, env] of cases) {
+      const r = await runInProcess(checkArgs(good, 'testing'), deps, env);
+      expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+      expect(r.stderr).toContain('could not be checked (ELOOP)');
+    }
+  });
+
   // Value: protects=a malformed repo-mode config reads config-malformed for any uid or architecture, while uid 0 or an architecture without a seccomp table refuses sandbox-unavailable and fails the probe; fails_when=the uid/architecture refusal runs before config validation, or the probe ignores it; why_new=continuation-2 cycle-1 finding (Codex: tests failed under root); seam=Deps.uid, Deps.arch
   test('uid 0 and an architecture without a seccomp table refuse sandbox-unavailable after config validation and fail the probe', async () => {
     const bad = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE, PASSWD_HOME] } }, { testing: 'p' });
@@ -1526,6 +1543,17 @@ describe('repository-mode sandbox and check', () => {
     const r = await runInProcess(runArgs(s, 'testing'));
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
     expect(reportOf(s, r.json, 'testing')).toEqual({ baseType: 'commit', logOk: true });
+  });
+
+  // Value: protects=a runtime dir whose existence check fails with an error other than ENOENT fails setup instead of staying unhidden; fails_when=the runtime-dir check reads every error as absent; why_new=continuation-3 cycle-3 finding (adversarial), fixed under the owner's convergence rule; seam=none
+  test.if(probe)('an XDG_RUNTIME_DIR that fails its existence check fails setup', async () => {
+    const s = setup('nested', { b: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'b' });
+    const loop = join(fresh('xdg-loop'), 'runtime');
+    symlinkSync(loop, loop);
+    const r = await runInProcess(runArgs(s, 'testing'), undefined, { XDG_RUNTIME_DIR: loop });
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed', dispatched: true });
+    const saved = JSON.parse(readFileSync(join(s.calls, `${row(r.json, 'testing').call_id}.json`), 'utf8'));
+    expect(saved.spawned.stderr).toContain('review-delegate: repo-mode setup failed (runtime-dir)');
   });
 
   // Value: protects=a repository path whose check fails with an error other than absent fails setup instead of staying unhidden; fails_when=every access() error reads as absent; why_new=continuation-3 cycle-2 finding (adversarial); seam=none
