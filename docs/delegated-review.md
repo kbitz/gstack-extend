@@ -209,8 +209,9 @@ runs every part on the host.
   temporary directory, `XDG_RUNTIME_DIR` or `/run/user/<uid>`, `/proc`, `/dev`,
   `/sys`, `/var/tmp` or an ancestor of any of them, or that lies inside a runtime
   dir (its session bus and agents, whose tmpfs would cover the entry at run time)
-  or inside the reviewed repository or `--calls`, is `config-malformed`, compared
-  both as written and with its symlinks resolved. So is an entry with a symlink
+  or (at `run`) at or inside the reviewed repository or `--calls`, is
+  `config-malformed`, compared both as written and with its symlinks resolved.
+  So is an entry with a symlink
   component below the deepest hidden directory around it (that symlink vanishes
   with the tmpfs, so bwrap would mount at the written spelling); below another
   listed directory the overlay keeps the symlink, so that case is allowed. At
@@ -342,7 +343,8 @@ runs every part on the host.
 - **A failed setup.** A setup step that fails (a missing or unsupported
   `expose` path, a `git` failure, the deadline) records `failed` or
   `timeout`, and the saved result's standard error names the step
-  (`review-delegate: repo-mode setup failed (<step>)`).
+  (`review-delegate: repo-mode setup failed (<step>)`, or `(<step>: timeout)`
+  when the deadline ran out).
 - **Logins, and the cost of throwaway writes.** Every write inside the
   sandbox, a refreshed login token included, is discarded when the call ends.
   A CLI that rotates its login token during a call therefore loses the
@@ -450,8 +452,8 @@ parts actually run on the host. Otherwise, the first matching reason wins:
 | Reason | Cause |
 |---|---|
 | `unresolved-claim` | An earlier call for the same input has a claim and no result. No call is made. |
-| `timeout` | The delegate ran past its configured timeout. |
-| `failed` | Its temporary directory could not be created or cleaned up, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
+| `timeout` | The delegate ran past its configured timeout (in repo mode, setup counts inside it). |
+| `failed` | Its temporary directory could not be created or cleaned up, a repo-mode setup step failed, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
 | `refused` | The installed classifier read the reply as a refusal. |
 | `needs-context` | The reply says `NEEDS_CONTEXT`. |
 | `uncredited` | The installed classifier did not credit the reply. |

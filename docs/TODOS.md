@@ -359,6 +359,17 @@
 - **Revisit when:** The next change to `tests/touchfiles.test.ts`, or the next time a `TOUCHFILES_BASE` run reports that failure.
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 8049fba (2026-11-09).
 
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: cycle-2 repair branches in the runner
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The continuation-3 cycle-2 repairs left these branches untested: a repository-path check that fails with `ENOTDIR` or `EACCES` (treated as absent), `realpath` failing with anything but `ENOENT` (fails setup) or with `ENOENT` (keeps the written path), `repoTop` falling back when `git rev-parse --show-toplevel` fails or times out, and the CLI writer under `EPIPE` or `ENOSPC`.
+- **Hypothesis (untested):** A worktree under a mode-000 directory for `EACCES`, a `PATH` with a failing `git` shim for `repoTop`, and a closed or full stdout for the writer. Re-verify the gap first; the next continuation may change these branches.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepareRepoCopy`, `repoTop`, the `import.meta.main` entry).
+- **Evidence:** Continuation-3 cycle-3 native adversarial pass (item 7); no failure reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 21a70d1 (2026-11-09).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
