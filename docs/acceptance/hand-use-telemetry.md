@@ -40,7 +40,9 @@ When reading synced or multi-machine state roots in place, pass repeatable
 gstack-extend-telemetry report --by-host --state-dir "$HOME/.gstack-extend"
 ```
 
-Confirm each expected cell in `hosts.<label>.skills.<stage>` and read only the
+Find the entry with the expected `host` label in the `hosts` array and check
+its `cells.<mode>` counts. The report aggregates stages per host; inspect the
+corresponding ledger locally to read only the
 row's `stage`, `agent`, `run_mode`, and `run_mode_source` fields. Never paste
 `session_id`, `work_item`, `repo`, `branch`, or local filesystem paths into
 this record. Once all required rows are recorded in the table below, update the
@@ -62,8 +64,8 @@ When no primary orchestration signal (`session-kind`, `work-item`,
 |---|---|---|
 | Non-empty `GSTACK_EXTEND_RUN_MODE` other than `orchestrated` | `unknown` | `unrecognized-run-mode-env` |
 | Non-default absolute `GSTACK_HOME` (different from `$HOME/.gstack`) | `unknown` | `launcher-state-root` |
-| Malformed non-empty `GSTACK_SESSION_KIND`, `GSTACK_EXTEND_WORK_ITEM`, or `GSTACK_EXTEND_WORKSPACE_OWNER` | `unknown` | `malformed-signal` |
-| Valid `GSTACK_EXTEND_WORKSPACE_OWNER` with no orchestration signal | `unknown` | `host-managed-workspace` |
+| Malformed non-empty `GSTACK_SESSION_KIND` or `GSTACK_EXTEND_WORK_ITEM`, or relative non-empty `GSTACK_HOME` | `unknown` | `malformed-signal` |
+| Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER` (even whitespace-only or malformed) with no orchestration signal | `unknown` | `host-managed-workspace` |
 | No harness detected and no `--agent` override (`agent: null`) | `unknown` | `no-harness` |
 | Non-Claude harness (`codex`, `cursor`, `grok`, or `--agent` override to/from another harness) | `unknown` | `harness-unqualified` |
 | Detected Claude with missing, empty, or unclean `CLAUDE_CODE_ENTRYPOINT` | `unknown` | `entrypoint-unavailable` |

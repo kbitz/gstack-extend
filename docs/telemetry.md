@@ -1701,7 +1701,7 @@ When the variable is unset or empty, `workspace_host` is `null`. When it is set,
 its value is copied verbatim if `clean()` accepts it: 1–200 printable Unicode
 code points, not blank, with outer spaces preserved. A non-empty value that fails
 `clean()` yields `null` and emits a value-free debug trace
-(`HOST_LABEL_INVALID: GSTACK_EXTEND_WORKSPACE_OWNER rejected by clean() (expected 1-200 printable non-blank chars); recording workspace_host=null`).
+with code `HOST_LABEL_INVALID`, the variable name, its validation rule and the null result.
 The draft-07 label constraints use Unicode categories and code-point length. Tests
 compare the supported Python/Bun runtimes on a bounded corpus; they do not prove
 equivalence across every Unicode-version pair. A plain hand-run has `null`
@@ -1735,19 +1735,16 @@ Quiet mode remains silent and optional telemetry remains nonfatal.
 by a user (`user-directed`), launched by an orchestrator (`orchestrated`), or lacks
 sufficient evidence (`unknown`). Finish evaluates signals in this exact 10-rule precedence:
 
-1. `GSTACK_SESSION_KIND` equal to `spawned` or `unattended` → `run_mode: "orchestrated"`, `run_mode_source: "session-kind"`.
-2. An accepted launcher work item saved at start from `GSTACK_EXTEND_WORK_ITEM` or supplied via `GSTACK_EXTEND_WORK_ITEM` in the finish environment → `run_mode: "orchestrated"`, `run_mode_source: "work-item"`. A manual `--work-item` finish flag alone does not classify a run as orchestrated.
-3. `GSTACK_EXTEND_RUN_MODE` equal to `orchestrated` → `run_mode: "orchestrated"`, `run_mode_source: "run-mode-env"`. Any other non-empty value of `GSTACK_EXTEND_RUN_MODE` is not guessed → `run_mode: "unknown"`, `run_mode_source: "unrecognized-run-mode-env"`.
-4. A non-default absolute `GSTACK_HOME` (normalized path different from `$HOME/.gstack`) → `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"`.
-5. Any malformed non-empty `GSTACK_SESSION_KIND`, `GSTACK_EXTEND_WORK_ITEM`, or `GSTACK_EXTEND_WORKSPACE_OWNER` → `run_mode: "unknown"`, `run_mode_source: "malformed-signal"`.
-6. Valid `GSTACK_EXTEND_WORKSPACE_OWNER` → `run_mode: "unknown"`, `run_mode_source: "host-managed-workspace"`. A workspace owner without an orchestration signal is a host-managed checkout, not proof of hand use.
-7. No harness (`agent is None`) → `run_mode: "unknown"`, `run_mode_source: "no-harness"`.
-8. Non-Claude harness (`detected_agent != "claude"` or `agent != "claude"`, including `codex`, `cursor`, `grok`, or an `--agent` override) → `run_mode: "unknown"`, `run_mode_source: "harness-unqualified"`.
-9. Detected Claude (`detected_agent == "claude"` and `agent == "claude"`), `CLAUDE_CODE_ENTRYPOINT` missing, empty, or rejected by `clean()` → `run_mode: "unknown"`, `run_mode_source: "entrypoint-unavailable"`.
-10. Detected Claude with a clean `CLAUDE_CODE_ENTRYPOINT`:
-    - Equal to `cli` → `run_mode: "user-directed"`, `run_mode_source: "cli"`.
-    - Equal to `Paseo` → `run_mode: "user-directed"`, `run_mode_source: "paseo-entrypoint"`.
-    - Any other entrypoint (`sdk-cli`, `sdk-ts`, `sdk-py`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, …) → `run_mode: "unknown"`, `run_mode_source: "entrypoint-unqualified"`.
+1. `GSTACK_SESSION_KIND` equal to `spawned` or `unattended` → `orchestrated` / `session-kind`.
+2. An accepted launcher work item saved at start from `GSTACK_EXTEND_WORK_ITEM`, else supplied by that variable at finish → `orchestrated` / `work-item`. A manual `--work-item` finish flag alone does not classify a run as orchestrated.
+3. `GSTACK_EXTEND_RUN_MODE=orchestrated` → `orchestrated` / `run-mode-env`.
+4. Any other non-empty `GSTACK_EXTEND_RUN_MODE` → `unknown` / `unrecognized-run-mode-env`.
+5. A non-default absolute `GSTACK_HOME` (normalized path different from `$HOME/.gstack`) → `unknown` / `launcher-state-root`.
+6. A malformed non-empty `GSTACK_SESSION_KIND`, a rejected saved or finish-environment `GSTACK_EXTEND_WORK_ITEM`, or a relative non-empty `GSTACK_HOME` → `unknown` / `malformed-signal`.
+7. Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, including whitespace-only or malformed values → `unknown` / `host-managed-workspace`. A host-managed checkout without an orchestration signal is not proof of hand use, even when its attribution label is rejected.
+8. No detected harness → `unknown` / `no-harness`.
+9. Detected or final harness other than Claude (including an `--agent` override to/from another harness) → `unknown` / `harness-unqualified`.
+10. Detected and final harness both Claude: missing, empty or unclean `CLAUDE_CODE_ENTRYPOINT` → `unknown` / `entrypoint-unavailable`; exactly `cli` → `user-directed` / `cli`; exactly `Paseo` → `user-directed` / `paseo-entrypoint`; every other entrypoint (`sdk-*`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, …) → `unknown` / `entrypoint-unqualified`.
 
 `PASEO_AGENT_ID` is never read: Paseo sets it for every agent it launches, so it
 cannot distinguish the owner's hand session in the Paseo app from an
@@ -1884,27 +1881,39 @@ gstack-extend-telemetry report --by-host --state-dir "$HOME/.gstack-extend"
 `analytics/stage-runs.jsonl` and sorted `analytics/stage-runs/*.jsonl` under
 `$GSTACK_EXTEND_STATE_DIR` (default `~/.gstack-extend`) or each absolute `--state-dir DIR`
 in argument order without taking locks, resolving the logger, or writing state.
-A relative or empty `--state-dir` argument or a symlinked state root is rejected
-with exit code 2 without echoing the rejected path. When the same underlying regular
-file `(st_dev, st_ino)` is reached more than once (for example, a repeated `--state-dir`
-or a hard-linked ledger), it is read once. It accepts `schema_version` 3 and 4 rows as
-versioned rows (`schema_version >= 5` is counted under `rows.unsupported`), prints the
-skill-by-mode table across `orchestrated`, `user-directed`, `unknown`, and `unrecorded`
-(legacy, v1, and v2 rows), with `runs`, `outcomes` (`success`, `error`, `abort`,
-`blocked`, `unknown`), and `last_seen` per cell, lists `empty_cells` (each installed
-skill × `orchestrated|user-directed|unknown` with zero runs across the combined report),
-and reports `files` (`read`, `unreadable`) and `rows` (`counted`, `routed`, `malformed`,
-`invalid`, `unsupported`).
+Explicit `--state-dir` roots replace the default root. `--json` and `--by-host`
+may each appear once; `--state-dir DIR` repeats, in any order. Unknown arguments,
+duplicate singleton flags, or a missing, empty or relative `DIR` print a value-free
+invalid-arguments message to stderr and return 0, preserving the command's
+existing nonfatal convention. Symlinked root aliases are allowed; individual
+ledger symlinks and symlinked `analytics/stage-runs` directories are not followed.
+When the same underlying regular file `(st_dev, st_ino)` is reached more than once
+(for example, a repeated root, a root alias or a hard-linked ledger), it is read
+once. Distinct copied files still count separately.
 
-When `--by-host` is passed, JSON adds `hosts: { "<label>": { "files": {"read": n, "unreadable": n}, "rows": {...}, "skills": {...} } }`
-(sorted by `<label>`) and text output appends a `=== host: <label> ===` section per
-observed host label. The host label comes from the ledger filename, never row contents:
-`analytics/stage-runs.jsonl` is `(legacy)`, `unknown-host.jsonl` and
-`unknown-host.legacy.jsonl` are `(unattributed)`, and `<host>.jsonl` or
-`<host>.legacy.jsonl` is `<host>` (so a machine's live and migrated legacy files merge
-under one label). When more than one `--state-dir` is given and the same host label
-appears in more than one root (after `(st_dev, st_ino)` deduplication), `report` still
-merges the counts and writes a warning to stderr (`gstack-extend-telemetry report: warning: host label '<label>' appears in multiple state dirs; use distinct host_id values before combining roots`).
+The report accepts v3 and v4 run modes; versions 5 and above are counted under
+`rows.unsupported`. It prints the skill-by-mode table across `orchestrated`,
+`user-directed`, `unknown`, and `unrecorded` (legacy, v1, and v2 rows), with
+`runs`, `outcomes` (`success`, `error`, `abort`, `blocked`, `unknown`), and
+`last_seen` per cell. It lists `empty_cells` (each installed skill ×
+`orchestrated|user-directed|unknown` with zero runs across the combined report),
+and reports `files` (`read`, `unreadable`) and `rows` (`counted`, `routed`,
+`malformed`, `invalid`, `unsupported`).
+
+With `--by-host`, JSON adds a `hosts` array whose entries are
+`{"host": "<label>", "cells": {"<mode>": {"runs": n, "outcomes": {...}, "last_seen": null}}}`.
+Text appends a `Host` table after `Empty cells`, with one row per host × mode.
+There is no per-host skill breakdown. The label comes from the ledger filename,
+never row contents: root `analytics/stage-runs.jsonl` is `(legacy)`; otherwise the
+text before the first dot is used when it matches `[a-z0-9][a-z0-9-]{0,62}`,
+including `unknown-host`, and an invalid prefix is `(unattributed)`.
+A machine's live and migrated `<host>.legacy.jsonl` files merge under one label;
+sync conflict copies ending in `.jsonl` are also read as separate ledgers.
+Labels sort alphabetically, with `(legacy)` and `(unattributed)` last.
+When a label appears in more than one listed root after inode deduplication,
+counts are combined and stderr warns with the duplicate-label count only:
+`telemetry report: N host label(s) appeared in more than one state directory; copies of one ledger are counted twice`.
+Without the new flags, text and JSON retain their previous shape.
 It never prints session IDs, branch, repo, work item, or file paths, and prints the
 stage-runs filename stem as a host label only when `--by-host` is passed.
 `last_seen` is the greatest valid `started_at` in the cell, or null if none is valid.
@@ -1998,7 +2007,8 @@ until finish flags or requested variables supply them:
   events log changed since the stage began is attributable; zero or several
   leave model and effort null.
 - **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. An explicit
-  `CURSOR_INVOKED_AS` records `route: "cli"`; otherwise `route` is `"unknown"`.
+  `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker records
+  `route: "cli"`; otherwise `route` is `"unknown"`.
   Conductor's private Cursor SDK store is no longer read; see
   [Cursor and quota](#cursor-and-quota). Transcript mtime under
   `~/.cursor/projects/*/agent-transcripts/` still breaks ties across harnesses,
@@ -2754,7 +2764,7 @@ stage, agent, model, effort, and route from provenance and does not print
 source labels. A quota row can name a model while the stage-runs source is
 `unknown`, or take its model and effort from a `requested` stage-runs value. That is not a substitute for this row and not permission to sample.
 
-Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read ([SPEC Audience and target](SPEC.md#audience-and-target) retired Conductor support on 2026-11-06); historical v1/v2/v3 rows that recorded `route: "conductor"` or detected Cursor store metadata remain valid under their schema branches, while v4 Cursor rows record `route: "cli"` when `CURSOR_INVOKED_AS` is set and `"unknown"` otherwise, and take model and effort from `--model`/`--effort` or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT`.
+Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read ([SPEC Audience and target](SPEC.md#audience-and-target) retired Conductor support on 2026-11-06); historical v1/v2/v3 rows that recorded `route: "conductor"` or detected Cursor store metadata remain valid under their schema branches, while v4 Cursor rows record `route: "cli"` when `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker is set and `"unknown"` otherwise, and take model and effort from `--model`/`--effort` or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT`.
 
 | Reason | Problem | Cause | Safe action |
 |---|---|---|---|

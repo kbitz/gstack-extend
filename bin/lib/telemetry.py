@@ -1471,7 +1471,6 @@ def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
         or finish_env_work_item not in (None, "")
         or saved_work_item is not None
         or (gstack_home is not None and gstack_home != "" and not os.path.isabs(gstack_home))
-        or (raw_owner not in (None, "") and clean(raw_owner) is None)
     ):
         return "unknown", "malformed-signal"
     if raw_owner not in (None, ""):

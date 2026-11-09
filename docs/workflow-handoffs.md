@@ -1445,10 +1445,10 @@ With neither variable set, every path is what it was before this section.
   `GSTACK_HOME` is supporting evidence that blocks `user-directed` and records
   `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"` when no primary
   orchestration signal or run-mode override is set; a malformed non-empty
-  `GSTACK_SESSION_KIND`, `GSTACK_EXTEND_WORK_ITEM`, or
-  `GSTACK_EXTEND_WORKSPACE_OWNER` records `run_mode: "unknown"`,
-  `run_mode_source: "malformed-signal"`; and a valid
-  `GSTACK_EXTEND_WORKSPACE_OWNER` without an orchestration signal records
+  `GSTACK_SESSION_KIND`, `GSTACK_EXTEND_WORK_ITEM`, or a relative
+  non-empty `GSTACK_HOME` records `run_mode: "unknown"`,
+  `run_mode_source: "malformed-signal"`; and any non-empty
+  `GSTACK_EXTEND_WORKSPACE_OWNER` (even whitespace-only or malformed) without an orchestration signal records
   `run_mode: "unknown"`, `run_mode_source: "host-managed-workspace"`. Only a
   detected Claude session whose `CLAUDE_CODE_ENTRYPOINT` is `cli`
   (`run_mode_source: "cli"`) or `Paseo` (`run_mode_source: "paseo-entrypoint"`)

@@ -2030,7 +2030,9 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { outcome: 'blocked', blocked_reason: null, blocked_reason_source: 'not-blocked' },
       { outcome: 'success', blocked_reason: 'missing-env', blocked_reason_source: 'flag' },
       { outcome: 'success', blocked_reason: null, blocked_reason_source: 'not-supplied' },
-    ]) expect([patch, verdict({ ...v3, ...patch }).ok]).toEqual([patch, false]);
+    ]) {
+      for (const base of [v3, v4]) expect([base.schema_version, patch, verdict({ ...base, ...patch }).ok]).toEqual([base.schema_version, patch, false]);
+    }
     for (const validPatch of [
       { run_mode: 'orchestrated', run_mode_source: 'session-kind', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
       { run_mode: 'orchestrated', run_mode_source: 'work-item', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
@@ -2042,6 +2044,7 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     for (const patch of [
       { host_agent_id: null }, { host_agent_id: 'paseo-1' },
       { route: 'conductor' },
+      { run_mode: 'unknown', run_mode_source: 'none' },
       { run_mode: 'user-directed', run_mode_source: 'sdk-cli' },
       { run_mode: 'user-directed', run_mode_source: 'Paseo' },
       { run_mode: 'unknown', run_mode_source: 'cli' },
@@ -2125,7 +2128,7 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { env: fix.env, encoding: 'utf8' });
     expect([surrogate.status, surrogate.stderr]).toEqual([0, '']);
     rows.push(JSON.parse(surrogate.stdout));
-    expect(rows.at(-1)).toMatchObject({ workspace_host: null, run_mode: 'unknown', run_mode_source: 'malformed-signal' });
+    expect(rows.at(-1)).toMatchObject({ workspace_host: null, run_mode: 'unknown', run_mode_source: 'host-managed-workspace' });
     expect(verdict({ ...quickstartRow(), workspace_host: 'bad\ud800id' }).ok).toBe(false);
     const result = runValidation(rows.map(row => JSON.stringify(row)).join('\n'));
     expect([result.status, result.stderr, result.summary]).toEqual([0, '', summaryOf({ rows: rows.length, v4: rows.length })]);
@@ -2474,10 +2477,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'host-managed-workspace',
       },
       {
-        name: 'malformed GSTACK_EXTEND_WORKSPACE_OWNER fails closed as malformed-signal',
+        name: 'malformed GSTACK_EXTEND_WORKSPACE_OWNER fails closed as host-managed-workspace',
         env: { GSTACK_EXTEND_WORKSPACE_OWNER: 'bad\nowner', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         expectedMode: 'unknown',
-        expectedSource: 'malformed-signal',
+        expectedSource: 'host-managed-workspace',
       },
       {
         name: 'Claude cli interactive entrypoint',
@@ -2528,6 +2531,24 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'no-harness',
       },
     ];
+
+    // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
+    for (const [name, harness] of [
+      ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
+      ['Claude Paseo', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' }],
+      ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
+      ['Cursor', { CURSOR_AGENT: '1' }],
+      ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
+    ] as Array<[string, Record<string, string>]>) {
+      for (const owner of ['', 'fixture-owner']) {
+        cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
+          env: { ...harness, GSTACK_EXTEND_RUN_MODE: 'orchestrated', GSTACK_EXTEND_WORKSPACE_OWNER: owner },
+          expectedMode: 'orchestrated', expectedSource: 'run-mode-env' });
+      }
+    }
+    cases.push({ name: 'relative GSTACK_HOME is malformed supporting evidence',
+      env: { GSTACK_HOME: 'relative-root', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+      expectedMode: 'unknown', expectedSource: 'malformed-signal' });
 
     for (const tc of cases) {
       const env = { ...fix.env, ...tc.env };
@@ -2673,7 +2694,6 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     const recordPath = join(ROOT, 'docs/acceptance/hand-use-telemetry.md');
     expect(existsSync(recordPath)).toBe(true);
     const record = readFileSync(recordPath, 'utf8');
-    expect(record).toContain('Status: pending — no real runs recorded');
     for (const h of [
       '## What counts',
       '## Readback procedure',
@@ -2686,7 +2706,13 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).toContain('GSTACK_EXTEND_RUN_MODE=orchestrated');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
-    expect(runModeSection).toContain('Hand-use capture is not yet established: no real by-hand run has been read back');
+    // Value: protects=pending qualification stays honest until real evidence is recorded; fails_when=empty evidence loses its notice or later evidence is forced pending; why_new=T9 requires the conditional transition; seam=none
+    const recordedRuns = section(record, '## Recorded runs').split('\n')
+      .filter(line => line.trim().startsWith('|')).slice(2);
+    if (recordedRuns.length === 0) {
+      expect(record).toMatch(/^Status: pending/m);
+      expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
+      expect(runModeSection).toContain('Hand-use capture is not yet established: no real by-hand run has been read back');
+    }
   });
 });

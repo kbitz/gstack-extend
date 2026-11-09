@@ -4346,10 +4346,11 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     }
   }, 30_000);
 
-  test('immutable v1 and legacy rows replay in exact original field order under new host/version context', () => {
+  test('immutable v1/v2/v3 and legacy rows replay in exact original field order under new host/version context', () => {
     const fix = makeTelemetryFixture('off');
     const install = copiedInstall(fix, 'historical-replay', '1.0.0\n');
-    for (const version of ['legacy-13', 'legacy-15', 'v1']) {
+    // Value: protects=historical rows retain their exact bytes under the v4 writer; fails_when=retry reconstructs version, host or source fields; why_new=T3 explicitly requires saved v3 replay; seam=none
+    for (const version of ['legacy-13', 'legacy-15', 'v1', 'v2', 'v3']) {
       expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
       const state = readHandoff(fix);
       const historical = { stage: 'roadmap', agent: 'codex', model: 'gpt-5-codex', effort: 'high', rung: 0,
@@ -4357,7 +4358,14 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
         repo: 'acme/widget', branch: 'main', work_item: 'historical-work', source: 'gstack-extend', route: 'conductor',
         entrypoint_raw: null, schema_version: 1, producer_version: '0.33.1.0', agent_source: 'detected',
         model_source: 'flag', effort_source: 'detected' };
-      const row = Object.fromEntries(Object.entries(historical).slice(0, version === 'v1' ? 20 : version === 'legacy-13' ? 13 : 15));
+      const row = Object.fromEntries(Object.entries(historical).slice(0, version.startsWith('v') ? 20 : version === 'legacy-13' ? 13 : 15));
+      if (version === 'v2' || version === 'v3') {
+        Object.assign(row, { schema_version: Number(version.slice(1)), workspace_host: 'paseo', host_agent_id: 'original-host' });
+      }
+      if (version === 'v3') {
+        Object.assign(row, { run_mode: 'user-directed', run_mode_source: 'Paseo', questions: null, user_wait_s: null,
+          resumes: null, user_signals_source: 'harness-unsupported', blocked_reason: null, blocked_reason_source: 'not-blocked' });
+      }
       const exact = JSON.stringify(row);
       rewriteHandoff(fix, { row, done: [] });
       const args = ['finish', '--skill', 'extend:roadmap', '--session-id', String(state.session_id), '--start', String(state.start)];
@@ -4793,22 +4801,22 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'cli',
       },
       {
-        name: 'GSTACK_EXTEND_WORKSPACE_OWNER whitespace-only gives malformed-signal',
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER whitespace-only gives host-managed-workspace',
         finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: '   ', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'unknown',
-        source: 'malformed-signal',
+        source: 'host-managed-workspace',
       },
       {
-        name: 'GSTACK_EXTEND_WORKSPACE_OWNER non-printable gives malformed-signal',
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER non-printable gives host-managed-workspace',
         finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: 'owner\nbad', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'unknown',
-        source: 'malformed-signal',
+        source: 'host-managed-workspace',
       },
       {
-        name: 'GSTACK_EXTEND_WORKSPACE_OWNER over 200 chars gives malformed-signal',
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER over 200 chars gives host-managed-workspace',
         finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: 'x'.repeat(201), CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'unknown',
-        source: 'malformed-signal',
+        source: 'host-managed-workspace',
       },
       {
         name: 'Claude cli entrypoint gives user-directed / cli',
@@ -4909,6 +4917,24 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       },
     ];
 
+    // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
+    for (const [name, harness] of [
+      ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
+      ['Claude Paseo', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' }],
+      ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
+      ['Cursor', { CURSOR_AGENT: '1' }],
+      ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
+    ] as Array<[string, Record<string, string>]>) {
+      for (const owner of ['', 'fixture-owner']) {
+        cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
+          finishEnv: { ...harness, GSTACK_EXTEND_RUN_MODE: 'orchestrated', GSTACK_EXTEND_WORKSPACE_OWNER: owner },
+          mode: 'orchestrated', source: 'run-mode-env' });
+      }
+    }
+    cases.push({ name: 'relative GSTACK_HOME is malformed supporting evidence',
+      finishEnv: { GSTACK_HOME: 'relative-root', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+      mode: 'unknown', source: 'malformed-signal' });
+
     for (const tc of cases) {
       const start = runHelper({ ...fix.env, ...(tc.startEnv ?? tc.finishEnv ?? {}) }, ['start', '--skill', 'extend:roadmap']);
       expect(start.status, tc.name).toBe(0);
@@ -4949,6 +4975,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     // subprocess, sqlite3, or credential paths.
     const auditScript = [
       'import inspect, io, json, pathlib, sys',
+      'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
       'for fn in (telemetry.run_mode, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
@@ -4966,6 +4993,8 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
       'telemetry.run_mode("claude", "claude", None)',
+      'with mock.patch.dict(telemetry.os.environ, {}, clear=True):',
+      '    assert telemetry.run_mode("claude", "claude", "bad\\nitem") == ("unknown", "malformed-signal")',
       'signals = telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000093", 1790000000, 1790000010)',
       'telemetry.host_file_name(state, "My.Host_01.local")',
       'telemetry.stage_run_files(state)',
@@ -5479,6 +5508,9 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     const row3 = makeV4Row('sid-3', 'implement', 'orchestrated', 'work-item', 'success', 40);
     const legacyRow = makeV4Row('sid-legacy', 'roadmap', 'unknown', 'entrypoint-unavailable', 'success', 15, { entrypoint_raw: null });
 
+    const defaultLedger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    mkdirSync(dirname(defaultLedger), { recursive: true });
+    writeFileSync(defaultLedger, JSON.stringify(makeV4Row('default-only', 'roadmap', 'user-directed', 'cli', 'success', 1)) + '\n');
     writeFileSync(join(rootA, 'analytics/stage-runs/macbook.jsonl'), JSON.stringify(row1) + '\n' + JSON.stringify(row2) + '\n');
     writeFileSync(join(rootA, 'analytics/stage-runs.jsonl'), JSON.stringify(legacyRow) + '\n');
     writeFileSync(join(rootB, 'analytics/stage-runs/omarchy.jsonl'), JSON.stringify(row3) + '\n');
@@ -5506,6 +5538,15 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     expect(implementSkill.cells['user-directed'].runs).toBe(1);
     expect(implementSkill.cells.orchestrated.runs).toBe(1);
     expect(report.hosts.map((h: { host: string }) => h.host)).toEqual(['macbook', 'omarchy', '(legacy)']);
+    // Value: protects=host cells aggregate all stages with exact mode/outcome counts; fails_when=host aggregation loses or duplicates a ledger; why_new=the original assertion only checked labels; seam=none
+    expect(report.hosts[0].cells['user-directed']).toEqual({
+      runs: 2, outcomes: { success: 1, error: 0, abort: 0, blocked: 1, unknown: 0 }, last_seen: row1.started_at,
+    });
+    expect(report.hosts[1].cells.orchestrated).toEqual({
+      runs: 1, outcomes: { success: 1, error: 0, abort: 0, blocked: 0, unknown: 0 }, last_seen: row3.started_at,
+    });
+    expect(report.hosts[2].cells.unknown.runs).toBe(1);
+    for (const privateValue of [rootA, rootB, 'sid-1', 'acme/widget', 'wi-1']) expect(res.stdout).not.toContain(privateValue);
 
     // Without --by-host, hosts is omitted from JSON
     const resNoByHost = spawnSync(HELPER_BIN, [
@@ -5520,6 +5561,40 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     });
     expect(resRel.status).toBe(0);
     expect(resRel.stderr).toContain('telemetry report: invalid arguments');
+    const alias = join(fix.home, 'root-alias');
+    symlinkSync(rootA, alias);
+    const aliased = spawnSync(HELPER_BIN, ['report', '--json', '--by-host', '--state-dir', rootA, '--state-dir', alias], {
+      env: fix.env, encoding: 'utf8', timeout: 15_000,
+    });
+    expect([aliased.status, aliased.stderr]).toEqual([0, '']);
+    expect(JSON.parse(aliased.stdout).rows.counted).toBe(3);
+    expect(JSON.parse(aliased.stdout).files.read).toBe(2);
+    for (const args of [['--state-dir'], ['--json', '--json'], ['--by-host', '--by-host']]) {
+      const rejected = spawnSync(HELPER_BIN, ['report', ...args], { env: fix.env, encoding: 'utf8', timeout: 15_000 });
+      expect([rejected.status, rejected.stdout]).toEqual([0, '']);
+      expect(rejected.stderr).toContain('telemetry report: invalid arguments');
+    }
+    for (const flags of [[], ['--json']]) {
+      const implicit = spawnSync(HELPER_BIN, ['report', ...flags], { env: fix.env, encoding: 'utf8' });
+      const explicit = spawnSync(HELPER_BIN, ['report', ...flags, '--state-dir', join(fix.home, '.gstack-extend')], { env: fix.env, encoding: 'utf8' });
+      expect([implicit.status, implicit.stdout, implicit.stderr]).toEqual([explicit.status, explicit.stdout, explicit.stderr]);
+    }
+
+    // Value: protects=migrated and conflict-copy filenames group by validated prefix; fails_when=suffixes become hosts or invalid names leak; why_new=T6 requires migrated files and fallback labels; seam=none
+    const { host_agent_id: _oldId, ...v3Base } = row1;
+    const historical = { ...v3Base, schema_version: 3, workspace_host: 'paseo', host_agent_id: 'original-host', run_mode_source: 'Paseo' };
+    expect(validRow(historical)).toBe(true);
+    writeFileSync(join(rootA, 'analytics/stage-runs/macbook.legacy.jsonl'), JSON.stringify(historical) + '\n');
+    writeFileSync(join(rootA, 'analytics/stage-runs/INVALID.jsonl'), JSON.stringify(row3) + '\n');
+    const labeled = spawnSync(HELPER_BIN, ['report', '--json', '--by-host', '--state-dir', rootA, '--state-dir', rootB], {
+      env: fix.env, encoding: 'utf8', timeout: 15_000,
+    });
+    expect([labeled.status, labeled.stderr]).toEqual([0, '']);
+    const labels = JSON.parse(labeled.stdout);
+    expect(labels.rows.counted).toBe(6);
+    expect(labels.hosts.map((h: { host: string }) => h.host)).toEqual(['macbook', 'omarchy', '(legacy)', '(unattributed)']);
+    expect(labels.hosts[0].cells['user-directed'].runs).toBe(3);
+    expect(labels.hosts[3].cells.orchestrated.runs).toBe(1);
 
     // Human --by-host output and duplicate host label across distinct state directories
     writeFileSync(join(rootB, 'analytics/stage-runs/macbook.jsonl'), JSON.stringify(row1) + '\n');
@@ -5534,6 +5609,20 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     expect(resHuman.stdout).toContain('macbook');
     expect(resHuman.stdout).toContain('omarchy');
     expect(resHuman.stdout).toContain('(legacy)');
+    // Exact numeric host rows, independent of the implementation's column widths.
+    const hostLines = resHuman.stdout.split('Host                    Mode           Runs')[1]!.trim().split('\n').slice(1)
+      .map(line => line.trim().split(/\s+/).join(' '));
+    expect(hostLines).toEqual([
+      'macbook orchestrated 0 0 0 0 0 0 -',
+      'macbook user-directed 4 3 1 0 0 0 2026-11-08T12:00:00Z',
+      'macbook unknown 0 0 0 0 0 0 -', 'macbook unrecorded 0 0 0 0 0 0 -',
+      'omarchy orchestrated 1 1 0 0 0 0 2026-11-08T12:00:00Z',
+      'omarchy user-directed 0 0 0 0 0 0 -', 'omarchy unknown 0 0 0 0 0 0 -', 'omarchy unrecorded 0 0 0 0 0 0 -',
+      '(legacy) orchestrated 0 0 0 0 0 0 -', '(legacy) user-directed 0 0 0 0 0 0 -',
+      '(legacy) unknown 1 1 0 0 0 0 2026-11-08T12:00:00Z', '(legacy) unrecorded 0 0 0 0 0 0 -',
+      '(unattributed) orchestrated 1 1 0 0 0 0 2026-11-08T12:00:00Z',
+      '(unattributed) user-directed 0 0 0 0 0 0 -', '(unattributed) unknown 0 0 0 0 0 0 -', '(unattributed) unrecorded 0 0 0 0 0 0 -',
+    ]);
   }, 30_000);
 
   test('Track 73A T7: structured transcript resume forms, signal-reader exception isolation, missing skill metadata, and report filesystem error diagnostics', () => {
@@ -5542,58 +5631,31 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     const env = { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ID: sid };
     const transcript = join(fix.home, '.claude/projects/project', `${sid}.jsonl`);
 
-    // 1. Structured transcript resume forms in claude_user_signals:
-    //    - end_turn followed by user message with content: [{type: 'text', text: 'PROMPT_ARRAY_CANARY'}] -> counts resume
-    //    - end_turn followed by user message with content: [] -> does NOT count resume
-    //    - subsequent user message with content: [{type: 'tool_result', tool_use_id: 'u1'}, {type: 'text', text: 'MIXED_CANARY'}] -> does NOT count resume (has tool_result)
-    //    - end_turn followed by user message with content: 12345 (non-string, non-list) -> does NOT count resume
+    // Value: protects=each documented resume form and its independent wait; fails_when=human prompt detection accepts tool/meta/blank records or rejects image/text prompts; why_new=T7 requires each form in its own window; seam=none
     const begin = 1790000100;
-    writeJsonl(transcript, [
-      {
-        type: 'assistant', timestamp: iso(begin + 1),
-        message: { id: 'm1', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'end_turn', content: [] },
-      },
-      {
-        type: 'user', timestamp: iso(begin + 6),
-        message: { role: 'user', content: [{ type: 'text', text: 'PROMPT_ARRAY_CANARY' }] },
-      },
-      {
-        type: 'assistant', timestamp: iso(begin + 10),
-        message: { id: 'm2', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'end_turn', content: [] },
-      },
-      {
-        type: 'user', timestamp: iso(begin + 12),
-        message: { role: 'user', content: [] },
-      },
-      {
-        type: 'user', timestamp: iso(begin + 15),
-        message: {
-          role: 'user',
-          content: [
-            { type: 'tool_result', tool_use_id: 'u1', content: 'TOOL_RES_CANARY' },
-            { type: 'text', text: 'MIXED_CANARY' },
-          ],
-        },
-      },
-      {
-        type: 'assistant', timestamp: iso(begin + 20),
-        message: { id: 'm3', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'end_turn', content: [] },
-      },
-      {
-        type: 'user', timestamp: iso(begin + 25),
-        message: { role: 'user', content: 12345 },
-      },
-    ]);
-
-    const structuredRes = provenanceRun(fix, env, undefined, ['--outcome', 'success', '--start', String(begin)]);
-    expect(structuredRes.row).toMatchObject({
-      questions: 0,
-      user_wait_s: 5, // (begin + 6) - (begin + 1)
-      resumes: 1,
-      user_signals_source: 'session-log',
-    });
-    expect(validRow(structuredRes.row)).toBe(true);
-    expect(JSON.stringify(structuredRes.row)).not.toContain('CANARY');
+    for (const [name, content, meta, counted] of [
+      ['text blocks', [{ type: 'text', text: 'PROMPT_ARRAY_CANARY' }], false, true],
+      ['image', [{ type: 'image', source: { type: 'base64', data: 'IMAGE_CANARY' } }], false, true],
+      ['empty list', [], false, false],
+      ['tool result with text', [{ type: 'tool_result', tool_use_id: 'u1' }, { type: 'text', text: 'MIXED_CANARY' }], false, false],
+      ['meta string', 'META_CANARY', true, false],
+      ['blank string', '   ', false, false],
+      ['blank text blocks', [{ type: 'text', text: '   ' }], false, false],
+      ['unsupported content', 12345, false, false],
+    ] as const) {
+      writeJsonl(transcript, [
+        { type: 'assistant', timestamp: iso(begin + 1), message: {
+          id: 'assistant', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'end_turn', content: [],
+        } },
+        { type: 'user', timestamp: iso(begin + 6), isMeta: meta, message: { role: 'user', content } },
+      ]);
+      const result = provenanceRun(fix, env, undefined, ['--outcome', 'success', '--start', String(begin)]);
+      expect(result.row, name).toMatchObject({
+        questions: 0, user_wait_s: counted ? 5 : 0, resumes: counted ? 1 : 0, user_signals_source: 'session-log',
+      });
+      expect(validRow(result.row), name).toBe(true);
+      expect(JSON.stringify(result.row)).not.toContain('CANARY');
+    }
 
     // 2. Signal-reader exception isolation: patching claude_user_signals to raise RuntimeError("SECRET_BOOM_VALUE")
     //    leaves the constructed row valid with null counts, user_signals_source: 'session-log-unavailable',
@@ -5627,28 +5689,17 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     expect(isoOut.stderr).not.toContain('SECRET_BOOM_VALUE');
     expect(isoOut.stderr).not.toContain('Traceback');
 
-    // 3. Missing installed skill metadata (_discover_installed_skills returning None) in run_report:
-    const skillMetaScript = [
-      'import io, json, sys',
-      'from unittest import mock',
-      'sys.path.insert(0, sys.argv[1])',
-      'import telemetry',
-      'buf = io.StringIO()',
-      'with mock.patch.object(telemetry, "_discover_installed_skills", return_value=None), mock.patch.object(sys, "stdout", buf):',
-      '    rc = telemetry.run_report(["--json"])',
-      'print(json.dumps({"rc": rc, "data": json.loads(buf.getvalue())}))',
-    ].join('\n');
-    const skillMetaRun = spawnSync('python3', ['-B', '-I', '-c', skillMetaScript, join(ROOT, 'bin/lib')], {
-      env: fix.env,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    expect([skillMetaRun.status, skillMetaRun.stderr]).toEqual([0, '']);
-    const skillMetaOut = JSON.parse(skillMetaRun.stdout);
-    expect(skillMetaOut.rc).toBe(0);
-    expect(skillMetaOut.data.installed_skills).toBeNull();
-    expect(skillMetaOut.data.empty_cells).toEqual([]);
-    expect(skillMetaOut.data.skills.some((s: { skill: string; installed: boolean }) => s.skill === 'roadmap' && s.installed === false)).toBe(true);
+    // Value: protects=real absent/non-directory install metadata retains observed stages without inventing empty cells; fails_when=metadata discovery defaults to an empty known install or loses rows; why_new=T7 previously mocked the result instead of discovery; seam=none
+    for (const shape of ['missing', 'file']) {
+      const install = copiedInstall(fix, `no-skills-${shape}`, RELEASE);
+      if (shape === 'file') writeFileSync(join(install.root, 'skills'), 'not a directory');
+      const report = install.run(['report', '--json']);
+      expect([report.status, report.stderr]).toEqual([0, '']);
+      const data = JSON.parse(report.stdout);
+      expect(data.installed_skills).toBeNull();
+      expect(data.empty_cells).toEqual([]);
+      expect(data.skills.some((s: { skill: string; installed: boolean }) => s.skill === 'roadmap' && s.installed === false)).toBe(true);
+    }
 
     // 4. Report filesystem error diagnostics: symlinked .jsonl file and unreadable stage-runs directory increment files.unreadable
     const fsErrRoot = join(fix.home, 'fs-err-state');
@@ -5665,25 +5716,58 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     expect([fsSymRes.status, fsSymRes.stderr]).toEqual([0, '']);
     expect(JSON.parse(fsSymRes.stdout).files).toEqual({ read: 0, unreadable: 1 });
 
-    // Also test OSError on listdir of stage-runs directory in run_report
-    const listdirErrScript = [
-      'import io, json, sys',
+    // Value: protects=per-file partial results survive directory, open, and iteration failures; fails_when=one unreadable input discards sibling or already-counted rows; why_new=T7 requires all three error boundaries; seam=none
+    const sample = { source: 'gstack-extend', schema_version: 4, stage: 'roadmap',
+      run_mode: 'user-directed', outcome: 'success', started_at: '2026-11-08T12:00:00Z' };
+    writeFileSync(join(fsErrRoot, 'analytics/stage-runs.jsonl'), JSON.stringify(sample) + '\n');
+    writeFileSync(join(fsErrRuns, 'host-a.jsonl'), JSON.stringify(sample) + '\n' + JSON.stringify(sample) + '\n');
+    writeFileSync(join(fsErrRuns, 'host-b.jsonl'), JSON.stringify(sample) + '\n');
+    rmSync(join(fsErrRuns, 'symlinked-host.jsonl'));
+    const fsErrorScript = [
+      'import io, json, os, sys',
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
+      'root, kind = sys.argv[2:4]',
+      'runs = os.path.join(root, "analytics/stage-runs")',
+      'bad_file = os.path.join(runs, "host-a.jsonl")',
+      'real_listdir, real_open, real_fdopen = os.listdir, os.open, os.fdopen',
+      'bad_fds = set()',
+      'def listdir(path):',
+      '    if kind == "listdir" and str(path) == runs: raise OSError("synthetic listdir failure")',
+      '    return real_listdir(path)',
+      'def open_file(path, flags, *args, **kwargs):',
+      '    if str(path) == bad_file and kind == "open": raise OSError("synthetic open failure")',
+      '    fd = real_open(path, flags, *args, **kwargs)',
+      '    if str(path) == bad_file: bad_fds.add(fd)',
+      '    return fd',
+      'class FailingStream:',
+      '    def __init__(self, stream): self.stream = stream',
+      '    def __enter__(self): return self',
+      '    def __exit__(self, *args): self.stream.close()',
+      '    def __iter__(self):',
+      '        yield next(self.stream)',
+      '        raise OSError("synthetic iteration failure")',
+      'def fdopen(fd, *args, **kwargs):',
+      '    fail = fd in bad_fds and kind == "iterate"',
+      '    bad_fds.discard(fd)',
+      '    stream = real_fdopen(fd, *args, **kwargs)',
+      '    return FailingStream(stream) if fail else stream',
       'buf = io.StringIO()',
-      'with mock.patch.object(telemetry.os, "listdir", side_effect=PermissionError(13, "Permission denied")), mock.patch.object(sys, "stdout", buf):',
-      '    rc = telemetry.run_report(["--json", "--state-dir", sys.argv[2]])',
+      'with mock.patch.object(telemetry.os, "listdir", listdir), mock.patch.object(telemetry.os, "open", open_file), mock.patch.object(telemetry.os, "fdopen", fdopen), mock.patch.object(sys, "stdout", buf):',
+      '    rc = telemetry.run_report(["--json", "--state-dir", root])',
       'print(json.dumps({"rc": rc, "data": json.loads(buf.getvalue())}))',
     ].join('\n');
-    const listdirErrRun = spawnSync('python3', ['-B', '-I', '-c', listdirErrScript, join(ROOT, 'bin/lib'), fsErrRoot], {
-      env: fix.env,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    expect([listdirErrRun.status, listdirErrRun.stderr]).toEqual([0, '']);
-    const listdirOut = JSON.parse(listdirErrRun.stdout);
-    expect(listdirOut.rc).toBe(0);
-    expect(listdirOut.data.files).toEqual({ read: 0, unreadable: 1 });
+    for (const [kind, read, counted] of [['listdir', 1, 1], ['open', 2, 2], ['iterate', 3, 3]] as const) {
+      const result = spawnSync('python3', ['-B', '-I', '-c', fsErrorScript, join(ROOT, 'bin/lib'), fsErrRoot, kind], {
+        env: fix.env, encoding: 'utf8', timeout: 10_000,
+      });
+      expect([result.status, result.stderr], kind).toEqual([0, '']);
+      const output = JSON.parse(result.stdout);
+      expect(output.rc).toBe(0);
+      expect(output.data.files, kind).toEqual({ read, unreadable: 1 });
+      expect(output.data.rows.counted, kind).toBe(counted);
+    }
+
   }, 30_000);
 });
