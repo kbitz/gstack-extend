@@ -1515,7 +1515,8 @@ proof belongs to the roadmap's external-handoff acceptance Tracks.
 ## Non-goals and alternatives
 
 No orchestration engine, parser binary, JSON transport, hosted service or automatic
-merge. `docs/stage-runs.schema.json` is a separate contract and is unchanged.
+merge. `docs/stage-runs.schema.json` is a separate contract governed by
+[telemetry's row-version rules](telemetry.md#versions).
 
 State discovery, where a caller reads PR state itself, stays available for live
 bindings but cannot replace this contract: a pause, a deferral and the approved scope
