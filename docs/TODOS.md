@@ -352,6 +352,13 @@
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c380a4a (2026-11-09).
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=tests/touchfiles.test.ts|tests/helpers/touchfiles.ts] detectBaseBranch probe-order tests read the caller's TOUCHFILES_BASE
+
+- **What:** `detectBaseBranch(repo)` defaults to `process.env`, so under `TOUCHFILES_BASE=<ref> bun run test` (the command CLAUDE.md prescribes for a release-metadata or targeted run) "probe order: prefers main when present" resolves the caller's ref in a fresh fixture repository, gets `null` and fails. Without the variable it passes. Pass an env without `TOUCHFILES_BASE` in those probe-order tests.
+- **Why deferred:** Unrelated to PR #224 (the test is unchanged on main); found while running its targeted lanes.
+- **Revisit when:** The next change to `tests/touchfiles.test.ts`, or the next time a `TOUCHFILES_BASE` run reports that failure.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 8049fba (2026-11-09).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
