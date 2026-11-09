@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.0] - 2026-11-08
+
+### Changed
+
+- stage-runs rows are now schema_version 4 with 29 fields.
+
+### Upgrade notes
+
+- A reader or schema copy pinned to v3 reports new rows as unsupported until it upgrades. Old rows, including `conductor` and `paseo` values, stay valid.
+- Hosts must set `GSTACK_EXTEND_WORKSPACE_OWNER`, and orchestrators `GSTACK_EXTEND_RUN_MODE=orchestrated` on every stage, to be attributed. Without the run-mode signal, an interactive `cli` launch outside a host-managed workspace still counts as hand use.
+- Rollback: reinstall the previous release. Its reader reports v4 rows as unsupported and keeps them; never rewrite rows. Recovery guidance: `docs/installation.md#version-numbers` and docs/telemetry.md "Reader-first migration and rollback".
+
 ## [0.76.1] - 2026-11-08
 
 ### Fixed
