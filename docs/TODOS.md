@@ -334,6 +334,13 @@
 - **Revisit when:** A repo-mode call is seen using significant memory, or the next Track touches the sandbox mounts.
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 27be902 (2026-11-09).
 
+### [review:files=src/review-delegate/cli.ts|src/review-delegate/delegate.ts] Repo mode: build the bubblewrap probe from the launch's argument builder
+
+- **What:** The availability probe in `resolveSandboxBwrap` repeats the launch's flag stack (seccomp on descriptor 3, `--new-session`, the `/proc` key masks, the `/tmp`, `/var` and `/run` mounts) instead of calling `sandboxArgs`, so the two can drift and a host could pass the probe yet fail every call. Build the probe's arguments from the same helper, or pin the probe's flags against `sandboxArgs` in a test.
+- **Why deferred:** A refactor of the sandbox argument builder at the last continuation's cycle cap; the copies match today. Auto-chosen at the continuation-3 cycle-2 review.
+- **Revisit when:** The next change to `sandboxArgs` or the probe.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 663dcd3 (2026-11-09).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
