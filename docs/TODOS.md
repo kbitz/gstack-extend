@@ -2,6 +2,187 @@
 
 ## Unprocessed
 
+<a id="delegate-tools-dt01"></a>
+
+### [review:files=src/review-delegate/cli.ts docs/acceptance/delegate-tools-mode.md] Delegate tools: Interruption and real CLI process-group qualification
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** No orphan has been demonstrated in the reviewed normal-run path. Native and outside reviewers hypothesize that killing the runner itself can strand detached children. Keep the owned-runner exit kill guarantee distinct from unknown CLI descendant groups; PM1 already requires the real Bash descendant check.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-red-team-1`, `CONT-adversarial-1`, `CONT-outside-challenge-1`, `O-A9`, `P-C2` in the review receipt.
+- **Revisit when:** PM1 runs, host timeout/signal handling changes, or a real interrupted run leaves a child/copy.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt02"></a>
+
+### [review:files=src/review-delegate/delegate.ts docs/acceptance/delegate-tools-mode.md] Delegate tools: Expand settings, memory and permission requalification
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Probe project and user settings keys, instruction memory, compound/substitution/redirection command forms, and direct outside reads using harmless owned fixtures. Existing qualified CLI probes denied outside Read and permitted in-copy Write; the old contrary report was based on contradictory record text. Preserve the exact qualified flags unless new behavioral evidence demonstrates a blocker.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-red-team-2`, `O-R3`, `O-R4`, `O-A2`, `O-A6` in the review receipt.
+- **Revisit when:** The qualified Claude Code version changes or PM1 gathers installed-agent evidence.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt03"></a>
+
+### [review:files=src/review-delegate/cli.ts] Delegate tools: Qualify relative temporary-directory inputs
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Two reviewers statically hypothesize that a relative TMPDIR can make setup and provider cwd disagree. No failure was reproduced at this reviewed head. Reproduce with an owned relative temporary directory before deciding whether to canonicalize or reject it.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-red-team-3`, `CONT-adversarial-2` in the review receipt.
+- **Revisit when:** Temporary-directory setup changes or a supported deployment requests a relative TMPDIR.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt04"></a>
+
+### [review:files=src/review-delegate/delegate.ts tests/review-delegate.test.ts] Delegate tools: Exercise finding and reproduction serialization
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Use fake tools-mode replies carrying adversarial and red-team findings, JSON-escaped multiline reproduction patches, and the schema-specific summary/evidence destination. Current tests emphasize NO_FINDINGS. Reassess semicolon-separated allowed-rule presentation only if model evidence shows compound-call confusion.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-adversarial-4`, `O-R7`, `P-S3` in the review receipt.
+- **Revisit when:** Prompt/schema/parser changes or PM1 returns a reproduction patch.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt05"></a>
+
+### [review:files=src/review-delegate/cli.ts src/review-delegate/delegate.ts] Delegate tools: Qualify finding path normalization and alternate Git formats
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Check whether real replies contain disposable absolute paths that impede deduplication. Separately qualify SHA-256 Git repositories before claiming support; the carried combined subdirectory finding was repaired and regression-tested, while alternate-object-format behavior remains untested.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `O-R5`, `O-R8` in the review receipt.
+- **Revisit when:** PM1 yields absolute finding paths, finding normalization changes, or SHA-256 repositories become a supported requirement.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt06"></a>
+
+### [review:files=skills/review-and-prep.md docs/delegated-review.md] Delegate tools: Reassess reproduction environment and account execution policy
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** The approved trust model permits candidate and delegate-authored code to run through allowed commands with account rights. The host now inspects reproduction patches and reruns only in an isolated copy, but reviewers request matching the child environment allowlist or a stronger sandbox. This is a design proposal, not a demonstrated violation of the approved model. Do not implement it silently.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `P-R1` in the review receipt.
+- **Revisit when:** The owner changes the trust model or actual reproduction evidence exposes an unacknowledged boundary.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt07"></a>
+
+### [review:files=src/review-delegate/delegate.ts docs/delegated-review.md] Delegate tools: Reassess standing approval and optional model budgets
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Reviewers propose mandatory max-budget-usd, per-head authorization and restricting delegate-authored edits. The approved configuration makes budgets optional and assumes candidates the owner would run locally. These proposals need a fresh owner decision and measured real-run cost or trust evidence.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `P-R4`, `P-A5` in the review receipt.
+- **Revisit when:** PM1 measures problematic spend, repository contributors/trust change, or the owner requests a per-head policy.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt08"></a>
+
+### [review:files=src/review-delegate/cli.ts docs/delegated-review.md] Delegate tools: Qualify Git prerequisite and shell PATH behavior
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Git 2.32+ and an absolute Git directory in PATH are documented prerequisites. Runtime version enforcement is a proposed enhancement. Test whether real Bash startup restores relative PATH entries before changing HOME or SHELL. The empty-filtered-PATH claim cannot reach a successful tools child because setup Git first fails in the owned empty parent.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `P-R3`, `P-A1`, `P-A4`, `P-C5`, `P-S1` in the review receipt.
+- **Revisit when:** Minimum supported Git/shell changes, CLI requalification occurs, or an actual PATH regression is reported.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt09"></a>
+
+### [review:files=src/review-delegate/cli.ts src/review-delegate/delegate.ts docs/delegated-review.md] Delegate tools: Improve bounded diagnostics without changing refusal semantics
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Potential follow-ups: bounded Git setup stderr, oversize argv guidance naming the size rather than argv[0], precise exit-2 wording after read-only preparation, and a byte-accurate combined stderr limit. Current setup notes intentionally give step/time, invalid tools configs refuse, and no dispatch occurs on usage errors. Earlier overbroad ERROR/FIX and nonexistent saved-result claims were already corrected.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-outside-challenge-3`, `CONT-outside-challenge-4`, `P-R2`, `P-R5`, `P-A2`, `P-A3`, `P-C1`, `P-S4` in the review receipt.
+- **Revisit when:** Setup/validation diagnostics are changed or a real support case cannot be diagnosed from the saved result.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt10"></a>
+
+### [review:files=src/review-delegate/cli.ts docs/delegated-review.md] Delegate tools: Reassess transient-failure recovery under never-resend
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Saved setup, timeout and cleanup failures intentionally replay under the approved never-resend policy. Reviewers propose retrying pre-model failures or crediting an otherwise valid result after failed cleanup; both change accepted semantics. Preserve claims and fail-closed cleanup. Previous timeout/login/CLI-path troubleshooting wording was corrected.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-adversarial-3`, `P-S5` in the review receipt.
+- **Revisit when:** Real use demonstrates a need for retry and the owner explicitly revises claim/replay semantics.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt11"></a>
+
+### [review:files=docs/acceptance/delegate-tools-mode.md] Delegate tools: Refresh visible qualification provenance and finish PM1 after release
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** The committed dry-run record names an earlier snapshot. Private continuation evidence includes an exact reviewed-head no-model copy/install/test pass, so this is a public verifiability gap. On the next acceptance-record update, identify content/tree equality and carry the real paired diff/tools results, reproduction rerun, timing, descendant kill, clean worktree and normal HOME sign-in evidence. PM1 remains mandatory after installation and is not claimed completed here.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-outside-challenge-2`, `CONT-outside-structured-1` in the review receipt.
+- **Revisit when:** The release carrying tools mode is installed and PM1 runs, or the acceptance record is next refreshed.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt12"></a>
+
+### [review:files=tests/review-delegate.test.ts] Delegate tools: Test effective permission argv in tools call identity independently
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Assert the call-id hash against literal effective permission argv. The existing changed-commands case also changes prompt text, so it cannot alone prove the argv contribution. Source currently hashes effectiveArgv correctly.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `COV-5` in the review receipt.
+- **Revisit when:** Call identity or permission flags change.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt13"></a>
+
+### [review:files=tests/review-delegate.test.ts] Delegate tools: Assert tools-policy sentences independently
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Add literal assertions for the missing-dependency instruction and final accepted engineering sentences instead of deriving the expectation from production TOOLS_POLICY. The implementation contains the required sentences; this is a test-quality obligation.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `COV-1`, `CONT-testing-1` in the review receipt.
+- **Revisit when:** TOOLS_POLICY changes or the tools-mode acceptance test batch is next extended.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt14"></a>
+
+### [review:files=tests/review-delegate.test.ts] Delegate tools: Assert setup Git environment boundaries
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Capture fake-Git environment for init/fetch/checkout and independently assert retained normal HOME, absolute PATH, stripped inherited GIT_* and fixed global/system/prompt/optional-lock settings. Current tests verify setup arguments/cwd and provider environment; source controls are present.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `COV-2`, `CONT-testing-2` in the review receipt.
+- **Revisit when:** Setup Git environment changes or the tools-mode acceptance test batch is next extended.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt15"></a>
+
+### [review:files=tests/review-delegate.test.ts] Delegate tools: Pin removal of obsolete command-size caps
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Add successful configs with more than 16 unique commands and a valid command longer than 200 characters while remaining below the accepted 64 KiB bound. Runtime currently has no obsolete extra caps.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `COV-3` in the review receipt.
+- **Revisit when:** Command validation changes or the tools-mode acceptance test batch is next extended.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt16"></a>
+
+### [review:files=tests/review-delegate.test.ts] Delegate tools: Exercise unsupported CLI refusal through check and run
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Extend integration cases for codex and unknown CLI names, assert no spawn, and include malformed unrequested-provider precedence. Pure codex refusal and whole-file validation exist; source dispatch is correct.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `COV-4` in the review receipt.
+- **Revisit when:** Provider dispatch/validation changes or the tools-mode acceptance test batch is next extended.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt17"></a>
+
+### [review:files=tests/review-delegate.test.ts] Delegate tools: Retain rationale and robustness for native process fixtures
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Record why FileSink.close replaced closeSync: raw numeric-fd closure could double-close a reused descriptor during concurrent setup. Consider a focused compatibility regression on Bun upgrades. Historical unused-stderr, weak elapsed-time and kill-zero/zombie observations are retained for fixture review; controlled overlap and independent diff bytes were already strengthened before this continuation.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `CONT-outside-structured-2`, `P-M1`, `O-HT2`, `O-HT3`, `P-HT1`, `P-HT2`, `P-C3` in the review receipt.
+- **Revisit when:** Bun changes, process fixtures become flaky, or cleanup/timer tests are next edited.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+<a id="delegate-tools-dt18"></a>
+
+### [review:files=src/review-delegate/cli.ts docs/delegated-review.md docs/acceptance/delegate-tools-mode.md] Delegate tools: Recheck historical diagnostic and qualification clarifications
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no new implementation fix in this continuation.
+- **Description:** Carried low-severity reports about unused cleanup helpers, cleanup bounds/header, fallback pointers, explicit setup controls, account-code exposure, Git metadata exclusions and environment-list accuracy were already repaired or clarified before the owner convergence decision. Keep them as historical revalidation prompts, not current defect claims. Old new-file and outside-read reports were disproved by the corrected qualified CLI probes. An old CLI fails closed at dispatch; check validates the configured CLI name rather than probing binary capabilities.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), reviewed head `5a2fb0f`; source finding IDs `O-M2`, `O-M3`, `O-M4`, `O-R2`, `O-R6`, `O-A7`, `O-A8`, `O-C3`, `O-C4`, `O-C7`, `O-C9`, `O-C10`, `O-S3`, `O-S4`, `O-S5`, `O-S8`, `O-S9` in the review receipt.
+- **Revisit when:** Cleanup/control flags, qualified CLI version, fallback wording or trust-boundary documentation changes.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+
 ### [review:files=skills/review-and-prep.md] Test gap: Review miss record repeated and competing detection
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
