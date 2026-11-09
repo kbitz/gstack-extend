@@ -1034,10 +1034,12 @@ describe('tools mode', () => {
   });
 
   // Value: protects=tools-mode accepts a repository subdirectory like diff mode; fails_when=fetch receives the subdirectory rather than repository top; why_new=existing copy tests always pass the top; seam=none
-  test('tools-mode resolves a subdirectory --repo to the repository top for copy setup', () => {
+  test.each(['repo', 'repo '])('tools-mode resolves a subdirectory --repo to the repository top for copy setup (%j)', (name) => {
     const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
     const state = fresh('subdirectory-copy');
-    const subdirectory = join(s.repo, 'nested');
+    const repo = join(fresh('root-spelling'), name);
+    expect(spawnSync('git', ['clone', '--quiet', s.repo, repo], { encoding: 'utf8' }).status).toBe(0);
+    const subdirectory = join(repo, 'nested');
     mkdirSync(subdirectory);
     put(s.config, wrapConfig(validToolsProvider()));
     const r = cli(runArgs({ ...s, repo: subdirectory }, 'testing'), { TMPDIR: state });
@@ -1046,9 +1048,9 @@ describe('tools mode', () => {
     const launched = JSON.parse(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim());
     expect(launched.cwd).not.toBe(subdirectory);
     expect(existsSync(launched.cwd)).toBe(false);
-    expect(git(s.repo, 'rev-parse', 'HEAD').stdout.trim()).toBe(s.candidate);
+    expect(git(repo, 'rev-parse', 'HEAD').stdout.trim()).toBe(s.candidate);
     // External review artifacts must also be outside the resolved root.
-    const insideCalls = join(s.repo, 'calls');
+    const insideCalls = join(repo, 'calls');
     const rejected = cli(runArgs({ ...s, repo: subdirectory, calls: insideCalls }, 'testing'), { TMPDIR: state });
     expect([rejected.status, rejected.stdout]).toEqual([2, '']);
     expect(rejected.stderr).toContain('--calls is inside --repo');

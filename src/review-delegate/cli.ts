@@ -554,7 +554,7 @@ export async function main(argv: string[], io: CliIo, deps?: Deps): Promise<numb
     // Reuse path validation against the whole repository, including calls/caught
     // paths that were outside the caller's subdirectory but inside its root.
     const rootArgs = [...argv];
-    rootArgs[rootArgs.indexOf('--repo') + 1] = top.stdout.trim();
+    rootArgs[rootArgs.indexOf('--repo') + 1] = top.stdout.replace(/\n$/, '');
     try { options = parseArgs(rootArgs) as Options; }
     catch (error) {
       if (!(error instanceof UsageError)) throw error;
