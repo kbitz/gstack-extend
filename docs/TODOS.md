@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+<a id="delegate-tools-dt20"></a>
+
+### [review:files=src/upstream-check/probe.ts|tests/upstream-check.test.ts] Delegate tools: Requalify the installed pregate-narrowing registry anchor
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; no anchor or assertion changed.
+- **Description:** Installed gstack 1.97.0.0 reports one drift in `review-and-prep.pregate-narrowing.index.1`: its check-registry declaration differs from the pinned bytes. The integrated opt-in run passed 1,175 checks and failed only the assertion that the supplied root has no drift. All active delegate, attacker, fix-first and other inspected anchors matched. This continuation explicitly requires the full pregate, so narrowing is already inactive; no tools-mode safety or required default-path defect was demonstrated.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), finding `CONT-UPSTREAM-DRIFT-1`; retained six-file integrated run with `GSTACK_OUTSIDE_TEST_ROOT` set. The drift is qualification evidence, not a passing root check, and no upgrade or test suppression was performed.
+- **Revisit when:** Upstream compatibility is next qualified or pregate narrowing is requested on gstack 1.97 or later.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+
 ### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Preparation full receipt immutability contract
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
