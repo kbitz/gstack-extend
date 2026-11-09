@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.79.0] - 2026-11-09
+
+### Changed
+
+- `/review-and-prep` keeps every PR body it writes at or under 45,000 characters by moving the completion matrix, and then other bulky evidence, into one linked PR comment; a missed full-review record is now reported at the next cycle's start instead of only at the cycle cap.
+
+### Upgrade notes
+
+- A review run that straddles the install update reads a record written by the older prose (free-form keys) as unreadable, which the stop already treats as no record (`record-missing`); nothing a consumer parses changes.
+
 ## [0.78.0] - 2026-11-09
 
 ### Changed

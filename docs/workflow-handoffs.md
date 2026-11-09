@@ -1021,8 +1021,15 @@ when the receipt reads `Unresolved: none recorded` (`B-STOPPED-NONE-RECORDED`).
 When a cap stop cannot report a completed full-review baseline, the producer
 names why in its STOPPED output and its internal record
 (`Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`).
-The stopped receipt's portable row stays `Full-review evidence: unavailable` and
-the H-E prompt is unchanged, so this adds no binding for a consumer.
+The producer verifies each full-review record (`cycle-1-baseline` and, when
+required, `cycle-1-fix-review`) before the cycle's first fix and again at the
+next cycle's start, records a miss at that start instead of discovering it only
+at the cap, and allows a single late write at that start from that cycle's
+retained evidence files naming its snapshot; a record written there carries
+`provenance: late`, named in the stop's internal record and the dedicated
+evidence comment. The stopped receipt's portable row stays
+`Full-review evidence: unavailable`, the four reasons are unchanged and the H-E
+prompt is unchanged, so this adds no binding for a consumer.
 
 When invoking the next session, the caller adds exactly one direct provenance
 instruction outside the unchanged relayed H-E prompt:
@@ -1397,6 +1404,19 @@ or input it says is needed is for the user.
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.
+
+The producer keeps every PR body it writes at or under 45,000 characters
+(counted as the JavaScript string length of `--body-file`), moving bulky
+evidence (first the completion matrix, then per-review and per-specialist
+outcome detail and finding-disposition tables, then sanitized output excerpts)
+into a linked dedicated PR comment while keeping every validated and
+receipt-present line, the markers, the pause or stop status lines, user
+decisions and quotes, and human-authored text in the body. If only protected
+content remains over budget, the producer reports the overage without blocking
+readiness; a rejected GitHub body or comment write still keeps preparation
+incomplete. Because consumers
+read the marked receipt comment first and already accept a linked completion
+matrix, this adds no binding for a consumer.
 
 ## Versioning and compatibility
 
