@@ -2,6 +2,114 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md] Test gap: Review record routing and schema rejection
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Extend the existing fence fixture with invalid action, kind, boundary, input JSON, schema and provenance values; require rejection without a record.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2343`.
+- **Evidence:** Coverage audit group C01 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review record probe row validation
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise malformed probe IDs, keys, outcomes, fingerprints and evidence references, alongside an empty required-probe list.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2358`.
+- **Evidence:** Coverage audit group C03 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review record pending and false states
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise legitimate pending/reproduced and false/null-snapshot records, missing causes and incomplete pending probes.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2362`.
+- **Evidence:** Coverage audit group C05 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review record unavailable Git objects
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise bad or absent Git anchors, wrong trees, honest unequal snapshots and optional-field validation.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2339`.
+- **Evidence:** Coverage audit group C07 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review fix record alternate states
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise false fix-review records with causes, reproduced current probes and malformed snapshot, scope or flag fields.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2375`.
+- **Evidence:** Coverage audit group C09 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review record source containment variants
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise missing and non-file sources, escaping symlinks, multiple-source rejection and filesystem-read failures.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2401`.
+- **Evidence:** Coverage audit group C15 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review record persisted metadata validation
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise parseable but invalid saved records and malformed late provenance metadata; require unreadable output with unchanged bytes.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2382`.
+- **Evidence:** Coverage audit group C19 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review record installed checkpoint lifecycle
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Observe an installed agent executing both checkpoints, rejecting I/O failures, using original collection evidence and retaining the stopped handoff.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2254`.
+- **Evidence:** Coverage audit group U23 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md] Test gap: Review PR body installed evidence publication
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Observe the real agent and GitHub flow measuring every receipt, moving and hashing evidence, preserving protected lines and holding on rejected publication.
+- **Hypothesis (untested):** Extend the existing fence fixtures or installed-agent acceptance for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:4437`.
+- **Evidence:** Coverage audit group U24 read the source and tests; no failing run or omitted plan-required proving test was identified for this gap.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md` or gathers its installed-agent acceptance.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=skills/pair-review.md] Test gap: pair-review installed handoff planning
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
