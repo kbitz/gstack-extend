@@ -342,6 +342,8 @@ description. `Attempts:` is a list each result is appended to and never edited:
 1 Step 3 for the authoring rules.
 An unavailable observation appends `observation unavailable at <build>:
 <reason>; parked as <bug id>`; it never replaces the human's failed attempt.
+Skipped items append `SKIPPED at <build> (<time>)`; a declined retest or rebuild
+records its deferral and linked parked bug instead of replacing the failure.
 An explicit user-added item may use `Needs: user added` (On ADD ITEM).
 
 A merged item (Step 3.2) carries multiple pass conditions on one `Pass:` line,
@@ -693,15 +695,18 @@ action.
 ### Present the next item
 
 Before selecting an UNTESTED item, recover interrupted fixes and pending human
-retests from all group files, including `completed_groups`. Resume the recorded
+retests from all group files, including `completed_groups`. A deliberately
+parked or deferred fix is not interrupted work; leave it parked until the user
+selects Fix now. Resume the recorded
 On FIX NOW or parked-bug step before continuing the list, without duplicating a
 failed attempt or resetting the three-attempt escalation. Revalidate `build_run`
 and `source_build`, then refresh prepared state and evidence. A verified fix can
 return to its original retest only while its verification inputs still match;
 otherwise repeat Verify before any retest. Missing reproduction evidence must
-be recovered on the failed build, or the item stays FAILED with a linked parked
-bug. A legacy `Fix:` alone is unverified. A FAILED item with no pending fix or
-retest and no unresolved parked bug returns to the On FAIL choice without
+be recovered on the failed build or an equivalent current build under Reproduce
+first, or the item stays FAILED with a linked parked bug. A legacy `Fix:` alone
+is unverified. A FAILED item with no pending fix or
+retest and no linked parked bug returns to the On FAIL choice without
 recording the same failure again. Recompute group completion from item state,
 moving any nonterminal group back to `active_groups` before continuing.
 
@@ -801,7 +806,11 @@ the fix step. Report BLOCKED to the user with the printed `$_OUT` tail
 On the build the human tested, under the item's prepared state, drive the
 reported failure and record `agent reproduced at <build>: <observation>; <evidence path>`
 in `Attempts:`; for a judgment failure, capture the state the human judged and
-name the property the fix will change. When the agent cannot observe the failure
+name the property the fix will change. If that build was replaced, a current
+owned build may stand in only after you confirm the intervening changes leave
+its failure path and prepared state unchanged. Record both build identities and
+the comparison in `Attempts:`; uncertain equivalence parks the failure instead
+of checking out another commit. When the agent cannot observe the failure
 directly (a device it cannot drive, an account only the user holds), use the
 closest check it can run: a simulator or emulator, a failing automated test, or
 the built artifact's own output. If no check observes it, park the bug with that
@@ -857,6 +866,9 @@ changed as intended. Record `agent verified at <build>: <observation>; <evidence
 or `agent verification failed at <build>: <observation>` in `Attempts:`. A failed
 verification is recorded, and the agent fixes again without asking the human; it
 counts toward the existing escalation after three fix attempts.
+If verification cannot run, append `agent verification unavailable at <build>:
+<reason>`, keep the item FAILED and link a parked bug. Mark that fix deliberately
+deferred; unavailability never triggers another fix or counts toward escalation.
 Apply the Prepare-the-item safety rules to the rebuild and verification too.
 At escalation, retain the failed verification and link an unresolved parked bug;
 a fix commit is never evidence of a passing item.
@@ -887,6 +899,12 @@ and repeat the fix cycle. Recompute `session.yaml` summary counts after either
 result; a retested pass replaces the latest failed tally, not its history.
 
 ### On SKIP
+
+On a skipped retest, keep `Status: FAILED`, link a parked bug and record the
+declined retest in `Attempts:`. Reuse an existing linked bug, mark the fix
+deliberately deferred and continue to the next UNTESTED item; never replace the
+failed attempt with a skip. For an UNTESTED item, append
+`SKIPPED at <build> (<time>)` to `Attempts:`, then use the fast path below.
 
 **Fast path** — same as PASS, use the cached lookahead:
 
@@ -1553,6 +1571,11 @@ echo "ARCHIVED=$ARCHIVE_DIR"
 Present via AskUserQuestion:
 - Question: "Build failed.\n\n```\n[stderr output]\n```"
 - Options: ["Fix the build issue", "Skip rebuild, continue testing"]
+
+If "Skip rebuild, continue testing" is chosen during a fix, keep the item FAILED
+and link a parked bug with the build-failure reason. Record the deliberate
+deferral in `Attempts:` and continue to the next UNTESTED item; recovery must
+not restart that deferred fix. This choice never verifies the fix or passes it.
 
 ### State file corrupt
 Present via AskUserQuestion:

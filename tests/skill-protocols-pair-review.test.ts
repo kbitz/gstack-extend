@@ -322,11 +322,26 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(present).toContain('Before selecting an UNTESTED item, recover interrupted fixes and pending human retests from all group files, including `completed_groups`');
     expect(present).toContain('without duplicating a failed attempt or resetting the three-attempt escalation');
     expect(present).toContain('otherwise repeat Verify before any retest');
-    expect(present).toContain('Missing reproduction evidence must be recovered on the failed build, or the item stays FAILED with a linked parked bug');
+    expect(present).toContain('Missing reproduction evidence must be recovered on the failed build or an equivalent current build under Reproduce first');
     expect(present).toContain('moving any nonterminal group back to `active_groups`');
     expect(resume).toContain("Present the next item's interrupted-fix and pending-retest recovery before selecting the next untested item");
     expect(normalized).toContain('After every result or retest, recompute `session.yaml` summary counts from each item\'s latest status');
     expect(content).toContain('1 failed (awaiting retest)');
+  });
+
+  test('declined rebuilds and retests stay parked while unavailable verification never refixes', () => {
+    const recovery = flatProse(skillSection(content, '### Present the next item'));
+    const errors = flatProse(skillSection(content, '## Error Handling'));
+    const fix = flatProse(skillSection(content, '### On FIX NOW'));
+    const skip = flatProse(skillSection(content, '### On SKIP'));
+    expect(errors).toContain('If "Skip rebuild, continue testing" is chosen during a fix, keep the item FAILED and link a parked bug with the build-failure reason');
+    expect(recovery).toContain('A deliberately parked or deferred fix is not interrupted work; leave it parked until the user selects Fix now');
+    expect(fix).toContain('agent verification unavailable at <build>: <reason>');
+    expect(fix).toContain('unavailability never triggers another fix or counts toward escalation');
+    expect(fix).toContain('confirm the intervening changes leave its failure path and prepared state unchanged');
+    expect(fix).toContain('Record both build identities and the comparison in `Attempts:`');
+    expect(skip).toContain('On a skipped retest, keep `Status: FAILED`, link a parked bug and record the declined retest in `Attempts:`');
+    expect(skip).toContain('For an UNTESTED item, append `SKIPPED at <build> (<time>)`');
   });
 
   test('batch individual results append history and batching offers require shared state', () => {
