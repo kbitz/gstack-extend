@@ -2,6 +2,18 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md] Test gap: Review miss record repeated and competing detection
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Exercise repeated valid next-cycle checks and the exclusive-create EEXIST race while retaining the existing miss bytes and boundary.
+- **Hypothesis (untested):** Extend the existing fence fixture with repeated checks and controlled competing detection; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:2439`.
+- **Evidence:** Coverage reassessment C13b; the separate null/primitive miss defect is fixed and tested, while repeat/race variants have no demonstrated defect or omitted plan-required proving test.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/79e7b895` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches `skills/review-and-prep.md`.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=skills/review-and-prep.md] Test gap: Review record routing and schema rejection
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
