@@ -993,6 +993,8 @@ describe('tools mode', () => {
   test('effectiveArgv, callId, and buildPrompt preserve diff-mode byte identity and bind tools-mode flags and policy', () => {
     expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
     const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
+    // Independent bytes from origin/main@5b54ffe, not the current policy constants.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
     expect(diffPrompt).toContain(DELEGATE_POLICY);
     expect(diffPrompt).not.toContain('disposable copy of the repository');
 
@@ -1025,9 +1027,33 @@ describe('tools mode', () => {
     if (!diffParsed.ok) return;
     const diffProv = diffParsed.config.providers.alpha!;
     expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
     expect(callId(diffPrompt, diffProv, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([diffPrompt, ['/bin/echo', 'hi'], 'model-a', 'alpha'])).digest('hex'),
     );
+  });
+
+  // Value: protects=tools-mode accepts a repository subdirectory like diff mode; fails_when=fetch receives the subdirectory rather than repository top; why_new=existing copy tests always pass the top; seam=none
+  test('tools-mode resolves a subdirectory --repo to the repository top for copy setup', () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const state = fresh('subdirectory-copy');
+    const subdirectory = join(s.repo, 'nested');
+    mkdirSync(subdirectory);
+    put(s.config, wrapConfig(validToolsProvider()));
+    const r = cli(runArgs({ ...s, repo: subdirectory }, 'testing'), { TMPDIR: state });
+    expect(r.status).toBe(0);
+    expect(row(r.json, 'testing').outcome).toBe('credited');
+    const launched = JSON.parse(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim());
+    expect(launched.cwd).not.toBe(subdirectory);
+    expect(existsSync(launched.cwd)).toBe(false);
+    expect(git(s.repo, 'rev-parse', 'HEAD').stdout.trim()).toBe(s.candidate);
+    // External review artifacts must also be outside the resolved root.
+    const insideCalls = join(s.repo, 'calls');
+    const rejected = cli(runArgs({ ...s, repo: subdirectory, calls: insideCalls }, 'testing'), { TMPDIR: state });
+    expect([rejected.status, rejected.stdout]).toEqual([2, '']);
+    expect(rejected.stderr).toContain('--calls is inside --repo');
+    expect(existsSync(insideCalls)).toBe(false);
+    expect(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim().split('\n')).toHaveLength(1);
   });
 
   test('check reports access:"tools" on tools-mode parts only, refusal stderr omits config values, and --help documents tools mode', () => {
@@ -1330,7 +1356,48 @@ exec "${realGit}" "$@"
     const parsedOut = JSON.parse(outBuf);
     expect(row(parsedOut, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed' });
     expect(row(parsedOut, 'performance')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
+    expect(errBuf).toContain('testing fell back (failed); saved result:');
+    expect(errBuf).toContain('performance fell back (timeout); saved result:');
     expect(await withinDeadline(Promise.resolve('ok'), 0)).toEqual({ ok: false });
+  });
+
+  // Value: protects=a sibling deadline fires while another part awaits cleanup; fails_when=parts or cleanup serialize the sibling deadline; why_new=final fallback outcomes do not prove event ordering; seam=existing rmDir injection
+  test('a sibling reaches timeout before the first cleanup is released', async () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha', performance: 'beta' });
+    const slowWrapper = join(fresh('overlap-wrapper'), 'slow-claude');
+    put(slowWrapper, '#!/bin/sh\nsleep 10\n');
+    chmodSync(slowWrapper, 0o755);
+    put(s.config, wrapConfig(validToolsProvider({ timeout_s: 5 }), {
+      beta: validToolsProvider({ argv: [slowWrapper], timeout_s: 1 }),
+    }, { testing: 'alpha', performance: 'beta' }));
+    let releaseFirst!: () => void;
+    let siblingEntered!: () => void;
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const siblingGate = new Promise<void>(resolve => { siblingEntered = resolve; });
+    let cleanupCalls = 0;
+    let output = '';
+    const run = runMain(runArgs(s, 'testing,performance'), { stdout: t => { output += t; }, stderr: () => {} }, {
+      rmDir: async target => {
+        if (++cleanupCalls === 1) await firstGate;
+        else siblingEntered();
+        rmSync(target, { recursive: true, force: true });
+      },
+      cleanupLimitMs: 15_000,
+    });
+    let observed: Awaited<ReturnType<typeof withinDeadline>>;
+    let code: number;
+    try {
+      // gstack-timing-ok: hang guard while first cleanup is explicitly held; no elapsed-time performance assertion.
+      observed = await withinDeadline(siblingGate, 5000);
+    } finally {
+      releaseFirst();
+      code = await run;
+    }
+    expect(observed!.ok).toBe(true);
+    expect(code!).toBe(4);
+    expect(cleanupCalls).toBe(2);
+    expect(row(JSON.parse(output), 'testing').outcome).toBe('credited');
+    expect(row(JSON.parse(output), 'performance')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
   });
 });
 

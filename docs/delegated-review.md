@@ -237,10 +237,12 @@ Exit 1 prints `{"v":1,"status":"refused","reason":...}` with `config-missing`,
 installed classifier cannot be loaded) or `checklist-anchor` (a named part's
 checklist or `--adversarial` file no longer matches the anchors, or its
 adversarial framing line does not directly follow the one `Subagent prompt:`
-line, or the prompt or criteria line does not occur once). When a tools-mode
-provider is refused by configuration validation, `ERROR <reason>: <detail>` and
-`FIX: <fix>` are also written to standard error naming `provider <label>
-<key>[<index>]` without echoing configuration values. Exit 2 is a usage error
+line, or the prompt or criteria line does not occur once). Tools-specific
+`access`, `cli`, `argv` and `commands` validation errors also write
+`ERROR <reason>: <detail>` and `FIX: <fix>` to standard error naming
+`provider <label> <key>[<index>]` without echoing configuration values. Common
+schema, timeout, model and part-mapping refusals retain the JSON-only diagnostic.
+Exit 2 is a usage error
 decided before any work (an unknown flag, a part outside the six, a repeated
 part, a missing or extra `--adversarial` or `--caught`, a relative path, a
 `--calls` or `--caught` inside `--repo`): standard output is empty and standard
@@ -502,7 +504,7 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
   Diff-mode prompt, argv and call-id bytes remain unchanged.
 - **Prompt (`TOOLS_POLICY`):** Replaces the diff-only no-tools lines while
   keeping the response format (`POLICY_FORMAT`) identical. The prompt names each
-  allowed `Bash(<entry>)` pattern and asks for the command, observed result and
+  allowed command rule in a semicolon-separated list and asks for the command, observed result and
   a unified diff (at most 200 lines) of reproduction edits in `evidence`, or
   `summary` when the checklist has no evidence field. Reproduction claims need
   host verification in a fresh copy after inspecting the patch and command:
@@ -512,7 +514,9 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
   1. `git init --quiet --template= <copy>`
   2. `git -C <copy> -c core.hooksPath=/dev/null fetch --quiet --no-tags --no-recurse-submodules --depth=1 --upload-pack="git -c uploadpack.allowAnySHA1InWant=true upload-pack" <real-top> <candidate> [<base> when different]`
   3. `git -C <copy> -c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false checkout --quiet --detach <candidate>`
-  Requires git 2.32+. `GIT_*` variables are stripped, `GIT_CONFIG_GLOBAL=/dev/null`,
+  Requires git 2.32+; the runner does not check its version. Older git may ignore
+  `GIT_CONFIG_GLOBAL` and read account configuration, so do not enable tools mode
+  on it. `GIT_*` variables are stripped, `GIT_CONFIG_GLOBAL=/dev/null`,
   `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, and `PATH` is filtered to
   absolute entries. Git LFS pointer files are not hydrated unless an allowed
   command fetches them; repositories requiring submodules or partial-clone
@@ -522,7 +526,9 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
   `safe.directory` fails setup. The copy owns its objects: no linked worktree,
   alternates or shared object store. Its shallow history contains only candidate
   and base, so `git log` or `git blame` sees little even when allowed.
-  Concurrent parts each fetch, checkout, install and test independently; setup
+  A subdirectory `--repo` is resolved to the repository top before tools-mode
+  diff collection, mutation checks and copy setup. Concurrent parts each fetch,
+  checkout, install and test independently; setup
   time counts against `timeout_s`, and grows with the tree and machine load.
 - **Environment and sign-in:** `CHILD_ENV` (`HOME`, `PATH` filtered to absolute
   entries, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`,
@@ -543,6 +549,9 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
   cleanup note in the saved stderr; `$TMPDIR/extend-delegate-*` may remain and
   can be removed by hand after the run exits. Removal is asynchronous so a
   read-only mode-`0500` artifact or a slow removal does not stall sibling timers.
+  The runner signals its provider process group; whether the qualified real CLI's
+  Bash descendants stay in that group remains pending PM1 item 4. The fake CLI
+  proves the same-group case only.
 
 ### Trust boundary
 
@@ -556,7 +565,8 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
     slash commands, settings or hooks widening permissions (`--safe-mode`,
     `--restricted`, `--strict-mcp-config`, `--disable-slash-commands`). Memory
     exclusion was probed; settings/hook exclusion is also documented by CLI help.
-  - Relative `PATH` entries hijacking copy-setup git or commands in the child.
+  - Relative `PATH` entries in the environment delivered to copy-setup git or
+    the provider. This does not establish what PATH a CLI's shell startup uses.
     Version-manager shims can still inspect the candidate and fail or switch
     versions; choose the real binary rather than relying on the runner to detect one.
   - Unverified reproduction claims being trusted without host re-run.
@@ -571,8 +581,8 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
     can access outside paths through its arguments. A named install command
     can reach the network. A reply can quote anything the delegate read or an
     allowed command printed.
-  - Background processes that call `setsid` to escape the child's process group
-    before exit-time `SIGKILL`.
+  - Background processes outside the provider's process group, whether the CLI
+    starts them in another group or they call `setsid` before exit-time `SIGKILL`.
   - Writes outside the real repository's `worktreeState` check: `--calls`
     (including planted saved results that replay), the gstack root and its
     loaded classifier, the extend root, `~/.claude` settings/hooks, the real
@@ -587,7 +597,8 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
    host.
 2. `argv[0]` points to the real `claude` binary (`mise which claude`), not a
    shim, and matches the qualified version (or has passed the behavioral
-   requalification probe).
+   requalification probe). Check `git --version` is 2.32+ and PATH includes an
+   absolute directory containing git; an empty filtered PATH cannot set up a copy.
 3. `commands` pins install commands without ` *` (for example `"bun install
    --frozen-lockfile"`) and scopes test runners narrowly.
 4. `--max-budget-usd` and `timeout_s` are sized for shallow fetch + install +
@@ -607,7 +618,7 @@ jq -r .spawned.stderr "<calls>/<call_id>.json"
 
 | Symptom in `.spawned.stderr` or `.spawned.stdout` | Meaning and fix |
 |---|---|
-| `review-delegate: tools-mode setup failed (init\|fetch\|checkout)` | Disposable copy setup failed (for example git < 2.32 or missing blobs). Fix the repository state for future calls; finish this part on the host. Do not delete its claim or result to retry. |
+| `review-delegate: tools-mode setup failed (init\|fetch\|checkout)` | Disposable copy setup failed (for example missing blobs or unavailable git). The saved note identifies the step and elapsed time; git's own stderr is suppressed. Check prerequisites and repository state for future calls; finish this part on the host. Do not delete its claim or result to retry. |
 | `review-delegate: tools-mode setup failed (<step>: timeout)` | Copy setup exceeded `timeout_s`; a model deadline also reports `timeout`. Increase the timeout for future inputs, but it is not in `callId`: the same input replays the saved failure. Finish this part on the host. |
 | `error: unknown option '--restricted'` (or another runner-owned flag) | The configured `claude` binary predates the qualified CLI flags. Point `argv[0]` at Claude Code `2.1.319`+. |
 | Authentication / login error in stdout or stderr | Stored login is missing/expired or uses an unsupported method. Refresh it interactively under normal `HOME` for future inputs; the same input still replays, so finish this part on the host. |
@@ -617,8 +628,10 @@ jq -r .spawned.stderr "<calls>/<call_id>.json"
 
 `delegation: active (...; tools=...)` records configuration, not runtime flag
 acceptance; each part's outcome shows that. An old Claude Code rejects an unknown
-flag and falls back `failed`. A saved result replays without a copy, CLI or
-command run, including after login repair, CLI upgrade or a timeout change.
+flag and falls back `failed`. When call inputs stay unchanged, a saved result
+replays without a copy, CLI or command run, including after login repair,
+an in-place CLI upgrade or a timeout change. Changing a versioned binary path
+in `argv[0]` changes the call id and dispatches again.
 A new head or changed call inputs dispatch again. Never delete a claim or switch
 calls directories to retry a failed part. A discarded `worktree-changed` result
 stays discarded; use a diff-mode mapping or finish the part on the host.

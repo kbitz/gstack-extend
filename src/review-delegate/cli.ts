@@ -545,6 +545,23 @@ export async function main(argv: string[], io: CliIo, deps?: Deps): Promise<numb
     return EXIT.ok;
   }
 
+  if (options.parts.some(part => config.providers[config.parts[part]!]!.access === 'tools')) {
+    const top = spawnSync('git', ['-C', options.repo, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnv() });
+    if (top.status !== 0 || !top.stdout?.trim()) {
+      print({ status: 'refused', reason: 'repo-unreadable' });
+      return EXIT.refused;
+    }
+    // Reuse path validation against the whole repository, including calls/caught
+    // paths that were outside the caller's subdirectory but inside its root.
+    const rootArgs = [...argv];
+    rootArgs[rootArgs.indexOf('--repo') + 1] = top.stdout.trim();
+    try { options = parseArgs(rootArgs) as Options; }
+    catch (error) {
+      if (!(error instanceof UsageError)) throw error;
+      io.stderr(`ERROR USAGE: ${error.message}\nFIX: ${error.fix}; see review-delegate --help\n`);
+      return EXIT.usage;
+    }
+  }
   const before = worktreeState(options.repo);
   let diff: string | undefined;
   try { diff = snapshotDiff({ repo: options.repo, base: options.base, candidate: options.candidate, scope: 'full' } as Request); } catch { diff = undefined; }
