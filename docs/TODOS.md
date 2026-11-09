@@ -2,6 +2,30 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Preparation full receipt immutability contract
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Pin preparation's exclusive full-receipt creation, invocation-local numbering and no-rewrite contract in its protocol suite.
+- **Hypothesis (untested):** Extend the existing receipt-layout test; re-verify that it rejects removal of each immutability requirement.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:3593`.
+- **Evidence:** Read-only coverage audit found this preparation-specific contract lacks an assertion; no failure was reproduced or plan-required proving test omitted. Ship's separate immutability contract is tested.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/d570cb56` at `c03c2a3` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Preparation full receipt provenance branches
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Pin preparation's author/edit-history plus byte-hash conjunction and its unreadable/mismatched full-receipt branches.
+- **Hypothesis (untested):** Extend the preparation protocol test to reject removal of authentication, matching-hash or unavailable-detail rules; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:4528`.
+- **Evidence:** Read-only coverage audit found ship-side assertions do not protect preparation's own provenance rule; no failure was reproduced or plan-required proving test omitted.
+- **Context:** Filed by `/review-and-prep` on branch `mmm/d570cb56` at `c03c2a3` before PR publication (2026-11-09).
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in `/roadmap`)
+
 <a id="delegate-tools-dt19"></a>
 
 ### [review:files=tests/secret-dispositions.test.ts] Delegate tools: Requalify the opt-in installed-scanner fixture count

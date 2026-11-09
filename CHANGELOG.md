@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.80.0] - 2026-11-09
+
+### Changed
+
+- `/review-and-prep` writes a short PR body (about 3,000 characters or less) and one compact receipt comment; the full receipt moves to a file in the review's local evidence directory, linked by path and SHA-256; `/ship-and-land`'s `## Ship and land` section becomes a short summary linking its own full receipt file, and the 0.79.0 45,000-character budget and its dedicated evidence comment are retired.
+
+### Upgrade notes
+
+- On a machine without the preparing run's evidence directory, `/ship-and-land` cannot read the full receipt, so release-only and receipt-based review reuse fall back to the FULL path (no wrong pass, more work); a PR prepared by an older install keeps working: a receipt comment without a `Full receipt:` line is read as a legacy full receipt, and markers, the `review-and-prep/v1` token and all handoff prompts are unchanged.
+
 ## [0.79.0] - 2026-11-09
 
 ### Changed
