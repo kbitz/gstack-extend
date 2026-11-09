@@ -254,6 +254,59 @@ describe('pair-review Track 74A: fix reproduction and verification before retest
   });
 });
 
+describe('pair-review Track 74A: observation and completion boundaries', () => {
+  const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
+  const normalized = flatProse(content);
+
+  // Value: protects=handoff identity and safe observation/rollup instructions;
+  // fails_when=an observation bypasses isolation or loses a check or failed result;
+  // why_new=the original locks cover individual headings, not these consumers;
+  // seam=none; no_claim=installed-agent acceptance (static instruction contracts only).
+  test('handoff checks retain their identity and binding through narrowing and merging', () => {
+    expect(normalized).toContain('Validate the handoff repository, PR and branch against the current checkout');
+    expect(normalized).toContain('Do not drop or reclassify handoff checks as agent checks');
+    expect(normalized).toContain('Never merge items carrying different `Check:` IDs');
+    expect(normalized).toContain('Handoff checks keep their `Check:` ID in the report');
+  });
+
+  test('all agent observations share isolation and persistent tracked-content guards', () => {
+    const prep = flatProse(skillSection(content, '### Prepare the item'));
+    expect(prep).toContain('Compare tracked-file contents too, including files already dirty');
+    expect(prep).toContain('Move only evidence captures this invocation owns');
+    expect(prep).toContain('Persist a tracked-file blocker in `session.yaml`');
+    expect(prep).toContain('Every checkpoint and fix commit refuses an unresolved blocker');
+    expect(prep).toContain('These safety rules apply to every agent-driven preparation, reproduction, rebuild and verification');
+    expect(normalized).toContain('Apply the Prepare-the-item safety rules to this observation');
+    expect(normalized).toContain('Apply the Prepare-the-item safety rules throughout this parked-bug flow');
+  });
+
+  test('the rendered prepared state attaches current evidence from an owned build', () => {
+    const prep = flatProse(skillSection(content, '### Prepare the item'));
+    expect(prep).toContain('Copy the `Agent evidence:` path and short observation into `Prepared:`');
+    expect(prep).toContain("Reuse only this invocation's own build while its source is unchanged");
+    expect(prep).toContain('Inspect the recipe destinations before running it; execute only owned local steps');
+    const fix = flatProse(skillSection(content, '### On FIX NOW'));
+    expect(fix).toContain('Refresh `Prepared:` and `Agent evidence:` on the verified build before presenting the retest');
+  });
+
+  test('an unobservable failure remains failed and linked to a parked bug, never a passing fix', () => {
+    const fix = flatProse(skillSection(content, '### On FIX NOW'));
+    expect(fix).toContain('Keep `Status: FAILED`, link the item and parked bug in both directions, record the blocked observation in `Attempts:`, and continue to the next UNTESTED item');
+    expect(normalized).toContain('Unavailable observation is not non-reproduction');
+    const completion = flatProse(skillSection(content, '### Group completion'));
+    expect(completion).toContain('A `Fix:` field alone or a pending human retest never completes an item');
+    expect(completion).toContain('A FAILED item with a linked parked bug remains unresolved');
+    expect(normalized).toContain('Every passed tally and all-passed predicate follows the Legacy sessions rule');
+  });
+
+  test('batch individual results append history and batching offers require shared state', () => {
+    const batch = flatProse(skillSection(content, '### On BATCH'));
+    expect(batch).toContain('Apply the ordinary PASS, FAIL or SKIP recording to each item, including appending each result to `Attempts:`');
+    expect(batch).toContain('No consecutive items share a prepared state — staying in single mode');
+    expect(batch).toContain('offer another batch only when the next consecutive items share one prepared state');
+  });
+});
+
 // ─── Item-shape + merge-gate drift-locks ─────────────────────────────
 //
 // Two session-speed regressions the skill previously allowed:
