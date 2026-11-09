@@ -2251,22 +2251,62 @@ paragraph's inventory already covers this one). A missing anchor writes
   that they hold; a defect still open at the stop stays in the receipt's
   unresolved findings and its `Unresolved:` line. A full-scope or inactive
   cycle 2 writes no fix-review record.
+- **Checkpoints.** Verify the records with the fence's `check` action at three
+  boundaries: (1) `before-fix`, after the write point and before Step 5 applies
+  the cycle's first fix (cycle 1 for `cycle-1-baseline`; cycle 2 for
+  `cycle-1-fix-review` when that record is required). `missing` there is still
+  inside the write point because no fix has been applied: write the record now
+  from the same collection results, check again, and apply no fix until it says
+  `present`. (2) `next-cycle`, at the next cycle's Step 3 (cycle 2 for
+  `cycle-1-baseline`, cycle 3 for `cycle-1-fix-review`), before any of that
+  cycle's readers or probes start. `missed` there records the miss at once:
+  print `Full-review record missed: <kind> — detected at cycle <n>'s start`,
+  and from then on only the late write below can make the record available.
+  (3) `stop`: the cap stop reads both records only through this action. The
+  fix-review checkpoints run only when the baseline says `pending-fix-review`
+  and cycle 2 runs as the in-cap delta from cycle 1's snapshot, matching
+  **Fix-review record**.
+- **Late write.** Allowed once, at the `next-cycle` checkpoint that recorded the
+  miss and before any reader or probe of that cycle starts. B, T and the
+  snapshot are the values that cycle recorded (the snapshot's tree check runs
+  in the fence). Each stage's result and each probe's outcome come only from
+  evidence-directory files written during that cycle's review collection that
+  name its snapshot (the per-review evidence and Step 4.7 results kept under
+  **Capture evidence and commit**), listed as `sources`. Never take a value from
+  memory or chat, a later cycle, the final materialized verdict or a later
+  relabel. Without such a source for every value, leave the miss: the stop
+  reports `record-missing`. A late record has the same fields and completion
+  rules, so it proves the same coverage; `provenance` records only when it was
+  assembled. There is no late write at the stop or at any later boundary.
 - **Files and write-once.** Write the records as `cycle-1-baseline.json` and
   `cycle-1-fix-review.json`, each with a `schema` field
   (`review-and-prep-cycle-1-baseline/v1`,
-  `review-and-prep-cycle-1-fix-review/v1`) and the fields above. Create each
-  file with an exclusive create (`set -C` before a shell redirect, or
-  `node:fs.writeFileSync(path, contents, {flag: 'wx'})` under Bun), so no
-  duplicate can exist. Write each record once, with the
-  outcomes known at its write point; never edit, rewrite or replace a written
-  record, including on a same-run resume, and never let a later relabel (for
-  example `superseded`) change it. A record not written at its write point is
-  never written later. A parse failure, or a missing or invalid required field,
-  makes a record unreadable; an unreadable or duplicate record counts as no
-  record of that kind. A `continue` invocation writes neither record. The
-  records belong to the invocation's first `/review` run; a later `/review` run
-  in the same invocation (Step 5's delta re-review, or a full-scope fallback)
-  writes neither.
+  `review-and-prep-cycle-1-fix-review/v1`) and the fields above. Each record
+  carries `provenance` (`write-point` or `late`) and uses these snake_case JSON
+  keys: `cycle-1-baseline` has `schema`, `provenance`, `b`, `t`, `snapshot`
+  (`null` allowed only when `completed` is `"false"`),
+  `snapshot_tree_equals_t` (boolean), `stages` (non-empty array of
+  `{name, result}`), `probes` (array of `{id, key, outcome}`, `id` 12 hex,
+  `outcome` starting with `passed`, `reproduced`, `blocked`, `inconclusive` or
+  `not-run`, with `fingerprint` required on `reproduced`), optional
+  `review_read_row`, `completed` (the string `"true"`, `"pending-fix-review"`
+  or `"false"`) and `cause` (required unless `completed` is `"true"`);
+  `cycle-1-fix-review` has `schema`, `provenance`, `cycle_1_snapshot`,
+  `cycle_2_snapshot`, `scope` (starting `delta from `), `stages`, `probes`
+  (each may carry `evidence`, the reference behind a reused current result),
+  `fix_reviewed` (`"true"` or `"false"`) and `cause` (required unless `"true"`).
+  Write each record with the fence's `write` action, which creates the file
+  exclusively (`{flag: "wx"}`), so no duplicate can exist. Write each record
+  once, with the outcomes known at its write point; never edit, rewrite or
+  replace a written record, including on a same-run resume, and never let a
+  later relabel (for example `superseded`) change it. A record not written at
+  its write point is never written later, except through the single **Late
+  write** at the next cycle's start above. A parse failure, or a missing or
+  invalid required field, makes a record unreadable; an unreadable or duplicate
+  record counts as no record of that kind. A `continue` invocation writes
+  neither record. The records belong to the invocation's first `/review` run; a
+  later `/review` run in the same invocation (Step 5's delta re-review, or a
+  full-scope fallback) writes neither.
 - **Unavailable.** A snapshot tree that differs from T (reviewed uncommitted or
   untracked content) is `tree-differs`; a missing record is `record-missing`.
   Each, with `anchor-changed` and `reviewer-incomplete`, makes the baseline
@@ -2275,6 +2315,127 @@ paragraph's inventory already covers this one). A missing anchor writes
   provisional pending the portable evidence envelope. The only portable
   contract stays the `Full-review evidence:` row and its dedicated comment.
   Never infer a baseline from HEAD or the stop commit.
+
+Write and check `cycle-1-baseline` and `cycle-1-fix-review` with this helper
+(`<action>` is `write` or `check`; `<kind>` is `cycle-1-baseline` or
+`cycle-1-fix-review`; `<record-file-or-boundary>` is the assembled JSON file
+for `write`, or `before-fix`, `next-cycle` or `stop` for `check`):
+
+```bash
+bun --no-env-file --config=/dev/null --no-install -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const {createHash} = require("node:crypto");
+const {execFileSync} = require("node:child_process");
+const [ws, evDir, action, kind, arg] = process.argv.slice(1);
+const out = (msg, code) => { console.log("FULL_REVIEW_RECORD: " + msg); process.exit(code); };
+const hex40 = s => typeof s === "string" && /^[0-9a-f]{40}$/.test(s);
+const hex64 = s => typeof s === "string" && /^[0-9a-f]{64}$/.test(s);
+const sha256 = buf => createHash("sha256").update(buf).digest("hex");
+const gitTree = rev => {
+  try { return execFileSync("git", ["-C", ws, "rev-parse", rev + "^{tree}"], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim(); }
+  catch { return null; }
+};
+if (kind !== "cycle-1-baseline" && kind !== "cycle-1-fix-review") out("invalid " + kind + ": kind", 3);
+const isBase = kind === "cycle-1-baseline";
+const schema = isBase ? "review-and-prep-cycle-1-baseline/v1" : "review-and-prep-cycle-1-fix-review/v1";
+const recPath = path.join(evDir, kind + ".json");
+const missPath = path.join(evDir, kind + ".missed.json");
+const readMiss = () => {
+  if (!fs.existsSync(missPath)) return null;
+  try { const raw = fs.readFileSync(missPath); return {raw, data: JSON.parse(raw.toString("utf8"))}; }
+  catch { return {raw: Buffer.alloc(0), data: {boundary: "unreadable"}}; }
+};
+const validate = (r, mode) => {
+  if (!r || typeof r !== "object" || Array.isArray(r)) return "record";
+  if (r.schema !== schema) return "schema";
+  if (r.provenance !== "write-point" && r.provenance !== "late") return "provenance";
+  if (!Array.isArray(r.stages) || r.stages.length === 0 || !r.stages.every(s => s && typeof s.name === "string" && s.name && typeof s.result === "string" && s.result)) return "stages";
+  if (!Array.isArray(r.probes) || !r.probes.every(p => p && typeof p.id === "string" && /^[0-9a-f]{12}$/.test(p.id) && typeof p.key === "string" && p.key && typeof p.outcome === "string" && /^(passed|reproduced|blocked|inconclusive|not-run)\b/.test(p.outcome) && (!p.outcome.startsWith("reproduced") || (typeof p.fingerprint === "string" && p.fingerprint)) && (isBase || p.evidence === undefined || (typeof p.evidence === "string" && p.evidence)))) return "probes";
+  if (isBase) {
+    if (r.completed !== "true" && r.completed !== "pending-fix-review" && r.completed !== "false") return "completed";
+    if (!hex40(r.b)) return "b";
+    if (!hex40(r.t)) return "t";
+    if (!(hex40(r.snapshot) || (r.snapshot === null && r.completed === "false"))) return "snapshot";
+    if (typeof r.snapshot_tree_equals_t !== "boolean") return "snapshot_tree_equals_t";
+    if (r.review_read_row !== undefined && r.review_read_row !== null && typeof r.review_read_row !== "string" && typeof r.review_read_row !== "object") return "review_read_row";
+    if (r.completed !== "true" && (typeof r.cause !== "string" || !r.cause)) return "cause";
+    if (r.snapshot !== null) {
+      const bt = gitTree(r.b), st = gitTree(r.snapshot);
+      if (bt !== r.t) return "t";
+      if (!st || (st === r.t) !== r.snapshot_tree_equals_t) return "snapshot_tree_equals_t";
+    }
+  } else {
+    if (!hex40(r.cycle_1_snapshot)) return "cycle_1_snapshot";
+    if (!hex40(r.cycle_2_snapshot)) return "cycle_2_snapshot";
+    if (typeof r.scope !== "string" || !r.scope.startsWith("delta from ")) return "scope";
+    if (r.fix_reviewed !== "true" && r.fix_reviewed !== "false") return "fix_reviewed";
+    if (r.fix_reviewed !== "true" && (typeof r.cause !== "string" || !r.cause)) return "cause";
+  }
+  if (mode === "check" && r.provenance === "late") {
+    if (!r.late || typeof r.late !== "object" || r.late.boundary !== "next-cycle" || !hex64(r.late.miss_sha256) || !Array.isArray(r.late.sources) || r.late.sources.length === 0 || !r.late.sources.every(s => s && typeof s.path === "string" && s.path && hex64(s.sha256))) return "late";
+  }
+  return null;
+};
+if (action === "write") {
+  let r;
+  try { r = JSON.parse(fs.readFileSync(arg, "utf8")); } catch { out("invalid " + kind + ": json", 3); }
+  const bad = validate(r, "write");
+  if (bad) out("invalid " + kind + ": " + bad, 3);
+  const miss = readMiss();
+  if (miss && r.provenance !== "late") out("refused " + kind + ": missed at " + (miss.data.boundary || "unknown"), 3);
+  if (r.provenance === "late") {
+    if (!miss || miss.data.schema !== "review-and-prep-record-miss/v1" || miss.data.kind !== kind || miss.data.boundary !== "next-cycle") out("refused " + kind + ": requires next-cycle miss record", 3);
+    if (!Array.isArray(r.sources) || r.sources.length === 0 || !r.sources.every(s => typeof s === "string" && s)) out("refused " + kind + ": sources required", 3);
+    const snap = isBase ? r.snapshot : r.cycle_2_snapshot;
+    if (!hex40(snap)) out("refused " + kind + ": snapshot required", 3);
+    const evRoot = fs.existsSync(evDir) ? fs.realpathSync(evDir) : path.resolve(evDir);
+    const sources = [];
+    for (const src of r.sources) {
+      const abs = path.resolve(evRoot, src);
+      const rel = path.relative(evRoot, abs);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) out("refused " + kind + ": source " + src + " missing", 3);
+      const real = fs.realpathSync(abs);
+      const realRel = path.relative(evRoot, real);
+      if (!realRel || realRel.startsWith("..") || path.isAbsolute(realRel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
+      const buf = fs.readFileSync(real);
+      if (!buf.toString("utf8").includes(snap)) out("refused " + kind + ": source " + src + " does not name the snapshot", 3);
+      sources.push({path: src, sha256: sha256(buf)});
+    }
+    delete r.sources;
+    r.late = {boundary: "next-cycle", miss_sha256: sha256(miss.raw), sources};
+  } else if (r.sources !== undefined || r.late !== undefined) {
+    out("invalid " + kind + ": provenance", 3);
+  }
+  const body = Buffer.from(JSON.stringify(r, null, 2) + "\n", "utf8");
+  try { fs.writeFileSync(recPath, body, {flag: "wx"}); } catch (e) { if (e && e.code === "EEXIST") out("exists " + kind, 2); throw e; }
+  out("written " + kind + "; provenance=" + r.provenance + "; sha256=" + sha256(body), 0);
+} else if (action === "check") {
+  if (arg !== "before-fix" && arg !== "next-cycle" && arg !== "stop") out("invalid " + kind + ": boundary", 3);
+  if (fs.existsSync(recPath)) {
+    let r;
+    try { r = JSON.parse(fs.readFileSync(recPath, "utf8")); } catch { out("unreadable " + kind + ": json", 1); }
+    const bad = validate(r, "check");
+    if (bad) out("unreadable " + kind + ": " + bad, 1);
+    const tail = isBase ? "completed=" + r.completed : "fix-reviewed=" + r.fix_reviewed;
+    out("present " + kind + "; provenance=" + r.provenance + "; " + tail, 0);
+  }
+  const miss = readMiss();
+  if (arg === "next-cycle") {
+    if (!miss) {
+      const m = JSON.stringify({schema: "review-and-prep-record-miss/v1", kind, boundary: "next-cycle", detected_at: new Date().toISOString()}, null, 2) + "\n";
+      try { fs.writeFileSync(missPath, m, {flag: "wx"}); } catch {}
+    }
+    out("missed " + kind + " at " + ((miss && miss.data.boundary) || "next-cycle"), 1);
+  }
+  if (miss) out("missed " + kind + " at " + (miss.data.boundary || "unknown"), 1);
+  out("missing " + kind, 1);
+} else {
+  out("invalid " + kind + ": action", 3);
+}
+' "<workspace>" "<evidence-directory>" "<action>" "<kind>" "<record-file-or-boundary>"
+```
 
 Worked example, with placeholders: one `reproduced` probe, then a cycle 2 that
 reviewed its fix.
@@ -2381,16 +2542,23 @@ shapes the prompt below, so the continuation starts in a fresh session.
    | `completed=pending-fix-review`, tree equals T | no readable record, one for another snapshot, or `fix-reviewed=false` | unavailable `reviewer-incomplete` |
    | `completed=pending-fix-review`, tree equals T | same snapshot, `fix-reviewed=true` | the row |
 
-   An unreadable or duplicate record counts as no record of that kind, and a
-   record not written at its write point is never written later. The stop's
-   own record, the one that carries the printed unavailable line, names which
-   table row applied and its cause; the stop never writes into
-   `cycle-1-baseline` or `cycle-1-fix-review`. The dedicated evidence comment
-   carries each probe's contract label, ID, outcome and, for `reproduced`, its
+   Read each record with the fence's `check` action at `stop`: `present`
+   supplies the record's values to the table above, and `missing`, `missed` or
+   `unreadable` counts as no record (or no readable record). An unreadable or
+   duplicate record counts as no record of that kind, and a record not written
+   at its write point is never written later, except through the single
+   `next-cycle` late write above. The stop's own record, the one that carries
+   the printed unavailable line, names which table row applied and its cause;
+   the stop never writes into `cycle-1-baseline` or `cycle-1-fix-review`. For a
+   late record, the stop's own record also names its provenance and boundary
+   (`provenance: late (next-cycle)`). The dedicated evidence comment carries
+   each probe's contract label, ID, outcome and, for `reproduced`, its
    fingerprint, plus cycle 2's fix-review results and a statement that
    `completed=true` records coverage, not a clean review; the exact probe
-   commands and requests stay in the local records. The receipt's portable row
-   and the H-E prompt stay unchanged. A consumer reads this row from the stopped
+   commands and requests stay in the local records. For a late record, the
+   dedicated evidence comment also carries `provenance: late (next-cycle)` and
+   its sources' SHA-256 values, while local paths stay in the local records.
+   The receipt's portable row and the H-E prompt stay unchanged. A consumer reads this row from the stopped
    receipt through the same author/edit-history checks; independently,
    `git rev-parse "B^{tree}"` must equal T (fetch the pushed commit if needed).
    Missing, incomplete, mismatched or unverifiable evidence holds repair-only continuation.
@@ -3476,14 +3644,38 @@ introduced by another actor without reviewing and verifying them.
 
 For a new PR, write a concise body with the problem, resulting behavior, scope,
 and actual local verification. Use an unversioned conventional title. Before
-every title/body write (creation, later refreshes, and the Step 6 receipt),
+every title/body write (creation, later refreshes, and the Step 6 receipt,
+including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt),
 scan the exact bytes for credentials and PII: use the installed
 `gstack-redact --from-file` when available, otherwise inspect manually. Strip
 environment prefixes and URL credentials from recorded commands and excerpts
 only when the scan flags their values; record benign prefixes such as
 `TOUCHFILES_BASE=<ref>` verbatim. A command whose recorded spelling had to be
-redacted is rerun rather than reused through the ledger. Use a temporary body
-file and the explicit base/head, for example:
+redacted is rerun rather than reused through the ledger. After that scan and
+before every PR-body write, measure the exact file passed to `--body-file`
+against the 45,000-character budget (counted as the JavaScript string length of
+the file, leaving 20,536 characters under GitHub's 65,536-character limit for a
+later stage's receipt, such as `/ship-and-land`'s `## Ship and land` receipt or
+a release step that rewrites the body):
+
+```bash
+bun --no-env-file --config=/dev/null --no-install -e '
+const fs = require("node:fs");
+const file = process.argv[1];
+if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+  console.log("PR_BODY_SIZE: missing; budget 45000; error");
+  process.exit(2);
+}
+const n = fs.readFileSync(file, "utf8").length;
+const within = n <= 45000;
+console.log("PR_BODY_SIZE: " + n + " characters; budget 45000; " + (within ? "within" : "over"));
+process.exit(within ? 0 : 1);
+' "<body-file>"
+```
+
+When `PR_BODY_SIZE` reports `over`, move bulky evidence out of the body into a
+linked dedicated PR comment under Step 6's budget order before writing the body.
+Use a temporary body file and the explicit base/head, for example:
 
 ```bash
 gh pr create --repo "<base-owner/repo>" --base "<base>" --head "<head-owner>:<branch>" --draft --title "feat: <summary>" --body-file "<body-file>"
@@ -4229,9 +4421,33 @@ Keep each present and distinctly labeled.
 Include the complete completion matrix and its source fingerprint in this
 receipt, with requirement/acceptance text, evidence links or excerpts, and
 explicit user deferrals. Keep rows compact (item ID, disposition, evidence
-reference; long requirement text by scope-source reference and SHA-256). If the
-rendered body would exceed GitHub's 65,536-character limit, put the full matrix
-in one dedicated PR comment and link it from the receipt. On public
+reference; long requirement text by scope-source reference and SHA-256). Keep
+every PR body at or under the 45,000-character budget measured by Step 3's
+`PR_BODY_SIZE` check (20,536 characters of headroom under GitHub's
+65,536-character limit for a later stage's receipt, such as `/ship-and-land`'s
+`## Ship and land` receipt or a release step that rewrites the body). When the
+body exceeds 45,000 characters, move, in this order and only until the body
+fits, (1) the completion matrix, (2) per-review and per-specialist outcome
+detail and finding-disposition tables, and (3) sanitized output excerpts, into
+one dedicated PR comment, leaving in the receipt each moved item's location and
+the SHA-256 the receipt already names. Post that comment before the body edit,
+scan it through Step 6's credential and PII scan, corroborate its author and
+every editor as for the full-review evidence comment, and link it by permalink.
+Post a new comment when its content changed; never edit an earlier one. Split
+it into numbered parts if one comment would exceed GitHub's limit. Never move:
+the `## Review and prep` heading and status line (including
+`PAUSED — manual testing required`, which `/pair-review` and `B-BODY-PAUSED`
+read from the body, `STOPPED — review cycle cap` and
+`BLOCKED — provider failures`), markers, the five stopped labels,
+`reviewRestrictionResolved: true`, every `Auto-chosen` line, every labeled line
+the stage-handoff contract lists as validated or receipt-present (including
+`Ship gates` with the documentation section's exact text, which
+`/ship-and-land` may rebuild from receipt text), user decisions and quotes, and
+human-authored text. When the body still exceeds the budget after every movable
+item moved, keep it and record
+`PR body: <n> characters; over the 45000 budget after moving evidence` in the
+receipt and the exit message; do not block readiness. The marked receipt,
+paused and stopped comments carry the same receipt as the body. On public
 repositories keep confidential requirement text out of the body: cite the
 scope source by path and SHA-256 and keep the full text in access-controlled
 storage. Local-only plan paths are supplementary: the portable
