@@ -22,7 +22,7 @@ import {
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
 export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'] as const;
-/** Host helpers run by fixed path, never a PATH lookup that a relative entry could point into the reviewed repository. */
+/** The repo-mode host helpers run by fixed path. The runner's other git calls and its launcher still use the caller's PATH. */
 const GETENT_PATHS = ['/usr/bin/getent', '/bin/getent'] as const;
 const CHMOD_PATHS = ['/usr/bin/chmod', '/bin/chmod'] as const;
 const firstExisting = (paths: readonly string[]) => paths.find((path) => existsSync(path));
@@ -304,7 +304,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       const entryPaths = entries.map((entry) => realpathBelow(entry));
       const { hops, targets } = linkChain(provider.argv[0]!);
       // The sandbox hides the reviewed repository and the calls directory, so a command installed there could never start.
-      if (hops.some((hop) => repoPaths.some((path) => isWithin(path, hop)))) {
+      if ([...hops, ...targets].some((hop) => repoPaths.some((path) => isWithin(path, hop)))) {
         return refuse('config-malformed', `provider ${label} argv[0] ${JSON.stringify(provider.argv[0])} lies inside the reviewed repository or `
           + 'the calls directory, which the sandbox hides');
       }

@@ -261,7 +261,10 @@ runs every part on the host.
   root may remain in the temporary directory. A setup failure is saved like any
   failed call, so the same frozen scope replays it; the next candidate's call
   dispatches again. Host helpers (`getent`, `chmod`) run by fixed path, and
-  setup `git` keeps only absolute `PATH` entries. It then spawns the
+  setup `git` keeps only absolute `PATH` entries. The runner's other `git`
+  calls and its launcher use the caller's `PATH`, so keep any `PATH` entry
+  that points into the reviewed repository (a relative one, or one a tool
+  such as direnv adds) out of the runner's environment. It then spawns the
   provider through `bwrap` in this order:
   - `--unshare-all --share-net --die-with-parent --new-session`, and a
     `--seccomp` filter that makes `add_key`, `request_key` and `keyctl` fail
@@ -370,8 +373,9 @@ runs every part on the host.
     from the reviewed head can reach local databases, development servers,
     orchestrator daemons and a signed-in browser's debugging port. One that
     accepts unauthenticated loopback requests to run commands or start agents
-    gives repo mode host access; keep such services off the account that runs
-    repo mode, or bound the provider command's network to its API host.
+    gives repo mode host access, whichever account owns it, because loopback is
+    shared by every account on the host; keep such services off the host, or
+    bound the provider command's network to its API host.
   - Unix sockets the sandbox can still connect to: abstract-namespace sockets,
     reachable through the shared network namespace (`--share-net`), and path
     sockets under paths that are not hidden. `connect()` needs no write access
