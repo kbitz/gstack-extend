@@ -70,19 +70,20 @@ for the complete contract:
   `/run` (re-binding the DNS resolver file alone, read-only, when
   `realpath('/etc/resolv.conf')` is under `/run/` or `/var/`), `$HOME`, the
   passwd home and the runner's temporary directory, an empty file over
-  `/proc/keys` and `/proc/key-users`, throwaway overlays or staged copies for
+  `/proc/keys` and `/proc/key-users` (each only when the host has it), throwaway overlays or staged copies for
   `expose` paths (no read-write host mount at all), `--tmpfs` over
   the real repository's work tree, git directory, common git directory, every
   worktree `git worktree list` names, the `--calls` directory and
   `XDG_RUNTIME_DIR`, and a read-write bind of a disposable copy: an empty
-  repository that fetches only `--candidate` (a frozen snapshot commit no ref
-  reaches included) and checks it out detached, with hooks, LFS filters and the
+  repository that fetches only `--candidate` and `--base` (frozen snapshot
+  commits no ref reaches included) and checks it out detached, with hooks, LFS filters and the
   host's global and system git configuration off. `expose` entries at or above a
   hidden root, inside a runtime dir or the reviewed repository, or behind a
   symlink that would vanish with a hidden root, a provider that still names
   `keep`, and an `argv[0]` with a hidden link hop no entry covers, refuse as
-  `config-malformed`; uid 0 and architectures without a keyring seccomp table
-  refuse as `sandbox-unavailable`. The before-and-after
+  `config-malformed`; uid 0, architectures without a keyring seccomp table and
+  an account home the passwd database cannot give refuse as
+  `sandbox-unavailable`, after the configuration's own checks. The before-and-after
   `worktreeState` check on the real repository still holds and discards every
   dispatched part on any change (`worktree-changed`).
 - **Configured by the caller's command (unobservable to the runner):** the

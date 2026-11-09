@@ -251,9 +251,17 @@ runs every part on the host.
   `GIT_CONFIG_NOSYSTEM=1`, and an empty `HOME` and `XDG_CONFIG_HOME` for a git
   older than 2.32), so no filter, hook or clone setting from the host runs on
   the candidate's files. That also drops a `safe.directory` entry, so a
-  repository owned by another account fails setup (`failed`). The copy has no remote. Setup runs
-  asynchronously, is bounded by the provider's `timeout_s` and counted in
-  `wall_ms`, and never delays another part's deadline. It then spawns the
+  repository owned by another account fails setup (`failed`). The copy has no remote; a shallow
+  source keeps its boundary (`--update-shallow`), so history commands work back
+  to it. Setup runs asynchronously, is bounded by the provider's `timeout_s` and
+  counted in `wall_ms`, and never delays another part's deadline. A stalled
+  filesystem call cannot be cancelled: the part fails at its deadline while the
+  call keeps running in the background, and removing the disposable root is
+  awaited for at most 30 s, after which the part is recorded `failed` and the
+  root may remain in the temporary directory. A setup failure is saved like any
+  failed call, so the same frozen scope replays it; the next candidate's call
+  dispatches again. Host helpers (`getent`, `chmod`) run by fixed path, and
+  setup `git` keeps only absolute `PATH` entries. It then spawns the
   provider through `bwrap` in this order:
   - `--unshare-all --share-net --die-with-parent --new-session`, and a
     `--seccomp` filter that makes `add_key`, `request_key` and `keyctl` fail
@@ -290,7 +298,7 @@ runs every part on the host.
   repo-mode provider, `check` and `run` require `linux`, an executable at the
   first existing path in `['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap']`
   (never a `PATH` lookup), and a 10 s probe that verifies user namespaces and
-  `--tmp-overlay`, and it refuses as uid 0 (the sandbox could read root-only
+  `--tmp-overlay` (bubblewrap 0.10 or later; an older one fails the probe), and it refuses as uid 0 (the sandbox could read root-only
   files), on an architecture without a keyring seccomp table (anything but
   x86_64 and aarch64), or when the account's home cannot be read from the
   passwd database (an overridden `HOME` would then leave the real home
@@ -358,6 +366,12 @@ runs every part on the host.
     provider command must reach its API, so the runner cannot tell API traffic
     from tool traffic. Keeping the model's tools off other network hosts and
     starting no agents is the provider command's own sandbox configuration.
+  - Loopback TCP services: `--share-net` keeps `127.0.0.1` and `::1`, so code
+    from the reviewed head can reach local databases, development servers,
+    orchestrator daemons and a signed-in browser's debugging port. One that
+    accepts unauthenticated loopback requests to run commands or start agents
+    gives repo mode host access; keep such services off the account that runs
+    repo mode, or bound the provider command's network to its API host.
   - Unix sockets the sandbox can still connect to: abstract-namespace sockets,
     reachable through the shared network namespace (`--share-net`), and path
     sockets under paths that are not hidden. `connect()` needs no write access
@@ -466,7 +480,10 @@ cannot be loaded), `checklist-anchor` (a named part's checklist or
 line does not directly follow the one `Subagent prompt:` line, or the prompt or
 criteria line does not occur once) or `sandbox-unavailable` (a named part maps
 to a repo-mode provider and the host is not Linux, has no executable at the
-fixed `bwrap` paths, or fails the 10 s bubblewrap probe). A `config-malformed`
+fixed `bwrap` paths, fails the 10 s bubblewrap probe, runs the runner as uid 0,
+has an architecture without a keyring seccomp table, or cannot read the
+account's home from the passwd database; that last case writes its detail to
+standard error). A `config-malformed`
 refusal also writes one detail line to standard error naming what is at fault:
 the unreadable or oversized file, the key or value (such as a `keep` key), an
 invalid `HOME`, or the provider and the `expose` entry or `argv[0]` that breaks a

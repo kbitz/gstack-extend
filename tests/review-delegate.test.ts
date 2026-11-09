@@ -183,7 +183,8 @@ else if (mode === 'inspect') {
   const header = prompt.split('\\n').find((line) => line.startsWith('{"part"'));
   const base = header ? JSON.parse(header).base : '';
   const type = spawnSync('git', ['cat-file', '-t', base], { encoding: 'utf8' });
-  report({ baseType: type.stdout.trim() || 'missing' });
+  const log = spawnSync('git', ['log', '--format=%H'], { encoding: 'utf8' });
+  report({ baseType: type.stdout.trim() || 'missing', logOk: log.status === 0 });
   out('NO_FINDINGS: none\\nRecommendation: merge because the base was checked.');
 } else if (mode === 'keyring') {
   // Ask the kernel for the session keyring id (KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING); the sandbox's seccomp filter must refuse it.
@@ -1421,6 +1422,10 @@ describe('repository-mode sandbox and check', () => {
     const r = await runInProcess(checkArgs(s, 'testing'), { accountHome: () => '' });
     expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
     expect(r.stderr).toContain('the account home could not be read from the passwd database');
+    // Off Linux the platform is the reason, so the passwd database is not blamed.
+    const mac = await runInProcess(checkArgs(s, 'testing'), { platform: 'darwin', accountHome: () => '' });
+    expect(mac.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+    expect(mac.stderr).not.toContain('passwd');
   });
 
   // Value: protects=a malformed repo-mode config reads config-malformed for any uid or architecture, while uid 0 or an architecture without a seccomp table refuses sandbox-unavailable and fails the probe; fails_when=the uid/architecture refusal runs before config validation, or the probe ignores it; why_new=continuation-2 cycle-1 finding (Codex: tests failed under root); seam=Deps.uid, Deps.arch
@@ -1470,10 +1475,47 @@ describe('repository-mode sandbox and check', () => {
 
   // Value: protects=a stalled filesystem call during setup fails the step at the part's deadline instead of holding the call; fails_when=staging has no deadline; why_new=continuation-2 cycle-1 finding (Codex); seam=withinDeadline
   test('withinDeadline fails a stalled setup step as a timeout and passes a settled one through', async () => {
-    const error = await withinDeadline(new Promise<never>(() => {}), () => 30, 'expose').catch((e: unknown) => e);
+    const error = await withinDeadline(() => new Promise<never>(() => {}), () => 30, 'expose').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SetupFailure);
     expect((error as SetupFailure).timedOut).toBe(true);
-    expect(await withinDeadline(Promise.resolve(7), () => 1000, 'expose')).toBe(7);
+    expect(await withinDeadline(() => Promise.resolve(7), () => 1000, 'expose')).toBe(7);
+    // An expired deadline never starts the operation, so its later rejection cannot go unhandled.
+    let started = false;
+    const expired = await withinDeadline(() => { started = true; return Promise.reject(new Error('late')); }, () => 0, 'expose').catch((e: unknown) => e);
+    expect(started).toBe(false);
+    expect((expired as SetupFailure).timedOut).toBe(true);
+  });
+
+  // Value: protects=a shallow source repository still gives a copy whose history commands work; fails_when=the fetch drops the shallow boundary; why_new=continuation-2 cycle-2 finding (adversarial, reproduced); seam=none
+  test.if(probe)('a shallow source repository gives a copy whose history commands work', async () => {
+    const s = setup('nested', { b: { mode: 'base-probe', access: 'repo', expose: [FAKE] } }, { testing: 'b' });
+    git(s.repo, 'commit', '--allow-empty', '-q', '-m', 'two');
+    const shallow = join(fresh('shallow'), 'repo');
+    expect(git(dirname(shallow), 'clone', '-q', '--depth', '1', `file://${s.repo}`, shallow).status).toBe(0);
+    s.repo = shallow;
+    s.candidate = git(shallow, 'rev-parse', 'HEAD').stdout.trim();
+    s.base = s.candidate;
+    const r = await runInProcess(runArgs(s, 'testing'));
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
+    expect(reportOf(s, r.json, 'testing').logOk).toBe(true);
+  });
+
+  // Value: protects=an argv[0] link whose written target crosses a symlink that a hidden directory removes is refused, since the kernel follows that spelling; fails_when=only the resolved hops are checked; why_new=continuation-2 cycle-2 finding (adversarial, reproduced); seam=none
+  test('an argv[0] link whose written target crosses a vanishing symlink refuses with config-malformed', async () => {
+    const h = fresh('home-target');
+    put(join(h, 'rt', 'versions', 'v22', 'bin', 'tool'), '#!/bin/sh\n');
+    chmodSync(join(h, 'rt', 'versions', 'v22', 'bin', 'tool'), 0o755);
+    symlinkSync('versions/v22', join(h, 'rt', 'current'));
+    mkdirSync(join(h, 'bin'), { recursive: true });
+    symlinkSync(join(h, 'rt', 'current', 'bin', 'tool'), join(h, 'bin', 'tool'));
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.p.argv = [join(h, 'bin', 'tool')];
+    cfg.providers.p.expose = [join(h, 'bin'), join(h, 'rt', 'versions', 'v22')];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = await runInProcess(checkArgs(s, 'testing'), undefined, { HOME: h });
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    expect(r.stderr).toContain('needs an expose entry around its install');
   });
 
   // Value: protects=no symlink that vanishes with a hidden root is trusted (bwrap mounts and execs the written spelling), while a symlink inside a listed directory survives; fails_when=symlinked ancestors pass, or a working link inside an exposed dir is refused; why_new=review findings (Codex, adversarial, testing); seam=none

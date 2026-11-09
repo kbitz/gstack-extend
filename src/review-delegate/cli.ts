@@ -22,6 +22,12 @@ import {
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
 export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'] as const;
+/** Host helpers run by fixed path, never a PATH lookup that a relative entry could point into the reviewed repository. */
+const GETENT_PATHS = ['/usr/bin/getent', '/bin/getent'] as const;
+const CHMOD_PATHS = ['/usr/bin/chmod', '/bin/chmod'] as const;
+const firstExisting = (paths: readonly string[]) => paths.find((path) => existsSync(path));
+/** How long cleanup may hold a part's result: a stalled removal cannot hold the invocation. */
+const CLEANUP_LIMIT_MS = 30_000;
 /** Test seams for what the sandbox checks read: the platform, bwrap paths, uid, architecture and passwd-home lookup. */
 export interface Deps { platform?: string; bwrapPaths?: readonly string[]; uid?: number; arch?: string; accountHome?: () => string }
 const CHILD_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const;
@@ -75,8 +81,9 @@ export function passwdHome(): string {
   const uid = process.getuid?.();
   if (uid === undefined) return '';
   try {
-    const res = spawnSync('getent', ['passwd', String(uid)], { encoding: 'utf8', timeout: 5000 });
-    const home = res.status === 0 ? res.stdout.split('\n')[0]?.split(':')[5] : undefined;
+    const getent = firstExisting(GETENT_PATHS);
+    const res = getent ? spawnSync(getent, ['passwd', String(uid)], { encoding: 'utf8', timeout: 5000, cwd: '/' }) : undefined;
+    const home = res?.status === 0 ? res.stdout.split('\n')[0]?.split(':')[5] : undefined;
     if (home) return home;
   } catch { /* fall back to the file */ }
   try {
@@ -91,9 +98,13 @@ export function passwdHome(): string {
 /** A path with its ancestors resolved and its last component as written, which is where bwrap finds a link or mounts an entry. */
 const linkLocation = (path: string) => join(realpathBelow(dirname(path)), basename(path));
 
-/** `path` and every link it passes through (at most 16 hops), each as a location. */
-function linkChain(path: string): string[] {
+/**
+ * `path` and every link it passes through (at most 16 hops), each as a location, plus each link's target as written: the kernel
+ * inside the sandbox follows that spelling, so a symlink in it that a hidden directory removes breaks exec.
+ */
+function linkChain(path: string): { hops: string[]; targets: string[] } {
   const hops = [linkLocation(path)];
+  const targets: string[] = [];
   let current = hops[0]!;
   for (let i = 0; i < 16; i++) {
     let target: string;
@@ -101,10 +112,11 @@ function linkChain(path: string): string[] {
       if (!lstatSync(current).isSymbolicLink()) break;
       target = readlinkSync(current);
     } catch { break; }
+    targets.push(resolve(dirname(current), target));
     current = linkLocation(resolve(dirname(current), target));
     hops.push(current);
   }
-  return hops;
+  return { hops, targets };
 }
 
 function parseArgs(argv: string[]): 'help' | Options {
@@ -290,14 +302,14 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       }
       // Every hop of argv[0]'s link chain that lies under a hidden root needs a listed path around it, with no vanishing symlink.
       const entryPaths = entries.map((entry) => realpathBelow(entry));
-      const hops = linkChain(provider.argv[0]!);
+      const { hops, targets } = linkChain(provider.argv[0]!);
       // The sandbox hides the reviewed repository and the calls directory, so a command installed there could never start.
       if (hops.some((hop) => repoPaths.some((path) => isWithin(path, hop)))) {
         return refuse('config-malformed', `provider ${label} argv[0] ${JSON.stringify(provider.argv[0])} lies inside the reviewed repository or `
           + 'the calls directory, which the sandbox hides');
       }
       const uncovered = hops.some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
-      if (uncovered || [provider.argv[0]!, ...hops].some((path) => symlinkVanishes(path, entries))) {
+      if (uncovered || [provider.argv[0]!, ...hops, ...targets].some((path) => symlinkVanishes(path, entries))) {
         return refuse('config-malformed', `provider ${label} argv[0] ${JSON.stringify(provider.argv[0])} needs an expose entry around its `
           + 'install under a hidden directory, reached without a symlink that directory would remove');
       }
@@ -345,6 +357,8 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   }
   let bwrap: string | undefined;
   if (repoProviders.length > 0) {
+    // The platform first, so a host without bwrap support is not told its passwd database is at fault.
+    if ((deps.platform ?? process.platform) !== 'linux') return refuse('sandbox-unavailable');
     if (!accountHomeOk) return refuse('sandbox-unavailable', 'the account home could not be read from the passwd database, so the sandbox cannot hide it');
     const resolvedBwrap = resolveSandboxBwrap(deps);
     if (!resolvedBwrap) return refuse('sandbox-unavailable');
@@ -423,9 +437,11 @@ export class SetupFailure extends Error {
 }
 
 /** Settle with the operation, or fail the setup step once the part's time runs out, so a stalled filesystem call cannot hold the part. */
-export function withinDeadline<T>(operation: Promise<T>, remainingMs: () => number, step: string): Promise<T> {
+export function withinDeadline<T>(start: () => Promise<T>, remainingMs: () => number, step: string): Promise<T> {
   const rem = remainingMs();
+  // An expired deadline never starts the operation, so no later rejection of it can go unhandled.
   if (rem <= 0) return Promise.reject(new SetupFailure(step, true));
+  const operation = start();
   return new Promise((resolveOp, rejectOp) => {
     const timer = setTimeout(() => rejectOp(new SetupFailure(step, true)), rem);
     operation.then((value) => { clearTimeout(timer); resolveOp(value); }, (error: unknown) => { clearTimeout(timer); rejectOp(error); });
@@ -439,6 +455,8 @@ export function withinDeadline<T>(operation: Promise<T>, remainingMs: () => numb
 function setupGitEnv(emptyHome: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) if (value !== undefined && !name.startsWith('GIT_')) env[name] = value;
+  // A relative PATH entry would resolve git from the working directory, so setup keeps absolute entries only.
+  if (env.PATH !== undefined) env.PATH = env.PATH.split(':').filter((dir) => isAbsolute(dir)).join(':');
   return { ...env, HOME: emptyHome, XDG_CONFIG_HOME: emptyHome, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
     GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
 }
@@ -449,7 +467,7 @@ function runSetupGit(args: string[], step: string, emptyHome: string, remainingM
     const rem = remainingMs();
     if (rem <= 0) { rejectGit(new SetupFailure(step, true)); return; }
     let proc: ReturnType<typeof spawn>;
-    try { proc = spawn('git', args, { env: setupGitEnv(emptyHome), detached: true, stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'] }); }
+    try { proc = spawn('git', args, { env: setupGitEnv(emptyHome), cwd: emptyHome, detached: true, stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'] }); }
     catch { rejectGit(new SetupFailure(step)); return; }
     let output = '';
     let expired = false, tooLong = false;
@@ -522,14 +540,14 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   try {
     for (let i = 0; i < spec.expose.length; i++) {
       const entry = spec.expose[i]!;
-      const stat = await withinDeadline(lstat(entry), remainingMs, 'expose');
+      const stat = await withinDeadline(() => lstat(entry), remainingMs, 'expose');
       if (stat.isSymbolicLink()) throw new SetupFailure('expose');
       if (stat.isDirectory()) {
         expose.push({ kind: 'dir', path: entry });
       } else if (stat.isFile()) {
         mkdirSync(stagedDir, { recursive: true, mode: 0o700 });
         const staged = join(stagedDir, String(i));
-        await withinDeadline(copyFile(entry, staged), remainingMs, 'expose');
+        await withinDeadline(() => copyFile(entry, staged), remainingMs, 'expose');
         expose.push({ kind: 'file', path: entry, staged });
       } else {
         throw new SetupFailure('expose');
@@ -539,7 +557,8 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
 
   const copy = join(cwd, 'repo');
   await git(['init', '--quiet', '--template=', copy], 'init');
-  await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules',
+  // --update-shallow keeps a shallow source's boundary, so history commands work in the copy.
+  await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--update-shallow',
     '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.repo, spec.candidate, ...(spec.base !== spec.candidate ? [spec.base] : [])], 'fetch');
   await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false',
     'checkout', '--quiet', '--detach', spec.candidate], 'checkout');
@@ -586,11 +605,16 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
       const cleanup = async () => {
         try { await rm(cwd, { recursive: true, force: true }); return; } catch { /* make it writable, then retry */ }
         await new Promise<void>((done) => {
-          try { execFile('chmod', ['-R', 'u+rwx', cwd], { timeout: 10_000, killSignal: 'SIGKILL' }, () => done()); } catch { done(); }
+          const chmod = firstExisting(CHMOD_PATHS);
+          if (!chmod) { done(); return; }
+          try { execFile(chmod, ['-R', 'u+rwx', cwd], { timeout: 10_000, killSignal: 'SIGKILL', cwd: '/' }, () => done()); } catch { done(); }
         });
         try { await rm(cwd, { recursive: true, force: true }); } catch { spawnError = true; }
       };
-      void cleanup().then(() => settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow,
+      // A stalled removal (a hung filesystem) is not awaited past the limit: the part settles as failed and the root may remain.
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+      const limit = new Promise<void>((done) => { cleanupTimer = setTimeout(() => { spawnError = true; done(); }, CLEANUP_LIMIT_MS); });
+      void Promise.race([cleanup(), limit]).then(() => clearTimeout(cleanupTimer)).then(() => settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow,
         spawn_error: spawnError, stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: setupNote + Buffer.concat(err, errSize).toString('utf8'),
         wall_ms: Date.now() - started }));
     };
