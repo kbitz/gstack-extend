@@ -77,7 +77,7 @@ describe('shipped blocks and installation lookup', () => {
       // The installed copy resolves to this checkout, so the provenance row names its release.
       const ledger = fix.readLedger();
       expect(ledger).toHaveLength(1);
-      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 3, producer_version: RELEASE });
+      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 4, producer_version: RELEASE });
       expect(validRow(ledger[0])).toBe(true);
     }, 30_000);
   }
@@ -1462,7 +1462,7 @@ describe('concurrent sessions', () => {
 const HOST_LEDGER_FILE = ((hostname().split('.')[0] ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63).replace(/-+$/g, '') || 'unknown-host') + '.jsonl';
 const SCHEMA = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
   'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw', 'schema_version', 'producer_version',
-  'agent_source', 'model_source', 'effort_source', 'workspace_host', 'host_agent_id', 'run_mode', 'run_mode_source',
+  'agent_source', 'model_source', 'effort_source', 'workspace_host', 'run_mode', 'run_mode_source',
   'questions', 'user_wait_s', 'resumes', 'user_signals_source', 'blocked_reason', 'blocked_reason_source'];
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const writeJsonl = (file: string, records: object[]) => {
@@ -1514,7 +1514,7 @@ describe('execution provenance', () => {
     expect(Object.keys(row)).toEqual(SCHEMA);
     expect(row).toMatchObject({ stage: 'roadmap', agent: null, model: null, effort: null, rung: 0, outcome: 'success',
       session_id: sid, repo: 'acme/widget', branch: 'feature/x', work_item: null, source: 'gstack-extend',
-      schema_version: 3, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
+      schema_version: 4, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
     expect(validRow(row)).toBe(true);
     expect(row.started_at).toBe(iso(epoch).replace(/\.\d{3}Z$/, 'Z'));
     expect(Number.isInteger(row.duration_s) && row.duration_s >= 0).toBe(true);
@@ -1886,947 +1886,8 @@ describe('execution provenance', () => {
   });
 });
 
-const CURSOR_SENTINEL = 'SENTINEL-PRIVATE-STORE';
-// SQLite-layout half of the Cursor harness: builders, a planter, named hooks and the scenario ops. Python source,
-// kept raw so its escapes reach the interpreter unchanged.
-const CURSOR_SQLITE_PY = String.raw`import contextlib, io, sqlite3, subprocess, tempfile
-from datetime import datetime, timezone
-WRITERS, PATCHES, UNDO, TURN = [], [], [], [0]
-SQLITE_DDL = {
-    "agents": ["agent_id TEXT PRIMARY KEY", "workspace_ref TEXT NOT NULL", "status TEXT NOT NULL", "active_run_id TEXT",
-               "latest_checkpoint_ref_json TEXT", "name TEXT", "metadata_json TEXT NOT NULL", "created_at TEXT NOT NULL",
-               "updated_at TEXT NOT NULL"],
-    "runs": ["run_id TEXT PRIMARY KEY", "request_id TEXT", "agent_id TEXT NOT NULL", "turn_number INTEGER NOT NULL",
-             "status TEXT NOT NULL", "model TEXT", "model_params_json TEXT", "start_checkpoint_ref_json TEXT",
-             "latest_checkpoint_ref_json TEXT", "error_code TEXT", "usage_ref TEXT", "usage_json TEXT", "result TEXT",
-             "created_at TEXT NOT NULL", "updated_at TEXT NOT NULL", "started_at TEXT", "finished_at TEXT",
-             "cancelled_at TEXT", "expired_at TEXT"],
-    "run_events": ["run_id TEXT NOT NULL", "seq INTEGER NOT NULL", '"offset" TEXT NOT NULL', "event_type TEXT NOT NULL",
-                   "payload_json TEXT", "payload_ref TEXT", "idempotency_key TEXT", "created_at TEXT NOT NULL",
-                   "PRIMARY KEY(run_id, seq)"],
-}
-HASH_SRC = (
-    "import hashlib, json, os, sys\n"
-    "root, out = sys.argv[1], {}\n"
-    "for base, dirs, files in os.walk(root):\n"
-    "    for name in dirs: out[os.path.relpath(os.path.join(base, name), root)] = 'dir'\n"
-    "    for name in files:\n"
-    "        path = os.path.join(base, name)\n"
-    "        with open(path, 'rb') as stream: out[os.path.relpath(path, root)] = hashlib.sha256(stream.read()).hexdigest()\n"
-    "print(json.dumps(out))\n")
-WRITER_SRC = (
-    "import json, os, sqlite3, sys, time\n"
-    "db, ready, release, row = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])\n"
-    "conn = sqlite3.connect(db, isolation_level=None)\n"
-    "conn.execute('PRAGMA wal_autocheckpoint=0')\n"
-    "names = ', '.join('\"' + col + '\"' for col in row)\n"
-    "conn.execute('INSERT INTO runs(' + names + ') VALUES(' + ', '.join('?' * len(row)) + ')', list(row.values()))\n"
-    "open(ready, 'w').close()\n"
-    "end = time.time() + 120\n"
-    "while not os.path.exists(release) and time.time() < end: time.sleep(0.02)\n"
-    "conn.close()\n")
 
-def sqlite_iso(seconds):
-    millis = int(round(seconds * 1000))
-    return datetime.fromtimestamp(millis // 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + ".%03dZ" % (millis % 1000)
 
-def conv(value):
-    # JSON cannot carry bytes or epoch-to-ISO conversion, so a case spells them as small markers.
-    if isinstance(value, dict):
-        if "$ts" in value: return sqlite_iso(value["$ts"])
-        if "$blob" in value: return bytes.fromhex(value["$blob"])
-        if "$repeat" in value: return value["$repeat"][0] * value["$repeat"][1]
-        if "$concat" in value: return "".join(conv(part) for part in value["$concat"])
-        return {key: conv(item) for key, item in value.items()}
-    if isinstance(value, list): return [conv(item) for item in value]
-    return value
-
-def sqlite_agent(agent_id, cwd, **overrides):
-    row = {"agent_id": agent_id, "workspace_ref": cwd, "status": "IDLE", "active_run_id": None,
-           "latest_checkpoint_ref_json": None, "name": None, "metadata_json": SENTINEL,
-           "created_at": sqlite_iso(1699990000), "updated_at": sqlite_iso(1699990000)}
-    row.update(overrides)
-    return row
-
-def sqlite_run(agent_id, run_id, model, params, started, updated, ended=None, status=None, **overrides):
-    TURN[0] += 1
-    row = {"run_id": run_id, "request_id": None, "agent_id": agent_id, "turn_number": TURN[0],
-           "status": status or ("RUNNING" if ended is None else "FINISHED"), "model": model,
-           "model_params_json": None if params is None else json.dumps(params),
-           "start_checkpoint_ref_json": None, "latest_checkpoint_ref_json": None, "error_code": None, "usage_ref": None,
-           "usage_json": SENTINEL, "result": SENTINEL, "created_at": sqlite_iso(started if started is not None else updated),
-           "updated_at": sqlite_iso(updated), "started_at": None if started is None else sqlite_iso(started),
-           "finished_at": None if ended is None else sqlite_iso(ended), "cancelled_at": None, "expired_at": None}
-    row.update(overrides)
-    return row
-
-def ddl_for(table, spec):
-    # The default DDL reproduces the types, NOT NULL flags and primary keys probed on a current Conductor build.
-    overrides = spec.get("ddl_overrides") or {}
-    if table in overrides:
-        return overrides[table]
-    dropped = set((spec.get("drop_columns") or {}).get(table, ()))
-    untyped = set((spec.get("untyped_columns") or {}).get(table, ()))
-    parts = []
-    for fragment in SQLITE_DDL[table]:
-        if fragment.startswith("PRIMARY KEY("):
-            parts.append(fragment)
-            continue
-        tokens = fragment.split()
-        name = tokens[0].strip('"')
-        if name in dropped: continue
-        parts.append(" ".join(tokens[:1] + tokens[2:]) if name in untyped else fragment)
-    return "CREATE TABLE " + table + "(" + ", ".join(parts) + ")"
-
-def insert_rows(conn, table, rows):
-    columns = [row[1] for row in conn.execute("PRAGMA table_info(" + table + ")")]
-    if not columns: return
-    for row in rows:
-        use = [col for col in columns if col in row]
-        conn.execute("INSERT INTO " + table + "(" + ", ".join('"' + col + '"' for col in use) + ") VALUES(" + ", ".join("?" * len(use)) + ")",
-                     [row[col] for col in use])
-
-def event_rows(runs):
-    return [{"run_id": run["run_id"], "seq": 1, "offset": "0", "event_type": "log", "payload_json": SENTINEL,
-             "created_at": sqlite_iso(1699990000)} for run in runs if isinstance(run.get("run_id"), str)]
-
-def build_agents(entries):
-    return [sqlite_agent(conv(entry["agent_id"]), conv(entry["cwd"]), **conv(entry.get("overrides") or {})) for entry in entries or ()]
-
-def build_runs(entries):
-    return [sqlite_run(conv(entry["agent_id"]), conv(entry["run_id"]), conv(entry.get("model")), conv(entry.get("params")),
-                       entry.get("started"), entry["updated"], entry.get("ended"), entry.get("status"),
-                       **conv(entry.get("overrides") or {}))
-            for entry in entries or ()]
-
-def close_writers():
-    while WRITERS:
-        try: WRITERS.pop().close()
-        except Exception: pass
-
-def plant_sqlite(spec, root=None):
-    journal = spec.get("journal", "wal")
-    modes = [bool(spec.get("keep_writer")), bool(spec.get("strip_sidecars")), journal == "delete"]
-    if sum(modes) != 1:
-        # Apple's SQLite keeps -wal/-shm after the last writer closes and upstream deletes them; a case must pick the
-        # state explicitly so it means the same thing on both.
-        raise ValueError("a SQLite case sets exactly one of keep_writer, strip_sidecars or journal=delete")
-    if spec.get("writer_process") and not spec.get("strip_sidecars"):
-        raise ValueError("writer_process starts from a stripped shard")
-    TURN[0] = 0
-    shard = Path(root or store_root()) / spec.get("shard", "0123456789abcdef")
-    (shard / "agents").mkdir(parents=True, exist_ok=True)
-    db = shard / "index.db"
-    conn = sqlite3.connect(str(db), isolation_level=None)
-    conn.execute("PRAGMA journal_mode=" + ("DELETE" if journal == "delete" else "WAL"))
-    if journal != "delete": conn.execute("PRAGMA wal_autocheckpoint=0")
-    view = (spec.get("ddl_overrides") or {}).get("runs") == "$view"
-    for table in ("agents", "runs", "run_events"):
-        if table == "runs" and view:
-            conn.execute(ddl_for("runs", {}).replace("CREATE TABLE runs(", "CREATE TABLE runs_t("))
-            conn.execute("CREATE VIEW runs AS SELECT * FROM runs_t")
-            continue
-        ddl = ddl_for(table, spec)
-        if ddl: conn.execute(ddl)
-    runs = build_runs(spec.get("runs"))
-    insert_rows(conn, "agents", build_agents(spec.get("agents")))
-    if not view:
-        insert_rows(conn, "runs", runs)
-        insert_rows(conn, "run_events", event_rows(runs))
-    late = build_runs(spec.get("wal_only_runs"))
-    if late:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        insert_rows(conn, "runs", late)
-        insert_rows(conn, "run_events", event_rows(late))
-    if spec.get("keep_writer"):
-        WRITERS.append(conn)
-    else:
-        if journal != "delete": conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.close()
-        for suffix in ("-wal", "-shm"):
-            if os.path.lexists(str(db) + suffix): os.unlink(str(db) + suffix)
-    for name, content in (spec.get("extra_files") or {}).items():
-        (shard / name).write_text(content)
-    proc = None
-    if spec.get("writer_process"):
-        proc = start_writer(db, build_runs([spec["writer_process"]])[0], shard.name)
-    return {"shard": shard, "db": db, "proc": proc}
-
-def start_writer(db, row, name):
-    marks = store_root().parent
-    ready, release = marks / (name + ".ready"), marks / (name + ".release")
-    for mark in (ready, release):
-        if mark.exists(): mark.unlink()
-    proc = subprocess.Popen([sys.executable, "-I", "-c", WRITER_SRC, str(db), str(ready), str(release), json.dumps(row)],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
-    deadline = time.time() + 20
-    while not ready.exists():
-        if proc.poll() is not None or time.time() > deadline:
-            raise RuntimeError("writer process did not become ready: " + proc.stderr.read().decode()[:300])
-        time.sleep(0.02)
-    return {"proc": proc, "release": release}
-
-def stop_writer(handle):
-    handle["release"].write_text("")
-    handle["proc"].wait(timeout=20)
-
-def snapshot(root, hashed):
-    # Hashing opens every file, so it runs in a child: closing a descriptor in a writer's own process would drop that
-    # writer's POSIX locks on the database.
-    if hashed:
-        out = subprocess.run([sys.executable, "-I", "-c", HASH_SRC, str(root)], capture_output=True, text=True, check=True)
-        return json.loads(out.stdout)
-    return {os.path.relpath(os.path.join(base, name), root): "" for base, dirs, files in os.walk(root) for name in dirs + files}
-
-def patch(obj, name, value):
-    PATCHES.append((obj, name, getattr(obj, name)))
-    setattr(obj, name, value)
-
-def unpatch():
-    while PATCHES:
-        obj, name, old = PATCHES.pop()
-        setattr(obj, name, old)
-    while UNDO:
-        UNDO.pop()()
-
-def ordered(causes):
-    return [token for token, _ in telemetry.CURSOR_SDK_CAUSES if token in causes]
-
-def debug_text(selection):
-    stream, saved = io.StringIO(), os.environ.get("GSTACK_EXTEND_TELEMETRY_DEBUG")
-    os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"
-    try:
-        with contextlib.redirect_stderr(stream):
-            telemetry._cursor_debug(selection.reasons, selection.causes)
-    finally:
-        if saved is None: os.environ.pop("GSTACK_EXTEND_TELEMETRY_DEBUG", None)
-        else: os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = saved
-    return stream.getvalue()
-
-def hook_busy(stage):
-    def install(case, ctx):
-        timeouts = ctx["data"].setdefault("timeouts", [])
-        real = sqlite3.connect
-        class Flaky(sqlite3.Connection):
-            def execute(self, sql, *args):
-                text = sql.strip().upper()
-                if ((stage == "begin" and text.startswith("BEGIN")) or (stage == "probe" and "SQLITE_MASTER" in text)
-                        or (stage == "query" and sql == telemetry.SQLITE_RUNS_SQL)):
-                    raise sqlite3.OperationalError("database is locked " + SENTINEL)
-                return super().execute(sql, *args)
-        def wrapped(*args, **kwargs):
-            timeouts.append(kwargs.get("timeout"))
-            if stage == "connect": raise sqlite3.OperationalError("database is locked " + SENTINEL)
-            return real(*args, factory=Flaky, **kwargs)
-        patch(sqlite3, "connect", wrapped)
-    return install
-
-def hook_row_cap(case, ctx):
-    patch(telemetry, "SQLITE_ROW_CAP", 2)
-    ctx["data"]["turn_reads"] = 0
-    real = sqlite3.connect
-    class Traced(sqlite3.Connection):
-        def execute(self, sql, *args):
-            if sql == telemetry.SQLITE_TURNS_SQL: ctx["data"]["turn_reads"] += 1
-            return super().execute(sql, *args)
-    patch(sqlite3, "connect", lambda *args, **kwargs: real(*args, factory=Traced, **kwargs))
-
-def hook_after_connect(action):
-    def install(case, ctx):
-        real = sqlite3.connect
-        def wrapped(*args, **kwargs):
-            conn = real(*args, **kwargs)
-            action(ctx["dbs"][0])
-            return conn
-        patch(sqlite3, "connect", wrapped)
-    return install
-
-def bump_mtime(db):
-    info = os.stat(db)
-    os.utime(db, ns=(info.st_atime_ns, info.st_mtime_ns + 5_000_000_000))
-
-def create_wal(db):
-    open(str(db) + "-wal", "wb").close()
-
-def hook_authorizer(case, ctx):
-    reads = ctx["data"].setdefault("reads", [])
-    real = sqlite3.connect
-    def callback(action, arg1, arg2, dbname, source):
-        if action == sqlite3.SQLITE_READ: reads.append(str(arg1) + "." + str(arg2))
-        return sqlite3.SQLITE_OK
-    def wrapped(*args, **kwargs):
-        conn = real(*args, **kwargs)
-        conn.set_authorizer(callback)
-        return conn
-    patch(sqlite3, "connect", wrapped)
-
-def hook_no_sqlite(case, ctx):
-    saved = sys.modules.get("sqlite3")
-    sys.modules["sqlite3"] = None
-    UNDO.append(lambda: sys.modules.__setitem__("sqlite3", saved))
-
-def hook_chmod_db(case, ctx):
-    if os.geteuid() == 0:
-        ctx["skipped"] = True
-        return
-    db = ctx["dbs"][0]
-    os.chmod(db, 0)
-    UNDO.append(lambda: os.chmod(db, 0o644))
-
-def hook_readonly_dir(case, ctx):
-    if os.geteuid() == 0:
-        ctx["skipped"] = True
-        return
-    shard = ctx["dbs"][0].parent
-    os.chmod(shard, 0o555)
-    UNDO.append(lambda: os.chmod(shard, 0o755))
-
-def raiser(name, message):
-    def install(case, ctx):
-        def boom(*args, **kwargs): raise RuntimeError(message)
-        patch(telemetry, name, boom)
-    return install
-
-HOOKS = {
-    "row-cap": hook_row_cap,
-    "budget-zero": lambda case, ctx: patch(telemetry, "CURSOR_CAPTURE_BUDGET_S", 0),
-    "no-sqlite": hook_no_sqlite,
-    "ndjson-vanished": lambda case, ctx: patch(telemetry, "_read_bounded", lambda path: ([], "missing")),
-    "ndjson-raises": raiser("_read_bounded", SENTINEL),
-    "normalize-raises": raiser("_sqlite_records", SENTINEL),
-    "busy-connect": hook_busy("connect"), "busy-begin": hook_busy("begin"), "busy-probe": hook_busy("probe"),
-    "query-error": hook_busy("query"),
-    "bump-mtime": hook_after_connect(bump_mtime), "create-wal": hook_after_connect(create_wal),
-    "authorizer": hook_authorizer, "chmod-db": hook_chmod_db, "readonly-dir": hook_readonly_dir,
-}
-
-def build_shards(shards, root, ctx):
-    for entry in shards:
-        kind = entry["kind"]
-        if kind == "sqlite":
-            planted = plant_sqlite(entry, root)
-            ctx["dbs"].append(planted["db"])
-            if planted["proc"]: ctx["writers"].append(planted["proc"])
-        elif kind == "ndjson":
-            base = Path(root or store_root()) / entry["shard"]
-            write_jsonl(base / "agents.ndjson", entry.get("agents", []))
-            write_jsonl(base / "runs.ndjson", entry.get("runs", []))
-        elif kind == "tree":
-            base = Path(root or store_root()) / entry["shard"]
-            base.mkdir(parents=True, exist_ok=True)
-            for name in entry.get("dirs", ()): (base / name).mkdir(parents=True, exist_ok=True)
-            for name, content in (entry.get("files") or {}).items(): (base / name).write_text(content)
-        else:
-            raise ValueError("unknown shard kind")
-
-def run_case(case):
-    close_writers()
-    reset_store()
-    ctx = {"dbs": [], "writers": [], "data": {}, "skipped": False}
-    root = None
-    if case.get("store") == "uri":
-        root = Path(tempfile.mkdtemp()) / "st ore?#%x"
-    try:
-        build_shards(case["shards"], root, ctx)
-        scan = root or store_root()
-        before = snapshot(scan, case.get("hash", False)) if scan.exists() else {}
-        if case.get("hook"): HOOKS[case["hook"]](case, ctx)
-        try:
-            capture = telemetry.capture_cursor_store(root)
-            selection = telemetry.select_cursor(capture, case.get("cwd", "/work"), case.get("session", "conv-1"),
-                                                case.get("begin", 1700000000), case.get("end", 1700000100))
-        finally:
-            unpatch()
-        after = snapshot(scan, case.get("hash", False)) if scan.exists() else {}
-        stable = lambda snap: {key: value for key, value in snap.items() if not key.endswith("-shm")}
-        result = {
-            "certify": selection.certify, "model": selection.model, "effort": selection.effort, "usable": selection.usable,
-            "reasons": selection.reasons, "causes": ordered(selection.causes), "complete": capture.complete,
-            "status": capture.status, "layouts": dict(capture.layouts),
-            "shard_layouts": [shard.get("layout") for shard in capture.shards],
-            "turns": [shard.get("turns") for shard in capture.shards],
-            "invariant": capture.status != "read" or capture.complete or bool(capture.causes),
-            "debug": debug_text(selection), "skipped": ctx["skipped"], "data": ctx["data"],
-            "tree_equal": set(before) == set(after), "bytes_equal": stable(before) == stable(after) if case.get("hash") else None,
-        }
-        return result
-    finally:
-        for handle in ctx["writers"]: stop_writer(handle)
-        unpatch()
-        close_writers()
-        if root is not None: shutil.rmtree(root.parent, ignore_errors=True)
-
-def do_sqlite(cases):
-    return {case["name"]: run_case(case) for case in cases}
-
-def do_budget():
-    out, cwd, reads, clock = {}, "/work", [], [1000.0]
-    real_reader = telemetry._read_bounded
-    def plant_ndjson(name):
-        write_jsonl(store_root() / name / "agents.ndjson", [agent("conv-1", cwd)])
-        write_jsonl(store_root() / name / "runs.ndjson", [])
-    def counting(advance_after=None):
-        # Counts NDJSON file reads. The fake clock jumps past any deadline right after the Nth read.
-        def wrapped(path):
-            reads.append(path.name)
-            result = real_reader(path)
-            if len(reads) == advance_after: clock[0] += 100
-            return result
-        return wrapped
-    def shape(capture):
-        return {"complete": capture.complete, "causes": ordered(capture.causes), "shards": len(capture.shards), "reads": len(reads)}
-    def fresh():
-        close_writers(); reset_store(); reads.clear(); clock[0] = 1000.0
-    try:
-        fresh(); plant_ndjson("a")
-        plant_sqlite({"shard": "b", "strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": cwd}], "runs": []})
-        patch(telemetry, "CURSOR_CAPTURE_BUDGET_S", 0); patch(telemetry, "_read_bounded", counting())
-        out["zero"] = shape(telemetry.capture_cursor_store())
-        unpatch()
-        fresh(); plant_ndjson("a")
-        patch(telemetry.time, "monotonic", lambda: clock[0]); patch(telemetry, "_read_bounded", counting(1))
-        out["between"] = shape(telemetry.capture_cursor_store())
-        out["between"]["read_names"] = list(reads)
-        unpatch()
-        fresh(); plant_ndjson("a"); plant_ndjson("b")
-        patch(telemetry.time, "monotonic", lambda: clock[0]); patch(telemetry, "_read_bounded", counting(2))
-        out["final"] = shape(telemetry.capture_cursor_store())
-        unpatch()
-        fresh()
-        planted = plant_sqlite({"strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": cwd}],
-                                "runs": [{"agent_id": "conv-1", "run_id": "r1", "model": "m", "started": 1, "updated": 2}]})
-        patch(telemetry, "SQLITE_PROGRESS_STEPS", 1)
-        past = telemetry._read_sqlite_shard(planted["shard"], time.monotonic() - 1)
-        future = telemetry._read_sqlite_shard(planted["shard"], time.monotonic() + 60)
-        out["interrupt"] = {"past": [len(past[0]), len(past[1]), past[2]], "future": [len(future[0]), len(future[1]), future[2]]}
-    finally:
-        unpatch()
-        close_writers()
-    return out
-
-def do_extract():
-    value = telemetry._sqlite_value
-    return {"integer": value("integer", None) == b"", "real": value("real", None) == b"", "blob": value("blob", b"x") == b"",
-            "over_cap": value("text", None) == b"", "null": value("null", None) is None, "text": value("text", "a") == "a",
-            "nul": value("text", "a\x00b") == "a\x00b"}
-
-def do_kept_wal():
-    # A snapshot copy of a live shard: sidecars present, no writer. This is the state after a crash, a persistent WAL,
-    # or Conductor quitting.
-    close_writers(); reset_store()
-    spec = {"keep_writer": True, "agents": [{"agent_id": "conv-1", "cwd": "/work"}], "runs": [{"agent_id": "conv-1", "run_id": "old", "model": "grok-4.0", "started": 1699999700, "updated": 1699999800, "ended": 1699999900}],
-            "wal_only_runs": [{"agent_id": "conv-1", "run_id": "cur", "model": "grok-4.7", "params": [{"id": "reasoning_effort", "value": "xhigh"}], "started": 1699999980, "updated": 1700000050}]}
-    planted = plant_sqlite(spec)
-    scratch = Path(tempfile.mkdtemp())
-    for suffix in ("", "-wal", "-shm"): shutil.copyfile(str(planted["db"]) + suffix, scratch / ("index.db" + suffix))
-    close_writers(); reset_store()
-    shard = store_root() / "0123456789abcdef"
-    shard.mkdir(parents=True)
-    for suffix in ("", "-wal", "-shm"): shutil.copyfile(scratch / ("index.db" + suffix), shard / ("index.db" + suffix))
-    shutil.rmtree(scratch)
-    before = snapshot(store_root(), True)
-    capture = telemetry.capture_cursor_store()
-    selection = telemetry.select_cursor(capture, "/work", "conv-1", 1700000000, 1700000100)
-    after = snapshot(store_root(), True)
-    return {"certify": selection.certify, "model": selection.model, "effort": selection.effort, "causes": ordered(capture.causes),
-            "tree_equal": set(before) == set(after), "db_equal": before["0123456789abcdef/index.db"] == after["0123456789abcdef/index.db"],
-            "wal_equal": before["0123456789abcdef/index.db-wal"] == after["0123456789abcdef/index.db-wal"]}
-
-def do_xproc():
-    # The writer is a separate process, as Conductor is: -shm is shared across processes, and a commit that sits only
-    # in the -wal must be visible without the reader changing index.db or the -wal.
-    close_writers(); reset_store()
-    handle = None
-    try:
-        planted = plant_sqlite({"strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": "/work"}],
-                                "runs": [{"agent_id": "conv-1", "run_id": "old", "model": "grok-4.0", "started": 1699999700, "updated": 1699999800, "ended": 1699999900}],
-                                "writer_process": {"agent_id": "conv-1", "run_id": "cur", "model": "grok-4.7", "params": [{"id": "reasoning_effort", "value": "xhigh"}], "started": 1699999980, "updated": 1700000050}})
-        handle = planted["proc"]
-        before = snapshot(store_root(), True)
-        capture = telemetry.capture_cursor_store()
-        selection = telemetry.select_cursor(capture, "/work", "conv-1", 1700000000, 1700000100)
-        after = snapshot(store_root(), True)
-        stable = lambda snap: {key: value for key, value in snap.items() if not key.endswith("-shm")}
-        return {"certify": selection.certify, "model": selection.model, "effort": selection.effort, "causes": ordered(capture.causes),
-                "tree_equal": set(before) == set(after), "bytes_equal": stable(before) == stable(after),
-                "had_wal": any(key.endswith("index.db-wal") for key in before)}
-    finally:
-        if handle: stop_writer(handle)
-
-def do_plant_sqlite(specs):
-    # Plants into the fixture HOME for an end-to-end finish. A held writer outlives this process; the caller releases it.
-    if any(spec.get("keep_writer") for spec in specs):
-        raise ValueError("keep_writer is only supported by in-process cases")
-    out = {"holds": []}
-    for spec in specs:
-        planted = plant_sqlite(spec)
-        out["db"] = str(planted["db"])
-        if planted["proc"]:
-            out["holds"].append({"pid": planted["proc"]["proc"].pid, "release": str(planted["proc"]["release"])})
-    return out
-
-def do_privacy(broken):
-    # A real provenance_row with debug on. The canary lives in every column that must never be read. A broken sibling
-    # shard (an empty directory) makes the capture incomplete, so the cause line prints.
-    close_writers(); reset_store()
-    cwd, now = os.getcwd(), int(time.time())
-    plant_sqlite({"strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": cwd}],
-                  "runs": [{"agent_id": "conv-1", "run_id": "cur", "model": "grok-4.7", "params": [{"id": "reasoning_effort", "value": "xhigh"}], "started": now - 60, "updated": now - 10}]})
-    if broken: (store_root() / "fedcba9876543210").mkdir()
-    os.environ.update({"CURSOR_AGENT": "1", "CURSOR_CONVERSATION_ID": "conv-1", "GSTACK_EXTEND_TELEMETRY_DEBUG": "1"})
-    for name in ("CURSOR_INVOKED_AS", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"):
-        os.environ.pop(name, None)
-    stream = io.StringIO()
-    with contextlib.redirect_stderr(stream):
-        row = telemetry.provenance_row("roadmap", "sid-sqlite-privacy", now - 30, 5, {}, None)
-    text = stream.getvalue()
-    lines = [line for line in text.splitlines() if line.startswith("telemetry: cursor-sdk")]
-    return {"row": {key: row[key] for key in ("agent", "model", "effort", "route")}, "lines": lines,
-            "leaked": SENTINEL in text + json.dumps(row), "path_in_lines": any("Library" in line or "/" in line.split("See docs/")[0] for line in lines)}
-`;
-const CURSOR_HARNESS = [
-  'import json, os, shutil, sys, time',
-  'from pathlib import Path',
-  'sys.path.insert(0, sys.argv[1])',
-  'import telemetry',
-  'SENTINEL = "SENTINEL-PRIVATE-STORE"',
-  'def special(case):',
-  '    kind = case.get("special")',
-  '    if kind == "nan": return float("nan")',
-  '    if kind == "inf": return float("inf")',
-  '    if kind == "ninf": return float("-inf")',
-  '    if kind == "huge": return 10 ** 10000',
-  '    if kind == "true": return True',
-  '    if kind == "false": return False',
-  '    if kind == "beyond": return 1e20',
-  '    return case.get("value")',
-  'def do_parse(cases):',
-  '    out = []',
-  '    for case in cases:',
-  '        try:',
-  '            if "unit" in case:',
-  '                value = telemetry.parse_ts(special(case), numeric_unit=case.get("unit"))',
-  '            else:',
-  '                value = telemetry.parse_ts(special(case))',
-  '            out.append({"raised": None, "value": value})',
-  '        except Exception as error:',
-  '            out.append({"raised": type(error).__name__, "message": str(error), "value": None})',
-  '    return out',
-  'def do_select(cases):',
-  '    out = []',
-  '    for case in cases:',
-  '        shards = case.get("shards")',
-  '        if shards is None:',
-  '            shards = [{"agents": case.get("agents") or [], "runs": case.get("runs") or []}]',
-  '        capture = telemetry.CursorCapture(case.get("status") or "read", shards, case.get("complete", True))',
-  '        selection = telemetry.select_cursor(capture, case.get("cwd"), case.get("session"), case.get("begin"), case.get("end"))',
-  '        out.append({"certify": selection.certify, "model": selection.model, "effort": selection.effort,',
-  '                    "usable": selection.usable, "reasons": selection.reasons, "causes": ordered(selection.causes)})',
-  '    return out',
-  'def store_root():',
-  '    return Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store"',
-  'def reset_store():',
-  '    root = store_root()',
-  '    if root.is_dir():',
-  '        shutil.rmtree(root)',
-  '    elif root.exists():',
-  '        root.unlink()',
-  'def write_jsonl(path, rows):',
-  '    path.parent.mkdir(parents=True, exist_ok=True)',
-  '    path.write_text("".join(json.dumps(row) + "\\n" for row in rows))',
-  'def plant(shard, agents, runs):',
-  '    root = store_root() / shard',
-  '    write_jsonl(root / "agents.ndjson", agents)',
-  '    write_jsonl(root / "runs.ndjson", runs)',
-  '    return root',
-  'def agent(agent_id, cwd, **extra):',
-  '    row = {"agentId": agent_id, "cwd": cwd}',
-  '    row.update(extra)',
-  '    return row',
-  'def run(agent_id, run_id, model, started=1700000000, updated=1700000050, ended=1700000080):',
-  '    row = {"agentId": agent_id, "runId": run_id, "startedAt": started * 1000, "updatedAt": updated * 1000, "model": model}',
-  '    if ended is None:',
-  '        row["endedAt"] = None',
-  '    elif ended != "omit":',
-  '        row["endedAt"] = ended * 1000',
-  '    return row',
-  'def do_files():',
-  '    reset_store()',
-  '    # Every capture this scenario takes is recorded, so an incomplete read capture with no cause cannot hide.',
-  '    captures, plain_capture = [], telemetry.capture_cursor_store',
-  '    telemetry.capture_cursor_store = lambda *args, **kwargs: captures.append(plain_capture(*args, **kwargs)) or captures[-1]',
-  '    cwd = os.getcwd()',
-  '    begin, end = 1700000000, 1700000100',
-  '    old = agent("old-agent", cwd)',
-  '    recent = agent("recent-agent", cwd)',
-  '    filler = "y" * telemetry.LOG_TAIL_BYTES',
-  '    agents_path = store_root() / "clip-agents" / "agents.ndjson"',
-  '    runs_path = store_root() / "clip-agents" / "runs.ndjson"',
-  '    agents_path.parent.mkdir(parents=True, exist_ok=True)',
-  '    agents_path.write_text(json.dumps(old) + "\\n" + filler + "\\n" + json.dumps(recent) + "\\n")',
-  '    write_jsonl(runs_path, [',
-  '        run("old-agent", "old", {"id": "model-old", "params": {"effort": "low"}}),',
-  '        run("recent-agent", "recent", {"id": "model-recent", "params": {"effort": "high"}}),',
-  '    ])',
-  '    clipped = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '    one = agent("only-agent", cwd)',
-  '    runs_clip = store_root() / "clip-runs" / "runs.ndjson"',
-  '    write_jsonl(store_root() / "clip-runs" / "agents.ndjson", [one])',
-  '    old_open = run("only-agent", "old-open", {"id": "model-old", "params": {"effort": "low"}}, ended=None)',
-  '    recent_run = run("only-agent", "recent", {"id": "model-recent", "params": {"effort": "high"}})',
-  '    runs_clip.write_text(json.dumps(old_open) + "\\n" + filler + "\\n" + json.dumps(recent_run) + "\\n")',
-  '    shutil.rmtree(store_root() / "clip-agents")',
-  '    runs_clipped = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '    def isolated(setup):',
-  '        reset_store()',
-  '        setup()',
-  '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
-  '    def missing_agents():',
-  '        write_jsonl(store_root() / "gap" / "runs.ndjson", [run("only-agent", "run-1", {"id": "model-hidden", "params": {"effort": "high"}})])',
-  '    def nonregular():',
-  '        (store_root() / "weird" / "agents.ndjson").mkdir(parents=True)',
-  '        write_jsonl(store_root() / "weird" / "runs.ndjson", [run("only-agent", "run-1", {"id": "model-hidden", "params": {"effort": "high"}})])',
-  '    def file_root():',
-  '        root = store_root()',
-  '        root.parent.mkdir(parents=True, exist_ok=True)',
-  '        root.write_text("not-a-directory")',
-  '    def bad_json():',
-  '        plant("good", [one], [run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}})])',
-  '        path = store_root() / "good" / "runs.ndjson"',
-  '        path.write_text("{not-json " + SENTINEL + "\\n" + path.read_text())',
-  '    def missing_runs():',
-  '        write_jsonl(store_root() / "a" / "agents.ndjson", [agent("x-agent", cwd)])',
-  '        plant("b", [agent("y-agent", cwd)], [run("y-agent", "r1", {"id": "model-y"}, ended=None)])',
-  '    def fifo_runs():',
-  '        write_jsonl(store_root() / "pipe" / "agents.ndjson", [one])',
-  '        os.mkfifo(store_root() / "pipe" / "runs.ndjson")',
-  '    def empty_shard():',
-  '        (store_root() / "empty").mkdir(parents=True)',
-  '        plant("good", [one], [run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}})])',
-  '    good_line = json.dumps(run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}}))',
-  '    def torn_tail():',
-  '        # Crash residue: a torn last line on a file nobody has touched for a minute.',
-  '        write_jsonl(store_root() / "torn" / "agents.ndjson", [one])',
-  '        path = store_root() / "torn" / "runs.ndjson"',
-  '        path.write_text(good_line + "\\n" + good_line.replace("run-1", "run-2")[:40])',
-  '        stale = time.time() - 60',
-  '        os.utime(path, (stale, stale))',
-  '    def torn_paused():',
-  '        # A writer paused mid-line: same size as the read, but modified just now.',
-  '        write_jsonl(store_root() / "paused" / "agents.ndjson", [one])',
-  '        (store_root() / "paused" / "runs.ndjson").write_text(good_line + "\\n" + good_line.replace("run-1", "run-2")[:40])',
-  '    def unterminated_tail():',
-  '        write_jsonl(store_root() / "whole" / "agents.ndjson", [one])',
-  '        (store_root() / "whole" / "runs.ndjson").write_text(good_line)',
-  '    def deep_line():',
-  '        write_jsonl(store_root() / "deep" / "agents.ndjson", [one])',
-  '        (store_root() / "deep" / "runs.ndjson").write_text("[" * 200000 + "]" * 200000 + "\\n" + good_line + "\\n")',
-  '    def grown():',
-  '        plant("grow", [one], [run("only-agent", "run-1", {"id": "model-kept"})])',
-  '        path = store_root() / "grow" / "runs.ndjson"',
-  '        rival = json.dumps(run("only-agent", "run-2", {"id": "model-rival"}))',
-  '        payload = (good_line + "\\n" + " " * (telemetry.LOG_TAIL_BYTES - len(good_line) - 1) + "\\n" + rival + "\\n").encode()',
-  '        real_open = telemetry.Path.open',
-  '        class Grown:',
-  '            # Reports a size under the cap, then the writer appends past it before the read.',
-  '            def __init__(self): self.pos = 0',
-  '            def __enter__(self): return self',
-  '            def __exit__(self, *exc): return False',
-  '            def seek(self, offset, whence=0):',
-  '                self.pos = telemetry.LOG_TAIL_BYTES - 10 if whence == os.SEEK_END else offset',
-  '                return self.pos',
-  '            def read(self, size=-1):',
-  '                return payload[self.pos:self.pos + size]',
-  '        telemetry.Path.open = lambda self, *a, **k: Grown() if self == path else real_open(self, *a, **k)',
-  '        return real_open',
-  '    def stubbed(shard, reported, served):',
-  '        # The size probe sees `reported` bytes; the read sees `served`. The file on disk keeps its own bytes.',
-  '        rival = json.dumps(run("only-agent", "run-2", {"id": "model-rival"}))',
-  '        plant(shard, [one], [run("only-agent", "run-1", {"id": "model-kept"}), run("only-agent", "run-2", {"id": "model-rival"})])',
-  '        path = store_root() / shard / "runs.ndjson"',
-  '        real_open = telemetry.Path.open',
-  '        class Stub:',
-  '            def __init__(self): self.pos = 0',
-  '            def __enter__(self): return self',
-  '            def __exit__(self, *exc): return False',
-  '            def seek(self, offset, whence=0):',
-  '                self.pos = reported if whence == os.SEEK_END else offset',
-  '                return self.pos',
-  '            def read(self, size=-1):',
-  '                return served[self.pos:self.pos + size]',
-  '        telemetry.Path.open = lambda self, *a, **k: Stub() if self == path else real_open(self, *a, **k)',
-  '        return real_open',
-  '    def stub_result(shard, reported, served):',
-  '        reset_store()',
-  '        restore = stubbed(shard, reported, served)',
-  '        try:',
-  '            found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '        finally:',
-  '            telemetry.Path.open = restore',
-  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
-  '    kept = (good_line + "\\n").encode()',
-  '    shrunk_result = stub_result("shrink", len(kept) * 2, kept)',
-  '    torn_growing_result = stub_result("tear", len(kept) + 20, kept + good_line.replace("run-1", "run-2").encode()[:20])',
-  '    def locked_shard():',
-  '        plant("open", [one], [run("only-agent", "run-1", {"id": "model-kept"}, ended=None)])',
-  '        plant("locked", [one], [run("only-agent", "run-2", {"id": "model-hidden"}, ended=None)])',
-  '        os.chmod(store_root() / "locked", 0)',
-  '    reset_store()',
-  '    locked_shard()',
-  '    # Python 3.14 pathlib answers False instead of raising on a permission error; emulate it on any runtime.',
-  '    saved = {name: getattr(Path, name) for name in ("exists", "is_dir", "is_file")}',
-  '    def lenient(method):',
-  '        def call(self, *args, **kwargs):',
-  '            try:',
-  '                return method(self, *args, **kwargs)',
-  '            except OSError:',
-  '                return False',
-  '        return call',
-  '    for name, method in saved.items():',
-  '        setattr(Path, name, lenient(method))',
-  '    try:',
-  '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '    finally:',
-  '        for name, method in saved.items():',
-  '            setattr(Path, name, method)',
-  '        os.chmod(store_root() / "locked", 0o755)',
-  '    locked_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
-  '    fifo_result = isolated(fifo_runs)',
-  '    empty_result = isolated(empty_shard)',
-  '    torn_result = isolated(torn_tail)',
-  '    paused_result = isolated(torn_paused)',
-  '    whole_result = isolated(unterminated_tail)',
-  '    deep_result = isolated(deep_line)',
-  '    reset_store()',
-  '    restore = grown()',
-  '    try:',
-  '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '    finally:',
-  '        telemetry.Path.open = restore',
-  '    grown_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
-  '    os.environ["CURSOR_AGENT"] = "1"',
-  '    os.environ.pop("CURSOR_CONVERSATION_ID", None)',
-  '    reset_store()',
-  '    big = store_root() / "big" / "runs.ndjson"',
-  '    write_jsonl(store_root() / "big" / "agents.ndjson", [one])',
-  '    line = json.dumps(run("only-agent", "r", {"id": "m"})) + "\\n"',
-  '    big.write_text(line * (telemetry.LOG_TAIL_BYTES // len(line) + 10))',
-  '    parsed = [0]',
-  '    real_loads = telemetry.json.loads',
-  '    def counting_loads(*args, **kwargs):',
-  '        parsed[0] += 1',
-  '        return real_loads(*args, **kwargs)',
-  '    telemetry.json.loads = counting_loads',
-  '    try:',
-  '        big_capture = telemetry.capture_cursor_store()',
-  '    finally:',
-  '        telemetry.json.loads = real_loads',
-  '    reset_store()',
-  '    plant("inspect-a", [agent("in-cwd", cwd), agent(["bad"], cwd), agent("elsewhere", "/elsewhere")],',
-  '          [run("in-cwd", "r1", {"id": "m-in"}), run("elsewhere", "r2", {"id": "m-out"}), run(["bad"], "r3", {"id": "m-bad"})])',
-  '    inspected = [record["runId"] for record in telemetry.cursor_sdk_runs(cwd)]',
-  '    inspected_all = sorted(record["runId"] for record in telemetry.cursor_sdk_runs())',
-  '    reset_store()',
-  '    file_root()',
-  '    recorded = telemetry.provenance_row("roadmap", "sid-shape", begin, 5, {}, None)',
-  '    return {"agents_tail": {"certify": clipped.certify, "model": clipped.model, "reasons": clipped.reasons, "causes": ordered(clipped.causes)},',
-  '            "runs_tail": {"certify": runs_clipped.certify, "model": runs_clipped.model, "reasons": runs_clipped.reasons, "causes": ordered(runs_clipped.causes)},',
-  '            "missing_agents": isolated(missing_agents), "nonregular": isolated(nonregular),',
-  '            "missing_runs": isolated(missing_runs), "fifo_runs": fifo_result, "empty_shard": empty_result,',
-  '            "torn_tail": torn_result, "unterminated_tail": whole_result, "deep_line": deep_result, "grown": grown_result,',
-  '            "shrunk": shrunk_result, "torn_growing": torn_growing_result, "locked": locked_result, "torn_paused": paused_result,',
-  '            "file_root": isolated(file_root), "bad_json": isolated(bad_json),',
-  '            "big": {"complete": big_capture.complete, "parsed": parsed[0]},',
-  '            "inspected": inspected, "inspected_all": inspected_all,',
-  '            "recorded": {"stage": recorded["stage"], "model": recorded["model"], "route": recorded["route"], "keys": list(recorded)},',
-  '            "captured": len(captures), "invariant": all(item.status != "read" or item.complete or bool(item.causes) for item in captures)}',
-  'def do_observe(mode):',
-  '    reset_store()',
-  '    cwd = os.getcwd()',
-  '    os.environ["CURSOR_AGENT"] = "1"',
-  '    os.environ["CURSOR_CONVERSATION_ID"] = "conv-1"',
-  '    os.environ.pop("CURSOR_INVOKED_AS", None)',
-  '    os.environ.pop("CLAUDECODE", None)',
-  '    os.environ.pop("CLAUDE_CODE_SESSION_ID", None)',
-  '    import io, contextlib',
-  '    calls, opens = [], []',
-  '    real_capture = telemetry.capture_cursor_store',
-  '    real_open = telemetry.Path.open',
-  '    real_time = telemetry.time.time',
-  '    if mode == "mutation":',
-  '        now = int(time.time())',
-  '        plant("shard-a", [agent("conv-1", cwd)], [run("conv-1", "run-1", {"id": "model-a", "params": [{"id": "effort", "value": "high"}]}, started=now - 60, updated=now - 10, ended=None)])',
-  '        def wrapped(*args, **kwargs):',
-  '            calls.append("capture")',
-  '            captured = real_capture(*args, **kwargs)',
-  '            extra = store_root() / "shard-a" / "runs.ndjson"',
-  '            extra.write_text(extra.read_text() + json.dumps(run("conv-1", "run-2", {"id": "model-b", "params": {"effort": "low"}}, started=now - 60, updated=now - 5, ended=None)) + "\\n")',
-  '            return captured',
-  '        def counting(self, mode="r", *args, **kwargs):',
-  '            if str(self).endswith(".ndjson") and mode == "rb":',
-  '                opens.append(str(self))',
-  '            return real_open(self, mode, *args, **kwargs)',
-  '        telemetry.capture_cursor_store = wrapped',
-  '        telemetry.Path.open = counting',
-  '        row = telemetry.provenance_row("roadmap", "sid-mutation", int(time.time()) - 30, 5, {}, None)',
-  '        return {"calls": len(calls), "opens": len(opens), "model": row["model"], "route": row["route"], "effort": row["effort"]}',
-  '    if mode == "clock":',
-  '        plant("shard-a", [agent("conv-1", cwd)], [run("conv-1", "run-1", {"id": "model-clock", "params": {"effort": "max"}}, started=1700000000, updated=1700000050, ended=None)])',
-  '        phase = {"value": "before"}',
-  '        def fake_time():',
-  '            return 1700000000 if phase["value"] == "before" else 1700000100',
-  '        def wrapped(*args, **kwargs):',
-  '            calls.append("capture")',
-  '            phase["value"] = "during"',
-  '            captured = real_capture(*args, **kwargs)',
-  '            phase["value"] = "after"',
-  '            return captured',
-  '        telemetry.time.time = fake_time',
-  '        telemetry.capture_cursor_store = wrapped',
-  '        row = telemetry.provenance_row("roadmap", "sid-clock", 1700000000, 5, {}, None)',
-  '        return {"calls": len(calls), "model": row["model"], "effort": row["effort"], "route": row["route"]}',
-  '    if mode == "cli":',
-  '        os.environ["CURSOR_INVOKED_AS"] = "cursor-agent"',
-  '        plant("shard-a", [agent("conv-1", cwd, note=SENTINEL)], [run("conv-1", "run-1", {"id": "model-store", "params": {"effort": "high", "ignored": SENTINEL}})])',
-  '        telemetry.capture_cursor_store = lambda *args, **kwargs: calls.append("capture") or real_capture(*args, **kwargs)',
-  '        with_session = telemetry.provenance_row("roadmap", "sid-cli", int(time.time()) - 5, 5, {}, None)',
-  '        os.environ.pop("CURSOR_CONVERSATION_ID", None)',
-  '        without_session = telemetry.provenance_row("roadmap", "sid-cli-2", int(time.time()) - 5, 5, {"--model": "flag-model"}, None)',
-  '        return {"calls": len(calls), "with": {"model": with_session["model"], "route": with_session["route"], "effort": with_session["effort"]},',
-  '                "without": {"model": without_session["model"], "route": without_session["route"], "model_source": without_session["model_source"]},',
-  '                "blob": json.dumps(with_session) + json.dumps(without_session)}',
-  '    if mode == "no-marker":',
-  '        os.environ.pop("CURSOR_AGENT", None)',
-  '        os.environ.pop("CURSOR_CONVERSATION_ID", None)',
-  '        plant("shard-a", [agent("conv-1", cwd)], [run("conv-1", "run-1", {"id": "model-store", "params": {"effort": "high"}}, started=int(time.time()) - 60, updated=int(time.time()) - 10, ended=None)])',
-  '        def counting(self, mode="r", *args, **kwargs):',
-  '            if str(self).endswith(".ndjson"):',
-  '                opens.append(str(self))',
-  '            return real_open(self, mode, *args, **kwargs)',
-  '        telemetry.capture_cursor_store = lambda *args, **kwargs: calls.append("capture") or real_capture(*args, **kwargs)',
-  '        telemetry.Path.open = counting',
-  '        row = telemetry.provenance_row("roadmap", "sid-no-marker", int(time.time()) - 30, 5, {}, None)',
-  '        return {"calls": len(calls), "opens": len(opens), "model": row["model"], "route": row["route"]}',
-  '    if mode == "empty":',
-  '        store_root().mkdir(parents=True, exist_ok=True)',
-  '        telemetry.capture_cursor_store = lambda *args, **kwargs: calls.append("capture") or real_capture(*args, **kwargs)',
-  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-  '        stderr = io.StringIO()',
-  '        with contextlib.redirect_stderr(stderr):',
-  '            row = telemetry.provenance_row("roadmap", "sid-empty", int(time.time()) - 5, 5, {}, None)',
-  '        return {"calls": len(calls), "model": row["model"], "route": row["route"], "stderr": stderr.getvalue()}',
-  '    if mode == "privacy":',
-  '        plant("shard-a", [agent("conv-1", cwd, note=SENTINEL)], [run("conv-1", "run-1", {"id": "model-good", "params": {"effort": "high", "fast": SENTINEL}})])',
-  '        plant("shard-b", [agent("conv-1", cwd)], [run("conv-1", "run-2", {"id": "model-hidden", "params": {"effort": "low"}})])',
-  '        def guarded(self, mode="r", *args, **kwargs):',
-  '            if str(self).endswith("runs.ndjson") and "shard-b" in str(self):',
-  '                raise PermissionError(13, SENTINEL)',
-  '            return real_open(self, mode, *args, **kwargs)',
-  '        telemetry.Path.open = guarded',
-  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-  '        stderr = io.StringIO()',
-  '        with contextlib.redirect_stderr(stderr):',
-  '            row = telemetry.provenance_row("roadmap", "sid-privacy", int(time.time()) - 30, 5, {}, None)',
-  '        text = stderr.getvalue() + json.dumps(row)',
-  '        return {"model": row["model"], "route": row["route"], "stderr": stderr.getvalue(), "leaked": SENTINEL in text}',
-  '    if mode == "redact":',
-  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-  '        def boom(*args, **kwargs):',
-  '            raise PermissionError(13, SENTINEL)',
-  '        telemetry.cursor_turns = boom',
-  '        stderr = io.StringIO()',
-  '        with contextlib.redirect_stderr(stderr):',
-  '            agent_name, model, effort = telemetry.detect(time.time() - 5, time.time(), None)',
-  '        text = stderr.getvalue()',
-  '        return {"agent": agent_name, "model": model, "effort": effort, "stderr": text, "leaked": SENTINEL in text}',
-  '    if mode == "neighbor":',
-  '        session = "0c7f2e29-0000-4000-8000-000000000099"',
-  '        os.environ["CLAUDECODE"] = "1"',
-  '        os.environ["CLAUDE_CODE_SESSION_ID"] = session',
-  '        log = Path.home() / ".claude/projects/-w" / (session + ".jsonl")',
-  '        log.parent.mkdir(parents=True, exist_ok=True)',
-  '        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())',
-  '        log.write_text(json.dumps({"type": "assistant", "timestamp": stamp, "effort": "xhigh", "message": {"id": "m1", "model": "claude-opus-5", "role": "assistant"}}) + "\\n")',
-  '        plant("shard-a", [agent("conv-1", cwd, note=SENTINEL)], [run("conv-1", "run-1", {"id": "model-store", "params": {"effort": "high"}})])',
-  '        def guarded(self, mode="r", *args, **kwargs):',
-  '            if "cursor-sdk-store" in str(self):',
-  '                raise PermissionError(13, SENTINEL)',
-  '            return real_open(self, mode, *args, **kwargs)',
-  '        telemetry.Path.open = guarded',
-  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-  '        stderr = io.StringIO()',
-  '        with contextlib.redirect_stderr(stderr):',
-  '            row = telemetry.provenance_row("roadmap", "sid-neighbor", int(time.time()) - 30, 5, {}, None)',
-  '        text = stderr.getvalue() + json.dumps(row)',
-  '        return {"agent": row["agent"], "model": row["model"], "route": row["route"], "stderr": stderr.getvalue(), "leaked": SENTINEL in text}',
-  '    if mode == "cli-transcript":',
-  '        os.environ["CURSOR_INVOKED_AS"] = "cursor-agent"',
-  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-  '        def broken(*args, **kwargs):',
-  '            raise PermissionError(13, SENTINEL)',
-  '        telemetry.cursor_logs = broken',
-  '        stderr = io.StringIO()',
-  '        with contextlib.redirect_stderr(stderr):',
-  '            row = telemetry.provenance_row("roadmap", "sid-cli-transcript", int(time.time()) - 5, 5, {}, None)',
-  '        text = stderr.getvalue()',
-  '        return {"agent": row["agent"], "route": row["route"], "model": row["model"], "stderr": text, "leaked": SENTINEL in text + json.dumps(row)}',
-  '    if mode == "deleted-cwd":',
-  '        os.environ.pop("CURSOR_CONVERSATION_ID", None)',
-  '        plant("shard-a", [agent("conv-1", cwd)], [run("conv-1", "run-1", {"id": "model-store", "params": {"effort": "high"}}, started=int(time.time()) - 60, updated=int(time.time()) - 10, ended=None)])',
-  '        gone = Path.home() / "gone-cwd"',
-  '        gone.mkdir()',
-  '        os.chdir(gone)',
-  '        gone.rmdir()',
-  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-  '        stderr = io.StringIO()',
-  '        with contextlib.redirect_stderr(stderr):',
-  '            try:',
-  '                row = telemetry.provenance_row("roadmap", "sid-gone", int(time.time()) - 30, 5, {}, None)',
-  '            except Exception as error:',
-  '                return {"raised": type(error).__name__}',
-  '        return {"raised": None, "agent": row["agent"], "model": row["model"], "route": row["route"], "keys": list(row), "stderr": stderr.getvalue()}',
-  '    raise SystemExit("unknown mode")',
-  CURSOR_SQLITE_PY,
-  'payload = json.load(sys.stdin)',
-  'op = payload["op"]',
-  'if op == "registry":',
-  '    print(json.dumps([list(pair) for pair in telemetry.CURSOR_SDK_REASONS]))',
-  'elif op == "parse":',
-  '    print(json.dumps(do_parse(payload["cases"])))',
-  'elif op == "select":',
-  '    print(json.dumps(do_select(payload["cases"])))',
-  'elif op == "files":',
-  '    print(json.dumps(do_files()))',
-  'elif op == "observe":',
-  '    print(json.dumps(do_observe(payload["mode"])))',
-  'elif op == "causes":',
-  '    print(json.dumps([list(pair) for pair in telemetry.CURSOR_SDK_CAUSES]))',
-  'elif op == "sqlite":',
-  '    print(json.dumps(do_sqlite(payload["cases"])))',
-  'elif op == "budget":',
-  '    print(json.dumps(do_budget()))',
-  'elif op == "extract":',
-  '    print(json.dumps(do_extract()))',
-  'elif op == "kept-wal":',
-  '    print(json.dumps(do_kept_wal()))',
-  'elif op == "xproc":',
-  '    print(json.dumps(do_xproc()))',
-  'elif op == "plant-sqlite":',
-  '    print(json.dumps(do_plant_sqlite(payload["specs"])))',
-  'elif op == "privacy":',
-  '    print(json.dumps(do_privacy(payload.get("broken", False))))',
-  'else:',
-  '    raise SystemExit("unknown op")',
-].join('\n');
-
-function cursorPy(fix: TelemetryFixture, payload: object, cwd?: string, python = 'python3') {
-  const result = spawnSync(python, ['-B', '-I', '-c', CURSOR_HARNESS, join(ROOT, 'bin/lib')], {
-    env: fix.env, cwd, input: JSON.stringify(payload), encoding: 'utf8', timeout: 20_000,
-  });
-  expect([result.status, result.stderr]).toEqual([0, '']);
-  return JSON.parse(result.stdout);
-}
 
 function cursorWork(fix: TelemetryFixture) {
   const work = join(fix.home, 'cursor-work');
@@ -2850,914 +1911,84 @@ function cursorFinish(fix: TelemetryFixture, env: Record<string, string>, plant:
   return { finish, row: fix.readLedger().at(-1)!, epoch, cwd };
 }
 
-describe('Conductor Cursor store', () => {
-  const begin = 1700000000;
-  const end = 1700000100;
-  const cwd = '/work';
-  const model = (id: string, params: unknown) => ({ id, params });
-  const closed = (agentId: string, runId: string, body: object, started = begin, updated = begin + 50, ended: number | null | 'omit' = begin + 80) => {
-    const row: Record<string, unknown> = { agentId, runId, startedAt: started * 1000, updatedAt: updated * 1000, model: body };
-    if (ended === 'omit') return row;
-    row.endedAt = ended === null ? null : ended * 1000;
-    return row;
-  };
-
-  test('T01-T05 parse explicit milliseconds and leave the default ISO-only', () => {
-    const fix = makeTelemetryFixture('off');
-    const cases = [
-      { value: 1700000000000, unit: 'milliseconds' },
-      { value: 1700000000000 },
-      { value: 1500.5, unit: 'milliseconds' },
-      { value: 0, unit: 'milliseconds' },
-      { value: 0.0, unit: 'milliseconds' },
-      { value: -1000, unit: 'milliseconds' },
-      { special: 'true', unit: 'milliseconds' },
-      { special: 'false', unit: 'milliseconds' },
-      { value: '1700000000000', unit: 'milliseconds' },
-      { value: null, unit: 'milliseconds' },
-      { value: [1], unit: 'milliseconds' },
-      { value: { ms: 1 }, unit: 'milliseconds' },
-      { special: 'nan', unit: 'milliseconds' },
-      { special: 'inf', unit: 'milliseconds' },
-      { special: 'ninf', unit: 'milliseconds' },
-      { special: 'huge', unit: 'milliseconds' },
-      { special: 'beyond', unit: 'milliseconds' },
-      { value: '2023-11-14T22:13:20Z', unit: 'milliseconds' },
-      { value: '2023-11-14T22:13:20Z' },
-      { value: '2026-01-02T03:04:05+05:30' },
-      { value: '2026-01-02T03:04:05.123456789Z' },
-      { value: '2026-02-31T00:00:00Z' },
-      { value: 'not-a-date' },
-      { unit: 'seconds', value: 0 },
-    ];
-    const parsed = cursorPy(fix, { op: 'parse', cases }) as Array<{ raised: string | null; value: number | null; message?: string }>;
-    expect(parsed[0]).toEqual({ raised: null, value: 1700000000 });
-    expect(parsed[1]).toEqual({ raised: null, value: null });
-    expect(Math.abs((parsed[2].value ?? 0) - 1.5005)).toBeLessThan(1e-6);
-    expect(parsed[3]).toEqual({ raised: null, value: 0 });
-    expect(parsed[4]).toEqual({ raised: null, value: 0 });
-    expect(parsed[5]).toEqual({ raised: null, value: -1 });
-    for (const index of [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
-      expect([index, parsed[index].raised, parsed[index].value]).toEqual([index, null, null]);
-    }
-    expect(parsed[17].value).toBe(1700000000);
-    expect(parsed[18].value).toBe(1700000000);
-    expect(parsed[19].value).toBe(Date.parse('2026-01-02T03:04:05+05:30') / 1000);
-    expect(Math.abs((parsed[20].value ?? 0) - (Date.parse('2026-01-02T03:04:05.123Z') / 1000 + 0.000456789))).toBeLessThan(1e-6);
-    expect(parsed[21]).toEqual({ raised: null, value: null });
-    expect(parsed[22]).toEqual({ raised: null, value: null });
-    expect(parsed[23].raised).toBe('ValueError');
-    expect(parsed[23].message).toContain('unsupported numeric_unit');
-  });
-
-  test('T06-T26 select one run from cwd, session, bounds, and model shape', () => {
-    const fix = makeTelemetryFixture('off');
-    const good = model('grok-4.7', [{ id: 'reasoning_effort', value: 'high' }, { id: 'fast', value: CURSOR_SENTINEL }]);
-    const agents = [{ agentId: 'conv-1', cwd }, { agentId: 'other', cwd: '/elsewhere' }];
-    const cases: Array<Record<string, unknown>> = [
-      { name: 'list', agents, runs: [closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'dict-iso', agents, session: 'conv-1', runs: [{ agentId: 'conv-1', runId: 'run-1', startedAt: '2023-11-14T22:13:20Z', updatedAt: '2023-11-14T22:14:00Z', endedAt: '2023-11-14T22:14:40Z', model: model('gpt-6-astra', { effort: 'high', reasoning_effort: 'low' }) }] },
-      { name: 'wrong-cwd', agents: [{ agentId: 'conv-1', cwd: '/elsewhere' }], runs: [closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'wrong-session', agents, runs: [closed('conv-1', 'run-1', good)], session: 'missing' },
-      { name: 'absent-unique', agents, runs: [closed('conv-1', 'run-1', good)], session: null },
-      { name: 'absent-two', agents, runs: [closed('conv-1', 'run-1', good), closed('other', 'run-2', model('other-model', { effort: 'low' }))], session: null, agentsOverride: [{ agentId: 'conv-1', cwd }, { agentId: 'other', cwd }] },
-      { name: 'bad-ids', agents: [{ agentId: ['bad'], cwd }, { agentId: { a: 1 }, cwd }, { agentId: null, cwd }, { agentId: 'conv-1', cwd }], runs: [{ agentId: ['bad'], runId: 'nope' }, closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'non-dict-run', agents, runs: ['nope', closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'open-before', agents, runs: [closed('conv-1', 'run-1', good, begin - 50, begin - 10, null)], session: 'conv-1' },
-      { name: 'completed-before', agents, runs: [closed('conv-1', 'run-1', good, begin - 100, begin - 40, begin - 20)], session: 'conv-1' },
-      { name: 'stale-open', agents, runs: [closed('conv-1', 'old', good, begin - 100, begin - 10, null), closed('conv-1', 'run-1', model('other-model', { effort: 'low' }))], session: 'conv-1' },
-      { name: 'inverted', agents, runs: [closed('conv-1', 'run-1', good, begin + 40, begin + 50, begin + 10)], session: 'conv-1' },
-      { name: 'update-before-start', agents, runs: [closed('conv-1', 'run-1', good, begin + 40, begin + 10, begin + 80)], session: 'conv-1' },
-      { name: 'bad-end', agents, runs: [{ agentId: 'conv-1', runId: 'run-1', startedAt: begin * 1000, updatedAt: (begin + 10) * 1000, endedAt: 'nope', model: good }], session: 'conv-1' },
-      { name: 'blank-id', agents, runs: [closed('conv-1', 'run-1', { id: '   ', params: { effort: 'high' } })], session: 'conv-1' },
-      { name: 'end-equals-begin', agents, runs: [closed('conv-1', 'run-1', good, begin - 10, begin, begin)], session: 'conv-1' },
-      { name: 'start-equals-end', agents, runs: [closed('conv-1', 'run-1', good, end, end, end)], session: 'conv-1' },
-      { name: 'zero', cwd: '/work', agents: [{ agentId: 'conv-1', cwd: '/work' }], runs: [closed('conv-1', 'run-1', good, 0, 0, 0)], session: 'conv-1', begin: 0, end: 10 },
-      { name: 'negative', agents, runs: [{ agentId: 'conv-1', runId: 'run-1', startedAt: -1000, updatedAt: -1000, endedAt: -1000, model: good }], session: 'conv-1', begin: -1, end: 10 },
-      { name: 'missing-updated', agents, runs: [{ agentId: 'conv-1', runId: 'run-1', startedAt: begin * 1000, endedAt: (begin + 10) * 1000, model: good }], session: 'conv-1' },
-      { name: 'future-updated', agents, runs: [closed('conv-1', 'run-1', model('model-old', { effort: 'low' }), begin, begin + 10, begin + 20), closed('conv-1', 'run-1', model('model-new', { effort: 'high' }), begin, end + 50, end + 60)], session: 'conv-1' },
-      { name: 'conflict', agents, runs: [closed('conv-1', 'run-1', model('one', { effort: 'low' })), closed('conv-1', 'run-1', model('two', { effort: 'high' }))], session: 'conv-1' },
-      { name: 'duplicate', agents, runs: [closed('conv-1', 'run-1', good), closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'progressive', agents, runs: [closed('conv-1', 'run-1', model('early', { effort: 'low' }), begin, begin + 10, null), closed('conv-1', 'run-1', good, begin, begin + 40, begin + 40)], session: 'conv-1' },
-      { name: 'distinct-ids', agents, runs: [closed('conv-1', 'run-1', good), closed('conv-1', 'run-2', good)], session: 'conv-1' },
-      { name: 'missing-run-id', agents, runs: [{ agentId: 'conv-1', startedAt: begin * 1000, updatedAt: (begin + 10) * 1000, endedAt: (begin + 20) * 1000, model: good }, { agentId: 'conv-1', startedAt: begin * 1000, updatedAt: (begin + 10) * 1000, endedAt: (begin + 20) * 1000, model: good }], session: 'conv-1' },
-      { name: 'neighbor', agents, runs: [{ agentId: 'conv-1', runId: 'bad', startedAt: begin * 1000, endedAt: (begin + 10) * 1000, model: model('nope', { effort: 'low' }) }, closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'effort-beats', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: 'high', reasoning_effort: 'low' }))], session: 'conv-1' },
-      { name: 'effort-fallback', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: 'bad\u0007' }, { id: 'reasoning_effort', value: 'max' }]))], session: 'conv-1' },
-      { name: 'effort-conflict', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: 'high' }, { id: 'effort', value: 'low' }, { id: 'reasoning_effort', value: 'max' }]))], session: 'conv-1' },
-      { name: 'same-duplicates', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: 'high' }, { id: 'effort', value: 'high' }]))], session: 'conv-1' },
-      { name: 'scalar-model', agents, runs: [closed('conv-1', 'run-1', 'scalar' as unknown as object)], session: 'conv-1' },
-      { name: 'model-without-params', agents, runs: [closed('conv-1', 'run-1', { id: 'grok-4.7' })], session: 'conv-1' },
-      { name: 'effort-without-id', agents, runs: [closed('conv-1', 'run-1', { id: 'bad\u0007id', params: { effort: 'high' } })], session: 'conv-1' },
-      { name: 'long-model', agents, runs: [closed('conv-1', 'run-1', model('m'.repeat(200), { effort: 'high' }))], session: 'conv-1' },
-      { name: 'too-long-effort', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: 'e'.repeat(201) }))], session: 'conv-1' },
-      { name: 'incomplete', agents, runs: [closed('conv-1', 'run-1', good)], session: 'conv-1', complete: false },
-      { name: 'absent', status: 'absent', agents: [], runs: [] },
-      { name: 'omit-end', agents, runs: [closed('conv-1', 'run-1', good, begin, begin + 20, 'omit')], session: 'conv-1' },
-      { name: 'malformed-entries', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', ['x', null, { value: 'low' }, { id: ['effort'], value: 'low' }, { id: { a: 1 }, value: 'low' }, { id: 'effort', value: 'high' }]))], session: 'conv-1' },
-      { name: 'eligible-plus-conflict', agents, runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-c', model('one', { effort: 'low' })), closed('conv-1', 'run-c', model('two', { effort: 'high' }))], session: 'conv-1' },
-      { name: 'eligible-plus-inconsistent-start', agents, runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-s', good, begin, begin + 10, begin + 20), closed('conv-1', 'run-s', good, begin + 5, begin + 30, begin + 40)], session: 'conv-1' },
-      { name: 'eligible-plus-old-conflict', agents, runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-c', model('one', { effort: 'low' }), begin - 100, begin - 50, begin - 40), closed('conv-1', 'run-c', model('two', { effort: 'high' }), begin - 100, begin - 50, begin - 40)], session: 'conv-1' },
-      { name: 'cross-shard', session: 'conv-1', shards: [{ agents: [{ agentId: 'conv-1', cwd }], runs: [] }, { agents: [{ agentId: 'conv-1', cwd: '/other' }], runs: [closed('conv-1', 'run-1', good)] }] },
-      { name: 'cross-shard-absent-session', session: null, shards: [{ agents: [{ agentId: 'conv-1', cwd }], runs: [] }, { agents: [{ agentId: 'conv-1', cwd: '/other' }], runs: [closed('conv-1', 'run-1', good)] }] },
-      { name: 'non-string-cwd', cwd: null, agents: [{ agentId: 'conv-1' }], runs: [closed('conv-1', 'run-1', good)], session: 'conv-1' },
-      { name: 'zero-ended-before', agents, runs: [closed('conv-1', 'run-1', good, 0, 0, 0)], session: 'conv-1', begin: 5, end: 10 },
-      { name: 'newest-first', agents, runs: [closed('conv-1', 'run-1', good, begin, begin + 40, begin + 40), closed('conv-1', 'run-1', model('early', { effort: 'low' }), begin, begin + 10, null)], session: 'conv-1' },
-      { name: 'inconsistent-start', agents, runs: [closed('conv-1', 'run-1', good, begin, begin + 10, begin + 20), closed('conv-1', 'run-1', good, begin + 5, begin + 30, begin + 40)], session: 'conv-1' },
-      { name: 'newest-unparseable', agents, runs: [closed('conv-1', 'run-1', good), { ...closed('conv-1', 'run-1', model('new', { effort: 'low' })), updatedAt: 'garbage' }], session: 'conv-1' },
-      { name: 'unsupported-params', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', 'fast'))], session: 'conv-1' },
-      { name: 'empty-list-params', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', []))], session: 'conv-1' },
-      { name: 'empty-dict-params', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', {}))], session: 'conv-1' },
-      { name: 'dict-fallback', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: 'bad\u0007', reasoning_effort: 'max' }))], session: 'conv-1' },
-      { name: 'list-both', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'reasoning_effort', value: 'low' }, { id: 'effort', value: 'high' }]))], session: 'conv-1' },
-      { name: 'reasoning-conflict', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'reasoning_effort', value: 'low' }, { id: 'reasoning_effort', value: 'high' }]))], session: 'conv-1' },
-      { name: 'eligible-plus-partial-conflict', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-c', model('one', {})), closed('conv-1', 'run-c', model('two', {})), { ...closed('conv-1', 'run-c', model('three', {})), updatedAt: undefined }] },
-      { name: 'eligible-plus-partial', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-p', model('one', {})), { ...closed('conv-1', 'run-p', model('two', {})), updatedAt: 'garbage' }] },
-      { name: 'eligible-plus-open-conflict', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-c', model('one', {}), begin - 100, begin - 50, null), closed('conv-1', 'run-c', model('two', {}), begin - 100, begin - 50, null)] },
-      { name: 'eligible-plus-bad-end-conflict', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { ...closed('conv-1', 'run-c', model('one', {}), begin + 10, begin + 20), endedAt: 'nope' }, { ...closed('conv-1', 'run-c', model('two', {}), begin + 10, begin + 20), endedAt: 'nope' }] },
-      { name: 'eligible-plus-older-snapshot-overlaps', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-s', good, begin - 100, begin - 50, null), closed('conv-1', 'run-s', good, begin - 90, begin - 40, begin - 30)] },
-      { name: 'malformed-neighbor', agents, session: 'conv-1', runs: [{ agentId: 'conv-1', runId: 'bad', startedAt: begin * 1000, endedAt: (begin + 10) * 1000, model: model('nope', { effort: 'low' }) }, closed('conv-1', 'run-1', good)] },
-      { name: 'inverted-stage', agents, runs: [closed('conv-1', 'run-1', good)], session: 'conv-1', begin: end + 50, end },
-      { name: 'null-effort', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: null }))], session: 'conv-1' },
-      { name: 'null-effort-list', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: null }]))], session: 'conv-1' },
-      { name: 'null-effort-fallback', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: null, reasoning_effort: 'max' }))], session: 'conv-1' },
-      { name: 'eligible-plus-future-newer', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-x', model('old', {}), begin, begin + 10, begin + 20), closed('conv-1', 'run-x', model('new', {}), begin, end + 50, end + 60)] },
-      { name: 'eligible-plus-old-partial', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-o', model('one', {}), begin - 100, begin - 50, begin - 40), { ...closed('conv-1', 'run-o', model('two', {}), begin - 100, begin - 50, begin - 40), updatedAt: 'garbage' }] },
-      { name: 'eligible-plus-old-inverted', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-i', model('old', {}), begin - 90, begin - 80, begin - 95)] },
-      { name: 'eligible-plus-bad-end-single', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { ...closed('conv-1', 'run-b', model('one', {}), begin + 10, begin + 20), endedAt: 'nope' }] },
-      { name: 'effort-uncleanable-duplicate', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: 'high' }, { id: 'effort', value: 123 }]))], session: 'conv-1' },
-      { name: 'no-model-key', agents, session: 'conv-1', runs: [{ agentId: 'conv-1', runId: 'run-1', startedAt: begin * 1000, updatedAt: (begin + 50) * 1000, endedAt: (begin + 80) * 1000 }] },
-      { name: 'null-model', agents, runs: [closed('conv-1', 'run-1', null as unknown as object)], session: 'conv-1' },
-      { name: 'null-model-id', agents, runs: [closed('conv-1', 'run-1', { id: null, params: { effort: 'high' } })], session: 'conv-1' },
-      { name: 'eligible-plus-open-then-closed-before', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-s', good, begin - 100, begin - 50, null), closed('conv-1', 'run-s', good, begin - 100, begin - 40, begin - 30)] },
-      { name: 'eligible-plus-malformed-after-stage', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { agentId: 'conv-1', runId: 'run-late', startedAt: (end + 50) * 1000, model: good }] },
-    ];
-    const normalized = cases.map(entry => ({
-      ...entry,
-      cwd: 'cwd' in entry ? entry.cwd : cwd,
-      begin: entry.begin ?? begin,
-      end: entry.end ?? end,
-      agents: entry.agentsOverride ?? entry.agents,
-    }));
-    const selected = cursorPy(fix, { op: 'select', cases: normalized }) as Array<{ certify: boolean; model: string | null; effort: string | null; usable: boolean; reasons: string[] }>;
-    const byName = Object.fromEntries(cases.map((entry, index) => [entry.name, selected[index]]));
-    expect(byName.list).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high', reasons: [] });
-    expect(JSON.stringify(byName.list)).not.toContain(CURSOR_SENTINEL);
-    expect(byName['dict-iso']).toMatchObject({ certify: true, model: 'gpt-6-astra', effort: 'high' });
-    expect(byName['wrong-cwd'].reasons).toEqual(['no-cwd-agent']);
-    expect(byName['wrong-session'].reasons).toEqual(['no-session-match']);
-    expect(byName['absent-unique']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['absent-two']).toMatchObject({ certify: false, model: null, reasons: ['ambiguous-candidates'] });
-    expect(byName['bad-ids']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['non-dict-run']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['open-before']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['completed-before']).toMatchObject({ certify: false, model: null, reasons: ['no-eligible-window'] });
-    expect(byName['stale-open']).toMatchObject({ certify: false, model: null, reasons: ['ambiguous-candidates'] });
-    expect(byName.inverted.reasons).toEqual(['malformed-bounds']);
-    expect(byName['update-before-start'].reasons).toEqual(['malformed-bounds']);
-    expect(byName['bad-end'].reasons).toEqual(['malformed-bounds']);
-    expect(byName['blank-id']).toMatchObject({ certify: true, model: null, effort: 'high', reasons: [] });
-    expect(byName['end-equals-begin']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['start-equals-end']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName.zero).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName.negative).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['missing-updated'].reasons).toEqual(['malformed-bounds']);
-    expect(byName['future-updated']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
-    expect(byName.conflict).toMatchObject({ certify: false, model: null, reasons: ['ambiguous-candidates'] });
-    expect(byName.duplicate).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high' });
-    expect(byName.progressive).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high' });
-    expect(byName['distinct-ids'].reasons).toEqual(['ambiguous-candidates']);
-    expect(byName['missing-run-id'].reasons).toEqual(['ambiguous-candidates']);
-    expect(byName.neighbor).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high' });
-    expect(byName['effort-beats']).toMatchObject({ effort: 'high', model: 'grok-4.7' });
-    expect(byName['effort-fallback']).toMatchObject({ model: 'grok-4.7', effort: 'max', certify: true });
-    expect(byName['effort-conflict']).toMatchObject({ model: 'grok-4.7', effort: null, certify: true, reasons: ['malformed-metadata'] });
-    expect(byName['same-duplicates']).toMatchObject({ effort: 'high', certify: true });
-    expect(byName['scalar-model']).toMatchObject({ model: null, effort: null, certify: true, usable: false, reasons: ['malformed-metadata'] });
-    expect(byName['model-without-params']).toMatchObject({ model: 'grok-4.7', effort: null, certify: true, reasons: [] });
-    expect(byName['effort-without-id']).toMatchObject({ model: null, effort: 'high', certify: true });
-    expect(byName['long-model']).toMatchObject({ model: 'm'.repeat(200), effort: 'high' });
-    expect(byName['too-long-effort']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
-    expect(byName.incomplete.reasons).toEqual(['incomplete-evidence']);
-    expect(byName.absent.reasons).toEqual(['store-absent']);
-    expect(byName['omit-end']).toMatchObject({ certify: true, model: 'grok-4.7' });
-    expect(byName['malformed-entries']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high', reasons: [] });
-    expect(byName['eligible-plus-conflict']).toMatchObject({ certify: false, model: null, reasons: ['ambiguous-candidates'] });
-    expect(byName['eligible-plus-inconsistent-start']).toMatchObject({ certify: false, model: null, reasons: ['ambiguous-candidates'] });
-    expect(byName['eligible-plus-old-conflict']).toMatchObject({ certify: true, model: 'grok-4.7', reasons: [] });
-    expect(byName['cross-shard']).toMatchObject({ certify: false, model: null, reasons: ['no-session-match'] });
-    expect(byName['cross-shard-absent-session']).toMatchObject({ certify: false, model: null, reasons: ['no-eligible-window'] });
-    expect(byName['non-string-cwd']).toMatchObject({ certify: false, model: null, reasons: ['no-cwd-agent'] });
-    expect(byName['zero-ended-before']).toMatchObject({ certify: false, model: null, reasons: ['no-eligible-window'] });
-    expect(byName['newest-first']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high' });
-    expect(byName['inconsistent-start']).toMatchObject({ certify: false, model: null, reasons: ['ambiguous-candidates'] });
-    expect(byName['newest-unparseable']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
-    for (const name of ['unsupported-params', 'empty-list-params', 'empty-dict-params']) {
-      expect([name, byName[name]]).toMatchObject([name, { certify: true, model: 'grok-4.7', effort: null, reasons: [] }]);
-    }
-    expect(byName['dict-fallback']).toMatchObject({ model: 'grok-4.7', effort: 'max', reasons: [] });
-    expect(byName['list-both']).toMatchObject({ model: 'grok-4.7', effort: 'high', reasons: [] });
-    expect(byName['reasoning-conflict']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
-    // A run counts toward uniqueness when any snapshot has valid bounds and overlaps the stage but its state
-    // cannot be resolved. A run with no valid snapshot is a malformed neighbor: it never blocks.
-    for (const name of ['eligible-plus-partial-conflict', 'eligible-plus-partial', 'eligible-plus-open-conflict', 'eligible-plus-older-snapshot-overlaps', 'eligible-plus-future-newer']) {
-      expect([name, byName[name]]).toMatchObject([name, { certify: false, model: null, reasons: ['ambiguous-candidates'] }]);
-    }
-    for (const name of ['eligible-plus-bad-end-conflict', 'eligible-plus-bad-end-single']) {
-      expect([name, byName[name]]).toMatchObject([name, { certify: true, model: 'grok-4.7', reasons: ['malformed-neighbor'] }]);
-    }
-    // A malformed run whose parseable bounds sit wholly before the stage is outside it, not a neighbor to flag.
-    for (const name of ['eligible-plus-old-partial', 'eligible-plus-old-inverted']) {
-      expect([name, byName[name]]).toMatchObject([name, { certify: true, model: 'grok-4.7', reasons: [] }]);
-    }
-    expect(byName['effort-uncleanable-duplicate']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
-    // Value: protects=a run with no model block, a null model or a null id still certifies the route with no malformed-metadata reason; fails_when=an absent or null model is counted malformed; why_new=only scalar-model and blank-id rows cover odd model shapes; seam=none
-    expect(byName['no-model-key']).toMatchObject({ certify: true, model: null, effort: null, usable: false, reasons: [] });
-    expect(byName['null-model']).toMatchObject({ certify: true, model: null, effort: null, usable: false, reasons: [] });
-    expect(byName['null-model-id']).toMatchObject({ certify: true, model: null, effort: 'high', usable: true, reasons: [] });
-    // Value: protects=an earlier run stored as open then closed snapshots is outside the stage by its newest state and never blocks the current run; fails_when=outside is decided from any overlapping snapshot; why_new=older-snapshot-overlaps has differing starts and resolves to ambiguous; seam=none
-    expect(byName['eligible-plus-open-then-closed-before']).toMatchObject({ certify: true, model: 'grok-4.7', reasons: [] });
-    // Value: protects=a malformed run starting after the stage end is outside it and adds no malformed-neighbor reason; fails_when=the started-after-end clause in _placed_outside is removed; why_new=old-partial and old-inverted cover only runs that ended before the stage; seam=none
-    expect(byName['eligible-plus-malformed-after-stage']).toMatchObject({ certify: true, model: 'grok-4.7', reasons: [] });
-    // A malformed neighbor does not block a well-formed run, but the certification says it saw one.
-    expect(byName['malformed-neighbor']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high', reasons: ['malformed-neighbor'] });
-    expect(byName.neighbor.reasons).toEqual(['malformed-neighbor']);
-    expect(byName['inverted-stage']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
-    expect(byName['null-effort']).toMatchObject({ certify: true, model: 'grok-4.7', effort: null, reasons: [] });
-    expect(byName['null-effort-list']).toMatchObject({ certify: true, model: 'grok-4.7', effort: null, reasons: [] });
-    expect(byName['null-effort-fallback']).toMatchObject({ model: 'grok-4.7', effort: 'max', reasons: [] });
-    const registry = (cursorPy(fix, { op: 'registry' }) as Array<[string, string]>).map(([code]) => code);
-    for (const result of selected) {
-      for (const reason of result.reasons) expect(registry).toContain(reason);
-    }
-  });
-
-  test('T09-T11 clipped tails and an unreadable sibling stay unknown', () => {
+describe('Conductor Cursor store retirement (Track 73A)', () => {
+  test('finish with CURSOR_AGENT=1 never touches a planted Conductor Cursor store or sqlite3.connect, and leaves model/effort null with route unknown', () => {
     const fix = makeTelemetryFixture('off');
     const cwd = cursorWork(fix);
-    const clipped = cursorPy(fix, { op: 'files' }, cwd);
-    const NDJSON_INCOMPLETE = ['ndjson-incomplete'];
-    expect(clipped.agents_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.runs_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.missing_agents).toMatchObject({ reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.nonregular).toMatchObject({ reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.missing_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    // A FIFO must not block open().
-    expect(clipped.fifo_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    // Value: protects=an empty shard directory is an unrecognized layout, never skipped; fails_when=the old "neither file is skipped" rule returns; why_new=this expectation used to certify the good sibling shard; seam=none
-    expect(clipped.empty_shard).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['unrecognized-layout'] });
-    // A writer mid-append can hide a competing run: growth past the cap, a shrink, or a torn final line on a file
-    // that changed size or was modified recently is incomplete. A torn line on a quiet file is stale residue, skipped.
-    expect(clipped.torn_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
-    expect(clipped.torn_growing).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.torn_paused).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.unterminated_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [], causes: [] });
-    expect(clipped.grown).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    expect(clipped.shrunk).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
-    // A shard that cannot be searched is unreadable, never "missing", whatever pathlib answers, and never a mixed layout.
-    expect(clipped.locked).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['shard-unreadable'] });
-    // Value: protects=no incomplete read capture is ever causeless, so a debug line never prints an empty cause list; fails_when=a new incomplete branch forgets its cause; why_new=causes are a new field; seam=none
-    expect(clipped.captured).toBeGreaterThan(10);
-    expect(clipped.invariant).toBe(true);
-    expect(clipped.deep_line).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
-    expect(clipped.big.complete).toBe(false);
-    expect(clipped.big.parsed).toBeLessThan(10);
-    expect(clipped.inspected).toEqual(['r1']);
-    expect(clipped.inspected_all).toEqual(['r1', 'r2']);
-    expect(clipped.file_root.reasons).toEqual(['store-unreadable']);
-    expect(clipped.bad_json).toMatchObject({ certify: true, model: 'model-kept' });
-    expect(JSON.stringify(clipped.bad_json)).not.toContain(CURSOR_SENTINEL);
-    expect(clipped.recorded).toMatchObject({ stage: 'roadmap', model: null, route: 'unknown' });
-    expect(clipped.recorded.keys).toEqual(SCHEMA);
-    const privacy = cursorPy(fix, { op: 'observe', mode: 'privacy' }, cwd);
-    expect(privacy).toMatchObject({ model: null, route: 'unknown', leaked: false });
-    expect(privacy.stderr).toContain('cursor-sdk incomplete-evidence');
-    expect(privacy.stderr).toContain('#cursor-sdk-incomplete-evidence');
-    expect(privacy.stderr).not.toContain(CURSOR_SENTINEL);
-  });
+    const storeShard = join(fix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
+    mkdirSync(storeShard, { recursive: true });
+    writeJsonl(join(storeShard, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
+    writeJsonl(join(storeShard, 'runs.ndjson'), [{
+      agentId: 'conv-1',
+      runId: 'run-1',
+      startedAt: (epochNow() - 20) * 1000,
+      updatedAt: epochNow() * 1000,
+      endedAt: null,
+      model: { id: 'grok-4.7', params: [{ id: 'reasoning_effort', value: 'high' }] },
+    }]);
 
-  test('T27-T28 one capture is shared, including the read-then-end order', () => {
-    const fix = makeTelemetryFixture('off');
-    const cwd = cursorWork(fix);
-    const mutation = cursorPy(fix, { op: 'observe', mode: 'mutation' }, cwd);
-    expect(mutation).toMatchObject({ calls: 1, opens: 2, model: 'model-a', effort: 'high', route: 'conductor' });
-    const clock = cursorPy(fix, { op: 'observe', mode: 'clock' }, cwd);
-    expect(clock).toMatchObject({ calls: 1, model: 'model-clock', effort: 'max', route: 'conductor' });
-    const skipped = cursorPy(fix, { op: 'observe', mode: 'cli' }, cwd);
-    expect(skipped.calls).toBe(0);
-    expect(skipped.with).toMatchObject({ model: null, effort: null, route: 'cli' });
-    expect(skipped.without).toMatchObject({ model: 'flag-model', route: 'cli', model_source: 'flag' });
-    expect(skipped.blob).not.toContain('model-store');
-    expect(skipped.blob).not.toContain(CURSOR_SENTINEL);
-    // Value: protects=a finish without a Cursor marker never captures or opens the Conductor store; fails_when=_observe_cursor_store returns true without a marker; why_new=the cli mode asserts zero reads only for CURSOR_INVOKED_AS; seam=none
-    const unmarked = cursorPy(fix, { op: 'observe', mode: 'no-marker' }, cwd);
-    expect(unmarked).toMatchObject({ calls: 0, opens: 0, model: null, route: 'unknown' });
-    const empty = cursorPy(fix, { op: 'observe', mode: 'empty' }, cwd);
-    expect(empty.calls).toBe(1);
-    expect(empty.model).toBeNull();
-    expect(empty.route).toBe('unknown');
-    expect(empty.stderr).toContain('cursor-sdk no-cwd-agent');
-    const gone = cursorPy(fix, { op: 'observe', mode: 'deleted-cwd' }, cwd);
-    expect(gone).toMatchObject({ raised: null, agent: 'cursor', model: null, route: 'unknown' });
-    expect(gone.keys).toEqual(SCHEMA);
-    expect(gone.stderr).toContain('cursor-sdk no-cwd-agent');
-  });
-
-  test('T16 T29-T32 T35 T37 native, CLI, nested, and transcript paths agree on one row', () => {
-    const overlapping = (agentId: string, runId: string, id: string, effort: string, start: number) => ({
-      agentId, runId, startedAt: (start - 20) * 1000, updatedAt: start * 1000, endedAt: null,
-      model: { id, params: [{ id: 'reasoning_effort', value: effort }, { id: 'fast', value: CURSOR_SENTINEL }] },
+    // End-to-end finish via wrapper
+    const finished = cursorFinish(fix, { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' }, () => {});
+    expect([finished.finish.status, finished.finish.stdout, finished.finish.stderr]).toEqual([0, '', '']);
+    expect(finished.row).toMatchObject({
+      agent: 'cursor',
+      model: null,
+      effort: null,
+      model_source: 'unknown',
+      effort_source: 'unknown',
+      route: 'unknown',
+      schema_version: 4,
     });
-    const native = { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' };
-    const happyFix = makeTelemetryFixture('off');
-    mkdirSync(join(happyFix.home, '.gstack-extend'), { recursive: true });
-    writeFileSync(join(happyFix.home, '.gstack-extend/config'), 'quota=on\n');
-    const happy = cursorFinish(happyFix, native, (start, cwd) => {
-      const root = join(happyFix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd, note: CURSOR_SENTINEL }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start)]);
+    expect(validRow(finished.row)).toBe(true);
+
+    // Python audit-hook verification: zero filesystem calls under cursor-sdk-store and zero sqlite3.connect calls
+    const auditScript = [
+      'import contextlib, io, json, os, sys',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'bad = []',
+      'def hook(event, args):',
+      '    if event == "sqlite3.connect":',
+      '        bad.append((event, str(args[:1])))',
+      '    elif event in ("open", "os.listdir", "os.scandir", "os.stat"):',
+      '        target = str(args[0]) if args else ""',
+      '        if "cursor-sdk-store" in target or "com.conductor.app" in target:',
+      '            bad.append((event, target))',
+      'sys.addaudithook(hook)',
+      'os.environ["CURSOR_AGENT"] = "1"',
+      'os.environ["CURSOR_CONVERSATION_ID"] = "conv-1"',
+      'row = telemetry.provenance_row("roadmap", "sid-cursor-audit", 1790000000, 5, {"--outcome": "success"}, None)',
+      'os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
+      'def broken(*a, **k): raise PermissionError(13, "SENTINEL_TRANSCRIPT_ERR")',
+      'telemetry.cursor_logs = broken',
+      'buf = io.StringIO()',
+      'with contextlib.redirect_stderr(buf):',
+      '    telemetry.provenance_row("roadmap", "sid-cursor-err", 1790000000, 5, {"--outcome": "success"}, None)',
+      'print(json.dumps({"bad": bad, "row": row, "stderr": buf.getvalue()}))',
+    ].join('\n');
+    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib')], {
+      env: fix.env,
+      cwd,
+      encoding: 'utf8',
+      timeout: 10_000,
     });
-    expect([happy.finish.status, happy.finish.stdout, happy.finish.stderr]).toEqual([0, '', '']);
-    expect(Object.keys(happy.row)).toEqual(SCHEMA);
-    expect(happy.row).toMatchObject({
-      agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 3,
-      agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
+    expect([audit.status, audit.stderr]).toEqual([0, '']);
+    const parsed = JSON.parse(audit.stdout);
+    expect(parsed.bad).toEqual([]);
+    expect(parsed.row).toMatchObject({
+      agent: 'cursor',
+      model: null,
+      effort: null,
+      model_source: 'unknown',
+      effort_source: 'unknown',
+      route: 'unknown',
     });
-    expect(validRow(happy.row)).toBe(true);
-    expect(JSON.stringify(happy.row)).not.toContain(CURSOR_SENTINEL);
-    expect(existsSync(join(happyFix.home, '.gstack-extend/quota'))).toBe(false);
-
-    const isoFix = makeTelemetryFixture('off');
-    const iso = cursorFinish(isoFix, native, (start, cwd) => {
-      const root = join(isoFix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [{
-        agentId: 'conv-1', runId: 'run-1',
-        startedAt: new Date((start - 30) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
-        updatedAt: new Date(start * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
-        endedAt: null,
-        model: { id: 'gpt-6-astra', params: { effort: 'high', reasoning_effort: 'low' } },
-      }]);
-    });
-    expect(iso.row).toMatchObject({ agent: 'cursor', model: 'gpt-6-astra', effort: 'high', route: 'conductor' });
-
-    // Either Cursor marker alone captures the store: the conversation id without CURSOR_AGENT.
-    const convFix = makeTelemetryFixture('off');
-    const convOnly = cursorFinish(convFix, { CURSOR_CONVERSATION_ID: 'conv-1' }, (start, cwd) => {
-      const root = join(convFix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start)]);
-    });
-    expect(convOnly.row).toMatchObject({ agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor' });
-
-    const wrong = makeTelemetryFixture('off');
-    const wrongCwd = cursorFinish(wrong, native, (start, cwd) => {
-      const root = join(wrong.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd: cwd + '-other' }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start)]);
-    });
-    expect(wrongCwd.row).toMatchObject({ agent: 'cursor', model: null, effort: null, route: 'unknown' });
-
-    const cli = makeTelemetryFixture('off');
-    const cliRow = cursorFinish(cli, { ...native, CURSOR_INVOKED_AS: 'cursor-agent' }, (start, cwd) => {
-      const root = join(cli.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start)]);
-    });
-    expect(cliRow.row).toMatchObject({ route: 'cli', model: null, effort: null, model_source: 'unknown' });
-    const cliFlag = cursorFinish(cli, { CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, (start, cwd) => {
-      const root = join(cli.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-b');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-2', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-2', 'run-9', 'hidden-model', 'low', start)]);
-    }, ['--model', 'flag-model', '--effort', 'max']);
-    expect(cliFlag.row).toMatchObject({ route: 'cli', model: 'flag-model', effort: 'max', model_source: 'flag', effort_source: 'flag' });
-
-    const flagOnly = makeTelemetryFixture('off');
-    const flagged = cursorFinish(flagOnly, {}, (start, cwd) => {
-      const root = join(flagOnly.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'store-model', 'high', start)]);
-    }, ['--agent', 'cursor', '--model', 'flag-model']);
-    expect(flagged.row).toMatchObject({ agent: 'cursor', route: 'unknown', model: 'flag-model', agent_source: 'flag', model_source: 'flag' });
-
-    const nested = makeTelemetryFixture('off');
-    const conducted = cursorFinish(nested, { ...native, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '0c7f2e29-0000-4000-8000-0000000000aa', CONDUCTOR_SESSION_ID: 'outer' }, (start, cwd) => {
-      writeJsonl(join(nested.home, '.claude/projects/-w/0c7f2e29-0000-4000-8000-0000000000aa.jsonl'), [claudeTurn(start - 30, 'c1', 'claude-opus-5', 'xhigh')]);
-      const root = join(nested.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start)]);
-    });
-    expect(conducted.row).toMatchObject({ agent: 'cursor', model: 'grok-4.7', route: 'conductor' });
-
-    const override = makeTelemetryFixture('off');
-    const moved = cursorFinish(override, { ...native, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '0c7f2e29-0000-4000-8000-0000000000bb' }, (start, cwd) => {
-      writeJsonl(join(override.home, '.claude/projects/-w/0c7f2e29-0000-4000-8000-0000000000bb.jsonl'), [claudeTurn(start, 'c2', 'claude-opus-5', 'xhigh')]);
-      const root = join(override.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [{
-        agentId: 'conv-1', runId: 'run-1', startedAt: (start - 20) * 1000, updatedAt: start * 1000, endedAt: null, model: 'not-a-dict',
-      }]);
-    }, ['--agent', 'cursor']);
-    expect(moved.row).toMatchObject({ agent: 'cursor', model: null, effort: null, route: 'cli', agent_source: 'flag' });
-
-    // Process ancestry is stubbed out, so the latest real activity picks the harness. A store turn carries
-    // its snapshot's updatedAt, never the observation end, so a later nested Claude turn still wins.
-    const racing = makeTelemetryFixture('off');
-    const raced = cursorFinish(racing, { ...native, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '0c7f2e29-0000-4000-8000-0000000000dd' }, (start, cwd) => {
-      writeJsonl(join(racing.home, '.claude/projects/-w/0c7f2e29-0000-4000-8000-0000000000dd.jsonl'), [claudeTurn(start, 'c4', 'claude-opus-5', 'xhigh')]);
-      const root = join(racing.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start - 10)]);
-    });
-    expect(raced.row).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
-
-    const partialFix = makeTelemetryFixture('off');
-    const partial = cursorFinish(partialFix, native, (start, cwd) => {
-      const root = join(partialFix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [{ ...overlapping('conv-1', 'run-1', 'x', 'high', start), model: { id: 'bad\u0007id', params: { effort: 'high' } } }]);
-    });
-    expect(partial.row).toMatchObject({ agent: 'cursor', model: null, effort: 'high', model_source: 'unknown', effort_source: 'detected', route: 'conductor' });
-    const idOnlyFix = makeTelemetryFixture('off');
-    const idOnly = cursorFinish(idOnlyFix, native, (start, cwd) => {
-      const root = join(idOnlyFix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
-      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
-      writeJsonl(join(root, 'runs.ndjson'), [{ ...overlapping('conv-1', 'run-1', 'x', 'high', start), model: { id: 'grok-4.7' } }]);
-    });
-    expect(idOnly.row).toMatchObject({ agent: 'cursor', model: 'grok-4.7', effort: null, model_source: 'detected', effort_source: 'unknown', route: 'conductor' });
-
-    const marker = makeTelemetryFixture('off');
-    const markerOnly = cursorFinish(marker, { CURSOR_AGENT: '1', CONDUCTOR_SESSION_ID: 'inherited' }, () => {});
-    expect(markerOnly.row).toMatchObject({ agent: 'cursor', model: null, route: 'unknown' });
-
-    const transcript = makeTelemetryFixture('off');
-    const sid = '0c7f2e29-0000-4000-8000-0000000000cc';
-    const fallen = cursorFinish(transcript, { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-session', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid }, (start) => {
-      const log = join(transcript.home, '.cursor/projects/project/agent-transcripts/cursor-session/transcript.jsonl');
-      writeJsonl(log, [{ role: 'assistant', message: 'fixture' }]);
-      utimesSync(log, start + 100000, start + 100000);
-      writeJsonl(join(transcript.home, '.claude/projects/-w', sid + '.jsonl'), [claudeTurn(start, 'c3', 'claude-opus-5', 'xhigh')]);
-    });
-    expect(fallen.row).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
-  }, 60_000);
-
-  test('T38 and T41 stay quiet by default and emit fixed reasons through the shared finish', () => {
-    const fix = makeTelemetryFixture('off');
-    const cwd = cursorWork(fix);
-    const redacted = cursorPy(fix, { op: 'observe', mode: 'redact' }, cwd);
-    expect(redacted).toMatchObject({ agent: 'cursor', model: null, leaked: false });
-    // The selection is captured before detect(), so a Cursor reader failure is a transcript failure.
-    expect(redacted.stderr).toContain('cursor-sdk transcript-unreadable');
-    expect(redacted.stderr).toContain('#cursor-sdk-transcript-unreadable');
-    expect(redacted.stderr).not.toContain('store-unreadable');
-    // The explicit CLI path never reads the store, and its transcript failure is the same fixed reason.
-    const cliTranscript = cursorPy(fix, { op: 'observe', mode: 'cli-transcript' }, cwd);
-    expect(cliTranscript).toMatchObject({ agent: 'cursor', route: 'cli', model: null, leaked: false });
-    expect(cliTranscript.stderr).toContain('cursor-sdk transcript-unreadable');
-    expect(cliTranscript.stderr).not.toContain('provenance detection failed');
-    expect(redacted.stderr).not.toContain(CURSOR_SENTINEL);
-    const neighbor = cursorPy(fix, { op: 'observe', mode: 'neighbor' }, cwd);
-    expect(neighbor).toMatchObject({ agent: 'claude', model: 'claude-opus-5', leaked: false });
-    expect(neighbor.stderr).not.toContain(CURSOR_SENTINEL);
-    const quietFix = makeTelemetryFixture('off');
-    const quiet = cursorFinish(quietFix, { CURSOR_AGENT: '1' }, () => {});
-    expect(quiet.finish.stderr).toBe('');
-    expect(quiet.row).toMatchObject({ agent: 'cursor', model: null, route: 'unknown' });
-    const skillFix = makeTelemetryFixture('off');
-    const debugEnv = { ...skillFix.env, ...DEBUG, CURSOR_AGENT: '1' };
-    const started = executeBlock(debugEnv, 'start');
-    const finished = executeBlock(debugEnv, 'finish');
-    expect(started.status).toBe(0);
-    expect(finished.status).toBe(0);
-    expect(finished.stderr).toContain('cursor-sdk store-absent');
-    expect(finished.stderr).toContain('#cursor-sdk-store-absent');
-    expect(finished.stderr).not.toContain(CURSOR_SENTINEL);
-    expect(skillFix.readLedger().filter(row => row.stage === 'full-review')).toHaveLength(1);
-    expect(handoffs(skillFix)).toHaveLength(0);
-  }, 30_000);
-
-  // ─── SQLite shard layout (Track 23G): index.db shards in the same selection contract ───
-  const XHIGH = [{ id: 'fast', value: 'false' }, { id: 'reasoning_effort', value: 'xhigh' }];
-  const sqlAgent = (agentId: string, where: string = cwd, overrides: Record<string, unknown> = {}) => ({ agent_id: agentId, cwd: where, overrides });
-  const sqlRun = (agentId: string, runId: unknown, id: unknown, params: unknown, started: number | null, updated: number,
-    ended: number | null = null, extra: Record<string, unknown> = {}) => ({ agent_id: agentId, run_id: runId, model: id, params, started, updated, ended, ...extra });
-  const priorRun = sqlRun('conv-1', 'old', 'grok-4.0', [{ id: 'reasoning_effort', value: 'low' }], begin - 300, begin - 200, begin - 100);
-  const currentRun = sqlRun('conv-1', 'cur', 'grok-4.7', XHIGH, begin - 20, begin + 50, begin + 80);
-  const openRun = sqlRun('conv-1', 'cur', 'grok-4.7', XHIGH, begin - 20, begin + 50);
-  const sqlLive = (runs: unknown[], extra: Record<string, unknown> = {}) => ({ kind: 'sqlite', keep_writer: true, agents: [sqlAgent('conv-1')], runs, ...extra });
-  const sqlQuiet = (runs: unknown[], extra: Record<string, unknown> = {}) => ({ kind: 'sqlite', strip_sidecars: true, agents: [sqlAgent('conv-1')], runs, ...extra });
-  const sqlDelete = (runs: unknown[], extra: Record<string, unknown> = {}) => ({ kind: 'sqlite', journal: 'delete', agents: [sqlAgent('conv-1')], runs, ...extra });
-  const goodNdjson = (shard = 'good') => ({
-    kind: 'ndjson', shard, agents: [{ agentId: 'conv-1', cwd }],
-    runs: [closed('conv-1', 'nd-run', model('grok-nd', XHIGH), begin - 20, begin + 50, begin + 80)],
+    expect(parsed.stderr).toContain('telemetry: cursor-sdk transcript-unreadable. See docs/telemetry.md#cursor-sdk-transcript-unreadable.');
+    expect(parsed.stderr).not.toContain('SENTINEL_TRANSCRIPT_ERR');
   });
-  type Case = { name: string; shards: unknown[]; hook?: string; hash?: boolean; session?: string | null; store?: string };
-  type Result = {
-    certify: boolean; model: string | null; effort: string | null; reasons: string[]; causes: string[]; complete: boolean;
-    layouts: Record<string, number>; shard_layouts: string[]; turns: Array<number[] | null>; invariant: boolean; debug: string;
-    skipped: boolean; data: { timeouts?: number[]; reads?: string[]; turn_reads?: number }; tree_equal: boolean; bytes_equal: boolean | null;
-  };
-  const sqliteCases = (fix: TelemetryFixture, cases: Case[], python = 'python3') =>
-    cursorPy(fix, { op: 'sqlite', cases }, undefined, python) as Record<string, Result>;
-  const CERTIFIED = { certify: true, model: 'grok-4.7', effort: 'xhigh', reasons: [], causes: [], complete: true, invariant: true };
-
-  /** Live, WAL-only and closed shards: the cases the runtime matrix repeats under the runner's own interpreter. */
-  const matrixCases = (): Case[] => [
-    { name: 'happy-live', hash: true, shards: [sqlLive([priorRun, currentRun])] },
-    { name: 'happy-quiet', hash: true, shards: [sqlQuiet([priorRun, currentRun])] },
-    { name: 'wal-only', hash: true, shards: [sqlLive([priorRun], { wal_only_runs: [openRun] })] },
-    { name: 'quiet-delete', hash: true, shards: [sqlDelete([priorRun, currentRun])] },
-  ];
-  const expectMatrix = (found: Record<string, Result>) => {
-    for (const name of ['happy-live', 'happy-quiet', 'wal-only', 'quiet-delete']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining({ ...CERTIFIED, layouts: { sqlite: 1 }, shard_layouts: ['sqlite'] })]);
-      // The reader creates no file and never changes index.db or the -wal; only the shared-memory index may move.
-      expect([name, found[name].tree_equal, found[name].bytes_equal]).toEqual([name, true, true]);
-    }
-  };
-
-  test('G-happy G-open G-wal: live, WAL-only, closed and rollback-journal shards certify without writing', () => {
-    const fix = makeTelemetryFixture('off');
-    const found = sqliteCases(fix, [
-      ...matrixCases(),
-      { name: 'open', shards: [sqlLive([openRun])] },
-    ]);
-    // Value: protects=a current build's single-prompt run records model and effort end to end; fails_when=the adapter, dispatch or open rule regresses; why_new=no SQLite reader existed; seam=none
-    expectMatrix(found);
-    expect(found['happy-live'].turns).toEqual([[1, 2, 2]]);
-    // Value: protects=a RUNNING run (all terminal columns null) is open and certifies; fails_when=status is read as ended; why_new=the NDJSON path has no status column; seam=none
-    expect(found.open).toMatchObject({ ...CERTIFIED });
-    // Value: protects=a commit that exists only in the -wal is visible on a live shard; fails_when=immutable=1 is used when sidecars exist; why_new=immutable misses WAL-only commits; seam=none
-    expect(found['wal-only']).toMatchObject({ ...CERTIFIED, model: 'grok-4.7' });
-    expect(found['wal-only'].turns).toEqual([[1, 2, 2]]);
-  });
-
-  test('G-turn-diagnostics: INTEGER affinity cannot send text or BLOB turn values through the aggregate', () => {
-    const fix = makeTelemetryFixture('off');
-    const found = sqliteCases(fix, [{ name: 'malformed-turns', shards: [sqlQuiet([
-      priorRun, currentRun,
-      { ...priorRun, run_id: 'text-turn', overrides: { turn_number: { $repeat: ['x', 1024 * 1024] } } },
-      { ...priorRun, run_id: 'blob-turn', overrides: { turn_number: { $blob: '78'.repeat(1024 * 1024) } } },
-    ])] }]);
-    // Value: protects=optional diagnostics return only bounded integers from SQL; fails_when=raw min/max materialize arbitrary text/BLOB values; why_new=INTEGER affinity permits non-integer storage; seam=none
-    expect(found['malformed-turns']).toMatchObject({ ...CERTIFIED, turns: [[1, 2, 4]] });
-  });
-
-  test('G-plant-op: standalone planting rejects keep_writer before creating any shard', () => {
-    const fix = makeTelemetryFixture('off');
-    const result = spawnSync('python3', ['-B', '-I', '-c', CURSOR_HARNESS, join(ROOT, 'bin/lib')], {
-      env: fix.env, input: JSON.stringify({ op: 'plant-sqlite', specs: [sqlQuiet([currentRun]), sqlLive([currentRun], { shard: 'second' })] }),
-      encoding: 'utf8', timeout: 20_000,
-    });
-    // Value: protects=the fixture cannot pretend a writer survives its planting subprocess; fails_when=the op accepts keep_writer or partially plants before validating all specs; why_new=approved plan requires the op guard; seam=none
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('keep_writer is only supported by in-process cases');
-    expect(existsSync(join(fix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store'))).toBe(false);
-  });
-
-  test('G-xproc G-kept-wal: a separate writer process and a crash-left WAL are read without writing', () => {
-    const fix = makeTelemetryFixture('off');
-    // Value: protects=live-run visibility across processes; fails_when=immutable=1 is used on a live shard, or the -shm path breaks across processes; why_new=in-process tests share one shm node; seam=none
-    const across = cursorPy(fix, { op: 'xproc' }) as Record<string, unknown>;
-    expect(across).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'xhigh', causes: [], tree_equal: true, bytes_equal: true, had_wal: true });
-    // Value: protects=the crash or persistent-WAL state (sidecars present, no writer) reads its WAL-only row and creates no file; fails_when=kept sidecars are treated as unknown or opened immutable; why_new=close on upstream SQLite cannot plant this state; seam=none
-    const kept = cursorPy(fix, { op: 'kept-wal' }) as Record<string, unknown>;
-    expect(kept).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'xhigh', causes: [], tree_equal: true, db_equal: true, wal_equal: true });
-  }, 60_000);
-
-  test('G-null-start G-cancelled G-terminal-conflict G-status G-ambiguous G-identity: the run lifecycle rules', () => {
-    const fix = makeTelemetryFixture('off');
-    const queued = sqlRun('conv-1', 'queued', 'm-queued', null, null, begin + 10, null, { status: 'QUEUED' });
-    const cancelled = (id: string, updated: number, at: number) =>
-      sqlRun('conv-1', id, 'grok-c', XHIGH, begin - 300, updated, null, { status: 'CANCELLED', overrides: { cancelled_at: { $ts: at } } });
-    const conflict = (cancelledAt: unknown, expiredAt: unknown, extra: Record<string, unknown> = {}) =>
-      sqlRun('conv-1', 'tc', 'grok-t', XHIGH, begin - 300, begin - 200, null, { status: 'CANCELLED', overrides: { cancelled_at: cancelledAt, expired_at: expiredAt }, ...extra });
-    const stopped = (status: string, started: number, updated: number, ended: number | null = null) =>
-      sqlRun('conv-1', 'stopped', 'm-stopped', null, started, updated, ended, { status });
-    const found = sqliteCases(fix, [
-      { name: 'null-start-beside', shards: [sqlQuiet([currentRun, queued])] },
-      { name: 'null-start-alone', shards: [sqlQuiet([queued])] },
-      { name: 'cancelled-before', shards: [sqlQuiet([currentRun, cancelled('c1', begin - 250, begin - 200)])] },
-      { name: 'cancelled-inside', shards: [sqlQuiet([cancelled('c2', begin - 200, begin + 40)])] },
-      { name: 'tc-alone', shards: [sqlQuiet([conflict({ $ts: begin - 100 }, { $ts: begin + 40 })])] },
-      { name: 'tc-beside', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin + 40 })])] },
-      { name: 'tc-both-before', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin - 90 })])] },
-      { name: 'tc-duplicate', shards: [sqlQuiet([conflict({ $ts: begin + 40 }, { $ts: begin + 40 })])] },
-      { name: 'tc-unparseable', shards: [sqlQuiet([conflict('not-a-time', null)])] },
-      { name: 'tc-null-run-id', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin + 40 }, { run_id: null })])] },
-      { name: 'tc-long-run-id', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin + 40 }, { run_id: { $repeat: ['x', 2000] } })])] },
-      { name: 'status-before', shards: [sqlQuiet([currentRun, stopped('ERROR', begin - 300, begin - 200)])] },
-      { name: 'status-inside-beside', shards: [sqlQuiet([currentRun, stopped('ERROR', begin - 10, begin + 20)])] },
-      { name: 'status-inside-alone', shards: [sqlQuiet([stopped('ERROR', begin - 10, begin + 20)])] },
-      { name: 'running-with-end', shards: [sqlQuiet([currentRun, stopped('RUNNING', begin - 300, begin - 200, begin - 100)])] },
-      { name: 'ambiguous', shards: [sqlQuiet([currentRun, sqlRun('conv-1', 'other', 'grok-4.8', XHIGH, begin - 5, begin + 60, begin + 90)])] },
-      { name: 'cwd-mismatch', shards: [sqlQuiet([currentRun], { agents: [sqlAgent('conv-1', '/elsewhere')] })] },
-      { name: 'session-mismatch', session: 'conv-2', shards: [sqlQuiet([currentRun])] },
-    ]);
-    // A NULL start is an invalid snapshot, exactly as an NDJSON record with no startedAt: a malformed neighbor beside a valid run.
-    expect(found['null-start-beside']).toMatchObject({ ...CERTIFIED, reasons: ['malformed-neighbor'] });
-    expect(found['null-start-alone']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
-    // Value: protects=cancelled_at ends a run when finished_at is null; fails_when=only finished_at is read, or the end falls back to updated_at; why_new=cancelled runs leave finished_at null; seam=none
-    expect(found['cancelled-before']).toMatchObject({ ...CERTIFIED });
-    expect(found['cancelled-inside']).toMatchObject({ certify: true, model: 'grok-c', reasons: [] });
-    // Value: protects=contradictory terminal times never certify and never vanish; fails_when=the latest end widens the run or one snapshot is silently picked; why_new=CEO and Codex counterexamples; seam=none
-    for (const name of ['tc-alone', 'tc-beside']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining({ certify: false, model: null, effort: null, reasons: ['ambiguous-candidates'] })]);
-    }
-    expect(found['tc-both-before']).toMatchObject({ ...CERTIFIED });
-    expect(found['tc-duplicate']).toMatchObject({ certify: true, model: 'grok-t', reasons: [] });
-    expect(found['tc-unparseable']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
-    // Value: protects=an untrusted run identity never becomes several unrelated candidates; fails_when=a NULL or over-long run_id splits the conflict into separate runs; why_new=Codex reproduced split-candidate certification; seam=none
-    for (const name of ['tc-null-run-id', 'tc-long-run-id']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['sqlite-schema'] })]);
-    }
-    // Value: protects=a stopped row with no end closes at updated_at, so an old errored row cannot overlap every later stage; fails_when=status is ignored (open forever) or the row is a malformed neighbor; why_new=new lifecycle rule; seam=none
-    expect(found['status-before']).toMatchObject({ ...CERTIFIED });
-    expect(found['status-inside-beside']).toMatchObject({ certify: false, reasons: ['ambiguous-candidates'] });
-    expect(found['status-inside-alone']).toMatchObject({ certify: true, model: 'm-stopped', reasons: [] });
-    expect(found['running-with-end']).toMatchObject({ ...CERTIFIED });
-    expect(found.ambiguous).toMatchObject({ certify: false, model: null, effort: null, reasons: ['ambiguous-candidates'] });
-    expect(found['cwd-mismatch']).toMatchObject({ certify: false, reasons: ['no-cwd-agent'] });
-    expect(found['session-mismatch']).toMatchObject({ certify: false, reasons: ['no-session-match'] });
-  });
-
-  test('G-nul G-numeric-ts G-params: values are kept whole, numbers are rejected, containers are ignored', () => {
-    const fix = makeTelemetryFixture('off');
-    const withOverrides = (overrides: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
-      sqlRun('conv-1', 'cur', 'grok-4.7', XHIGH, begin - 20, begin + 50, begin + 80, { overrides, ...extra });
-    const withParams = (raw: unknown) => sqlQuiet([withOverrides({ model_params_json: raw })]);
-    const found = sqliteCases(fix, [
-      { name: 'nul-cwd', shards: [sqlQuiet([currentRun], { agents: [sqlAgent('conv-1', '/work\u0000/x')] })] },
-      { name: 'nul-agent', shards: [sqlQuiet([currentRun], { agents: [sqlAgent('conv-1\u0000junk')] })] },
-      { name: 'nul-timestamp', shards: [sqlQuiet([withOverrides({ started_at: { $concat: [{ $ts: begin - 20 }, '\u0000junk'] } })])] },
-      { name: 'nul-model', shards: [sqlQuiet([sqlRun('conv-1', 'cur', 'grok\u00004.7', XHIGH, begin - 20, begin + 50, begin + 80)])] },
-      { name: 'nul-params', shards: [withParams('[{"id":"reasoning_effort","value":"xhigh"}]\u0000')] },
-      { name: 'numeric-ts', shards: [sqlQuiet([withOverrides({ started_at: (begin - 20) * 1000, updated_at: (begin + 50) * 1000 })],
-        { untyped_columns: { runs: ['started_at', 'updated_at'] } })] },
-      { name: 'params-invalid', shards: [withParams('not json')] },
-      { name: 'params-over-cap', shards: [withParams({ $repeat: ['x', 17000] })] },
-      { name: 'params-blob', shards: [withParams({ $blob: '5b5d' })] },
-      { name: 'params-null', shards: [sqlQuiet([sqlRun('conv-1', 'cur', 'grok-4.7', null, begin - 20, begin + 50, begin + 80)])] },
-      { name: 'params-precedence', shards: [sqlQuiet([sqlRun('conv-1', 'cur', 'grok-4.7', [{ id: 'effort', value: 'low' }, { id: 'reasoning_effort', value: 'xhigh' }], begin - 20, begin + 50, begin + 80)])] },
-      { name: 'model-300', shards: [sqlQuiet([sqlRun('conv-1', 'cur', { $repeat: ['m', 300] }, XHIGH, begin - 20, begin + 50, begin + 80)])] },
-      { name: 'model-over-cap', shards: [sqlQuiet([sqlRun('conv-1', 'cur', { $repeat: ['m', 2000] }, XHIGH, begin - 20, begin + 50, begin + 80)])] },
-    ]);
-    // Value: protects=identity and validation integrity; fails_when=substr() or other truncating extraction cuts text at the NUL; why_new=Codex reproduced substr truncation on both SQLite builds; seam=none
-    expect(found['nul-cwd']).toMatchObject({ certify: false, reasons: ['no-cwd-agent'] });
-    expect(found['nul-agent']).toMatchObject({ certify: false, reasons: ['no-cwd-agent'] });
-    expect(found['nul-timestamp']).toMatchObject({ certify: false, reasons: ['malformed-bounds'] });
-    expect(found['nul-model']).toMatchObject({ certify: true, model: null, effort: 'xhigh', reasons: ['malformed-metadata'] });
-    expect(found['nul-params']).toMatchObject({ certify: true, model: 'grok-4.7', effort: null, reasons: [] });
-    // Value: protects=no unit guessing: an integer timestamp is a changed column, never milliseconds; fails_when=the declared-type probe or gated extraction is bypassed; why_new=TEXT affinity hides this in the default DDL; seam=none
-    expect(found['numeric-ts']).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['sqlite-schema'] });
-    const kept = { certify: true, model: 'grok-4.7', effort: null, reasons: [] };
-    for (const name of ['params-invalid', 'params-over-cap', 'params-blob', 'params-null']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining(kept)]);
-    }
-    expect(found['params-precedence']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'low', reasons: [] });
-    for (const name of ['model-300', 'model-over-cap']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining({ certify: true, model: null, effort: 'xhigh', reasons: ['malformed-metadata'] })]);
-    }
-    const extracted = cursorPy(fix, { op: 'extract' }) as Record<string, boolean>;
-    // Value: protects=a number, a BLOB or an over-cap text never reaches _run_view as a timestamp; fails_when=gated extraction passes a number through; why_new=this pins D3 even when the schema probe would catch the column first; seam=none
-    expect(extracted).toEqual({ integer: true, real: true, blob: true, over_cap: true, null: true, text: true, nul: true });
-  });
-
-  test('G-mixed-store: NDJSON and SQLite shards select together, identity stays per shard', () => {
-    const fix = makeTelemetryFixture('off');
-    const found = sqliteCases(fix, [
-      { name: 'mixed-store', shards: [{ kind: 'ndjson', shard: 'nd', agents: [{ agentId: 'conv-9', cwd: '/other' }], runs: [closed('conv-9', 'r9', model('m9', XHIGH))] },
-        sqlQuiet([currentRun])] },
-      { name: 'both-eligible', shards: [goodNdjson(), sqlQuiet([currentRun])] },
-      { name: 'ndjson-only', shards: [goodNdjson()] },
-    ]);
-    expect(found['mixed-store']).toMatchObject({ ...CERTIFIED, layouts: { ndjson: 1, sqlite: 1 } });
-    expect(found['both-eligible']).toMatchObject({ certify: false, reasons: ['ambiguous-candidates'], layouts: { ndjson: 1, sqlite: 1 } });
-    expect(found['ndjson-only']).toMatchObject({ certify: true, model: 'grok-nd', effort: 'xhigh', layouts: { ndjson: 1 }, shard_layouts: ['ndjson'] });
-  });
-
-  test('G-empty G-agents-dir-only G-mixed-layout G-not-db G-schema G-nonregular: an unrecognized layout fails closed', () => {
-    const fix = makeTelemetryFixture('off');
-    const found = sqliteCases(fix, [
-      { name: 'empty', shards: [goodNdjson(), { kind: 'tree', shard: 'empty' }] },
-      { name: 'agents-dir-only', shards: [{ kind: 'tree', shard: 'agents-only', dirs: ['agents'] }] },
-      { name: 'mixed-layout', shards: [sqlQuiet([currentRun], { extra_files: { 'agents.ndjson': '{"agentId":"conv-1","cwd":"/work"}\n', 'runs.ndjson': '' } })] },
-      { name: 'not-db', shards: [{ kind: 'tree', shard: 'bad', files: { 'index.db': 'x'.repeat(4096) } }] },
-      { name: 'zero-byte', shards: [{ kind: 'tree', shard: 'zero', files: { 'index.db': '' } }] },
-      { name: 'schema-no-runs', shards: [sqlQuiet([currentRun], { ddl_overrides: { runs: null } })] },
-      { name: 'schema-dropped-column', shards: [sqlQuiet([currentRun], { drop_columns: { runs: ['expired_at'] } })] },
-      { name: 'schema-view', shards: [sqlQuiet([], { ddl_overrides: { runs: '$view' } })] },
-      { name: 'schema-untyped-agents', shards: [sqlQuiet([currentRun], { untyped_columns: { agents: ['workspace_ref'] } })] },
-      { name: 'nonregular', shards: [{ kind: 'tree', shard: 'dir-db', dirs: ['index.db'] }] },
-    ]);
-    const incomplete = (cause: string) => ({ certify: false, model: null, effort: null, usable: false, reasons: ['incomplete-evidence'], causes: [cause], complete: false, invariant: true });
-    // Value: protects=fail-closed layout recognition with the accurate cause; fails_when=an empty shard is skipped (the old rule) or causes are misattributed; why_new=the empty_shard expectation flipped; seam=none
-    expect(found.empty).toMatchObject({ ...incomplete('unrecognized-layout'), layouts: { ndjson: 1, unrecognized: 1 } });
-    expect(found.empty.debug).toContain('(causes: unrecognized-layout)');
-    expect(found['agents-dir-only']).toMatchObject(incomplete('unrecognized-layout'));
-    expect(found.nonregular).toMatchObject(incomplete('unrecognized-layout'));
-    // A mixed shard contributes no records from either layout.
-    expect(found['mixed-layout']).toMatchObject({ ...incomplete('mixed-layout'), shard_layouts: [] });
-    for (const name of ['not-db', 'zero-byte', 'schema-no-runs', 'schema-dropped-column', 'schema-view', 'schema-untyped-agents']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining(incomplete('sqlite-schema'))]);
-    }
-    for (const result of Object.values(found)) {
-      expect(result.invariant).toBe(true);
-      expect(result.debug).toContain('#cursor-sdk-incomplete-evidence');
-      expect(result.debug).not.toContain(fix.home);
-    }
-  });
-
-  test('G-unreadable G-busy G-row-cap G-no-sqlite-module G-ndjson-vanished: one cause token per failure', () => {
-    const fix = makeTelemetryFixture('off');
-    const busy = (name: string) => ({ name, hook: name, shards: [sqlQuiet([currentRun])] });
-    const found = sqliteCases(fix, [
-      { name: 'chmod-db', hook: 'chmod-db', shards: [sqlQuiet([currentRun])] },
-      busy('busy-connect'), busy('busy-begin'), busy('busy-probe'), busy('query-error'),
-      { name: 'row-cap', hook: 'row-cap', shards: [sqlQuiet([currentRun, priorRun, sqlRun('conv-1', 'third', 'm3', null, begin - 400, begin - 350, begin - 340)])] },
-      { name: 'row-cap-at-limit', hook: 'row-cap', shards: [sqlQuiet([currentRun, priorRun])] },
-      { name: 'no-sqlite', hook: 'no-sqlite', shards: [sqlQuiet([currentRun])] },
-      { name: 'no-sqlite-ndjson', hook: 'no-sqlite', shards: [goodNdjson()] },
-      { name: 'ndjson-vanished', hook: 'ndjson-vanished', shards: [goodNdjson()] },
-      { name: 'ndjson-raises', hook: 'ndjson-raises', shards: [goodNdjson()] },
-      { name: 'normalize-raises', hook: 'normalize-raises', shards: [sqlQuiet([currentRun])] },
-    ]);
-    const incomplete = (cause: string) => ({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: [cause], complete: false, invariant: true });
-    if (!found['chmod-db'].skipped) expect(found['chmod-db']).toMatchObject(incomplete('sqlite-open'));
-    // Value: protects=transient (lock) versus changed-store classification by control flow, not exception text; fails_when=one catch-all token, or the busy timeout exceeds SQLITE_BUSY_S; why_new=DX both-voice finding; seam=none
-    for (const name of ['busy-connect', 'busy-begin', 'busy-probe']) {
-      expect([name, found[name]]).toEqual([name, expect.objectContaining(incomplete('sqlite-open'))]);
-      expect(found[name].data.timeouts!.length).toBeGreaterThan(0);
-      for (const timeout of found[name].data.timeouts!) expect(timeout).toBeLessThanOrEqual(0.5);
-      expect(found[name].debug).not.toContain('locked');
-      expect(found[name].debug).not.toContain(CURSOR_SENTINEL);
-    }
-    expect(found['row-cap']).toMatchObject(incomplete('sqlite-row-cap'));
-    // Value: protects=excess rows are rejected before optional diagnostic work; fails_when=the aggregate scans an already over-cap archive; why_new=the old reader scanned it before checking the cap; seam=row cap and query trace
-    expect(found['row-cap'].data.turn_reads).toBe(0);
-    expect(found['row-cap-at-limit']).toMatchObject({ ...CERTIFIED });
-    expect(found['row-cap-at-limit'].data.turn_reads).toBe(1);
-    // Value: protects=post-probe errors remain transient sqlite-error and never leak exception text; fails_when=all OperationalError paths are called sqlite-open; why_new=the probe marks a distinct recovery boundary; seam=query error injection
-    expect(found['query-error']).toMatchObject({ ...incomplete('sqlite-error'), effort: null });
-    expect(found['query-error'].debug).toContain('(causes: sqlite-error)');
-    expect(found['query-error'].debug).not.toContain('locked');
-    expect(found['query-error'].debug).not.toContain(CURSOR_SENTINEL);
-    expect(found['no-sqlite']).toMatchObject(incomplete('sqlite-module-missing'));
-    // An NDJSON-only store never needs the module.
-    expect(found['no-sqlite-ndjson']).toMatchObject({ certify: true, model: 'grok-nd', causes: [] });
-    expect(found['ndjson-vanished']).toMatchObject(incomplete('ndjson-vanished'));
-    // A bug in dispatch or normalization is a reader bug, never a Conductor change.
-    expect(found['ndjson-raises']).toMatchObject(incomplete('reader-error'));
-    expect(found['normalize-raises']).toMatchObject(incomplete('reader-error'));
-    for (const name of ['ndjson-raises', 'normalize-raises']) expect(found[name].debug).not.toContain(CURSOR_SENTINEL);
-  });
-
-  /** G-readonly (b)-(e): closed shards, sidecar transitions and writer races. (a) is the live shard in the matrix cases. */
-  const readonlyCases = (): Case[] => [
-    { name: 'quiet-dir-0555', hook: 'readonly-dir', hash: true, shards: [sqlQuiet([currentRun])] },
-    { name: 'delete-dir-0555', hook: 'readonly-dir', hash: true, shards: [sqlDelete([currentRun])] },
-    { name: 'wal-without-shm', shards: [sqlQuiet([currentRun], { extra_files: { 'index.db-wal': '' } })] },
-    { name: 'journal-present', shards: [sqlDelete([currentRun], { extra_files: { 'index.db-journal': '' } })] },
-    { name: 'race-mtime', hook: 'bump-mtime', shards: [sqlQuiet([currentRun])] },
-    { name: 'race-wal', hook: 'create-wal', shards: [sqlQuiet([currentRun])] },
-  ];
-  const expectReadonly = (found: Record<string, Result>) => {
-    for (const name of ['quiet-dir-0555', 'delete-dir-0555']) {
-      // Skipped when running as root, matching the other chmod cases.
-      if (!found[name].skipped) expect([name, found[name]]).toEqual([name, expect.objectContaining({ ...CERTIFIED, tree_equal: true, bytes_equal: true })]);
-    }
-    const incomplete = (cause: string) => ({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: [cause], invariant: true });
-    // Value: protects=a shard in transition is never opened, so no sidecar is created; fails_when=a half-present sidecar set is opened; why_new=Apple fails and upstream creates files on a plain mode=ro open; seam=none
-    expect(found['wal-without-shm']).toMatchObject({ ...incomplete('sqlite-sidecars'), tree_equal: true });
-    expect(found['journal-present']).toMatchObject({ ...incomplete('sqlite-sidecars'), tree_equal: true });
-    // Value: protects=a read that a writer could have raced is discarded; fails_when=the post-read re-check of the sidecars or index.db stat key is dropped; why_new=immutable=1 does not detect change; seam=none
-    expect(found['race-mtime']).toMatchObject(incomplete('sqlite-changed'));
-    expect(found['race-wal']).toMatchObject(incomplete('sqlite-changed'));
-  };
-
-  test('G-readonly G-uri: closed shards, sidecar transitions and writer races never write', () => {
-    const fix = makeTelemetryFixture('off');
-    const found = sqliteCases(fix, [
-      ...readonlyCases(),
-      { name: 'uri', store: 'uri', shards: [sqlQuiet([currentRun])] },
-    ]);
-    expectReadonly(found);
-    // A store root containing ?, #, % and a space is a path, never a URI component.
-    expect(found.uri).toMatchObject({ ...CERTIFIED });
-  });
-
-  test('G-budget: the capture deadline stops reads between files, between shards and inside a query', () => {
-    const fix = makeTelemetryFixture('off');
-    const budget = cursorPy(fix, { op: 'budget' }) as Record<string, { complete: boolean; causes: string[]; shards: number; reads: number; read_names?: string[] }
-      | { past: unknown[]; future: unknown[] }>;
-    const stopped = { complete: false, causes: ['capture-timeout'] };
-    // Value: protects=bounded finish latency; fails_when=the deadline is only checked at shard edges; why_new=Codex and native budget findings; seam=none
-    expect(budget.zero).toMatchObject({ ...stopped, shards: 0, reads: 0 });
-    expect(budget.between).toMatchObject({ ...stopped, shards: 0, reads: 1, read_names: ['agents.ndjson'] });
-    expect(budget.final).toMatchObject({ ...stopped, shards: 1, reads: 2 });
-    // Value: protects=an interrupted query is a timeout, not a lock or a read error; fails_when=failures are classified without the deadline-first rule; why_new=progress-handler interrupt is an OperationalError; seam=SQLITE_PROGRESS_STEPS constant (monkeypatched)
-    expect(budget.interrupt).toEqual({ past: [0, 0, 'capture-timeout'], future: [1, 1, null] });
-  });
-
-  test('G-privacy: the key column and every unread column never leave the store', () => {
-    const fix = makeTelemetryFixture('off');
-    const found = sqliteCases(fix, [{ name: 'reads', hook: 'authorizer', shards: [sqlLive([priorRun, currentRun])] }]);
-    expect(found.reads).toMatchObject({ ...CERTIFIED });
-    const columns = (found.reads.data.reads ?? []).filter(item => /^(agents|runs|run_events)\./.test(item));
-    const allowed = new Set([
-      'agents.agent_id', 'agents.workspace_ref',
-      ...['run_id', 'agent_id', 'status', 'model', 'model_params_json', 'started_at', 'updated_at', 'finished_at', 'cancelled_at', 'expired_at', 'turn_number'].map(name => 'runs.' + name),
-    ]);
-    // Value: protects=the encryption-key column, usage, result and event payloads are never selected; fails_when=SELECT * or an extra column creeps in; why_new=the store has a secret column; seam=none
-    expect(columns.length).toBeGreaterThan(10);
-    expect(columns.filter(item => !allowed.has(item))).toEqual([]);
-    const python = spawnSync('python3', ['-B', '-I', '-c',
-      'import sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(telemetry.SQLITE_AGENTS_SQL + "\\n" + telemetry.SQLITE_RUNS_SQL)',
-      join(ROOT, 'bin/lib')], { encoding: 'utf8', env: fix.env });
-    expect(python.status).toBe(0);
-    expect(python.stdout).not.toContain('*');
-    expect(python.stdout).not.toContain('metadata_json');
-    for (const broken of [false, true]) {
-      const trace = cursorPy(fix, { op: 'privacy', broken }, cursorWork(fix)) as { row: Record<string, unknown>; lines: string[]; leaked: boolean; path_in_lines: boolean };
-      expect(trace.leaked).toBe(false);
-      expect(trace.path_in_lines).toBe(false);
-      expect(trace.row).toMatchObject(broken ? { model: null, route: 'unknown' } : { model: 'grok-4.7', effort: 'xhigh', route: 'conductor' });
-      if (broken) expect(trace.lines).toEqual(['telemetry: cursor-sdk incomplete-evidence (causes: unrecognized-layout). See docs/telemetry.md#cursor-sdk-incomplete-evidence.']);
-    }
-  }, 30_000);
-
-  test('G-e2e: a real finish records the requested model and effort from a SQLite shard', () => {
-    const native = { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' };
-    const fix = makeTelemetryFixture('off');
-    // HOME is reached through a path with a space, as a real home can be; the fixture HOME has none. G-uri owns the quoting of ?, # and %.
-    const spaced = mkdtempSync(join(tmpdir(), 'sp ace-'));
-    symlinkSync(fix.home, join(spaced, 'home'));
-    try {
-      const finished = cursorFinish(fix, { ...native, HOME: join(spaced, 'home') }, (start, where) => {
-        cursorPy(fix, { op: 'plant-sqlite', specs: [{
-          strip_sidecars: true, agents: [sqlAgent('conv-1', where)],
-          runs: [sqlRun('conv-1', 'run-1', 'grok-4.7', XHIGH, start - 30, start)],
-        }] }, where);
-      });
-      // Value: protects=the Track outcome end to end through the real wrapper, from a store path that contains a space; fails_when=the wrapper, dispatch or adapter regresses; why_new=no SQLite end-to-end test exists; seam=none
-      expect([finished.finish.status, finished.finish.stdout]).toEqual([0, '']);
-      expect(Object.keys(finished.row)).toEqual(SCHEMA);
-      expect(finished.row).toMatchObject({
-        agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 3,
-        agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
-      });
-      expect(validRow(finished.row)).toBe(true);
-      expect(JSON.stringify(finished.row) + finished.finish.stderr).not.toContain(CURSOR_SENTINEL);
-      // The sink is the ledger file itself.
-      expect(JSON.stringify(fix.readLedger())).not.toContain(CURSOR_SENTINEL);
-    } finally {
-      rmSync(spaced, { recursive: true, force: true });
-    }
-  }, 30_000);
-
-  test('G-e2e-live: a real finish reads a shard while another process holds the writer open', () => {
-    const fix = makeTelemetryFixture('off');
-    let holds: Array<{ pid: number; release: string }> = [];
-    try {
-      const finished = cursorFinish(fix, { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' }, (start, where) => {
-        const planted = cursorPy(fix, { op: 'plant-sqlite', specs: [{
-          strip_sidecars: true, agents: [sqlAgent('conv-1', where)],
-          runs: [sqlRun('conv-1', 'old', 'grok-4.0', null, start - 300, start - 200, start - 100)],
-          writer_process: sqlRun('conv-1', 'live', 'grok-4.7', XHIGH, start - 20, start),
-        }] }, where) as { holds: Array<{ pid: number; release: string }> };
-        holds = planted.holds;
-      });
-      expect(holds).toHaveLength(1);
-      // Value: protects=the production state through the real wrapper: a live shard whose newest run exists only in the -wal; fails_when=the live open rule or cross-process -shm access breaks; why_new=in-process tests cannot show it; seam=none
-      expect(finished.row).toMatchObject({ agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', model_source: 'detected' });
-      expect(validRow(finished.row)).toBe(true);
-    } finally {
-      for (const hold of holds) {
-        try { writeFileSync(hold.release, ''); } catch { /* the harness already removed its HOME */ }
-        try { process.kill(hold.pid, 'SIGTERM'); } catch { /* already exited */ }
-      }
-    }
-  }, 30_000);
-
-  // The fixture PATH resolves one interpreter; production often runs another SQLite build. Both are exercised when they differ.
-  const pythonBuild = (env: Record<string, string | undefined>) => {
-    const probed = spawnSync('python3', ['-c', 'import sys, sqlite3; print(sys.executable); print(sqlite3.sqlite_version)'], { env, encoding: 'utf8' });
-    const [exe, version] = probed.status === 0 ? probed.stdout.trim().split('\n') : [null, null];
-    return { exe, version };
-  };
-  const fixtureBuild = pythonBuild({ PATH: '/usr/bin:/bin' });
-  const runnerBuild = pythonBuild(process.env);
-  const sameBuild = !fixtureBuild.exe || !runnerBuild.exe || fixtureBuild.version === runnerBuild.version;
-  test.skipIf(sameBuild)(
-    sameBuild ? `runtime matrix: skipped, runner SQLite ${runnerBuild.version} matches fixture SQLite ${fixtureBuild.version}` : 'runtime matrix: live, WAL-only and closed shards under the runner interpreter',
-    () => {
-      const fix = makeTelemetryFixture('off');
-      // Value: protects=upstream-SQLite behavior that the fixture PATH never exercises; fails_when=the open rule regresses on one build only; why_new=the harness resolves one interpreter; seam=none
-      const found = sqliteCases(fix, [...matrixCases(), ...readonlyCases()], runnerBuild.exe!);
-      expectMatrix(found);
-      expectReadonly(found);
-    }, 60_000);
 });
+
+
 
 /** A disposable copy of the wrapper and module with its own VERSION; the real VERSION is never written. */
 function copiedInstall(fix: TelemetryFixture, name: string, version: string | null) {
@@ -3794,7 +2025,7 @@ describe('row version, producer and sources', () => {
     const finish = spawnSync(join(installed, 'bin/gstack-extend-telemetry'), ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], options);
     expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
     expect(fix.readLedger()).toHaveLength(1);
-    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 3, producer_version: RELEASE });
+    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 4, producer_version: RELEASE });
     // Release and sources stay local: the completion the logger receives carries none of them.
     const forwarded = fix.readStubArgs().join('\n') + JSON.stringify(fix.readJsonl());
     for (const text of [RELEASE, 'schema', 'producer', '_source']) expect(forwarded).not.toContain(text);
@@ -3845,7 +2076,7 @@ describe('row version, producer and sources', () => {
     const install = copiedInstall(usage, 'install-missing', null);
     expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(install.run(['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 3 }]);
+    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 4 }]);
     expect(usage.readJsonl().map(entry => entry.event_type)).toEqual(['skill_start', 'skill_run']);
   }, 60_000);
 
@@ -3914,7 +2145,7 @@ describe('row version, producer and sources', () => {
       expect([name, Object.keys(row), stderr]).toEqual([name, SCHEMA, '']);
       expect([name, row.agent, row.model, row.effort, row.agent_source, row.model_source, row.effort_source])
         .toEqual([name, ...expected]);
-      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 3, RELEASE, true]);
+      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 4, RELEASE, true]);
     });
     // A read the operating system refuses (no portable chmod needed) costs only the release.
     const denied = rows.at(-1)!;
@@ -3946,11 +2177,12 @@ describe('row version, producer and sources', () => {
       return readHandoff(fix).row as Record<string, unknown>;
     };
 
-    // A current v3 row built by the older installation is appended by the newer one exactly as built, whatever the retry passes.
-    const saved = failFirstAppend(older, { CLAUDECODE: '1', PASEO_AGENT_ID: 'original-agent' });
-    expect(saved).toMatchObject({ agent: 'claude', schema_version: 3, producer_version: '0.40.0.0',
-      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown', workspace_host: 'paseo', host_agent_id: 'original-agent' });
-    expect(newer.run([...finish, '--agent', 'codex', '--model', 'gpt-6-astra'], { CODEX_THREAD_ID: 'later-thread', CONDUCTOR_SESSION_ID: 'later-session' }).status).toBe(0);
+    // A current v4 row built by the older installation is appended by the newer one exactly as built, whatever the retry passes.
+    const saved = failFirstAppend(older, { CLAUDECODE: '1', GSTACK_EXTEND_WORKSPACE_OWNER: 'original-owner' });
+    expect(saved).toMatchObject({ agent: 'claude', schema_version: 4, producer_version: '0.40.0.0',
+      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown', workspace_host: 'original-owner' });
+    expect(saved).not.toHaveProperty('host_agent_id');
+    expect(newer.run([...finish, '--agent', 'codex', '--model', 'gpt-6-astra'], { CODEX_THREAD_ID: 'later-thread', GSTACK_EXTEND_WORKSPACE_OWNER: 'later-owner' }).status).toBe(0);
     expect(lines()).toEqual([JSON.stringify(saved)]);
     expect(handoffs(fix)).toHaveLength(0);
 
@@ -3962,6 +2194,25 @@ describe('row version, producer and sources', () => {
     expect(broken.run(finish).status).toBe(0);
     expect(lines().at(-1)).toBe(JSON.stringify(cached));
     expect(validRow(cached)).toBe(true);
+
+    // A v3 row saved before upgrading to v4 is appended byte-for-byte unchanged on retry.
+    expect(newer.run(start).status).toBe(0);
+    const sidV3 = readHandoff(fix).session_id as string;
+    const savedV3 = {
+      stage: 'roadmap', agent: 'claude', model: 'claude-opus-5', effort: 'high',
+      rung: 0, outcome: 'success', started_at: '2026-09-22T14:50:06Z', duration_s: 42, session_id: sidV3, repo: 'acme/widget',
+      branch: 'main', work_item: null, source: 'gstack-extend', route: 'conductor', entrypoint_raw: 'Paseo',
+      schema_version: 3, producer_version: '0.43.0.0', agent_source: 'detected', model_source: 'detected', effort_source: 'detected',
+      workspace_host: 'paseo', host_agent_id: 'original-agent',
+      run_mode: 'user-directed', run_mode_source: 'Paseo',
+      questions: 1, user_wait_s: 10, resumes: 0, user_signals_source: 'session-log',
+      blocked_reason: null, blocked_reason_source: 'not-blocked',
+    };
+    rewriteHandoff(fix, { row: savedV3, done: [] });
+    expect(newer.run(finish).status).toBe(0);
+    expect(lines().at(-1)).toBe(JSON.stringify(savedV3));
+    expect(validRow(savedV3)).toBe(true);
+    expect(handoffs(fix)).toHaveLength(0);
 
     // Rows a pre-version writer saved are appended as those legacy rows; no version, producer or source is invented.
     for (const keep of [15, 13]) {
@@ -6056,26 +4307,28 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
   test('host attribution is sampled at first finish, then retained through failed and completed explicit retries', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const install = copiedInstall(fix, 'construction-time', '1.0.0\n');
-    const start = install.run(['start', '--skill', 'extend:roadmap'], { PASEO_AGENT_ID: 'start-agent' });
+    const start = install.run(['start', '--skill', 'extend:roadmap'], { GSTACK_EXTEND_WORKSPACE_OWNER: 'start-owner', PASEO_AGENT_ID: 'start-agent' });
     expect([start.status, start.stderr]).toEqual([0, '']);
     expect(start.stdout).toMatch(/^GE_TELEMETRY: session=\S+ start=\d+\n$/);
+    expect(start.stdout).not.toContain('start-owner');
     expect(start.stdout).not.toContain('start-agent');
     const initial = readHandoff(fix);
     expect(initial).not.toHaveProperty('row');
-    expect(JSON.stringify(initial)).not.toContain('start-agent');
+    expect(JSON.stringify(initial)).not.toContain('start-owner');
     const args = ['finish', '--skill', 'extend:roadmap', '--session-id', String(initial.session_id),
       '--start', String(initial.start), '--outcome', 'success', '--work-item', 'original-work'];
     const blocker = join(fix.home, '.gstack-extend/analytics');
     writeFileSync(blocker, '');
-    const failed = install.run(args, { CONDUCTOR_SESSION_ID: 'first-finish-session', CLAUDECODE: '1' });
+    const failed = install.run(args, { GSTACK_EXTEND_WORKSPACE_OWNER: 'first-finish-owner', CLAUDECODE: '1' });
     expect([failed.status, failed.stdout, failed.stderr]).toEqual([0, '', '']);
     const saved = readHandoff(fix).row as Record<string, unknown>;
-    expect(saved).toMatchObject({ schema_version: 3, producer_version: '1.0.0', workspace_host: 'conductor',
-      host_agent_id: 'first-finish-session', work_item: 'original-work', agent: 'claude' });
+    expect(saved).toMatchObject({ schema_version: 4, producer_version: '1.0.0', workspace_host: 'first-finish-owner',
+      work_item: 'original-work', agent: 'claude' });
+    expect(saved).not.toHaveProperty('host_agent_id');
     expect(Object.keys(saved)).toEqual(SCHEMA);
     rmSync(blocker);
     writeFileSync(install.versionFile, '1.0.1\n');
-    const changed = { PASEO_AGENT_ID: 'retry-SENTINEL', CONDUCTOR_SESSION_ID: 'conflict-SENTINEL',
+    const changed = { GSTACK_EXTEND_WORKSPACE_OWNER: 'retry-SENTINEL', PASEO_AGENT_ID: 'retry-SENTINEL', CONDUCTOR_SESSION_ID: 'conflict-SENTINEL',
       CODEX_THREAD_ID: 'different-harness', ...DEBUG };
     const retry = install.run([...args, '--agent', 'codex', '--model', 'later-model', '--work-item', 'later-work'], changed);
     expect([retry.status, retry.stdout]).toEqual([0, '']);
@@ -6088,15 +4341,16 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     expect(readFileSync(ledger, 'utf8')).toBe(exact);
     expect(fix.readJsonl()).toHaveLength(usageCount);
     const usage = JSON.stringify(fix.readJsonl()) + fix.readStubArgs().join('\n');
-    for (const secret of ['first-finish-session', 'start-agent', 'workspace_host', 'host_agent_id', 'schema_version', 'producer_version']) {
+    for (const secret of ['first-finish-owner', 'start-owner', 'start-agent', 'workspace_host', 'host_agent_id', 'schema_version', 'producer_version']) {
       expect(usage).not.toContain(secret);
     }
   }, 30_000);
 
-  test('immutable v1 and legacy rows replay in exact original field order under new host/version context', () => {
+  test('immutable v1/v2/v3 and legacy rows replay in exact original field order under new host/version context', () => {
     const fix = makeTelemetryFixture('off');
     const install = copiedInstall(fix, 'historical-replay', '1.0.0\n');
-    for (const version of ['legacy-13', 'legacy-15', 'v1']) {
+    // Value: protects=historical rows retain their exact bytes under the v4 writer; fails_when=retry reconstructs version, host or source fields; why_new=T3 explicitly requires saved v3 replay; seam=none
+    for (const version of ['legacy-13', 'legacy-15', 'v1', 'v2', 'v3']) {
       expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
       const state = readHandoff(fix);
       const historical = { stage: 'roadmap', agent: 'codex', model: 'gpt-5-codex', effort: 'high', rung: 0,
@@ -6104,7 +4358,14 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
         repo: 'acme/widget', branch: 'main', work_item: 'historical-work', source: 'gstack-extend', route: 'conductor',
         entrypoint_raw: null, schema_version: 1, producer_version: '0.33.1.0', agent_source: 'detected',
         model_source: 'flag', effort_source: 'detected' };
-      const row = Object.fromEntries(Object.entries(historical).slice(0, version === 'v1' ? 20 : version === 'legacy-13' ? 13 : 15));
+      const row = Object.fromEntries(Object.entries(historical).slice(0, version.startsWith('v') ? 20 : version === 'legacy-13' ? 13 : 15));
+      if (version === 'v2' || version === 'v3') {
+        Object.assign(row, { schema_version: Number(version.slice(1)), workspace_host: 'paseo', host_agent_id: 'original-host' });
+      }
+      if (version === 'v3') {
+        Object.assign(row, { run_mode: 'user-directed', run_mode_source: 'Paseo', questions: null, user_wait_s: null,
+          resumes: null, user_signals_source: 'harness-unsupported', blocked_reason: null, blocked_reason_source: 'not-blocked' });
+      }
       const exact = JSON.stringify(row);
       rewriteHandoff(fix, { row, done: [] });
       const args = ['finish', '--skill', 'extend:roadmap', '--session-id', String(state.session_id), '--start', String(state.start)];
@@ -6257,26 +4518,27 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
         effort: 'high', effort_source: 'requested',
       });
 
-      // (d) Requested model with effort detected independently (Cursor Conductor store run whose model has params.effort and no id, without CURSOR_INVOKED_AS),
+      // (d) Requested model with effort detected independently (detect() returning null model and non-null effort),
       // plus requested model with flagged --effort and no detection.
       const fixD1 = makeTelemetryFixture('off');
-      const envD1 = {
-        CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-d1',
-        GSTACK_EXTEND_MODEL: 'req-cursor-model', GSTACK_EXTEND_EFFORT: 'low',
-      };
-      const resD1 = cursorFinish(fixD1, envD1, (start: number, cwd: string) => {
-        writeJsonl(join(fixD1.home, '.cursor/projects/project/agent-transcripts/conv-d1/transcript.jsonl'),
-          [{ role: 'assistant', message: 'fixture' }]);
-        const root = join(fixD1.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-d1');
-        writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-d1', cwd }]);
-        writeJsonl(join(root, 'runs.ndjson'), [{
-          agentId: 'conv-d1', runId: 'run-d1', startedAt: (start - 20) * 1000, updatedAt: start * 1000,
-          endedAt: (start + 20) * 1000, model: { params: { effort: 'xhigh' } },
-        }]);
+      const d1Script = [
+        'import json, sys',
+        'from unittest import mock',
+        'sys.path.insert(0, sys.argv[1])',
+        'import telemetry',
+        'with mock.patch.object(telemetry, "detect", return_value=("claude", None, "xhigh")):',
+        '    row = telemetry.provenance_row("roadmap", "sid-d1", 1790000000, 5, {"--outcome": "success"}, None)',
+        'print(json.dumps(row))',
+      ].join('\n');
+      const runD1 = spawnSync('python3', ['-B', '-I', '-c', d1Script, join(ROOT, 'bin/lib')], {
+        env: { ...fixD1.env, GSTACK_EXTEND_MODEL: 'req-claude-model', GSTACK_EXTEND_EFFORT: 'low' },
+        encoding: 'utf8',
+        timeout: 10_000,
       });
-      expect(resD1.row).toMatchObject({
-        agent: 'cursor', route: 'conductor',
-        model: 'req-cursor-model', model_source: 'requested',
+      expect([runD1.status, runD1.stderr]).toEqual([0, '']);
+      expect(JSON.parse(runD1.stdout)).toMatchObject({
+        agent: 'claude',
+        model: 'req-claude-model', model_source: 'requested',
         effort: 'xhigh', effort_source: 'detected',
       });
 
@@ -6292,32 +4554,28 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
   test('host and producer faults give fixed next-invocation advice without values, paths or premature success', () => {
     const fix = makeTelemetryFixture('off');
     const install = copiedInstall(fix, 'PRIVATE-INSTALL-PATH', 'PRIVATE-VERSION-TEXT\n');
-    const cases: Array<[Record<string, string>, string, string, string]> = [
-      [{ PASEO_AGENT_ID: 'PRIVATE-PASEO', CONDUCTOR_SESSION_ID: 'PRIVATE-CONDUCTOR' },
-        'HOST_MARKERS_CONFLICT', 'PASEO_AGENT_ID and CONDUCTOR_SESSION_ID', 'unknown/null'],
-      [{ PASEO_AGENT_ID: 'PRIVATE-PASEO\nBAD' }, 'HOST_AGENT_ID_INVALID', 'PASEO_AGENT_ID', 'paseo/null'],
-      [{ CONDUCTOR_SESSION_ID: 'PRIVATE-CONDUCTOR\nBAD' }, 'HOST_AGENT_ID_INVALID', 'CONDUCTOR_SESSION_ID', 'conductor/null'],
+    const cases: Array<Record<string, string>> = [
+      { GSTACK_EXTEND_WORKSPACE_OWNER: '   ' },
+      { GSTACK_EXTEND_WORKSPACE_OWNER: 'PRIVATE-OWNER\nBAD' },
+      { GSTACK_EXTEND_WORKSPACE_OWNER: 'PRIVATE-OWNER-' + 'x'.repeat(201) },
     ];
-    for (const [index, [env, code, markers, result]] of cases.entries()) {
+    for (const [index, env] of cases.entries()) {
       const args = ['finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 1), '--outcome', 'success'];
       const quiet = install.run([...args, '--session-id', 'quiet-' + index], env);
       expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
       const debug = install.run([...args, '--session-id', 'debug-' + index], { ...env, ...DEBUG });
       expect([debug.status, debug.stdout]).toEqual([0, '']);
-      const diagnosis = debug.stderr.split('\n').find(line => line.includes(code))!;
-      expect(diagnosis).toContain(markers);
-      expect(diagnosis).toContain(result);
+      const diagnosis = debug.stderr.split('\n').find(line => line.includes('HOST_LABEL_INVALID'))!;
+      expect(diagnosis).toContain('GSTACK_EXTEND_WORKSPACE_OWNER is not a valid host label');
+      expect(diagnosis).toContain('1–200 printable Unicode code points and not blank');
+      expect(diagnosis).toContain('recording workspace_host=null');
       expect(diagnosis).toContain('Saved replay cannot repair attribution');
-      expect(diagnosis).toContain('ask the launcher owner');
+      expect(diagnosis).toContain('set GSTACK_EXTEND_WORKSPACE_OWNER to a clean label');
       expect(diagnosis).toContain('next new invocation');
-      expect(diagnosis).toContain('never invent an ID, blindly unset a marker or rewrite this row');
+      expect(diagnosis).toContain('never invent a label or rewrite this row');
       expect(diagnosis).toContain('docs/telemetry.md#host-attribution');
-      if (code === 'HOST_AGENT_ID_INVALID') {
-        expect(diagnosis).toContain('1–200 printable Unicode code points and not blank');
-        expect(diagnosis).not.toContain(markers === 'PASEO_AGENT_ID' ? 'CONDUCTOR_SESSION_ID' : 'PASEO_AGENT_ID');
-      }
       expect(debug.stderr).toContain(UNKNOWN_PRODUCER('VERSION is not a three- or four-part numeric release'));
-      for (const secret of ['PRIVATE-PASEO', 'PRIVATE-CONDUCTOR', 'PRIVATE-VERSION-TEXT', 'PRIVATE-INSTALL-PATH']) {
+      for (const secret of ['PRIVATE-OWNER', 'PRIVATE-VERSION-TEXT', 'PRIVATE-INSTALL-PATH']) {
         expect(debug.stderr + debug.stdout).not.toContain(secret);
       }
       // Existing debug output names its sink. The new metadata diagnostics must never name a private path.
@@ -6325,14 +4583,22 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
       expect(metadataDiagnostics).not.toContain(fix.home);
       expect(debug.stderr).not.toMatch(/row still records|append succeeded/);
     }
+    // Retired PASEO_AGENT_ID and CONDUCTOR_SESSION_ID markers never trigger HOST_* diagnostics.
+    const retiredEnv = { PASEO_AGENT_ID: 'PRIVATE-PASEO\nBAD', CONDUCTOR_SESSION_ID: 'PRIVATE-CONDUCTOR\nBAD', ...DEBUG };
+    const retiredRes = install.run(['finish', '--skill', 'extend:roadmap', '--session-id', 'retired-markers', '--start', String(epochNow() - 1)], retiredEnv);
+    expect(retiredRes.status).toBe(0);
+    expect(retiredRes.stderr).not.toContain('HOST_');
+    expect(retiredRes.stderr).not.toContain('PRIVATE-PASEO');
+    expect(retiredRes.stderr).not.toContain('PRIVATE-CONDUCTOR');
+
     // Both diagnostics are also safe when append fails after construction.
     const blocker = join(fix.home, '.gstack-extend/analytics');
     renameSync(blocker, blocker + '.kept');
     writeFileSync(blocker, '');
     const failed = install.run(['finish', '--skill', 'extend:roadmap', '--session-id', 'failed-advice',
-      '--start', String(epochNow() - 1)], { ...cases[0][0], ...DEBUG });
+      '--start', String(epochNow() - 1)], { ...cases[1], ...DEBUG });
     expect(failed.status).toBe(0);
-    expect(failed.stderr).toContain('HOST_MARKERS_CONFLICT');
+    expect(failed.stderr).toContain('HOST_LABEL_INVALID');
     expect(failed.stderr).not.toMatch(/row still records|append succeeded/);
   }, 30_000);
 });
@@ -6351,7 +4617,7 @@ describe('deliberate pauses finish as blocked, and each resume is its own segmen
       expect(finishRun(fix, 'blocked', skill).status).toBe(0);
       const rows = fix.readLedger();
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ stage: name, outcome: 'blocked', schema_version: 3, session_id: sid });
+      expect(rows[0]).toMatchObject({ stage: name, outcome: 'blocked', schema_version: 4, session_id: sid });
       expect(fix.readStubArgs().some(line => line.split('\t').join(' ').includes('--outcome blocked'))).toBe(true);
       const runs = skillRuns(fix);
       expect(runs).toHaveLength(1);
@@ -6511,78 +4777,163 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'cli',
       },
       {
-        name: 'malformed GSTACK_SESSION_KIND blocks user-directed',
+        name: 'malformed GSTACK_SESSION_KIND blocks user-directed with malformed-signal',
         finishEnv: { GSTACK_SESSION_KIND: 'bogus', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'unknown',
-        source: 'none',
+        source: 'malformed-signal',
       },
       {
-        name: 'malformed GSTACK_EXTEND_WORK_ITEM blocks user-directed',
+        name: 'malformed GSTACK_EXTEND_WORK_ITEM blocks user-directed with malformed-signal',
         finishEnv: { GSTACK_EXTEND_WORK_ITEM: '   ', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'unknown',
-        source: 'none',
+        source: 'malformed-signal',
       },
       {
-        name: 'Claude cli entrypoint gives user-directed',
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER valid label gives host-managed-workspace',
+        finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: 'paseo', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'host-managed-workspace',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER empty string is treated as unset and allows user-directed',
+        finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: '', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'user-directed',
+        source: 'cli',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER whitespace-only gives host-managed-workspace',
+        finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: '   ', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'host-managed-workspace',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER non-printable gives host-managed-workspace',
+        finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: 'owner\nbad', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'host-managed-workspace',
+      },
+      {
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER over 200 chars gives host-managed-workspace',
+        finishEnv: { GSTACK_EXTEND_WORKSPACE_OWNER: 'x'.repeat(201), CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'unknown',
+        source: 'host-managed-workspace',
+      },
+      {
+        name: 'Claude cli entrypoint gives user-directed / cli',
         finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'user-directed',
         source: 'cli',
       },
       {
-        name: 'Paseo entrypoint Paseo gives user-directed',
+        name: 'Claude Paseo entrypoint gives user-directed / paseo-entrypoint (PASEO_AGENT_ID ignored)',
         finishEnv: { PASEO_AGENT_ID: 'p-1', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' },
         mode: 'user-directed',
-        source: 'Paseo',
+        source: 'paseo-entrypoint',
       },
       {
-        name: 'Paseo entrypoint sdk-cli gives user-directed',
+        name: 'Claude sdk-cli entrypoint gives entrypoint-unqualified even with PASEO_AGENT_ID set',
         finishEnv: { PASEO_AGENT_ID: 'p-2', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' },
-        mode: 'user-directed',
-        source: 'sdk-cli',
+        mode: 'unknown',
+        source: 'entrypoint-unqualified',
       },
       {
-        name: 'Paseo entrypoint sdk-ts gives user-directed',
+        name: 'Claude sdk-ts entrypoint gives entrypoint-unqualified even with PASEO_AGENT_ID set',
         finishEnv: { PASEO_AGENT_ID: 'p-3', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' },
-        mode: 'user-directed',
-        source: 'sdk-ts',
+        mode: 'unknown',
+        source: 'entrypoint-unqualified',
       },
       {
-        name: 'Paseo entrypoint acp gives user-directed',
+        name: 'Claude acp entrypoint gives entrypoint-unqualified even with PASEO_AGENT_ID set',
         finishEnv: { PASEO_AGENT_ID: 'p-4', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'acp' },
-        mode: 'user-directed',
-        source: 'acp',
-      },
-      {
-        name: 'sdk-cli outside Paseo host gives unknown',
-        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' },
         mode: 'unknown',
-        source: 'none',
+        source: 'entrypoint-unqualified',
       },
       {
-        name: 'unreadable/missing entrypoint gives unknown',
-        finishEnv: { CLAUDECODE: '1' },
+        name: 'Claude claude-desktop entrypoint gives entrypoint-unqualified',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
         mode: 'unknown',
-        source: 'none',
+        source: 'entrypoint-unqualified',
       },
       {
-        name: 'non-interactive entrypoint gives unknown',
+        name: 'Claude remote-daemon entrypoint gives entrypoint-unqualified',
         finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'remote-daemon' },
         mode: 'unknown',
-        source: 'none',
+        source: 'entrypoint-unqualified',
       },
       {
-        name: 'codex markers only gives unknown',
+        name: 'Claude missing entrypoint gives entrypoint-unavailable',
+        finishEnv: { CLAUDECODE: '1' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Claude empty entrypoint gives entrypoint-unavailable',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: '' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Claude whitespace-only entrypoint gives entrypoint-unavailable',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: '   ' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Claude non-printable entrypoint gives entrypoint-unavailable',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli\nbad' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'codex markers only gives harness-unqualified',
         finishEnv: { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349' },
         mode: 'unknown',
-        source: 'none',
+        source: 'harness-unqualified',
       },
       {
-        name: 'no markers at all gives unknown',
+        name: 'cursor markers only gives harness-unqualified',
+        finishEnv: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-rm-1', CURSOR_INVOKED_AS: 'cursor-agent' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'grok markers only gives harness-unqualified',
+        finishEnv: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-1' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: '--agent codex override on Claude cli gives harness-unqualified',
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        finishArgs: ['--agent', 'codex'],
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'no markers at all gives no-harness',
         finishEnv: {},
         mode: 'unknown',
-        source: 'none',
+        source: 'no-harness',
       },
     ];
+
+    // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
+    for (const [name, harness] of [
+      ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
+      ['Claude Paseo', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' }],
+      ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
+      ['Cursor', { CURSOR_AGENT: '1' }],
+      ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
+    ] as Array<[string, Record<string, string>]>) {
+      for (const owner of ['', 'fixture-owner']) {
+        cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
+          finishEnv: { ...harness, GSTACK_EXTEND_RUN_MODE: 'orchestrated', GSTACK_EXTEND_WORKSPACE_OWNER: owner },
+          mode: 'orchestrated', source: 'run-mode-env' });
+      }
+    }
+    cases.push({ name: 'relative GSTACK_HOME is malformed supporting evidence',
+      finishEnv: { GSTACK_HOME: 'relative-root', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+      mode: 'unknown', source: 'malformed-signal' });
 
     for (const tc of cases) {
       const start = runHelper({ ...fix.env, ...(tc.startEnv ?? tc.finishEnv ?? {}) }, ['start', '--skill', 'extend:roadmap']);
@@ -6624,6 +4975,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     // subprocess, sqlite3, or credential paths.
     const auditScript = [
       'import inspect, io, json, pathlib, sys',
+      'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
       'for fn in (telemetry.run_mode, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
@@ -6641,6 +4993,8 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
       'telemetry.run_mode("claude", "claude", None)',
+      'with mock.patch.dict(telemetry.os.environ, {}, clear=True):',
+      '    assert telemetry.run_mode("claude", "claude", "bad\\nitem") == ("unknown", "malformed-signal")',
       'signals = telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000093", 1790000000, 1790000010)',
       'telemetry.host_file_name(state, "My.Host_01.local")',
       'telemetry.stage_run_files(state)',
@@ -6652,7 +5006,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'finally:',
       '    sys.stdout = old_stdout',
       'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
-      'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 3, "signals": signals}))',
+      'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 4, "signals": signals}))',
     ].join('\n');
     const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend')], {
       env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
@@ -7099,13 +5453,321 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
 
     // Legacy file stayed byte-identical!
     expect(readFileSync(legacyPath, 'utf8')).toBe(legacyContent);
-    // Per-host file has both rows (the v3 retried row and the v2 retried row unchanged)
+    // Per-host file has both rows (the v4 retried row and the v2 retried row unchanged)
     const hostRows = readFileSync(join(stageRunsDir, HOST_LEDGER_FILE), 'utf8')
       .trim()
       .split('\n')
       .map(line => JSON.parse(line));
     expect(hostRows).toHaveLength(2);
-    expect(hostRows[0].schema_version).toBe(3);
+    expect(hostRows[0].schema_version).toBe(4);
     expect(hostRows[1]).toEqual(v2Row);
+  }, 30_000);
+
+  test('report multi-root aggregation, --state-dir, --by-host, inode deduplication, and duplicate host label warning', () => {
+    const fix = makeTelemetryFixture('off');
+    const rootA = join(fix.home, 'root-a');
+    const rootB = join(fix.home, 'root-b');
+    mkdirSync(join(rootA, 'analytics/stage-runs'), { recursive: true });
+    mkdirSync(join(rootB, 'analytics/stage-runs'), { recursive: true });
+
+    const makeV4Row = (sid: string, stage: string, runMode: string, runModeSource: string, outcome: string, durationS: number, extra: Record<string, unknown> = {}) => ({
+      stage,
+      agent: 'claude',
+      model: 'claude-opus-4-6',
+      effort: 'high',
+      rung: 0,
+      outcome,
+      started_at: '2026-11-08T12:00:00Z',
+      duration_s: durationS,
+      session_id: sid,
+      repo: 'acme/widget',
+      branch: 'main',
+      work_item: runMode === 'orchestrated' ? 'wi-1' : null,
+      source: 'gstack-extend',
+      route: 'cli',
+      entrypoint_raw: runModeSource === 'paseo-entrypoint' ? 'Paseo' : 'cli',
+      schema_version: 4,
+      producer_version: RELEASE,
+      agent_source: 'detected',
+      model_source: 'detected',
+      effort_source: 'detected',
+      workspace_host: null,
+      run_mode: runMode,
+      run_mode_source: runModeSource,
+      questions: runMode === 'orchestrated' ? null : 1,
+      user_wait_s: runMode === 'orchestrated' ? null : 10,
+      resumes: runMode === 'orchestrated' ? null : 0,
+      user_signals_source: runMode === 'orchestrated' ? 'orchestrated' : 'session-log',
+      blocked_reason: outcome === 'blocked' && runMode !== 'orchestrated' ? 'waiting-on-user' : null,
+      blocked_reason_source: runMode === 'orchestrated' ? 'orchestrated' : outcome === 'blocked' ? 'flag' : 'not-blocked',
+      ...extra,
+    });
+
+    const row1 = makeV4Row('sid-1', 'roadmap', 'user-directed', 'cli', 'success', 20);
+    const row2 = makeV4Row('sid-2', 'implement', 'user-directed', 'paseo-entrypoint', 'blocked', 30);
+    const row3 = makeV4Row('sid-3', 'implement', 'orchestrated', 'work-item', 'success', 40);
+    const legacyRow = makeV4Row('sid-legacy', 'roadmap', 'unknown', 'entrypoint-unavailable', 'success', 15, { entrypoint_raw: null });
+
+    const defaultLedger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    mkdirSync(dirname(defaultLedger), { recursive: true });
+    writeFileSync(defaultLedger, JSON.stringify(makeV4Row('default-only', 'roadmap', 'user-directed', 'cli', 'success', 1)) + '\n');
+    writeFileSync(join(rootA, 'analytics/stage-runs/macbook.jsonl'), JSON.stringify(row1) + '\n' + JSON.stringify(row2) + '\n');
+    writeFileSync(join(rootA, 'analytics/stage-runs.jsonl'), JSON.stringify(legacyRow) + '\n');
+    writeFileSync(join(rootB, 'analytics/stage-runs/omarchy.jsonl'), JSON.stringify(row3) + '\n');
+
+    // Repeatable --state-dir (with rootA passed twice to verify same-inode deduplication) and --by-host --json
+    const res = spawnSync(HELPER_BIN, [
+      'report', '--json', '--by-host',
+      '--state-dir', rootA,
+      '--state-dir', rootB,
+      '--state-dir', rootA,
+    ], { env: fix.env, encoding: 'utf8', timeout: 15_000 });
+    expect([res.status, res.stderr]).toEqual([0, '']);
+    const report = JSON.parse(res.stdout);
+    expect(report.rows).toEqual({
+      counted: 4,
+      routed: 0,
+      malformed: 0,
+      invalid: 0,
+      unsupported: 0,
+    });
+    const roadmapSkill = report.skills.find((s: { skill: string }) => s.skill === 'roadmap');
+    const implementSkill = report.skills.find((s: { skill: string }) => s.skill === 'implement');
+    expect(roadmapSkill.cells['user-directed'].runs).toBe(1);
+    expect(roadmapSkill.cells.unknown.runs).toBe(1);
+    expect(implementSkill.cells['user-directed'].runs).toBe(1);
+    expect(implementSkill.cells.orchestrated.runs).toBe(1);
+    expect(report.hosts.map((h: { host: string }) => h.host)).toEqual(['macbook', 'omarchy', '(legacy)']);
+    // Value: protects=host cells aggregate all stages with exact mode/outcome counts; fails_when=host aggregation loses or duplicates a ledger; why_new=the original assertion only checked labels; seam=none
+    expect(report.hosts[0].cells['user-directed']).toEqual({
+      runs: 2, outcomes: { success: 1, error: 0, abort: 0, blocked: 1, unknown: 0 }, last_seen: row1.started_at,
+    });
+    expect(report.hosts[1].cells.orchestrated).toEqual({
+      runs: 1, outcomes: { success: 1, error: 0, abort: 0, blocked: 0, unknown: 0 }, last_seen: row3.started_at,
+    });
+    expect(report.hosts[2].cells.unknown.runs).toBe(1);
+    for (const privateValue of [rootA, rootB, 'sid-1', 'acme/widget', 'wi-1']) expect(res.stdout).not.toContain(privateValue);
+
+    // Without --by-host, hosts is omitted from JSON
+    const resNoByHost = spawnSync(HELPER_BIN, [
+      'report', '--json', '--state-dir', rootA, '--state-dir', rootB,
+    ], { env: fix.env, encoding: 'utf8', timeout: 15_000 });
+    expect([resNoByHost.status, resNoByHost.stderr]).toEqual([0, '']);
+    expect(JSON.parse(resNoByHost.stdout)).not.toHaveProperty('hosts');
+
+    // Relative --state-dir is rejected as invalid arguments
+    const resRel = spawnSync(HELPER_BIN, ['report', '--state-dir', 'relative/ignored'], {
+      env: fix.env, encoding: 'utf8', timeout: 15_000,
+    });
+    expect(resRel.status).toBe(0);
+    expect(resRel.stderr).toContain('telemetry report: invalid arguments');
+    const alias = join(fix.home, 'root-alias');
+    symlinkSync(rootA, alias);
+    const aliased = spawnSync(HELPER_BIN, ['report', '--json', '--by-host', '--state-dir', rootA, '--state-dir', alias], {
+      env: fix.env, encoding: 'utf8', timeout: 15_000,
+    });
+    expect([aliased.status, aliased.stderr]).toEqual([0, '']);
+    expect(JSON.parse(aliased.stdout).rows.counted).toBe(3);
+    expect(JSON.parse(aliased.stdout).files.read).toBe(2);
+    for (const args of [['--state-dir'], ['--json', '--json'], ['--by-host', '--by-host']]) {
+      const rejected = spawnSync(HELPER_BIN, ['report', ...args], { env: fix.env, encoding: 'utf8', timeout: 15_000 });
+      expect([rejected.status, rejected.stdout]).toEqual([0, '']);
+      expect(rejected.stderr).toContain('telemetry report: invalid arguments');
+    }
+    for (const flags of [[], ['--json']]) {
+      const implicit = spawnSync(HELPER_BIN, ['report', ...flags], { env: fix.env, encoding: 'utf8' });
+      const explicit = spawnSync(HELPER_BIN, ['report', ...flags, '--state-dir', join(fix.home, '.gstack-extend')], { env: fix.env, encoding: 'utf8' });
+      expect([implicit.status, implicit.stdout, implicit.stderr]).toEqual([explicit.status, explicit.stdout, explicit.stderr]);
+    }
+
+    // Value: protects=migrated and conflict-copy filenames group by validated prefix; fails_when=suffixes become hosts or invalid names leak; why_new=T6 requires migrated files and fallback labels; seam=none
+    const { host_agent_id: _oldId, ...v3Base } = row1;
+    const historical = { ...v3Base, schema_version: 3, workspace_host: 'paseo', host_agent_id: 'original-host', run_mode_source: 'Paseo' };
+    expect(validRow(historical)).toBe(true);
+    writeFileSync(join(rootA, 'analytics/stage-runs/macbook.legacy.jsonl'), JSON.stringify(historical) + '\n');
+    writeFileSync(join(rootA, 'analytics/stage-runs/INVALID.jsonl'), JSON.stringify(row3) + '\n');
+    const labeled = spawnSync(HELPER_BIN, ['report', '--json', '--by-host', '--state-dir', rootA, '--state-dir', rootB], {
+      env: fix.env, encoding: 'utf8', timeout: 15_000,
+    });
+    expect([labeled.status, labeled.stderr]).toEqual([0, '']);
+    const labels = JSON.parse(labeled.stdout);
+    expect(labels.rows.counted).toBe(6);
+    expect(labels.hosts.map((h: { host: string }) => h.host)).toEqual(['macbook', 'omarchy', '(legacy)', '(unattributed)']);
+    expect(labels.hosts[0].cells['user-directed'].runs).toBe(3);
+    expect(labels.hosts[3].cells.orchestrated.runs).toBe(1);
+
+    // Human --by-host output and duplicate host label across distinct state directories
+    writeFileSync(join(rootB, 'analytics/stage-runs/macbook.jsonl'), JSON.stringify(row1) + '\n');
+    const resHuman = spawnSync(HELPER_BIN, ['report', '--by-host', '--state-dir', rootA, '--state-dir', rootB], {
+      env: fix.env,
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(resHuman.status).toBe(0);
+    expect(resHuman.stderr).toContain('1 host label(s) appeared in more than one state directory');
+    expect(resHuman.stdout).toContain('Host                    Mode           Runs');
+    expect(resHuman.stdout).toContain('macbook');
+    expect(resHuman.stdout).toContain('omarchy');
+    expect(resHuman.stdout).toContain('(legacy)');
+    // Exact numeric host rows, independent of the implementation's column widths.
+    const hostLines = resHuman.stdout.split('Host                    Mode           Runs')[1]!.trim().split('\n').slice(1)
+      .map(line => line.trim().split(/\s+/).join(' '));
+    expect(hostLines).toEqual([
+      'macbook orchestrated 0 0 0 0 0 0 -',
+      'macbook user-directed 4 3 1 0 0 0 2026-11-08T12:00:00Z',
+      'macbook unknown 0 0 0 0 0 0 -', 'macbook unrecorded 0 0 0 0 0 0 -',
+      'omarchy orchestrated 1 1 0 0 0 0 2026-11-08T12:00:00Z',
+      'omarchy user-directed 0 0 0 0 0 0 -', 'omarchy unknown 0 0 0 0 0 0 -', 'omarchy unrecorded 0 0 0 0 0 0 -',
+      '(legacy) orchestrated 0 0 0 0 0 0 -', '(legacy) user-directed 0 0 0 0 0 0 -',
+      '(legacy) unknown 1 1 0 0 0 0 2026-11-08T12:00:00Z', '(legacy) unrecorded 0 0 0 0 0 0 -',
+      '(unattributed) orchestrated 1 1 0 0 0 0 2026-11-08T12:00:00Z',
+      '(unattributed) user-directed 0 0 0 0 0 0 -', '(unattributed) unknown 0 0 0 0 0 0 -', '(unattributed) unrecorded 0 0 0 0 0 0 -',
+    ]);
+  }, 30_000);
+
+  test('Track 73A T7: structured transcript resume forms, signal-reader exception isolation, missing skill metadata, and report filesystem error diagnostics', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = '0c7f2e29-0000-4000-8000-000000000077';
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ID: sid };
+    const transcript = join(fix.home, '.claude/projects/project', `${sid}.jsonl`);
+
+    // Value: protects=each documented resume form and its independent wait; fails_when=human prompt detection accepts tool/meta/blank records or rejects image/text prompts; why_new=T7 requires each form in its own window; seam=none
+    const begin = 1790000100;
+    for (const [name, content, meta, counted] of [
+      ['text blocks', [{ type: 'text', text: 'PROMPT_ARRAY_CANARY' }], false, true],
+      ['image', [{ type: 'image', source: { type: 'base64', data: 'IMAGE_CANARY' } }], false, true],
+      ['empty list', [], false, false],
+      ['tool result with text', [{ type: 'tool_result', tool_use_id: 'u1' }, { type: 'text', text: 'MIXED_CANARY' }], false, false],
+      ['meta string', 'META_CANARY', true, false],
+      ['blank string', '   ', false, false],
+      ['blank text blocks', [{ type: 'text', text: '   ' }], false, false],
+      ['unsupported content', 12345, false, false],
+    ] as const) {
+      writeJsonl(transcript, [
+        { type: 'assistant', timestamp: iso(begin + 1), message: {
+          id: 'assistant', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'end_turn', content: [],
+        } },
+        { type: 'user', timestamp: iso(begin + 6), isMeta: meta, message: { role: 'user', content } },
+      ]);
+      const result = provenanceRun(fix, env, undefined, ['--outcome', 'success', '--start', String(begin)]);
+      expect(result.row, name).toMatchObject({
+        questions: 0, user_wait_s: counted ? 5 : 0, resumes: counted ? 1 : 0, user_signals_source: 'session-log',
+      });
+      expect(validRow(result.row), name).toBe(true);
+      expect(JSON.stringify(result.row)).not.toContain('CANARY');
+    }
+
+    // 2. Signal-reader exception isolation: patching claude_user_signals to raise RuntimeError("SECRET_BOOM_VALUE")
+    //    leaves the constructed row valid with null counts, user_signals_source: 'session-log-unavailable',
+    //    and never leaks the exception message.
+    const isolationScript = [
+      'import contextlib, io, json, os, sys',
+      'from unittest import mock',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
+      'stderr = io.StringIO()',
+      'with contextlib.redirect_stderr(stderr):',
+      '    with mock.patch.object(telemetry, "claude_user_signals", side_effect=RuntimeError("SECRET_BOOM_VALUE")):',
+      '        row = telemetry.provenance_row("roadmap", "sid-isolation", 1790000000, 5, {"--outcome": "success"}, None)',
+      'print(json.dumps({"row": row, "stderr": stderr.getvalue()}))',
+    ].join('\n');
+    const isoRun = spawnSync('python3', ['-B', '-I', '-c', isolationScript, join(ROOT, 'bin/lib')], {
+      env: { ...fix.env, ...env },
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect([isoRun.status, isoRun.stderr]).toEqual([0, '']);
+    const isoOut = JSON.parse(isoRun.stdout);
+    expect(isoOut.row).toMatchObject({
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'session-log-unavailable',
+    });
+    expect(validRow(isoOut.row)).toBe(true);
+    expect(isoOut.stderr).not.toContain('SECRET_BOOM_VALUE');
+    expect(isoOut.stderr).not.toContain('Traceback');
+
+    // Value: protects=real absent/non-directory install metadata retains observed stages without inventing empty cells; fails_when=metadata discovery defaults to an empty known install or loses rows; why_new=T7 previously mocked the result instead of discovery; seam=none
+    for (const shape of ['missing', 'file']) {
+      const install = copiedInstall(fix, `no-skills-${shape}`, RELEASE);
+      if (shape === 'file') writeFileSync(join(install.root, 'skills'), 'not a directory');
+      const report = install.run(['report', '--json']);
+      expect([report.status, report.stderr]).toEqual([0, '']);
+      const data = JSON.parse(report.stdout);
+      expect(data.installed_skills).toBeNull();
+      expect(data.empty_cells).toEqual([]);
+      expect(data.skills.some((s: { skill: string; installed: boolean }) => s.skill === 'roadmap' && s.installed === false)).toBe(true);
+    }
+
+    // 4. Report filesystem error diagnostics: symlinked .jsonl file and unreadable stage-runs directory increment files.unreadable
+    const fsErrRoot = join(fix.home, 'fs-err-state');
+    const fsErrRuns = join(fsErrRoot, 'analytics/stage-runs');
+    mkdirSync(fsErrRuns, { recursive: true });
+    writeFileSync(join(fsErrRoot, 'real.jsonl'), '');
+    symlinkSync(join(fsErrRoot, 'real.jsonl'), join(fsErrRuns, 'symlinked-host.jsonl'));
+
+    const fsSymRes = spawnSync(HELPER_BIN, ['report', '--json', '--state-dir', fsErrRoot], {
+      env: fix.env,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect([fsSymRes.status, fsSymRes.stderr]).toEqual([0, '']);
+    expect(JSON.parse(fsSymRes.stdout).files).toEqual({ read: 0, unreadable: 1 });
+
+    // Value: protects=per-file partial results survive directory, open, and iteration failures; fails_when=one unreadable input discards sibling or already-counted rows; why_new=T7 requires all three error boundaries; seam=none
+    const sample = { source: 'gstack-extend', schema_version: 4, stage: 'roadmap',
+      run_mode: 'user-directed', outcome: 'success', started_at: '2026-11-08T12:00:00Z' };
+    writeFileSync(join(fsErrRoot, 'analytics/stage-runs.jsonl'), JSON.stringify(sample) + '\n');
+    writeFileSync(join(fsErrRuns, 'host-a.jsonl'), JSON.stringify(sample) + '\n' + JSON.stringify(sample) + '\n');
+    writeFileSync(join(fsErrRuns, 'host-b.jsonl'), JSON.stringify(sample) + '\n');
+    rmSync(join(fsErrRuns, 'symlinked-host.jsonl'));
+    const fsErrorScript = [
+      'import io, json, os, sys',
+      'from unittest import mock',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'root, kind = sys.argv[2:4]',
+      'runs = os.path.join(root, "analytics/stage-runs")',
+      'bad_file = os.path.join(runs, "host-a.jsonl")',
+      'real_listdir, real_open, real_fdopen = os.listdir, os.open, os.fdopen',
+      'bad_fds = set()',
+      'def listdir(path):',
+      '    if kind == "listdir" and str(path) == runs: raise OSError("synthetic listdir failure")',
+      '    return real_listdir(path)',
+      'def open_file(path, flags, *args, **kwargs):',
+      '    if str(path) == bad_file and kind == "open": raise OSError("synthetic open failure")',
+      '    fd = real_open(path, flags, *args, **kwargs)',
+      '    if str(path) == bad_file: bad_fds.add(fd)',
+      '    return fd',
+      'class FailingStream:',
+      '    def __init__(self, stream): self.stream = stream',
+      '    def __enter__(self): return self',
+      '    def __exit__(self, *args): self.stream.close()',
+      '    def __iter__(self):',
+      '        yield next(self.stream)',
+      '        raise OSError("synthetic iteration failure")',
+      'def fdopen(fd, *args, **kwargs):',
+      '    fail = fd in bad_fds and kind == "iterate"',
+      '    bad_fds.discard(fd)',
+      '    stream = real_fdopen(fd, *args, **kwargs)',
+      '    return FailingStream(stream) if fail else stream',
+      'buf = io.StringIO()',
+      'with mock.patch.object(telemetry.os, "listdir", listdir), mock.patch.object(telemetry.os, "open", open_file), mock.patch.object(telemetry.os, "fdopen", fdopen), mock.patch.object(sys, "stdout", buf):',
+      '    rc = telemetry.run_report(["--json", "--state-dir", root])',
+      'print(json.dumps({"rc": rc, "data": json.loads(buf.getvalue())}))',
+    ].join('\n');
+    for (const [kind, read, counted] of [['listdir', 1, 1], ['open', 2, 2], ['iterate', 3, 3]] as const) {
+      const result = spawnSync('python3', ['-B', '-I', '-c', fsErrorScript, join(ROOT, 'bin/lib'), fsErrRoot, kind], {
+        env: fix.env, encoding: 'utf8', timeout: 10_000,
+      });
+      expect([result.status, result.stderr], kind).toEqual([0, '']);
+      const output = JSON.parse(result.stdout);
+      expect(output.rc).toBe(0);
+      expect(output.data.files, kind).toEqual({ read, unreadable: 1 });
+      expect(output.data.rows.counted, kind).toBe(counted);
+    }
+
   }, 30_000);
 });

@@ -1251,16 +1251,18 @@ class QuotaTests(unittest.TestCase):
         import telemetry
         os.environ['CLAUDE_CODE_ENTRYPOINT']='sdk-ts'
         os.environ['CONDUCTOR_SESSION_ID']='conductor-a'
-        self.assertEqual(telemetry.route_for('claude')[0],'conductor')
+        self.assertEqual(telemetry.route_for('claude')[0],'sdk')
         del os.environ['CONDUCTOR_SESSION_ID']
         self.assertEqual(telemetry.route_for('claude')[0],'sdk')
         os.environ.pop('CLAUDE_CODE_ENTRYPOINT',None)
-        self.assertEqual(telemetry.route_for('cursor',conductor_match=True)[0],'conductor')
-        for name in ('CLAUDECODE','CURSOR_AGENT','GROK_AGENT','CONDUCTOR_SESSION_ID','CODEX_THREAD_ID'):
+        self.assertEqual(telemetry.route_for('cursor')[0],'unknown')
+        os.environ['CURSOR_INVOKED_AS']='cursor-agent'
+        self.assertEqual(telemetry.route_for('cursor')[0],'cli')
+        for name in ('CLAUDECODE','CURSOR_AGENT','CURSOR_INVOKED_AS','GROK_AGENT','CONDUCTOR_SESSION_ID','CODEX_THREAD_ID'):
             os.environ.pop(name,None)
         self.assertEqual(telemetry.route_for('codex')[0],'unknown')
         os.environ['CONDUCTOR_SESSION_ID']='conductor-a'
-        self.assertEqual(telemetry.route_for('codex')[0],'conductor')
+        self.assertEqual(telemetry.route_for('codex')[0],'unknown')
         self.assertEqual(telemetry.harness_ancestor({'claude'},{10:(0,'','claude')},pid=10),'claude')
         with mock.patch.object(telemetry.subprocess,'run',side_effect=OSError('ps failed')):
             self.assertIsNone(telemetry.harness_ancestor({'claude'}))

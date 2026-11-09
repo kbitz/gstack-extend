@@ -297,6 +297,7 @@ const V1_FIELDS = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'star
 const V2_FIELDS = [...V1_FIELDS, 'workspace_host', 'host_agent_id'];
 const V3_FIELDS = [...V2_FIELDS, 'run_mode', 'run_mode_source', 'questions', 'user_wait_s', 'resumes',
   'user_signals_source', 'blocked_reason', 'blocked_reason_source'];
+const V4_FIELDS = [...V1_FIELDS, 'workspace_host', ...V3_FIELDS.slice(22)];
 // Immutable historical fixtures, independent of current docs, schema and writer constants.
 function historicalRow(): Record<string, unknown> {
   return { stage: 'roadmap', agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', rung: 0,
@@ -306,6 +307,12 @@ function historicalRow(): Record<string, unknown> {
 }
 function historicalV2Row(): Record<string, unknown> {
   return { ...historicalRow(), schema_version: 2, workspace_host: 'paseo', host_agent_id: 'example-agent' };
+}
+function historicalV3Row(): Record<string, unknown> {
+  return { ...historicalV2Row(), schema_version: 3, producer_version: '1.0.0', route: 'conductor',
+    workspace_host: 'conductor', host_agent_id: 'example-agent', run_mode: 'user-directed', run_mode_source: 'Paseo',
+    questions: null, user_wait_s: null, resumes: null, user_signals_source: 'session-log-unavailable',
+    blocked_reason: null, blocked_reason_source: 'not-blocked' };
 }
 const METADATA = V1_FIELDS.slice(15);
 
@@ -483,9 +490,9 @@ function runValidation(input?: string | Buffer, options: { cwd?: string; file?: 
     summary: result.stdout.split('\n').find(line => line.startsWith('summary: ')) ?? '' };
 }
 
-function summaryOf(counts: Partial<Record<'rows' | 'v3' | 'v2' | 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank', number>>) {
+function summaryOf(counts: Partial<Record<'rows' | 'v4' | 'v3' | 'v2' | 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank', number>>) {
   const value = (name: keyof typeof counts) => counts[name] ?? 0;
-  return `summary: rows=${value('rows')} valid=${value('v3') + value('v2') + value('v1') + value('legacy')} v3=${value('v3')} v2=${value('v2')} v1=${value('v1')} legacy=${value('legacy')} `
+  return `summary: rows=${value('rows')} valid=${value('v4') + value('v3') + value('v2') + value('v1') + value('legacy')} v4=${value('v4')} v3=${value('v3')} v2=${value('v2')} v1=${value('v1')} legacy=${value('legacy')} `
     + `invalid=${value('invalid')} unsupported=${value('unsupported')} routed=${value('routed')} blank=${value('blank')}`;
 }
 
@@ -766,19 +773,25 @@ describe('docs/stage-runs.schema.json', () => {
     const v1Outcomes = constants.outcomes.filter((value: string) => value !== 'blocked');
     if (!same(defs.outcome.enum, v1Outcomes)) mismatch('schema v1 outcome enum differs from OUTCOMES without blocked', defs.outcome.enum, v1Outcomes);
     if (!same(defs.outcome_2.enum, constants.outcomes)) mismatch('schema v2 outcome enum differs from OUTCOMES', defs.outcome_2.enum, constants.outcomes);
-    if (!same(defs.route.enum, constants.routes)) mismatch('schema route enum differs from ROUTES', defs.route.enum, constants.routes);
+    const v1Routes = [...constants.routes, 'conductor'];
+    if (!same(defs.route.enum, v1Routes)) mismatch('schema v1-v3 route enum differs from ROUTES + conductor', defs.route.enum, v1Routes);
+    if (!same(defs.route_4.enum, constants.routes)) mismatch('schema v4 route enum differs from ROUTES', defs.route_4.enum, constants.routes);
     if (!same(defs.evidence_source.enum, constants.sources)) mismatch('schema evidence_source enum differs from SOURCES', defs.evidence_source.enum, constants.sources);
     if (!same(defs.run_mode.enum, constants.run_modes)) mismatch('schema run_mode enum differs from RUN_MODES', defs.run_mode.enum, constants.run_modes);
-    if (!same(defs.run_mode_source.enum, constants.run_mode_sources)) mismatch('schema run_mode_source enum differs from RUN_MODE_SOURCES', defs.run_mode_source.enum, constants.run_mode_sources);
+    if (!same(defs.run_mode_source_4.enum, constants.run_mode_sources)) mismatch('schema v4 run_mode_source enum differs from RUN_MODE_SOURCES', defs.run_mode_source_4.enum, constants.run_mode_sources);
     if (!same(defs.user_signals_source.enum, constants.user_signals_sources)) mismatch('schema user_signals_source enum differs from USER_SIGNALS_SOURCES', defs.user_signals_source.enum, constants.user_signals_sources);
     if (!same(defs.blocked_reason_source.enum, constants.blocked_reason_sources)) mismatch('schema blocked_reason_source enum differs from BLOCKED_REASON_SOURCES', defs.blocked_reason_source.enum, constants.blocked_reason_sources);
     expect(defs.schema_version.const).toBe(1);
     expect(defs.schema_version_2.const).toBe(2);
-    expect(defs.schema_version_3.const).toBe(constants.schema_version);
+    expect(defs.schema_version_3.const).toBe(3);
+    expect(defs.schema_version_4.const).toBe(constants.schema_version);
     // One release grammar: what the writer accepts from VERSION is exactly what the schema accepts.
     expect(defs.producer_version.pattern).toBe('^[0-9]+(\\.[0-9]+){3}$');
     expect(defs.producer_version_2.pattern).toBe('^' + constants.release + '$');
     expect(Object.keys(schema.properties)).toEqual(V3_FIELDS);
+    expect(Object.keys(defs.v4.properties)).toEqual(V3_FIELDS);
+    expect(defs.v4.required).toEqual(V4_FIELDS);
+    expect(defs.v4.properties.host_agent_id).toBe(false);
     expect(Object.keys(defs.v3.properties)).toEqual(V3_FIELDS);
     expect(defs.v3.required).toEqual(V3_FIELDS);
     expect(Object.keys(defs.v2.properties)).toEqual(V3_FIELDS);
@@ -789,7 +802,7 @@ describe('docs/stage-runs.schema.json', () => {
     expect(Object.keys(defs.legacy.properties)).toEqual([...V1_FIELDS.slice(0, 15), ...METADATA.slice(1), ...V3_FIELDS.slice(20)]);
   });
 
-  test('wrapper-emitted rows are v3, name this checkout as producer, and validate', () => {
+  test('wrapper-emitted rows are v4, name this checkout as producer, and validate', () => {
     const fix = makeTelemetryFixture('off');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const sid = '0c7f2e29-0000-4000-8000-0000000000c1';
@@ -811,8 +824,8 @@ describe('docs/stage-runs.schema.json', () => {
       [run(claude, ['--agent', 'codex']), ['flag', 'unknown', 'unknown']],
     ];
     for (const [row, sources] of cases) {
-      expect(Object.keys(row)).toEqual(V3_FIELDS);
-      expect(row).toMatchObject({ schema_version: 3, producer_version: RELEASE });
+      expect(Object.keys(row)).toEqual(V4_FIELDS);
+      expect(row).toMatchObject({ schema_version: 4, producer_version: RELEASE });
       expect([row.agent_source, row.model_source, row.effort_source]).toEqual(sources);
       expect(verdict(row)).toEqual({ ok: true, errors: [] });
     }
@@ -825,14 +838,14 @@ describe('docs/stage-runs.schema.json', () => {
     expect(runTelemetry(requestedEnv, repo, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runTelemetry(requestedEnv, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     const requestedRow = fix.readLedger().at(-1)!;
-    expect(Object.keys(requestedRow)).toEqual(V3_FIELDS);
+    expect(Object.keys(requestedRow)).toEqual(V4_FIELDS);
     expect(requestedRow).toMatchObject({ model: 'requested-model', effort: 'high' });
     expect([requestedRow.agent_source, requestedRow.model_source, requestedRow.effort_source]).toEqual([
       'unknown', 'requested', 'requested',
     ]);
     expect(verdict(requestedRow)).toEqual({ ok: true, errors: [] });
     const validated = runValidation(JSON.stringify(requestedRow));
-    expect([validated.status, validated.summary]).toEqual([0, summaryOf({ rows: 1, v3: 1 })]);
+    expect([validated.status, validated.summary]).toEqual([0, summaryOf({ rows: 1, v4: 1 })]);
 
     const sid = '0c7f2e29-0000-4000-8000-0000000000c2';
     const claudeEnv = { ...requestedEnv, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid };
@@ -853,9 +866,9 @@ describe('docs/stage-runs.schema.json', () => {
     expect(verdict(detectedRow)).toEqual({ ok: true, errors: [] });
   }, 30_000);
 
-  test('v2 and v3 three-part producers pass schema and documented reader; malformed widths fail', () => {
+  test('v2, v3, and v4 three-part producers pass schema and documented reader; malformed widths fail', () => {
     for (const producer_version of ['0.47.0', '1.0.0', '0.47', '0.47.0.0.0']) {
-      for (const [base, kind] of [[historicalV2Row(), 'v2'], [quickstartRow(), 'v3']] as const) {
+      for (const [base, kind] of [[historicalV2Row(), 'v2'], [historicalV3Row(), 'v3'], [quickstartRow(), 'v4']] as const) {
         const row = { ...base, producer_version };
         const valid = ['0.47.0', '1.0.0'].includes(producer_version);
         expect(verdict(row).ok).toBe(valid);
@@ -907,7 +920,7 @@ describe('docs/stage-runs.schema.json', () => {
       [{ schema_version: 0 }, ['/schema_version const']],
       [{ schema_version: -1 }, ['/schema_version const']],
       [{ schema_version: 1.5 }, ['/schema_version type', '/schema_version const']],
-      [{ schema_version: 4 }, ['/schema_version const']],
+      [{ schema_version: 5 }, ['/schema_version const']],
       [{ schema_version: true }, ['/schema_version type', '/schema_version const']],
       [{ stage: 7 }, ['/stage type']],
       [{ agent: 'gpt' }, ['/agent enum']],
@@ -949,16 +962,18 @@ describe('docs/stage-runs.schema.json', () => {
     }
   });
 
-  test('quota runs enrichment is unchanged by v1/v2/v3 metadata and per-host files, and the metadata never reaches skill-usage', () => {
+  test('quota runs enrichment is unchanged by v1/v2/v3/v4 metadata and per-host files, and the metadata never reaches skill-usage', () => {
     const quota = quotaFixture();
     try {
       const attribution = { agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor', agent_source: 'flag' };
       const v1 = { ...historicalRow(), ...attribution };
       const v2 = { ...historicalV2Row(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
-      const v3 = { ...quickstartRow(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
+      const v3 = { ...historicalV3Row(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
+      const v4 = { ...quickstartRow(), agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'sdk', agent_source: 'flag', workspace_host: 'paseo' };
       expect(v1.schema_version).toBe(1);
       expect(v2.schema_version).toBe(2);
       expect(v3.schema_version).toBe(3);
+      expect(v4.schema_version).toBe(4);
       const ledger = join(quota.env.GSTACK_EXTEND_STATE_DIR, 'analytics/stage-runs.jsonl');
       const hostDir = join(quota.env.GSTACK_EXTEND_STATE_DIR, 'analytics/stage-runs');
       mkdirSync(hostDir, { recursive: true });
@@ -967,7 +982,10 @@ describe('docs/stage-runs.schema.json', () => {
         { ...v2, producer_version: '1.0.0', session_id: 'run-v2-stable' },
         { ...v2, model: 'stale-model', session_id: 'run-v3' }]
         .map(row => JSON.stringify(row)).join('\n') + '\n');
-      writeFileSync(join(hostDir, 'host-a.jsonl'), JSON.stringify({ ...v3, session_id: 'run-v3' }) + '\n');
+      writeFileSync(join(hostDir, 'host-a.jsonl'), [
+        JSON.stringify({ ...v3, session_id: 'run-v3' }),
+        JSON.stringify({ ...v4, session_id: 'run-v4' }),
+      ].join('\n') + '\n');
       const enriched = (sid: string) => {
         for (const [phase, at] of [['start', '2026-09-23T12:00:00Z'], ['finish', '2026-09-23T12:01:00Z']]) {
           const sample = quota.run(['sample', '--session-id', sid, '--phase', phase, '--json'], { GSTACK_EXTEND_QUOTA_NOW: at });
@@ -985,6 +1003,7 @@ describe('docs/stage-runs.schema.json', () => {
       expect(enriched('run-v2')).toEqual([expected]);
       expect(enriched('run-v2-stable')).toEqual([expected]);
       expect(enriched('run-v3')).toEqual([expected]);
+      expect(enriched('run-v4')).toEqual([{ ...expected, route: 'sdk' }]);
       expect(enriched('run-legacy')).toEqual([expected]);
     } finally {
       quota.cleanup();
@@ -992,7 +1011,7 @@ describe('docs/stage-runs.schema.json', () => {
     const fix = makeTelemetryFixture('community');
     expect(runTelemetry(fix.env, ROOT, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runTelemetry(fix.env, ROOT, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(Object.keys(fix.readLedger()[0])).toEqual(V3_FIELDS);
+    expect(Object.keys(fix.readLedger()[0])).toEqual(V4_FIELDS);
     const usage = JSON.stringify(fix.readJsonl()) + fix.readStubArgs().join('\n');
     for (const field of [...METADATA, ...V3_FIELDS.slice(20), 'producer', 'schema-version', 'detected']) expect(usage).not.toContain(field);
   }, 60_000);
@@ -1024,12 +1043,12 @@ describe('docs/telemetry.md schema validation command', () => {
     const doc = docText();
     const command = validationCommand(doc);
     const [success, failure] = documentedOutputs(doc);
-    // The included row is the quickstart row, so both examples stay one valid v2 row.
+    // The included row is the quickstart row, so both examples stay one valid v4 row.
     expect(command).toContain('const EXAMPLE = ' + JSON.stringify(quickstartRow()) + ';');
     const result = runValidation();
     expect([result.status, result.stdout.trimEnd(), result.stderr]).toEqual([0, success, '']);
     const v1 = quickstartRow();
-    const shown = runValidation([{ ...v1, model: null, model_source: 'flag' }, { ...v1, schema_version: 4 }]
+    const shown = runValidation([{ ...v1, model: null, model_source: 'flag' }, { ...v1, schema_version: 5 }]
       .map(row => JSON.stringify(row)).join('\n') + '\n');
     expect([shown.status, (shown.stderr + shown.stdout).trimEnd()]).toEqual([1, failure]);
     expect(shown.stdout).toBe(shown.summary + '\n');
@@ -1060,7 +1079,7 @@ describe('docs/telemetry.md schema validation command', () => {
     [JSON.stringify({ ...v1(), schema_version: 1.5 }), 'invalid'],
     [JSON.stringify({ ...v1(), schema_version: 0 }), 'invalid'],
     [JSON.stringify({ ...v1(), schema_version: -3 }), 'invalid'],
-    [JSON.stringify({ ...v1(), schema_version: 4 }), 'unsupported'],
+    [JSON.stringify({ ...v1(), schema_version: 5 }), 'unsupported'],
     [JSON.stringify({ ...v1(), schema_version: 7 }), 'unsupported'],
     ['{"stage": "roadmap",', 'invalid'],
     ['null', 'invalid'],
@@ -1399,223 +1418,19 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(documented).toEqual(registry);
   });
 
-  test('T40 documents the store contract, the reason rows, and the pending native check', () => {
+  test('Cursor and quota documents the retired Conductor store, transcript-unreadable anchor, and honored orchestration-contract status', () => {
     const doc = readFileSync(DOC, 'utf8');
     const cursor = doc.slice(doc.indexOf('## Cursor and quota'));
     expect(cursor.startsWith('## Cursor and quota')).toBe(true);
-    expect(cursor).toContain('numeric_unit="milliseconds"');
-    expect(cursor).toContain('epoch milliseconds');
-    expect(cursor).toContain('list of `{id, value}`');
-    expect(cursor).toContain('`params` may be a dict');
-    expect(cursor).toContain('not served or billed proof');
-    expect(cursor).toContain('0.36.0.1');
-    expect(cursor).toContain('dated pre-repair');
-    expect(cursor).toContain('designs/review-independence.md#8-provenance-feasibility');
-    expect(cursor).toContain('Doctor reports skill-usage pairing, not model coverage');
-    expect(cursor).toContain('GSTACK_EXTEND_TELEMETRY_DEBUG=1');
-    expect(cursor).toContain('`pwd -P`');
-    expect(cursor).toContain('stale open run');
-    expect(cursor).toContain('2-5 minute target is an unmeasured');
-    expect(cursor).toContain('not native evidence');
+    expect(cursor).toContain("Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read");
+    expect(cursor).toContain('id="cursor-sdk-historical-route"');
+    expect(cursor).toContain('id="cursor-sdk-transcript-unreadable"');
+    expect(cursor).toContain('id="cursor-ledger-recipe"');
     expect(cursor.replace(/\s+/g, ' ')).toContain('Do not rewrite old rows');
-    expect(cursor).toContain('100000000000');
-    expect(cursor).toContain('does not change supported Paseo behavior');
-    expect(doc).toContain('Captured 2026-09-25T12:28:18Z');
-    // Anchors come from the registry; the registry-to-docs lock test above owns their order and spelling.
-    const registry = spawnSync('python3', ['-B', '-I', '-c',
-      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_REASONS))',
-      join(ROOT, 'bin/lib')], { encoding: 'utf8' });
-    expect(registry.status).toBe(0);
-    for (const [, anchor] of JSON.parse(registry.stdout) as Array<[string, string]>) {
-      expect(cursor).toContain(`id="${anchor}"`);
-    }
-    // Debug privacy is promised only for the fixed reason lines; the provenance trace prints recorded values.
-    expect(cursor.replace(/\s+/g, ' ')).toContain('provenance agent=… model=… effort=…');
-    expect(cursor.replace(/\s+/g, ' ')).toContain('Copy only lines that begin `telemetry: cursor-sdk` into a receipt');
-  });
 
-  /** The cause registry as the reader exports it: [token, class] in print order. */
-  function causeRegistry() {
-    const result = spawnSync('python3', ['-B', '-I', '-c',
-      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_CAUSES))',
-      join(ROOT, 'bin/lib')], { encoding: 'utf8' });
-    expect([result.status, result.stderr]).toEqual([0, '']);
-    return JSON.parse(result.stdout) as Array<[string, string]>;
-  }
-
-  test('every incomplete-evidence cause has its documented row, in order, with its class', () => {
-    const doc = readFileSync(DOC, 'utf8');
-    // A separate anchor namespace, so the reason-anchor lock above keeps matching only cursor-sdk-* rows.
-    const rows = [...doc.matchAll(/<a id="cursor-cause-([a-z-]+)"><\/a>`([a-z-]+)` \| [^|]*\| ([a-z-]+) \|/g)];
-    for (const row of rows) expect(row[1]).toBe(row[2]);
-    expect(rows.map(row => [row[2], row[3]])).toEqual(causeRegistry());
-    expect(new Set(causeRegistry().map(([, kind]) => kind))).toEqual(new Set(['transient', 'store-changed', 'persistent', 'reader-bug']));
-  });
-
-  test('T40 documents both layouts, the fail-closed rule, the privacy and no-write guarantees, and the revisit triggers', () => {
-    const doc = readFileSync(DOC, 'utf8');
-    const cursor = doc.slice(doc.indexOf('## Cursor and quota'));
-    const flat = cursor.replace(/\s+/g, ' ');
-    // Guarantees only: the open mode, URI flags and sidecar table live in code comments and are not locked here.
-    expect(cursor).toContain('`index.db`');
-    expect(flat).toContain('two Conductor-internal layouts');
-    expect(flat).toContain('best effort');
-    expect(flat).toContain('creates no file in the store');
-    expect(flat).toContain('`metadata_json`, the agent\'s key column, is never read');
-    expect(flat).toMatch(/shard with both, a shard with neither .* each make the capture incomplete \(`incomplete-evidence`, route `unknown`\)/);
-    expect(flat).toContain('The `0.36.2.0` repair applied to NDJSON shards only');
-    expect(flat).toContain('Certification needs exactly one Conductor prompt');
-    expect(flat).toContain('A stage that spans several prompts in one conversation stays unknown (`ambiguous-candidates`) by design');
-    expect(flat).toContain('the SQLite schema or file layout changes');
-    expect(flat).toContain('`ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt) Conductor stages in receipt 2 or the Conductor host-qualification evidence');
-    expect(flat).toContain('a SQLite shard reaches the row cap, a run status other than RUNNING, FINISHED or CANCELLED appears');
-    expect(flat).toContain('`malformed-bounds` shows on every SQLite run');
-    expect(flat).toContain('Cursor offers low, medium, high and xhigh, so `none` is not a valid expectation');
-    expect(flat).toContain('The 2-5 minute target covers this classification, not the recovery of a past cause');
-    expect(flat).toContain('never delete or edit store files');
-    // The row explains the cause list instead of repeating it.
-    expect(cursor).toContain('[Incomplete-evidence causes](#cursor-causes)');
-    expect(cursor).toContain('id="cursor-causes"');
-  });
-});
-
-const SMOKE_RECIPE_MARK = '# gstack-extend-cursor-smoke-recipe';
-const SMOKE_SENTINEL = 'SENTINEL-SMOKE-STORE';
-const SQLITE_STORE_DDL = [
-  'CREATE TABLE agents(agent_id TEXT PRIMARY KEY, workspace_ref TEXT NOT NULL, status TEXT NOT NULL, active_run_id TEXT, latest_checkpoint_ref_json TEXT, name TEXT, metadata_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
-  'CREATE TABLE runs(run_id TEXT PRIMARY KEY, request_id TEXT, agent_id TEXT NOT NULL, turn_number INTEGER NOT NULL, status TEXT NOT NULL, model TEXT, model_params_json TEXT, start_checkpoint_ref_json TEXT, latest_checkpoint_ref_json TEXT, error_code TEXT, usage_ref TEXT, usage_json TEXT, result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, cancelled_at TEXT, expired_at TEXT)',
-];
-// Fixed tokens, integers, booleans and a version: nothing else may reach a pasted receipt.
-const SMOKE_TOKEN = '[a-z]+(?:-[a-z]+)*';
-const SMOKE_LIST = `(?:none|${SMOKE_TOKEN}(?:,${SMOKE_TOKEN})*)`;
-const SMOKE_BOOL = '(?:true|false)';
-const SMOKE_LINE = new RegExp('^(?:' + [
-  'sqlite_version (?:none|\\d+(?:\\.\\d+)+)',
-  'status (?:read|absent|unreadable)',
-  'layouts ndjson=\\d+ sqlite=\\d+ mixed=\\d+ unrecognized=\\d+ unreadable=\\d+',
-  `complete ${SMOKE_BOOL}`,
-  `causes ${SMOKE_LIST}`,
-  `shard \\d+ certify=${SMOKE_BOOL} reasons=${SMOKE_LIST} model=${SMOKE_BOOL} effort=${SMOKE_BOOL} turns=(?:none|\\d+),(?:none|\\d+),\\d+`,
-  `real-identity (?:no-match|certify=${SMOKE_BOOL} reasons=${SMOKE_LIST} model=${SMOKE_BOOL} effort=${SMOKE_BOOL})`,
-  'result (?:ok|blocked)',
-].join('|') + ')$');
-
-function cursorSmokeRecipe() {
-  const doc = readFileSync(DOC, 'utf8');
-  const python = [...doc.matchAll(/```python\n([\s\S]*?)```/g)].map(match => match[1]);
-  const marked = python.filter(body => body.startsWith(SMOKE_RECIPE_MARK + '\n'));
-  expect(marked).toHaveLength(1);
-  return marked[0];
-}
-
-function storeListing(root: string): string[] {
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true, recursive: true }).map(entry => join(entry.parentPath ?? entry.path, entry.name)).sort();
-}
-
-describe('Conductor Cursor live-smoke recipe', () => {
-  const now = Math.floor(Date.now() / 1000);
-  const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
-
-  /** Plants stores with the stdlib only, so the recipe is exercised without the test harness. */
-  function plant(fixture: ReturnType<typeof makeTelemetryFixture>, work: string, kind: 'certifying' | 'failed' | 'zero-sqlite') {
-    const store = join(fixture.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store');
-    mkdirSync(store, { recursive: true });
-    const script = [
-      'import json, os, sqlite3, sys',
-      'store, work, kind, now, sentinel = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]',
-      'def iso(seconds):',
-      '    import datetime',
-      '    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")',
-      'if kind == "zero-sqlite":',
-      '    os.makedirs(store + "/0000000000000001")',
-      '    open(store + "/0000000000000001/agents.ndjson", "w").write(json.dumps({"agentId": "conv-1", "cwd": work}) + "\\n")',
-      '    open(store + "/0000000000000001/runs.ndjson", "w").write("")',
-      'else:',
-      '    shard = store + "/0123456789abcdef"',
-      '    os.makedirs(shard + "/agents")',
-      '    conn = sqlite3.connect(shard + "/index.db", isolation_level=None)',
-      '    conn.execute("PRAGMA journal_mode=WAL")',
-      ...SQLITE_STORE_DDL.map(statement => `    conn.execute(${JSON.stringify(statement)})`),
-      '    conn.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", ("conv-1", work, "IDLE", None, None, None, sentinel, iso(now - 900), iso(now - 900)))',
-      '    for turn, (run_id, started, updated, finished, status) in enumerate([("old", now - 300, now - 200, now - 100, "FINISHED"), ("cur", now - 60, now - 10, None, "RUNNING")], 1):',
-      '        conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (run_id, None, "conv-1", turn, status, "grok-4.7",',
-      '            json.dumps([{"id": "reasoning_effort", "value": "xhigh"}]), None, None, None, None, sentinel, sentinel, iso(started), iso(updated),',
-      '            iso(started), None if finished is None else iso(finished), None, None))',
-      '    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")',
-      '    conn.close()',
-      '    for suffix in ("-wal", "-shm"):',
-      '        if os.path.lexists(shard + "/index.db" + suffix): os.unlink(shard + "/index.db" + suffix)',
-      '    if kind == "failed":',
-      '        os.makedirs(store + "/fedcba9876543210")',
-    ].join('\n');
-    const planted = spawnSync('python3', ['-I', '-c', script, store, work, kind, String(now), SMOKE_SENTINEL], { env: fixture.env, encoding: 'utf8' });
-    expect([planted.status, planted.stderr]).toEqual([0, '']);
-    return store;
-  }
-
-  function smoke(fixture: ReturnType<typeof makeTelemetryFixture>, cwd: string, env: Record<string, string> = {}) {
-    return spawnSync('python3', ['-I', '-', join(ROOT, 'bin/lib')], { input: cursorSmokeRecipe(), env: { ...fixture.env, ...env }, cwd, encoding: 'utf8', timeout: 30_000 });
-  }
-
-  function workspace(fixture: ReturnType<typeof makeTelemetryFixture>) {
-    const work = join(fixture.home, 'smoke-work');
-    mkdirSync(work, { recursive: true });
-    return realpathSync(work);
-  }
-
-  function expectQuiet(run: ReturnType<typeof smoke>, fixture: ReturnType<typeof makeTelemetryFixture>) {
-    expect(run.stderr).toBe('');
-    const lines = run.stdout.trimEnd().split('\n');
-    for (const line of lines) expect([line, SMOKE_LINE.test(line)]).toEqual([line, true]);
-    // Not even the fixture's path or a column that holds a secret may be echoed.
-    expect(run.stdout).not.toContain(SMOKE_SENTINEL);
-    expect(run.stdout).not.toContain(fixture.home);
-    expect(lines.at(-1)).toMatch(/^result (ok|blocked)$/);
-    return lines;
-  }
-
-  test('a certifying SQLite store prints sanitized tokens, exits 0, and writes nothing', () => {
-    const fixture = makeTelemetryFixture('off');
-    const work = workspace(fixture);
-    const store = plant(fixture, work, 'certifying');
-    const before = storeListing(store);
-    const found = smoke(fixture, work, { CURSOR_CONVERSATION_ID: 'conv-1' });
-    expect(found.status).toBe(0);
-    const lines = expectQuiet(found, fixture);
-    expect(lines).toContain('layouts ndjson=0 sqlite=1 mixed=0 unrecognized=0 unreadable=0');
-    expect(lines).toContain('complete true');
-    expect(lines).toContain('causes none');
-    expect(lines).toContain('shard 1 certify=true reasons=none model=true effort=true turns=1,2,2');
-    // The join a real finish performs: this shell's cwd and the conversation id.
-    expect(lines).toContain('real-identity certify=true reasons=none model=true effort=true');
-    expect(lines.at(-1)).toBe('result ok');
-    expect(storeListing(store)).toEqual(before);
-    // Run from elsewhere, the same store has no matching shard for this cwd.
-    const elsewhere = smoke(fixture, fixture.home, { CURSOR_CONVERSATION_ID: 'conv-1' });
-    expect(elsewhere.status).toBe(0);
-    expect(expectQuiet(elsewhere, fixture)).toContain('real-identity no-match');
-  });
-
-  test('an incomplete store and a store with no SQLite shard both block with a non-zero exit', () => {
-    const failing = makeTelemetryFixture('off');
-    const failedWork = workspace(failing);
-    plant(failing, failedWork, 'failed');
-    const failed = smoke(failing, failedWork);
-    expect(failed.status).not.toBe(0);
-    const failedLines = expectQuiet(failed, failing);
-    expect(failedLines).toContain('complete false');
-    expect(failedLines).toContain('causes unrecognized-layout');
-    expect(failedLines.at(-1)).toBe('result blocked');
-
-    const plain = makeTelemetryFixture('off');
-    const plainWork = workspace(plain);
-    plant(plain, plainWork, 'zero-sqlite');
-    const none = smoke(plain, plainWork);
-    expect(none.status).not.toBe(0);
-    const noneLines = expectQuiet(none, plain);
-    expect(noneLines).toContain('layouts ndjson=1 sqlite=0 mixed=0 unrecognized=0 unreadable=0');
-    expect(noneLines.at(-1)).toBe('result blocked');
+    const orchContract = readFileSync(join(ROOT, 'docs/orchestration-contract.md'), 'utf8');
+    expect(orchContract).toContain('| Host attribution | Set `GSTACK_EXTEND_WORKSPACE_OWNER=<host label>`, recorded as provenance `workspace_host` ([Host attribution](telemetry.md#host-attribution)) | `bin/lib/telemetry.py` `workspace_host()` | `honored` |');
+    expect(orchContract).toContain('| Run-mode signal | Set `GSTACK_EXTEND_RUN_MODE=orchestrated` on every stage launched, interactive or not ([Run mode](telemetry.md#run-mode)) | `bin/lib/telemetry.py` `run_mode()` | `honored` |');
   });
 });
 
@@ -1669,7 +1484,7 @@ describe('workflow metrics contract (Track 24A)', () => {
     const row = fix.readLedger()[0];
     expect(verdict(row)).toEqual({ ok: true, errors: [] });
     expect(row.session_id).toBe(sid);
-    expect(row.schema_version).toBe(3);
+    expect(row.schema_version).toBe(4);
     expect(fix.readJsonl().map(r => r.event_type)).toEqual(['skill_start', 'skill_run']);
     const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
     expect(JSON.parse(read.stdout).status).toBe('ok');
@@ -2159,14 +1974,16 @@ describe('workflow metrics contract (Track 24A)', () => {
 
 
 describe('Track 26A v2 regression bundles G1–G5/G8', () => {
-  test('G4 historical branches remain closed; v2 and v3 reserve vocabulary without widening history', () => {
+  test('G4 historical branches remain closed; v2, v3, and v4 reserve vocabulary without widening history', () => {
     const v1 = historicalRow();
     const v2 = historicalV2Row();
-    const v3 = quickstartRow();
+    const v3 = historicalV3Row();
+    const v4 = quickstartRow();
     const legacy = legacyOf(v1);
     expect(verdict(v1).ok).toBe(true);
     expect(verdict(v2).ok).toBe(true);
     expect(verdict(v3).ok).toBe(true);
+    expect(verdict(v4).ok).toBe(true);
     for (const old of [legacy, v1]) {
       for (const field of ['workspace_host', 'host_agent_id', ...V3_FIELDS.slice(22)]) {
         expect(verdict({ ...old, [field]: v3[field] }).ok).toBe(false);
@@ -2186,8 +2003,12 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       const { [field]: _gone, ...row } = v3;
       expect([field, verdict(row).ok]).toEqual([field, false]);
     }
+    for (const field of V4_FIELDS) {
+      const { [field]: _gone, ...row } = v4;
+      expect([field, verdict(row).ok]).toEqual([field, false]);
+    }
     for (const patch of [
-      { schema_version: 1 }, { schema_version: 3 }, { schema_version: 4 }, { extra: true },
+      { schema_version: 1 }, { schema_version: 3 }, { schema_version: 5 }, { extra: true },
       { workspace_host: 'unknown', host_agent_id: 'invented' }, { workspace_host: 'other' },
       { host_agent_id: 3 }, { agent_source: 'requested' },
       { model: null, model_source: 'requested' }, { effort: null, effort_source: 'requested' },
@@ -2209,7 +2030,9 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { outcome: 'blocked', blocked_reason: null, blocked_reason_source: 'not-blocked' },
       { outcome: 'success', blocked_reason: 'missing-env', blocked_reason_source: 'flag' },
       { outcome: 'success', blocked_reason: null, blocked_reason_source: 'not-supplied' },
-    ]) expect([patch, verdict({ ...v3, ...patch }).ok]).toEqual([patch, false]);
+    ]) {
+      for (const base of [v3, v4]) expect([base.schema_version, patch, verdict({ ...base, ...patch }).ok]).toEqual([base.schema_version, patch, false]);
+    }
     for (const validPatch of [
       { run_mode: 'orchestrated', run_mode_source: 'session-kind', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
       { run_mode: 'orchestrated', run_mode_source: 'work-item', user_signals_source: 'orchestrated', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'orchestrated' },
@@ -2218,6 +2041,24 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { run_mode: 'user-directed', run_mode_source: 'Paseo', outcome: 'blocked', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason: 'awaiting-user', blocked_reason_source: 'flag' },
       { run_mode: 'unknown', run_mode_source: 'launcher-state-root', outcome: 'blocked', user_signals_source: 'no-harness', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-supplied' },
     ]) expect([validPatch, verdict({ ...v3, ...validPatch }).ok]).toEqual([validPatch, true]);
+    for (const patch of [
+      { host_agent_id: null }, { host_agent_id: 'paseo-1' },
+      { route: 'conductor' },
+      { run_mode: 'unknown', run_mode_source: 'none' },
+      { run_mode: 'user-directed', run_mode_source: 'sdk-cli' },
+      { run_mode: 'user-directed', run_mode_source: 'Paseo' },
+      { run_mode: 'unknown', run_mode_source: 'cli' },
+      { run_mode: 'unknown', run_mode_source: 'paseo-entrypoint' },
+      { workspace_host: '' }, { workspace_host: '   ' },
+    ]) expect([patch, verdict({ ...v4, ...patch }).ok]).toEqual([patch, false]);
+    for (const validV4Patch of [
+      { workspace_host: null },
+      { workspace_host: 'my-host' },
+      { run_mode: 'user-directed', run_mode_source: 'cli', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { run_mode: 'user-directed', run_mode_source: 'paseo-entrypoint', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { run_mode: 'unknown', run_mode_source: 'entrypoint-unqualified', user_signals_source: 'no-harness', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { run_mode: 'unknown', run_mode_source: 'host-managed-workspace', user_signals_source: 'no-harness', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+    ]) expect([validV4Patch, verdict({ ...v4, ...validV4Patch }).ok]).toEqual([validV4Patch, true]);
     for (const source of ['flag', 'detected', 'requested']) {
       const row = { ...v2, model_source: source, effort_source: source, outcome: 'blocked' };
       expect(verdict(row).ok).toBe(true);
@@ -2230,62 +2071,56 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
 
   test('G1/G2 actual wrapper host matrix and Unicode agree with strict schema and exact docs reader', () => {
     const fix = makeTelemetryFixture('off');
-    const roots = [join(fix.home, '.paseo/worktrees/key/repo'), join(fix.home, 'custom-paseo/worktrees/key/repo'),
-      join(fix.home, 'configured-outside-root/repo'), join(fix.home, 'arbitrary'), join(fix.home, 'lookalike/.paseo/worktrees/repo')];
-    for (const root of roots) mkdirSync(root, { recursive: true });
+    const cwd = join(fix.home, 'arbitrary');
+    mkdirSync(cwd, { recursive: true });
     const rows: Record<string, unknown>[] = [];
-    const run = (markers: Record<string, string>, host: string, id: string | null,
-      harness: Record<string, string> = {}, agent: string | null = null, route = 'unknown', cwd = roots[3]) => {
+    const run = (markers: Record<string, string>, host: string | null,
+      harness: Record<string, string> = {}, agent: string | null = null, route = 'unknown') => {
       const env = { ...fix.env, ...markers, ...harness };
       expect(runTelemetry(env, cwd, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
       const result = runTelemetry(env, cwd, ['finish', '--skill', 'extend:roadmap', '--outcome', 'blocked',
         '--model', 'fixture-model', '--effort', 'high']);
       expect([result.status, result.stdout, result.stderr]).toEqual([0, '', '']);
       const row = fix.readLedger().at(-1)!;
-      expect(row).toMatchObject({ schema_version: 3, workspace_host: host, host_agent_id: id, agent, route,
+      expect(row).toMatchObject({ schema_version: 4, workspace_host: host, agent, route,
         model: 'fixture-model', effort: 'high', model_source: 'flag', effort_source: 'flag', outcome: 'blocked' });
-      expect(Object.keys(row)).toEqual(V3_FIELDS);
+      expect(row).not.toHaveProperty('host_agent_id');
+      expect(Object.keys(row)).toEqual(V4_FIELDS);
       expect(verdict(row).ok).toBe(true);
       rows.push(row);
     };
-    for (const cwd of roots) {
-      const home: Record<string, string> = cwd === roots[0] ? {} : { PASEO_HOME: join(fix.home, 'custom-paseo') };
-      run(home, 'unknown', null, {}, null, 'unknown', cwd);
-      run({ ...home, PASEO_AGENT_ID: 'paseo-id' }, 'paseo', 'paseo-id', {}, null, 'unknown', cwd);
+    // Host-specific env vars are never read in v4; only GSTACK_EXTEND_WORKSPACE_OWNER sets workspace_host.
+    run({}, null);
+    run({ PASEO_AGENT_ID: 'paseo-id' }, null);
+    run({ CONDUCTOR_SESSION_ID: 'cond-id' }, null);
+    run({ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'c' }, null);
+    run({ GSTACK_EXTEND_WORKSPACE_OWNER: 'my-host' }, 'my-host');
+    run({ GSTACK_EXTEND_WORKSPACE_OWNER: 'paseo', PASEO_AGENT_ID: 'paseo-id' }, 'paseo');
+    for (const [harness, agent, route] of [
+      [{ CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-fixture' }, 'claude', 'sdk'],
+      [{ CODEX_THREAD_ID: 'host-matrix' }, 'codex', 'unknown'],
+      [{ CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, 'cursor', 'cli'],
+    ] as Array<[Record<string, string>, string, string]>) {
+      run({ PASEO_AGENT_ID: 'p' }, null, harness, agent, route);
+      run({ CONDUCTOR_SESSION_ID: 'c' }, null, harness, agent, route);
+      run({ GSTACK_EXTEND_WORKSPACE_OWNER: 'owner-host' }, 'owner-host', harness, agent, route);
     }
-    for (const [markers, host, id] of [
-      [{ PASEO_AGENT_ID: '', CONDUCTOR_SESSION_ID: ' \t' }, 'unknown', null],
-      [{ PASEO_AGENT_ID: ' \n' }, 'unknown', null],
-      [{ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'c' }, 'unknown', null],
-      [{ PASEO_AGENT_ID: 'bad\nSENTINEL', CONDUCTOR_SESSION_ID: 'c' }, 'unknown', null],
-      [{ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'bad\nSENTINEL' }, 'unknown', null],
-      [{ CONDUCTOR_SESSION_ID: 'bad\nSENTINEL' }, 'conductor', null],
-    ] as Array<[Record<string, string>, string, string | null]>) run(markers, host, id);
-    for (const [harness, agent, routeP, routeC] of [
-      [{ CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-fixture' }, 'claude', 'sdk', 'conductor'],
-      [{ CODEX_THREAD_ID: 'host-matrix' }, 'codex', 'unknown', 'conductor'],
-      [{ CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, 'cursor', 'cli', 'cli'],
-    ] as Array<[Record<string, string>, string, string, string]>) {
-      run({ PASEO_AGENT_ID: 'p' }, 'paseo', 'p', harness, agent, routeP);
-      run({ CONDUCTOR_SESSION_ID: 'c' }, 'conductor', 'c', harness, agent, routeC);
-      run({ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'c' }, 'unknown', null, harness, agent, routeC);
-    }
-    const ids: Array<[string, string | null]> = [
+    const labels: Array<[string, string | null]> = [
       ['x', 'x'], ['x'.repeat(200), 'x'.repeat(200)], ['x'.repeat(201), null],
       ['café', 'café'], ['🎉'.repeat(200), '🎉'.repeat(200)], ['🎉'.repeat(201), null],
       [' a 🎉 ', ' a 🎉 '], ['   ', null], ['', null], ['bad\tvalue', null],
       ['bad\nvalue', null], ['bad\u007fvalue', null], ['a\u00a0b', null], ['a\u2028b', null],
       ['a\u200db', null], ['a\ue000b', null], ['a\u0378b', null],
     ];
-    for (const [id, accepted] of ids) {
-      run({ PASEO_AGENT_ID: id }, id.trim() ? 'paseo' : 'unknown', accepted);
-      expect(verdict({ ...quickstartRow(), host_agent_id: id }).ok).toBe(accepted !== null);
+    for (const [label, accepted] of labels) {
+      run({ GSTACK_EXTEND_WORKSPACE_OWNER: label }, accepted);
+      expect(verdict({ ...quickstartRow(), workspace_host: label }).ok).toBe(accepted !== null);
     }
     // Lone surrogates cannot be transported in an OS environment. Exercise the real
     // constructor with a plain inherited-environment mapping at this encoding boundary.
     const script = [
       'import json, sys', 'from unittest import mock', 'sys.path.insert(0, sys.argv[1])', 'import telemetry',
-      'with mock.patch.object(telemetry.os, "environ", {"PASEO_AGENT_ID": "bad\\ud800id"}), mock.patch.object(telemetry, "detect", return_value=(None,None,None)):',
+      'with mock.patch.object(telemetry.os, "environ", {"GSTACK_EXTEND_WORKSPACE_OWNER": "bad\\ud800id"}), mock.patch.object(telemetry, "detect", return_value=(None,None,None)):',
       '    row = telemetry.provenance_row("roadmap", "surrogate", 1790000000, 1, {}, None)',
       'print(json.dumps(row))',
     ].join('\n');
@@ -2293,12 +2128,12 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { env: fix.env, encoding: 'utf8' });
     expect([surrogate.status, surrogate.stderr]).toEqual([0, '']);
     rows.push(JSON.parse(surrogate.stdout));
-    expect(rows.at(-1)).toMatchObject({ workspace_host: 'paseo', host_agent_id: null });
-    expect(verdict({ ...quickstartRow(), host_agent_id: 'bad\ud800id' }).ok).toBe(false);
+    expect(rows.at(-1)).toMatchObject({ workspace_host: null, run_mode: 'unknown', run_mode_source: 'host-managed-workspace' });
+    expect(verdict({ ...quickstartRow(), workspace_host: 'bad\ud800id' }).ok).toBe(false);
     const result = runValidation(rows.map(row => JSON.stringify(row)).join('\n'));
-    expect([result.status, result.stderr, result.summary]).toEqual([0, '', summaryOf({ rows: rows.length, v3: rows.length })]);
-    const rejected = ids.filter(([, accepted]) => accepted === null).map(([id]) => ({ ...quickstartRow(), host_agent_id: id }));
-    rejected.push({ ...quickstartRow(), host_agent_id: 'bad\ud800id' });
+    expect([result.status, result.stderr, result.summary]).toEqual([0, '', summaryOf({ rows: rows.length, v4: rows.length })]);
+    const rejected = labels.filter(([, accepted]) => accepted === null).map(([label]) => ({ ...quickstartRow(), workspace_host: label }));
+    rejected.push({ ...quickstartRow(), workspace_host: 'bad\ud800id' });
     const invalid = runValidation(rejected.map(row => JSON.stringify(row)).join('\n'));
     expect(invalid.summary).toBe(summaryOf({ rows: rejected.length, invalid: rejected.length }));
     expect(invalid.status).toBe(1);
@@ -2308,12 +2143,12 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     const empty = { ...quickstartRow(), model: '' };
     const padded = { ...empty, model: 'x'.repeat(65535 - Buffer.byteLength(JSON.stringify(empty))) };
     const unicode = { ...quickstartRow(), model: 'a\u2028b\u2029c' };
-    const invalid = { ...quickstartRow(), host_agent_id: 'a\u2028b\u2029c' };
+    const invalid = { ...quickstartRow(), workspace_host: 'a\u2028b\u2029c' };
     const routed = { source: 'other', value: 'a\u2028b\u2029c' };
     for (const ending of ['\n', '\r', '\r\n']) {
       const input = [padded, unicode, invalid, routed].map(row => JSON.stringify(row)).join(ending) + ending;
       const result = runValidation(input);
-      expect([result.status, result.summary]).toEqual([1, summaryOf({ rows: 4, v3: 2, invalid: 1, routed: 1 })]);
+      expect([result.status, result.summary]).toEqual([1, summaryOf({ rows: 4, v4: 2, invalid: 1, routed: 1 })]);
       expect(readFileSync(result.file!, 'utf8')).toBe(input);
       expect(result.stderr).not.toMatch(/a\u2028b|a\u2029b/);
     }
@@ -2321,8 +2156,8 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
 
   test('G5 positive safe integer dispatch, mixed versions and frozen old-reader rollback are read-only', () => {
     const base = JSON.stringify(historicalRow());
-    const versions: Array<[string, 'v1' | 'v2' | 'v3' | 'unsupported' | 'invalid']> = [
-      ['1', 'v1'], ['2', 'v2'], ['3', 'v3'], ['4', 'unsupported'], ['9007199254740991', 'unsupported'],
+    const versions: Array<[string, 'v1' | 'v2' | 'v3' | 'v4' | 'unsupported' | 'invalid']> = [
+      ['1', 'v1'], ['2', 'v2'], ['3', 'v3'], ['4', 'v4'], ['5', 'unsupported'], ['9007199254740991', 'unsupported'],
       ['9007199254740992', 'invalid'], ['9007199254740993', 'invalid'], ['1e400', 'invalid'],
       ['0', 'invalid'], ['-1', 'invalid'], ['1.5', 'invalid'], ['"1"', 'invalid'], ['null', 'invalid'], ['true', 'invalid'],
     ];
@@ -2330,27 +2165,29 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       const row = kind === 'v2'
         ? JSON.stringify(historicalV2Row())
         : kind === 'v3'
-          ? JSON.stringify(quickstartRow())
-          : base.replace('"schema_version":1', '"schema_version":' + version);
+          ? JSON.stringify(historicalV3Row())
+          : kind === 'v4'
+            ? JSON.stringify(quickstartRow())
+            : base.replace('"schema_version":1', '"schema_version":' + version);
       const result = runValidation(row);
-      expect([version, result.status, result.summary]).toEqual([version, ['v1', 'v2', 'v3'].includes(kind) ? 0 : 1,
+      expect([version, result.status, result.summary]).toEqual([version, ['v1', 'v2', 'v3', 'v4'].includes(kind) ? 0 : 1,
         summaryOf({ rows: 1, [kind]: 1 })]);
       expect(readFileSync(result.file!, 'utf8')).toBe(row);
-      if (kind === 'unsupported') expect(result.stderr).toContain(`version ${version} is newer than supported versions 1/2/3`);
+      if (kind === 'unsupported') expect(result.stderr).toContain(`version ${version} is newer than supported versions 1/2/3/4`);
       if (kind === 'invalid') {
         expect(result.stderr).toContain('not a positive safe integer');
         expect(result.stderr).not.toContain('version ' + version);
       }
     }
-    const text = [legacyOf(historicalRow()), historicalRow(), historicalV2Row(), quickstartRow()].map(row => JSON.stringify(row)).join('\n');
-    expect(runValidation(text).summary).toBe(summaryOf({ rows: 4, legacy: 1, v1: 1, v2: 1, v3: 1 }));
+    const text = [legacyOf(historicalRow()), historicalRow(), historicalV2Row(), historicalV3Row(), quickstartRow()].map(row => JSON.stringify(row)).join('\n');
+    expect(runValidation(text).summary).toBe(summaryOf({ rows: 5, legacy: 1, v1: 1, v2: 1, v3: 1, v4: 1 }));
     const fix = makeTelemetryFixture('off');
     const file = join(fix.home, 'old-reader.jsonl');
     writeFileSync(file, text);
     const old = spawnSync('bash', ['-c', V1_READER_COMMAND], { cwd: ROOT,
       env: { HOME: fix.home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', STAGE_RUNS_FILE: file }, encoding: 'utf8' });
     expect([old.status, old.stderr]).toEqual([1, '']);
-    expect(old.stdout).toContain('summary: rows=4 valid=2 v1=1 legacy=1 invalid=0 unsupported=2');
+    expect(old.stdout).toContain('summary: rows=5 valid=2 v1=1 legacy=1 invalid=0 unsupported=3');
     expect(old.stdout).toContain('newer than this contract');
     expect(readFileSync(file, 'utf8')).toBe(text);
   }, 30_000);
@@ -2404,7 +2241,7 @@ describe('paused and resumed segments', () => {
     expect(new Set(rows.map(row => row.session_id)).size).toBe(2);
     expect(rows.map(row => row.work_item)).toEqual(['item-53a', 'item-53a']);
     for (const row of rows) {
-      expect(row.schema_version).toBe(3);
+      expect(row.schema_version).toBe(4);
       expect(verdict(row)).toEqual({ ok: true, errors: [] });
     }
 
@@ -2412,7 +2249,7 @@ describe('paused and resumed segments', () => {
     const all = [legacyOf(v1), v1, ...rows];
     const result = runValidation(all.map(row => JSON.stringify(row)).join('\n') + '\n');
     expect(result.status).toBe(0);
-    expect(result.summary).toBe(summaryOf({ rows: 4, v3: 2, v1: 1, legacy: 1 }));
+    expect(result.summary).toBe(summaryOf({ rows: 4, v4: 2, v1: 1, legacy: 1 }));
   }, 60_000);
 });
 
@@ -2576,10 +2413,10 @@ describe('Track 67A usage capture and workflow-metrics v2 schema contract', () =
   });
 });
 
-describe('stage-runs v3: run_mode, usability signals, per-host files, migration, and report', () => {
+describe('stage-runs v4: run_mode, usability signals, per-host files, migration, and report', () => {
   test('run_mode branches follow the amended rule and validate against stage-runs.schema.json', () => {
     const fix = makeTelemetryFixture('off');
-    const repo = initCheckout(fix.home, fix.env, 'checkout-v3-mode', 'git@github.com:acme/widget.git');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-v4-mode', 'git@github.com:acme/widget.git');
     const customGstackHome = join(fix.home, 'custom-gstack-home');
     mkdirSync(customGstackHome, { recursive: true });
 
@@ -2634,42 +2471,84 @@ describe('stage-runs v3: run_mode, usability signals, per-host files, migration,
         expectedSource: 'launcher-state-root',
       },
       {
+        name: 'GSTACK_EXTEND_WORKSPACE_OWNER blocks user-directed',
+        env: { GSTACK_EXTEND_WORKSPACE_OWNER: 'paseo', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'unknown',
+        expectedSource: 'host-managed-workspace',
+      },
+      {
+        name: 'malformed GSTACK_EXTEND_WORKSPACE_OWNER fails closed as host-managed-workspace',
+        env: { GSTACK_EXTEND_WORKSPACE_OWNER: 'bad\nowner', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        expectedMode: 'unknown',
+        expectedSource: 'host-managed-workspace',
+      },
+      {
         name: 'Claude cli interactive entrypoint',
         env: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         expectedMode: 'user-directed',
         expectedSource: 'cli',
       },
       {
-        name: 'Paseo entrypoint Paseo',
+        name: 'Paseo app entrypoint Paseo qualifies as user-directed with paseo-entrypoint',
         env: { PASEO_AGENT_ID: 'paseo-1', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' },
         expectedMode: 'user-directed',
-        expectedSource: 'Paseo',
+        expectedSource: 'paseo-entrypoint',
       },
       {
-        name: 'Paseo SDK entrypoint sdk-cli',
+        name: 'SDK entrypoint sdk-cli is unqualified',
         env: { PASEO_AGENT_ID: 'paseo-2', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' },
-        expectedMode: 'user-directed',
-        expectedSource: 'sdk-cli',
+        expectedMode: 'unknown',
+        expectedSource: 'entrypoint-unqualified',
       },
       {
-        name: 'Paseo SDK entrypoint sdk-ts',
+        name: 'SDK entrypoint sdk-ts is unqualified',
         env: { PASEO_AGENT_ID: 'paseo-3', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' },
-        expectedMode: 'user-directed',
-        expectedSource: 'sdk-ts',
+        expectedMode: 'unknown',
+        expectedSource: 'entrypoint-unqualified',
       },
       {
-        name: 'Paseo ACP entrypoint acp',
+        name: 'ACP entrypoint acp is unqualified',
         env: { PASEO_AGENT_ID: 'paseo-4', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'acp' },
-        expectedMode: 'user-directed',
-        expectedSource: 'acp',
+        expectedMode: 'unknown',
+        expectedSource: 'entrypoint-unqualified',
       },
       {
-        name: 'unreadable/missing entrypoint yields unknown',
+        name: 'missing entrypoint on Claude yields entrypoint-unavailable',
         env: { CLAUDECODE: '1' },
         expectedMode: 'unknown',
-        expectedSource: 'none',
+        expectedSource: 'entrypoint-unavailable',
+      },
+      {
+        name: 'non-Claude harness yields harness-unqualified',
+        env: { CODEX_THREAD_ID: 'codex-1' },
+        expectedMode: 'unknown',
+        expectedSource: 'harness-unqualified',
+      },
+      {
+        name: 'no harness yields no-harness',
+        env: {},
+        expectedMode: 'unknown',
+        expectedSource: 'no-harness',
       },
     ];
+
+    // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
+    for (const [name, harness] of [
+      ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
+      ['Claude Paseo', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' }],
+      ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
+      ['Cursor', { CURSOR_AGENT: '1' }],
+      ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
+    ] as Array<[string, Record<string, string>]>) {
+      for (const owner of ['', 'fixture-owner']) {
+        cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
+          env: { ...harness, GSTACK_EXTEND_RUN_MODE: 'orchestrated', GSTACK_EXTEND_WORKSPACE_OWNER: owner },
+          expectedMode: 'orchestrated', expectedSource: 'run-mode-env' });
+      }
+    }
+    cases.push({ name: 'relative GSTACK_HOME is malformed supporting evidence',
+      env: { GSTACK_HOME: 'relative-root', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+      expectedMode: 'unknown', expectedSource: 'malformed-signal' });
 
     for (const tc of cases) {
       const env = { ...fix.env, ...tc.env };
@@ -2794,7 +2673,7 @@ describe('stage-runs v3: run_mode, usability signals, per-host files, migration,
     });
     expect([result.status, result.stderr]).toEqual([0, '']);
     expect(result.stdout.trimEnd().split('\n')).toEqual([
-      summaryOf({ rows: 1, v3: 1 }),
+      summaryOf({ rows: 1, v4: 1 }),
       ...files.map((_, index) => summaryOf({ rows: index + 1, v1: index + 1 })),
     ]);
     // One invalid file must fail the whole block without hiding the remaining host results.
@@ -2805,9 +2684,35 @@ describe('stage-runs v3: run_mode, usability signals, per-host files, migration,
     });
     expect(invalid.status).toBe(1);
     expect(invalid.stdout.trimEnd().split('\n')).toEqual([
-      summaryOf({ rows: 1, v3: 1 }), summaryOf({ rows: 1, v1: 1 }),
+      summaryOf({ rows: 1, v4: 1 }), summaryOf({ rows: 1, v1: 1 }),
       summaryOf({ rows: 1, invalid: 1 }), summaryOf({ rows: 3, v1: 3 }),
       summaryOf({ rows: 4, v1: 4 }),
     ]);
   }, 30_000);
+
+  test('hand-use qualification record and docs/telemetry.md notice match the pending-PM1 contract', () => {
+    const recordPath = join(ROOT, 'docs/acceptance/hand-use-telemetry.md');
+    expect(existsSync(recordPath)).toBe(true);
+    const record = readFileSync(recordPath, 'utf8');
+    for (const h of [
+      '## What counts',
+      '## Readback procedure',
+      '## Recorded runs',
+      '## Harnesses and entrypoints that read `unknown`',
+    ]) {
+      expect(record).toContain(h);
+    }
+    expect(record).toContain('paseo-entrypoint');
+    expect(record).toContain('GSTACK_EXTEND_RUN_MODE=orchestrated');
+    const telemetryDoc = docText();
+    const runModeSection = section(telemetryDoc, '### Run mode');
+    // Value: protects=pending qualification stays honest until real evidence is recorded; fails_when=empty evidence loses its notice or later evidence is forced pending; why_new=T9 requires the conditional transition; seam=none
+    const recordedRuns = section(record, '## Recorded runs').split('\n')
+      .filter(line => line.trim().startsWith('|')).slice(2);
+    if (recordedRuns.length === 0) {
+      expect(record).toMatch(/^Status: pending/m);
+      expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
+      expect(runModeSection).toContain('Hand-use capture is not yet established: no real by-hand run has been read back');
+    }
+  });
 });
