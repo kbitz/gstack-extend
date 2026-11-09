@@ -364,6 +364,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'tests/fixtures/quota/**',
     'docs/stage-runs.schema.json',
     'docs/telemetry.md',
+    'docs/acceptance/hand-use-telemetry.md',
     'setup',
     'VERSION',
   ],

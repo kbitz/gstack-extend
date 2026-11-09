@@ -8,7 +8,6 @@ import errno
 import fcntl
 import hashlib
 import json
-import math
 import os
 import stat
 from collections import Counter
@@ -33,27 +32,32 @@ PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
 HARNESSES = ("claude", "codex", "grok", "cursor")
 OUTCOMES = ("success", "error", "abort", "blocked", "unknown")
-ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "conductor", "sdk", "unknown"
-ROUTES = (ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN)
+ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "sdk", "unknown"
+ROUTES = (ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN)
 # Where a row's agent, model or effort value came from. A null value is always unknown.
 SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN = "flag", "detected", "unknown"
 SOURCE_REQUESTED = "requested"
 SOURCES = (SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN)
 # The stage-runs row format in docs/stage-runs.schema.json. Bump it, and add a schema branch, when the row's
 # shape or meaning changes; a release alone does not. Unrelated to skill-usage's v and PROTOCOL_MARKER.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+WORKSPACE_OWNER_ENV = "GSTACK_EXTEND_WORKSPACE_OWNER"
 RUN_MODE_ENV = "GSTACK_EXTEND_RUN_MODE"
 RUN_MODES = ("user-directed", "orchestrated", "unknown")
-PASEO_INTERACTIVE_ENTRYPOINTS = ("Paseo", "sdk-cli", "sdk-ts", "acp")
 RUN_MODE_SOURCES = (
     "session-kind",
     "work-item",
     "run-mode-env",
     "unrecognized-run-mode-env",
     "launcher-state-root",
+    "malformed-signal",
+    "host-managed-workspace",
     "cli",
-    *PASEO_INTERACTIVE_ENTRYPOINTS,
-    "none",
+    "paseo-entrypoint",
+    "entrypoint-unqualified",
+    "entrypoint-unavailable",
+    "harness-unqualified",
+    "no-harness",
 )
 USER_SIGNALS_SOURCES = (
     "session-log",
@@ -85,48 +89,11 @@ VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
 VERSION_BYTES = 128
 RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
-TORN_QUIET_S = 10  # a torn last line counts as crash residue only on a Conductor store file this long untouched
 # Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
 # Debug prints only these tokens: never a store path, id, cwd, exception, or field value.
 CURSOR_SDK_REASONS = (
-    ("store-absent", "cursor-sdk-store-absent"),
-    ("store-unreadable", "cursor-sdk-store-unreadable"),
-    ("incomplete-evidence", "cursor-sdk-incomplete-evidence"),
-    ("no-cwd-agent", "cursor-sdk-no-cwd-agent"),
-    ("no-session-match", "cursor-sdk-no-session-match"),
-    ("malformed-bounds", "cursor-sdk-malformed-bounds"),
-    ("no-eligible-window", "cursor-sdk-no-eligible-window"),
-    ("ambiguous-candidates", "cursor-sdk-ambiguous-candidates"),
-    ("malformed-metadata", "cursor-sdk-malformed-metadata"),
-    ("malformed-neighbor", "cursor-sdk-malformed-neighbor"),
     ("transcript-unreadable", "cursor-sdk-transcript-unreadable"),
 )
-# Debug-only causes behind an incomplete-evidence reason, paired with a first-guess class: transient (may clear on a
-# later finish), store-changed (Conductor changed its store), persistent (stays until the store or environment
-# changes) or reader-bug. Printed in this order; never a row field, a path, an id, or an exception.
-CURSOR_SDK_CAUSES = (
-    ("shard-unreadable", "transient"),
-    ("ndjson-incomplete", "transient"),
-    ("ndjson-vanished", "transient"),
-    ("mixed-layout", "store-changed"),
-    ("unrecognized-layout", "store-changed"),
-    ("sqlite-sidecars", "transient"),
-    ("sqlite-changed", "transient"),
-    ("sqlite-open", "transient"),
-    ("sqlite-schema", "store-changed"),
-    ("sqlite-error", "transient"),
-    ("reader-error", "reader-bug"),
-    ("sqlite-row-cap", "persistent"),
-    ("sqlite-module-missing", "persistent"),
-    ("capture-timeout", "transient"),
-)
-CURSOR_CAPTURE_BUDGET_S = 5.0  # cooperative: checked between files and shards and inside SQLite work, not mid-read
-SQLITE_BUSY_S = 0.5  # longest wait on a locked shard
-SQLITE_ROW_CAP = 5000  # per table, per shard; more rows than this cannot prove uniqueness
-SQLITE_VALUE_BYTES = 1024  # ids, status, model and timestamps
-SQLITE_PATH_BYTES = 16384  # workspace_ref
-SQLITE_PARAMS_BYTES = 16384  # model_params_json
-SQLITE_PROGRESS_STEPS = 1000  # SQLite VM steps between deadline checks
 # Bare skill names. Finish strips the extend: prefix before consulting this set.
 RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
 ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
@@ -1041,31 +1008,7 @@ def deliver_usage(logger, skill, sid, duration, values, uncertain):
 # ─── Execution provenance: which harness, model and effort ran a stage ───
 
 
-def _from_epoch_ms(value):
-    # Explicit milliseconds only. Bool is an int subclass; a numeric string is not a number.
-    # Huge integers overflow at the division, before any datetime conversion.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    try:
-        seconds = value / 1000
-    except OverflowError:
-        return None
-    try:
-        datetime.fromtimestamp(seconds, timezone.utc)
-    except (OverflowError, OSError, ValueError):
-        return None
-    return seconds
-
-
-def parse_ts(value, numeric_unit=None):
-    # Conductor SDK call sites pass numeric_unit="milliseconds". Every other harness keeps the
-    # no-unit ISO path, which rejects numbers instead of guessing a unit.
-    if numeric_unit not in (None, "milliseconds"):
-        raise ValueError("unsupported numeric_unit")
-    if numeric_unit == "milliseconds" and not isinstance(value, str):
-        return _from_epoch_ms(value)
+def parse_ts(value):
     # Harness logs write ISO-8601 UTC with 3 to 9 fractional digits; datetime.fromisoformat before 3.11 takes only 3 or 6.
     match = isinstance(value, str) and re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)?", value)
     if not match:
@@ -1371,707 +1314,30 @@ def cursor_logs(session_id, projects=None):
     return list(root.glob(f"*/agent-transcripts/{session_id}.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.txt"))
 
 
-def _cursor_store_root(store=None):
-    if store is not None:
-        return Path(store)
-    return Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store"
-
-
-def _path_kind(path):
-    # os.stat, not Path.exists/is_dir/is_file: Python 3.14 pathlib answers False on a permission error, which would
-    # make an unsearchable shard look missing. Only ENOENT/ENOTDIR mean missing.
-    try:
-        mode = os.stat(path).st_mode
-    except (FileNotFoundError, NotADirectoryError):
-        return "missing"
-    except OSError:
-        return "unreadable"
-    return "dir" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode) else "other"
-
-
-def _read_bounded(path):
-    # Same cap as tail_records. Status is how complete the read was. A file over the cap, or an unreadable one,
-    # cannot prove that an older row is absent, so it is not parsed: that evidence would only be discarded.
-    # A writer mid-append is the same: growth past the cap or a shrink during the read is clipped, and so is a torn
-    # final line on a file that changed size or was modified recently. A torn line on a quiet file is stale residue.
-    kind = _path_kind(path)
-    if kind in ("missing", "unreadable"):
-        return [], kind
-    if kind != "file":
-        return [], "nonregular"
-    try:
-        with path.open("rb") as stream:
-            size = stream.seek(0, os.SEEK_END)
-            if size > LOG_TAIL_BYTES:
-                return [], "clipped"
-            stream.seek(0)
-            blob = stream.read(LOG_TAIL_BYTES + 1)
-    except OSError:
-        return [], "unreadable"
-    if len(blob) > LOG_TAIL_BYTES or len(blob) < size:
-        return [], "clipped"
-    records = []
-    lines = blob.split(b"\n")
-    for index, line in enumerate(lines):
-        try:
-            record = json.loads(line)
-        except (ValueError, RecursionError):
-            # A malformed or too-deeply-nested line is skipped. An unterminated, unparseable last line is skipped as
-            # crash residue only when the file still has the size that was read and has been quiet for TORN_QUIET_S;
-            # a writer paused mid-line looks the same except for its recent modification time.
-            if index == len(lines) - 1 and line.strip():
-                try:
-                    info = os.stat(path)
-                except OSError:
-                    return [], "unreadable"
-                if info.st_size != len(blob) or time.time() - info.st_mtime < TORN_QUIET_S:
-                    return [], "clipped"
-            continue
-        if isinstance(record, dict):
-            records.append(record)
-    return records, "complete"
-
-
-def _shard_hides_rows(agents_status, runs_status, agents):
-    if agents_status == "missing" and runs_status == "missing":
-        return False
-    if agents_status in ("unreadable", "nonregular", "clipped") or runs_status in ("unreadable", "nonregular", "clipped"):
-        return True
-    if agents_status == "missing":
-        return True
-    return runs_status == "missing" and bool(agents)
-
-
-class CursorCapture:
-    """One bounded read of the Conductor SDK store. status is absent, unreadable, or read.
-
-    causes (fixed CURSOR_SDK_CAUSES tokens) say why a read capture is incomplete, and layouts counts how each shard
-    directory was dispatched. Both are private diagnostics: selection ignores layouts and prints causes only in debug."""
-
-    def __init__(self, status, shards, complete, causes=(), layouts=None):
-        self.status = status
-        self.shards = shards
-        self.complete = complete
-        self.causes = set(causes)
-        self.layouts = Counter(layouts or ())
-
-    def fail(self, cause):
-        # How a read capture becomes incomplete, so an incomplete read capture always names a cause.
-        self.complete = False
-        self.causes.add(cause)
-
-
-class CursorSelection:
-    """Window result shared by metadata and native route. None model/effort stay unknown.
-    updated is the chosen snapshot's updatedAt: the store's own activity time, never the observation end.
-    causes is an incomplete capture's cause set, for debug output only."""
-
-    def __init__(self, certify, model, effort, usable, reasons, updated=None, causes=()):
-        self.certify = certify
-        self.model = model
-        self.effort = effort
-        self.usable = usable
-        self.reasons = reasons
-        self.updated = updated
-        self.causes = frozenset(causes)
-
-
-def _gated_select(table, columns):
-    # Each column is read as its storage class plus a text value that exists only for text within its byte cap. Never
-    # substr(): on both SQLite builds it cuts text at an embedded NUL, so "/work\0/x" would become "/work".
-    # Named columns only, never SELECT *: agents.metadata_json holds a key and is never selected.
-    gated = ", ".join(
-        f"typeof({name}), CASE WHEN typeof({name}) = 'text' AND length(CAST({name} AS BLOB)) <= {cap} THEN {name} END"
-        for name, cap in columns)
-    return f"SELECT {gated} FROM {table} LIMIT ?"
-
-
-_SQLITE_AGENT_COLUMNS = (("agent_id", SQLITE_VALUE_BYTES), ("workspace_ref", SQLITE_PATH_BYTES))
-_SQLITE_RUN_COLUMNS = (
-    ("run_id", SQLITE_VALUE_BYTES), ("agent_id", SQLITE_VALUE_BYTES), ("status", SQLITE_VALUE_BYTES),
-    ("model", SQLITE_VALUE_BYTES), ("model_params_json", SQLITE_PARAMS_BYTES),
-    ("started_at", SQLITE_VALUE_BYTES), ("updated_at", SQLITE_VALUE_BYTES), ("finished_at", SQLITE_VALUE_BYTES),
-    ("cancelled_at", SQLITE_VALUE_BYTES), ("expired_at", SQLITE_VALUE_BYTES))
-SQLITE_AGENTS_SQL = _gated_select("agents", _SQLITE_AGENT_COLUMNS)
-SQLITE_RUNS_SQL = _gated_select("runs", _SQLITE_RUN_COLUMNS)
-# INTEGER affinity permits text and BLOBs. Keep even optional diagnostics bounded before Python materializes them.
-SQLITE_TURNS_SQL = (
-    "SELECT min(CASE WHEN typeof(turn_number) = 'integer' THEN turn_number END), "
-    "max(CASE WHEN typeof(turn_number) = 'integer' THEN turn_number END), count(*) FROM runs")
-# The declared types seen on a current Conductor build. A table or column that differs is a changed store.
-_SQLITE_SCHEMA = {
-    "agents": {name: "TEXT" for name, _ in _SQLITE_AGENT_COLUMNS},
-    "runs": {**{name: "TEXT" for name, _ in _SQLITE_RUN_COLUMNS}, "turn_number": "INTEGER"},
-}
-
-
-def _sqlite_value(value_type, text):
-    # NULL is None. Text within its cap is kept whole, NUL included. Everything else (a number, a BLOB, text over
-    # its cap) is b"": every validator downstream rejects bytes, so no number is ever read as a timestamp and no
-    # over-long value is shortened into a valid one.
-    if value_type == "null":
-        return None
-    if value_type == "text" and isinstance(text, str):
-        return text
-    return b""
-
-
-def _sqlite_row(row):
-    return [_sqlite_value(row[index], row[index + 1]) for index in range(0, len(row), 2)]
-
-
-def _sqlite_uri(db, immutable):
-    # "file://" plus an absolute path has an empty authority, so a path that starts with // is never a host.
-    return "file://" + quote(os.path.abspath(db)) + ("?mode=ro&immutable=1" if immutable else "?mode=ro")
-
-
-def _sqlite_open_mode(db):
-    # live: Conductor's -wal and -shm are both there, so another connection may be writing. Open mode=ro and let
-    # SQLite's own WAL protocol find commits that exist only in the -wal. Apple's SQLite keeps both files after the
-    # last writer closes; upstream SQLite deletes them.
-    # quiescent: no sidecar at all, so there is no WAL to miss. A plain mode=ro open fails on Apple's SQLite and
-    # creates empty sidecars in the shard on upstream SQLite, so open immutable and re-check afterwards.
-    # Any other combination (a lone -wal or -shm, a hot -journal) is a shard in transition and is not opened.
-    # Never nolock=1, and never immutable=1 on a shard with sidecars, where it would miss WAL-only commits.
-    wal, shm, journal = (_path_kind(str(db) + suffix) for suffix in ("-wal", "-shm", "-journal"))
-    if journal == "missing" and wal == "file" and shm == "file":
-        return "live"
-    if wal == shm == journal == "missing":
-        return "quiescent"
-    return None
-
-
-def _sqlite_stat_key(db):
-    info = os.stat(db)
-    return info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
-
-
-def _sqlite_unchanged(db, before):
-    # A write to a quiescent shard creates -wal (WAL mode) or changes index.db (a checkpoint, rollback mode).
-    try:
-        return _sqlite_open_mode(db) == "quiescent" and _sqlite_stat_key(db) == before
-    except OSError:
-        return False
-
-
-def _sqlite_schema_ok(conn):
-    # Control flow, not exception text: both are real tables, and every selected column has the declared type seen
-    # on a current build. A view, a missing column or an untyped column is a changed store.
-    tables = {row[0] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('agents', 'runs')")}
-    for table, expected in _SQLITE_SCHEMA.items():
-        if table not in tables:
-            return False
-        declared = {name: str(kind).upper()
-                    for name, kind in conn.execute("SELECT name, type FROM pragma_table_info(?)", (table,))}
-        if any(declared.get(name) != kind for name, kind in expected.items()):
-            return False
-    return True
-
-
-def _sqlite_cause(sqlite3, error, deadline, probed):
-    # Past the deadline any sqlite error is the progress handler's interrupt. Before the schema probe completes, an
-    # OperationalError is a lock, permission or I/O problem and any other DatabaseError ("file is not a database")
-    # means this is not the store we read. After it, anything else is a transient read error.
-    if time.monotonic() >= deadline:
-        return "capture-timeout"
-    if not probed and isinstance(error, sqlite3.OperationalError):
-        return "sqlite-open"
-    if not probed and isinstance(error, sqlite3.DatabaseError):
-        return "sqlite-schema"
-    return "sqlite-error"
-
-
-def _sqlite_query(sqlite3, db, mode, deadline):
-    # One read transaction, so the probe, both SELECTs and the turns aggregate come from one snapshot.
-    # Returns ((agent rows, run rows, turns), None), or (None, cause).
-    conn, probed = None, False
-    try:
-        timeout = max(0.0, min(SQLITE_BUSY_S, deadline - time.monotonic()))
-        conn = sqlite3.connect(_sqlite_uri(db, mode == "quiescent"), uri=True, timeout=timeout, isolation_level=None)
-        conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), SQLITE_PROGRESS_STEPS)
-        conn.execute("BEGIN")
-        if not _sqlite_schema_ok(conn):
-            return None, "sqlite-schema"
-        probed = True
-        agent_rows = conn.execute(SQLITE_AGENTS_SQL, (SQLITE_ROW_CAP + 1,)).fetchall()
-        run_rows = conn.execute(SQLITE_RUNS_SQL, (SQLITE_ROW_CAP + 1,)).fetchall()
-        if len(agent_rows) > SQLITE_ROW_CAP or len(run_rows) > SQLITE_ROW_CAP:
-            return None, "sqlite-row-cap"  # Do not scan an over-cap archive just for optional diagnostics.
-        turns = conn.execute(SQLITE_TURNS_SQL).fetchone()
-        conn.execute("ROLLBACK")
-        return (agent_rows, run_rows, turns), None
-    except sqlite3.Error as error:
-        return None, _sqlite_cause(sqlite3, error, deadline, probed)
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def _sqlite_params(raw):
-    # Text that decodes is the list or dict the NDJSON path reads. Anything else (undecodable text, b"") passes
-    # through as an unsupported container: the model id survives and effort stays unknown, with no extra reason.
-    if not isinstance(raw, str):
-        return raw
-    try:
-        return json.loads(raw)
-    except (ValueError, RecursionError):
-        return raw
-
-
-def _sqlite_ends(status, updated, terminal):
-    # A terminal time always wins over status. One distinct value is the end. Several distinct values mean the store
-    # does not say which is real: the caller emits one snapshot per value, and 23B's equal-timestamp rule blocks the
-    # run when any of them could overlap the stage. With no terminal time, RUNNING is open and any other status
-    # (including NULL) stopped no later than its last update.
-    distinct = []
-    for value in terminal:
-        if value is not None and value not in distinct:
-            distinct.append(value)
-    if distinct:
-        return distinct
-    return [None] if status == "RUNNING" else [updated]
-
-
-def _sqlite_records(agent_rows, run_rows):
-    # Rows become the NDJSON record vocabulary that select_cursor already reads. None means a run identity this
-    # reader cannot trust. It must not become several unrelated candidates, so the whole shard is a schema failure.
-    agents = []
-    for row in agent_rows:
-        agent_id, workspace_ref = _sqlite_row(row)
-        agents.append({"agentId": agent_id, "cwd": workspace_ref})
-    runs = []
-    for row in run_rows:
-        run_id, agent_id, status, model, params, started, updated, *terminal = _sqlite_row(row)
-        if clean(run_id) is None or clean(agent_id) is None:
-            return None
-        meta = {"id": model}
-        if params is not None:
-            meta["params"] = _sqlite_params(params)
-        for ended in _sqlite_ends(status, updated, terminal):
-            runs.append({"agentId": agent_id, "runId": run_id, "startedAt": started, "updatedAt": updated,
-                         "endedAt": ended, "model": meta})
-    return agents, runs
-
-
-def _sqlite_turns(row):
-    return tuple(value if isinstance(value, int) and not isinstance(value, bool) else None for value in row)
-
-
-def _read_sqlite_shard(shard_dir, deadline, diagnostics=None):
-    """(agents, runs, cause) for one index.db shard. cause is None when complete, else one CURSOR_SDK_CAUSES token and
-    no records. The read creates no file in the store and never changes index.db or its -wal; SQLite may rewrite
-    -shm, its shared WAL index, on any shard that has sidecars. diagnostics, when given, receives turns: the
-    (min, max, count) of runs.turn_number from the same transaction."""
-    try:
-        import sqlite3
-    except ImportError:
-        return [], [], "sqlite-module-missing"
-    db = Path(shard_dir) / "index.db"
-    mode = _sqlite_open_mode(db)
-    if mode is None:
-        return [], [], "sqlite-sidecars"
-    try:
-        before = _sqlite_stat_key(db) if mode == "quiescent" else None
-    except OSError:
-        return [], [], "sqlite-changed"
-    try:
-        found, cause = _sqlite_query(sqlite3, db, mode, deadline)
-        if cause:
-            return [], [], cause
-        agent_rows, run_rows, turns = found
-        if mode == "quiescent" and not _sqlite_unchanged(db, before):
-            return [], [], "sqlite-changed"
-        records = _sqlite_records(agent_rows, run_rows)
-        if records is None:
-            return [], [], "sqlite-schema"
-        if diagnostics is not None:
-            diagnostics["turns"] = _sqlite_turns(turns)
-        return records[0], records[1], None
-    except Exception:
-        # A bug in this code must never look like a Conductor change.
-        return [], [], "reader-error"
-
-
-def _capture_ndjson(child, deadline, capture):
-    agents, agents_status = _read_bounded(child / "agents.ndjson")
-    if time.monotonic() >= deadline:
-        capture.fail("capture-timeout")
-        return
-    runs, runs_status = _read_bounded(child / "runs.ndjson")
-    if agents_status == "missing" and runs_status == "missing":
-        capture.fail("ndjson-vanished")  # dispatch saw a file, so a shard that now has none changed mid-capture
-        return
-    if _shard_hides_rows(agents_status, runs_status, agents):
-        capture.fail("ndjson-incomplete")
-    capture.shards.append({"agents": agents, "runs": runs, "layout": "ndjson"})
-
-
-def _capture_shard(child, deadline, capture):
-    kind = _path_kind(child)
-    if kind == "unreadable":
-        capture.layouts["unreadable"] += 1
-        capture.fail("shard-unreadable")
-        return
-    if kind != "dir":
-        return
-    # "Present" is anything but missing, so an unreadable or non-regular file counts. index.db is classified before any
-    # NDJSON content is read, so a mixed shard never contributes NDJSON records.
-    agents_kind, runs_kind, db_kind = (_path_kind(child / name) for name in ("agents.ndjson", "runs.ndjson", "index.db"))
-    ndjson = agents_kind != "missing" or runs_kind != "missing"
-    if agents_kind == runs_kind == db_kind == "unreadable":
-        capture.layouts["unreadable"] += 1
-        capture.fail("shard-unreadable")
-    elif ndjson and db_kind != "missing":
-        capture.layouts["mixed"] += 1
-        capture.fail("mixed-layout")
-    elif ndjson:
-        capture.layouts["ndjson"] += 1
-        _capture_ndjson(child, deadline, capture)
-    elif db_kind == "file":
-        capture.layouts["sqlite"] += 1
-        diagnostics = {}
-        agents, runs, cause = _read_sqlite_shard(child, deadline, diagnostics)
-        if cause:
-            capture.fail(cause)
-        else:
-            capture.shards.append({"agents": agents, "runs": runs, "layout": "sqlite", "turns": diagnostics.get("turns")})
-    else:
-        # Neither layout, including an empty directory or an index.db that is not a regular file.
-        capture.layouts["unrecognized"] += 1
-        capture.fail("unrecognized-layout")
-
-
-def capture_cursor_store(store=None):
-    # One traversal. Callers select from this object; they do not read the store again.
-    # The deadline is cooperative: checked before and after each shard, between a shard's two NDJSON reads, and inside
-    # SQLite work. One NDJSON read (at most 8 MiB) or one filesystem call can overrun it.
-    deadline = time.monotonic() + CURSOR_CAPTURE_BUDGET_S
-    try:
-        root = _cursor_store_root(store)
-        kind = _path_kind(root)
-        if kind == "missing":
-            return CursorCapture("absent", [], False)
-        if kind != "dir":
-            return CursorCapture("unreadable", [], False)
-        try:
-            children = list(root.iterdir())
-        except OSError:
-            return CursorCapture("unreadable", [], False)
-        capture = CursorCapture("read", [], True)
-        for child in children:
-            if time.monotonic() >= deadline:
-                capture.fail("capture-timeout")
-                break
-            try:
-                _capture_shard(child, deadline, capture)
-            except Exception:
-                capture.fail("reader-error")
-            if time.monotonic() >= deadline:
-                capture.fail("capture-timeout")
-                break
-        return capture
-    except Exception:
-        # A store failure must not escape with a path or record attached.
-        return CursorCapture("unreadable", [], False)
-
-
-def _effort_status(cleaned_values):
-    # missing: key never appeared, or only as null. invalid: appeared but nothing survived clean().
-    # conflict: two different cleaned values. ok: one cleaned value, duplicates allowed.
-    if not cleaned_values:
-        return "missing", None
-    distinct = {value for value in cleaned_values if value is not None}
-    # A recognized non-null value that fails clean() beside a clean one is still a conflicting value.
-    if len(distinct) > 1 or (distinct and None in cleaned_values):
-        return "conflict", None
-    if len(distinct) == 1:
-        return "ok", next(iter(distinct))
-    return "invalid", None
-
-
-def _effort_from_params(params):
-    if isinstance(params, dict):
-        found = {}
-        for key in ("effort", "reasoning_effort"):
-            if params.get(key) is not None:
-                found[key] = [clean(params.get(key))]
-        effort_state, effort = _effort_status(found.get("effort", []))
-        reason_state, reason = _effort_status(found.get("reasoning_effort", []))
-    elif isinstance(params, list):
-        found = {"effort": [], "reasoning_effort": []}
-        for entry in params:
-            if not isinstance(entry, dict):
-                continue
-            key = entry.get("id")
-            # A list or dict id is malformed, not a lookup error that could discard the whole run. A null value
-            # is missing, like a null model id, not malformed.
-            if isinstance(key, str) and key in found and entry.get("value") is not None:
-                found[key].append(clean(entry.get("value")))
-        effort_state, effort = _effort_status(found["effort"])
-        reason_state, reason = _effort_status(found["reasoning_effort"])
-    else:
-        return None, False
-    if effort_state == "ok":
-        return effort, False
-    if effort_state == "conflict":
-        return None, True
-    if effort_state == "invalid":
-        if reason_state == "ok":
-            return reason, False
-        # A recognized effort value that failed cleaning stays malformed when nothing valid replaces it.
-        return None, True
-    if reason_state == "ok":
-        return reason, False
-    if reason_state in ("conflict", "invalid"):
-        return None, True
-    return None, False
-
-
-def cursor_metadata(model):
-    # model id and effort are independent. A bad params container must not drop a usable id, and a bad id must not drop effort.
-    if model is None:
-        return None, None, False
-    if not isinstance(model, dict):
-        return None, None, True
-    model_id, id_bad = None, False
-    if "id" in model:
-        raw = model.get("id")
-        model_id = clean(raw)
-        blank = isinstance(raw, str) and not raw.strip()
-        id_bad = model_id is None and raw is not None and not blank
-    if "params" in model:
-        effort, effort_bad = _effort_from_params(model.get("params"))
-    else:
-        effort, effort_bad = None, False
-    return model_id, effort, id_bad or effort_bad
-
-
-def _run_view(record):
-    started = parse_ts(record.get("startedAt"), numeric_unit="milliseconds") if "startedAt" in record else None
-    updated = parse_ts(record.get("updatedAt"), numeric_unit="milliseconds") if "updatedAt" in record else None
-    if "endedAt" not in record or record.get("endedAt") is None:
-        ended = ("open", None)
-    else:
-        parsed = parse_ts(record.get("endedAt"), numeric_unit="milliseconds")
-        ended = ("ok", parsed) if parsed is not None else ("bad", None)
-    return {"record": record, "started": started, "updated": updated, "ended": ended,
-            "meta": cursor_metadata(record.get("model") if "model" in record else None)}
-
-
-def _equivalent(left, right):
-    return (left["started"], left["updated"], left["ended"], left["meta"]) == (
-        right["started"], right["updated"], right["ended"], right["meta"])
-
-
-def _valid(view, end):
-    # A snapshot whose own bounds meet the contract: readable start and update, startedAt <= updatedAt <= the
-    # captured end, and a missing/null or readable endedAt no earlier than startedAt.
-    kind, ended = view["ended"]
-    if view["started"] is None or view["updated"] is None or kind == "bad":
-        return False
-    return view["started"] <= view["updated"] <= end and (kind == "open" or ended >= view["started"])
-
-
-def _overlaps(view, begin, end):
-    # For a valid snapshot: the inclusive run window meets the inclusive stage window.
-    kind, ended = view["ended"]
-    return view["started"] <= end and (end if kind == "open" else ended) >= begin
-
-
-def _placed_outside(view, begin, end):
-    # Readable bounds that put a snapshot wholly after or before the stage, whatever else is wrong with it.
-    started, (kind, ended) = view["started"], view["ended"]
-    if started is not None and started > end:
-        return True
-    return kind == "ok" and ended < begin and (started is None or started < begin)
-
-
-def _classify_group(records, begin, end):
-    # One run identity. A run counts toward uniqueness when any snapshot has valid bounds and overlaps the stage;
-    # if its state then cannot be resolved to one valid newest snapshot, it blocks certification. A run with no
-    # valid snapshot is a malformed neighbor: it never blocks, unless its readable bounds place it outside the stage,
-    # in which case it is simply outside. The group never falls back to an older snapshot.
-    views = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        try:
-            views.append(_run_view(record))
-        except Exception:
-            return "malformed-bounds", None
-    if not views:
-        return "malformed-bounds", None
-    valid = [_valid(view, end) for view in views]
-    overlapping = any(ok and _overlaps(view, begin, end) for ok, view in zip(valid, views))
-    if not all(valid):
-        # An invalid snapshot hides the run's newest state ("partial" when a valid one still places it in the window).
-        if overlapping:
-            return "partial", None
-        if all(ok or _placed_outside(view, begin, end) for ok, view in zip(valid, views)):
-            return "outside", None
-        return "malformed-bounds", None
-    starts = {view["started"] for view in views}
-    latest = max(view["updated"] for view in views)
-    tops = [view for view in views if view["updated"] == latest]
-    if len(starts) != 1 or any(not _equivalent(tops[0], view) for view in tops[1:]):
-        # Inconsistent starts or an equal-timestamp conflict: unverifiable, blocking only if it could overlap.
-        return ("unresolved" if overlapping else "outside"), None
-    chosen = tops[0]
-    return ("eligible", chosen) if _overlaps(chosen, begin, end) else ("outside", None)
-
-
-def _finite_bound(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
-def select_cursor(capture, cwd, session, begin, end):
-    if capture.status == "absent":
-        return CursorSelection(False, None, None, False, ["store-absent"])
-    if capture.status != "read":
-        return CursorSelection(False, None, None, False, ["store-unreadable"])
-    if not capture.complete:
-        return CursorSelection(False, None, None, False, ["incomplete-evidence"], causes=capture.causes)
-    if not _finite_bound(begin) or not _finite_bound(end) or begin > end:
-        return CursorSelection(False, None, None, False, ["malformed-bounds"])
-    if not isinstance(cwd, str):
-        # An unknown process cwd (deleted directory) never matches, including a record with no cwd field.
-        return CursorSelection(False, None, None, False, ["no-cwd-agent"])
-    if not isinstance(session, str) or session == "":
-        session = None
-    # Identity is per shard: a run counts only when its own shard's agents file places that agent in this cwd.
-    cwd_agents = []
-    for index, shard in enumerate(capture.shards):
-        for record in shard.get("agents") or ():
-            if not isinstance(record, dict):
-                continue
-            agent_id = clean(record.get("agentId"))
-            if agent_id is not None and record.get("cwd") == cwd:
-                cwd_agents.append((index, agent_id))
-    if not cwd_agents:
-        return CursorSelection(False, None, None, False, ["no-cwd-agent"])
-    if session is not None:
-        allowed = {pair for pair in cwd_agents if pair[1] == session}
-        if not allowed:
-            return CursorSelection(False, None, None, False, ["no-session-match"])
-    else:
-        allowed = set(cwd_agents)
-    groups, distinct = {}, 0
-    for index, shard in enumerate(capture.shards):
-        for record in shard.get("runs") or ():
-            if not isinstance(record, dict):
-                continue
-            agent_id = clean(record.get("agentId"))
-            if (index, agent_id) not in allowed:
-                continue
-            run_id = clean(record.get("runId"))
-            if run_id is None:
-                distinct += 1
-                key = (index, agent_id, None, distinct)
-            else:
-                key = (index, agent_id, run_id)
-            groups.setdefault(key, []).append(record)
-    if session is not None and not groups:
-        return CursorSelection(False, None, None, False, ["no-session-match"])
-    eligible, reasons = [], []
-    saw_malformed = saw_unresolved = saw_partial = False
-    for records in groups.values():
-        try:
-            status, chosen = _classify_group(records, begin, end)
-        except Exception:
-            saw_malformed = True
-            continue
-        if status == "eligible":
-            eligible.append(chosen)
-        elif status == "malformed-bounds":
-            saw_malformed = True
-        elif status == "partial":
-            saw_malformed = saw_partial = True
-        elif status == "unresolved":
-            saw_unresolved = True
-    # An unverifiable run that could overlap the stage leaves uniqueness unproven, even beside one eligible run.
-    if len(eligible) > 1 or saw_unresolved or (eligible and saw_partial):
-        return CursorSelection(False, None, None, False, ["ambiguous-candidates"])
-    if len(eligible) == 1:
-        model, effort, bad = eligible[0]["meta"]
-        if bad:
-            reasons.append("malformed-metadata")
-        if saw_malformed:
-            # A malformed neighbor does not block the well-formed run; the reason makes that visible.
-            reasons.append("malformed-neighbor")
-        return CursorSelection(True, model, effort, model is not None or effort is not None, reasons,
-                               eligible[0]["updated"])
-    if saw_malformed:
-        return CursorSelection(False, None, None, False, ["malformed-bounds"])
-    return CursorSelection(False, None, None, False, ["no-eligible-window"])
-
-
-def cursor_sdk_runs(cwd=None, store=None):
-    # Inspection helper. Provenance does not use it; certification goes through one capture plus select_cursor.
-    capture = capture_cursor_store(store)
-    for shard in capture.shards:
-        allowed = set()
-        for record in shard.get("agents") or ():
-            if not isinstance(record, dict):
-                continue
-            agent_id = clean(record.get("agentId"))
-            if agent_id is None:
-                continue
-            if cwd and record.get("cwd") != cwd:
-                continue
-            allowed.add(agent_id)
-        for record in shard.get("runs") or ():
-            if isinstance(record, dict) and clean(record.get("agentId")) in allowed:
-                yield record
-
-
-def _cursor_debug(reasons, causes=()):
+def _cursor_debug(reasons):
     for code, anchor in CURSOR_SDK_REASONS:
         if code in reasons:
-            tokens = [token for token, _ in CURSOR_SDK_CAUSES if token in causes] if code == "incomplete-evidence" else []
-            detail = f" (causes: {', '.join(tokens)})" if tokens else ""
-            trace(f"cursor-sdk {code}{detail}. See docs/telemetry.md#{anchor}.")
+            trace(f"cursor-sdk {code}. See docs/telemetry.md#{anchor}.")
 
 
-def _observe_cursor_store():
-    # A flag or an explicit CLI entrypoint is not native execution. Inherited Conductor markers are not either.
-    if os.environ.get("CURSOR_INVOKED_AS"):
-        return False
-    return bool(os.environ.get("CURSOR_AGENT") or os.environ.get("CURSOR_CONVERSATION_ID"))
+def cursor_turns(root, begin):
+    log = newest(cursor_logs(os.environ.get("CURSOR_CONVERSATION_ID")))
+    return [(log.stat().st_mtime, None, None)] if log else []
 
 
-def cursor_turns(root, begin, selection=None):
-    # selection None means the store was not captured. An object, even an empty one, must not cause another read.
-    # A usable store result carries its snapshot's updatedAt, so a nested harness with later activity still wins
-    # when process ancestry is unavailable.
-    turns = []
-    if selection is not None and selection.usable and selection.updated is not None:
-        turns.append((selection.updated, selection.model, selection.effort))
-    if not turns:
-        log = newest(cursor_logs(os.environ.get("CURSOR_CONVERSATION_ID")))
-        if log:
-            turns.append((log.stat().st_mtime, None, None))
-    return turns
-
-
-def route_for(agent, conductor_match=False):
+def route_for(agent):
     entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if agent == "claude" else os.environ.get("CURSOR_INVOKED_AS", "") if agent == "cursor" else ""
     if agent == "claude" and entry.startswith("sdk-"):
-        route = ROUTE_CONDUCTOR if os.environ.get("CONDUCTOR_SESSION_ID") else ROUTE_SDK
-    elif agent == "cursor" and conductor_match:
-        route = ROUTE_CONDUCTOR
+        route = ROUTE_SDK
     elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("CURSOR_AGENT") or os.environ.get("GROK_AGENT"))) or (agent == "claude" and (os.environ.get("CURSOR_AGENT") or os.environ.get("CODEX_THREAD_ID"))) or (agent == "cursor" and (os.environ.get("CLAUDECODE") or os.environ.get("CODEX_THREAD_ID"))):
         route = ROUTE_CLI
-    elif agent == "codex" and os.environ.get("CONDUCTOR_SESSION_ID"):
-        route = ROUTE_CONDUCTOR
     else:
         route = ROUTE_UNKNOWN
     return route, clean(entry)
 
 
 def _trace_detection_error(agent, error):
-    # cursor_turns reads no store (a captured selection is passed in, or none on the CLI path), so a Cursor reader
-    # failure can only come from its transcript fallback. It gets a fixed reason without the exception text.
+    # A Cursor reader failure comes from its transcript fallback and gets a fixed reason without the exception text.
     # Other harnesses keep the existing exception text.
     if agent == "cursor":
         _cursor_debug(["transcript-unreadable"])
@@ -2079,11 +1345,11 @@ def _trace_detection_error(agent, error):
     trace(f"provenance detection failed ({type(error).__name__}: {error})")
 
 
-def detect(begin, end, root, cursor_selection=None):
+def detect(begin, end, root):
     """(agent, model, effort) for the harness running this command, from its own session log; None when unverifiable."""
     readers = []
     if os.environ.get("CURSOR_AGENT") or os.environ.get("CURSOR_CONVERSATION_ID"):
-        readers.append(("cursor", True, lambda: cursor_turns(root, begin, cursor_selection)))
+        readers.append(("cursor", True, lambda: cursor_turns(root, begin)))
     if os.environ.get("CODEX_THREAD_ID"):
         readers.append(("codex", True, lambda: codex_turns(os.environ["CODEX_THREAD_ID"])))
     if os.environ.get("GROK_AGENT") == "1":  # Grok's shell forces this; a user-set profile name is not a marker
@@ -2159,24 +1425,16 @@ def repo_slug(url):
 
 def workspace_host():
     """Explicit inherited launch context at first row construction, independently of harness/route."""
-    markers = (("paseo", "PASEO_AGENT_ID"), ("conductor", "CONDUCTOR_SESSION_ID"))
-    present = [(host, name, os.environ[name]) for host, name in markers
-               if os.environ.get(name, "").strip()]
-    recovery = ("Saved replay cannot repair attribution. Fix: ask the launcher owner for the correct original "
-                "host context on the next new invocation; never invent an ID, blindly unset a marker or rewrite this row. "
-                "See docs/telemetry.md#host-attribution.")
-    if len(present) == 2:
-        trace("HOST_MARKERS_CONFLICT: PASEO_AGENT_ID and CONDUCTOR_SESSION_ID are both nonblank; "
-              "attribution for this row is unknown/null. " + recovery)
-        return "unknown", None
-    if not present:
-        return "unknown", None
-    host, name, value = present[0]
-    agent_id = clean(value)
-    if agent_id is None:
-        trace(f"HOST_AGENT_ID_INVALID: {name} must be 1–200 printable Unicode code points and not blank; "
-              f"attribution for this row is {host}/null. " + recovery)
-    return host, agent_id
+    value = os.environ.get(WORKSPACE_OWNER_ENV)
+    if not value:
+        return None
+    label = clean(value)
+    if label is None:
+        trace(f"HOST_LABEL_INVALID: {WORKSPACE_OWNER_ENV} is not a valid host label (expected 1–200 printable Unicode "
+              "code points and not blank); recording workspace_host=null. Saved replay cannot repair attribution. Fix: "
+              "set GSTACK_EXTEND_WORKSPACE_OWNER to a clean label on the next new invocation; never invent a label or "
+              "rewrite this row. See docs/telemetry.md#host-attribution.")
+    return label
 
 
 def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
@@ -2207,29 +1465,30 @@ def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
         and os.path.normpath(gstack_home) != os.path.normpath(os.path.join(home, ".gstack"))
     ):
         return "unknown", "launcher-state-root"
+    raw_owner = os.environ.get(WORKSPACE_OWNER_ENV)
     if (
         session_kind not in (None, "")
         or finish_env_work_item not in (None, "")
         or saved_work_item is not None
         or (gstack_home is not None and gstack_home != "" and not os.path.isabs(gstack_home))
+        or (raw_owner not in (None, "") and clean(raw_owner) is None)
     ):
-        return "unknown", "none"
-    paseo_raw = os.environ.get("PASEO_AGENT_ID")
-    conductor_raw = os.environ.get("CONDUCTOR_SESSION_ID")
-    has_paseo = bool(paseo_raw and paseo_raw.strip())
-    has_conductor = bool(conductor_raw and conductor_raw.strip())
-    if has_paseo and has_conductor:
-        return "unknown", "none"
-    if paseo_raw not in (None, "") and clean(paseo_raw) is None:
-        return "unknown", "none"
+        return "unknown", "malformed-signal"
+    if raw_owner not in (None, ""):
+        return "unknown", "host-managed-workspace"
+    if detected_agent is None:
+        return "unknown", "no-harness"
+    if detected_agent != "claude" or agent != "claude":
+        return "unknown", "harness-unqualified"
     raw_entrypoint = os.environ.get("CLAUDE_CODE_ENTRYPOINT")
     entry = clean(raw_entrypoint)
-    if detected_agent == "claude" and agent == "claude" and entry is not None and raw_entrypoint == entry:
-        if not has_conductor and entry in ("cli", "Paseo"):
-            return "user-directed", entry
-        if has_paseo and not has_conductor and entry in PASEO_INTERACTIVE_ENTRYPOINTS:
-            return "user-directed", entry
-    return "unknown", "none"
+    if entry is None or raw_entrypoint != entry:
+        return "unknown", "entrypoint-unavailable"
+    if entry == "cli":
+        return "user-directed", "cli"
+    if entry == "Paseo":
+        return "user-directed", "paseo-entrypoint"
+    return "unknown", "entrypoint-unqualified"
 
 
 def resolve_blocked_reason(raw_reason, outcome, mode):
@@ -2249,17 +1508,9 @@ def resolve_blocked_reason(raw_reason, outcome, mode):
 
 
 def provenance_row(stage, sid, start, duration, values, root, work_item=None, observed=None, saved_work_item=None):
-    # Read the mutable store before sampling the observation end, then share that one selection.
-    captured = capture_cursor_store() if _observe_cursor_store() else None
     now = time.time()
     begin = start if start is not None else int(now) - duration
-    session = os.environ.get("CURSOR_CONVERSATION_ID") or None
-    try:
-        cwd = os.getcwd()
-    except OSError:
-        cwd = None  # a deleted working directory costs the store match, never the row
-    cursor_selection = select_cursor(captured, cwd, session, begin, now) if captured is not None else None
-    agent, model, effort = detect(begin, now, root, cursor_selection)
+    agent, model, effort = detect(begin, now, root)
     detected_agent = agent
     if isinstance(observed, dict):
         observed.update(begin=begin, end=now, agent=detected_agent)
@@ -2304,16 +1555,10 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
             repo = branch = None
     raw_outcome = values.get("--outcome")
     resolved_outcome = raw_outcome if raw_outcome in OUTCOMES else "unknown"
-    # Route certification uses the agent detect() selected before --agent rewrote it.
-    conductor_match = bool(
-        detected_agent == "cursor" and agent == "cursor" and not os.environ.get("CURSOR_INVOKED_AS")
-        and cursor_selection is not None and cursor_selection.certify)
-    route, entrypoint = route_for(agent, conductor_match)
-    if cursor_selection is not None:
-        _cursor_debug(cursor_selection.reasons, cursor_selection.causes)
+    route, entrypoint = route_for(agent)
     # Field order is part of the published contract (docs/stage-runs.schema.json): new fields append after the existing
     # ones. rung is always 0 for a hand-run skill (no fallback chain).
-    host, host_id = workspace_host()
+    host = workspace_host()
     finish_env_item = os.environ.get(WORK_ITEM_ENV)
     saved_for_mode = saved_work_item if saved_work_item is not None else (
         work_item if "--work-item" not in values and finish_env_item in (None, "") else None
@@ -2353,7 +1598,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
                 source="gstack-extend", route=route, entrypoint_raw=entrypoint,
                 schema_version=SCHEMA_VERSION, producer_version=producer_version(),
                 agent_source=source("agent", agent), model_source=source("model", model),
-                effort_source=source("effort", effort), workspace_host=host, host_agent_id=host_id,
+                effort_source=source("effort", effort), workspace_host=host,
                 run_mode=mode, run_mode_source=mode_source,
                 questions=questions, user_wait_s=user_wait_s, resumes=resumes,
                 user_signals_source=signals_source,
@@ -2417,44 +1662,86 @@ def _discover_installed_skills():
     return ordered
 
 
+def _host_label_for(base, path):
+    if path == base / "analytics/stage-runs.jsonl":
+        return "(legacy)"
+    prefix = path.name.split(".", 1)[0]
+    return prefix if HOST_ID_RE.fullmatch(prefix) else "(unattributed)"
+
+
 def run_report(args):
     """Print the skill-by-mode stage-runs table across the legacy and per-host files."""
+    report_usage = "gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]..."
     if args in (["-h"], ["--help"]):
-        print("Usage: gstack-extend-telemetry report [--json]")
+        print(f"Usage: {report_usage}")
         return 0
-    if any(arg != "--json" for arg in args) or len(args) > 1:
-        print("telemetry report: invalid arguments; use 'gstack-extend-telemetry report [--json]'", file=sys.stderr)
+    as_json = False
+    by_host = False
+    state_dirs = []
+    idx = 0
+    invalid_args = False
+    while idx < len(args):
+        arg = args[idx]
+        if arg == "--json":
+            if as_json:
+                invalid_args = True
+                break
+            as_json = True
+            idx += 1
+        elif arg == "--by-host":
+            if by_host:
+                invalid_args = True
+                break
+            by_host = True
+            idx += 1
+        elif arg == "--state-dir":
+            if idx + 1 >= len(args) or not args[idx + 1] or not os.path.isabs(args[idx + 1]):
+                invalid_args = True
+                break
+            state_dirs.append(Path(args[idx + 1]))
+            idx += 2
+        else:
+            invalid_args = True
+            break
+    if invalid_args:
+        print(f"telemetry report: invalid arguments; use '{report_usage}'", file=sys.stderr)
         return 0
-    as_json = "--json" in args
-    base = state_root()
-    readable_files = stage_run_files(base)
-    readable_set = set(readable_files)
+    roots = state_dirs if state_dirs else [state_root()]
     unreadable_count = 0
-    legacy = base / "analytics/stage-runs.jsonl"
-    if os.path.lexists(legacy) and legacy not in readable_set:
-        unreadable_count += 1
-    directory = stage_run_dir(base)
-    dir_shape = store_shape(directory)
-    if dir_shape == "bad":
-        unreadable_count += 1
-    elif dir_shape == "ok":
-        try:
-            entries = sorted(os.listdir(directory))
-        except OSError:
-            entries = []
+    candidate_files = []
+    for root_idx, base in enumerate(roots):
+        readable_files = stage_run_files(base)
+        readable_set = set(readable_files)
+        legacy = base / "analytics/stage-runs.jsonl"
+        if os.path.lexists(legacy) and legacy not in readable_set:
             unreadable_count += 1
-        for name in entries:
-            if name.endswith(".jsonl") and name != ".jsonl" and directory / name not in readable_set:
+        directory = stage_run_dir(base)
+        dir_shape = store_shape(directory)
+        if dir_shape == "bad":
+            unreadable_count += 1
+        elif dir_shape == "ok":
+            try:
+                entries = sorted(os.listdir(directory))
+            except OSError:
+                entries = []
                 unreadable_count += 1
+            for name in entries:
+                if name.endswith(".jsonl") and name != ".jsonl" and directory / name not in readable_set:
+                    unreadable_count += 1
+        for path in readable_files:
+            candidate_files.append((root_idx, base, path))
     installed_skills = _discover_installed_skills()
     installed_set = set(installed_skills or ())
     stage_cells = {
         skill: {mode: _empty_cell() for mode in REPORT_MODES}
         for skill in (installed_skills or ())
     }
+    host_cells = {}
+    label_roots = {}
+    seen_inodes = set()
     files_read = 0
     row_counts = {"counted": 0, "routed": 0, "malformed": 0, "invalid": 0, "unsupported": 0}
-    for path in readable_files:
+    for root_idx, base, path in candidate_files:
         fd = -1
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -2462,6 +1749,13 @@ def run_report(args):
             if not stat.S_ISREG(info.st_mode):
                 unreadable_count += 1
                 continue
+            file_id = (info.st_dev, info.st_ino)
+            if file_id in seen_inodes:
+                continue
+            seen_inodes.add(file_id)
+            host_label = _host_label_for(base, path)
+            label_roots.setdefault(host_label, set()).add(root_idx)
+            host_cells.setdefault(host_label, {m: _empty_cell() for m in REPORT_MODES})
             with os.fdopen(fd, "rb") as stream:
                 fd = -1
                 files_read += 1
@@ -2493,7 +1787,7 @@ def run_report(args):
                             continue
                         if sv in (1, 2):
                             mode = "unrecorded"
-                        elif sv == 3:
+                        elif sv in (3, 4):
                             rm = row.get("run_mode")
                             if rm in RUN_MODES:
                                 mode = rm
@@ -2509,21 +1803,31 @@ def run_report(args):
                         row_counts["invalid"] += 1
                         continue
                     row_counts["counted"] += 1
-                    cells = stage_cells.setdefault(stage_name, {m: _empty_cell() for m in REPORT_MODES})
-                    cell = cells[mode]
-                    cell["runs"] += 1
-                    cell["outcomes"][outcome] += 1
                     started_at = row.get("started_at")
                     ts = parse_ts(started_at)
-                    if ts is not None and (cell["_last_ts"] is None or ts > cell["_last_ts"]):
-                        cell["_last_ts"] = ts
-                        cell["last_seen"] = started_at
+                    for target_cells in (
+                        stage_cells.setdefault(stage_name, {m: _empty_cell() for m in REPORT_MODES}),
+                        host_cells[host_label],
+                    ):
+                        cell = target_cells[mode]
+                        cell["runs"] += 1
+                        cell["outcomes"][outcome] += 1
+                        if ts is not None and (cell["_last_ts"] is None or ts > cell["_last_ts"]):
+                            cell["_last_ts"] = ts
+                            cell["last_seen"] = started_at
         except OSError:
             unreadable_count += 1
             continue
         finally:
             if fd >= 0:
                 os.close(fd)
+    dup_labels = sum(1 for root_set in label_roots.values() if len(root_set) > 1)
+    if dup_labels:
+        print(
+            f"telemetry report: {dup_labels} host label(s) appeared in more than one state directory; "
+            "copies of one ledger are counted twice",
+            file=sys.stderr,
+        )
     extra_skills = sorted(s for s in stage_cells if s not in installed_set)
     all_skills = list(installed_skills or ()) + extra_skills
     skills_payload = []
@@ -2557,6 +1861,23 @@ def run_report(args):
     }
     if installed_skills is None:
         payload["installed_skills"] = None
+    hosts_payload = []
+    if by_host:
+        sorted_hosts = sorted(host_cells, key=lambda h: (h in ("(legacy)", "(unattributed)"), h))
+        for host in sorted_hosts:
+            cells = host_cells[host]
+            hosts_payload.append({
+                "host": host,
+                "cells": {
+                    mode: {
+                        "runs": cells[mode]["runs"],
+                        "outcomes": dict(cells[mode]["outcomes"]),
+                        "last_seen": cells[mode]["last_seen"],
+                    }
+                    for mode in REPORT_MODES
+                },
+            })
+        payload["hosts"] = hosts_payload
     if as_json:
         print(json.dumps(payload, indent=2))
         return 0
@@ -2581,6 +1902,18 @@ def run_report(args):
         print(f"Empty cells ({len(empty_cells)}): {formatted}")
     else:
         print("Empty cells (0): none")
+    if by_host:
+        print("Host                    Mode           Runs  Success  Blocked  Error  Abort  Unknown  Last seen")
+        for entry in hosts_payload:
+            host = entry["host"]
+            for mode in REPORT_MODES:
+                c = entry["cells"][mode]
+                o = c["outcomes"]
+                last = c["last_seen"] or "-"
+                print(
+                    f"{host:<22}  {mode:<13}  {c['runs']:>4}  {o['success']:>7}  {o['blocked']:>7}  "
+                    f"{o['error']:>5}  {o['abort']:>5}  {o['unknown']:>7}  {last}"
+                )
     return 0
 
 
@@ -2593,7 +1926,7 @@ def main(args):
         return
     if args and args[0] in ("-h", "--help"):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
-        print("       gstack-extend-telemetry report [--json]")
+        print("       gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...")
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown] [--blocked-reason TOKEN]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
         print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")

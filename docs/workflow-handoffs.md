@@ -1444,10 +1444,22 @@ With neither variable set, every path is what it was before this section.
   `run_mode_source: "unrecognized-run-mode-env"`. A non-default absolute
   `GSTACK_HOME` is supporting evidence that blocks `user-directed` and records
   `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"` when no primary
-  orchestration signal or run-mode override is set. An orchestrator that launches
-  workers without any signal will have runs on an otherwise eligible interactive
-  Claude entrypoint counted as `user-directed` until it sets one;
-  `run_mode_source` shows why each row got its mode.
+  orchestration signal or run-mode override is set; a malformed non-empty
+  `GSTACK_SESSION_KIND`, `GSTACK_EXTEND_WORK_ITEM`, or
+  `GSTACK_EXTEND_WORKSPACE_OWNER` records `run_mode: "unknown"`,
+  `run_mode_source: "malformed-signal"`; and a valid
+  `GSTACK_EXTEND_WORKSPACE_OWNER` without an orchestration signal records
+  `run_mode: "unknown"`, `run_mode_source: "host-managed-workspace"`. Only a
+  detected Claude session whose `CLAUDE_CODE_ENTRYPOINT` is `cli`
+  (`run_mode_source: "cli"`) or `Paseo` (`run_mode_source: "paseo-entrypoint"`)
+  with none of those signals set records `run_mode: "user-directed"`, while other
+  Claude entrypoints (`entrypoint-unqualified` or `entrypoint-unavailable`),
+  non-Claude harnesses (`harness-unqualified`), and unattributed runs
+  (`no-harness`) record `run_mode: "unknown"`. An orchestrator that launches
+  workers through Paseo or Claude's `cli` entrypoint must set
+  `GSTACK_EXTEND_RUN_MODE=orchestrated` (or `GSTACK_EXTEND_WORKSPACE_OWNER`), or
+  its workers are counted as hand use (`user-directed`); `run_mode_source` shows
+  why each row got its mode.
 - **Other upstream variables are not followed.** `GSTACK_STATE_DIR` and
   `CLAUDE_PLUGIN_DATA` select an upstream root, but these paths do not read them.
 - **A fresh root is used and created.** When either variable is set to an absolute
