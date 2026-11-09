@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { copyFile, rm } from 'node:fs/promises';
+import { copyFile, lstat, rm } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { UPSTREAM_HELPERS } from '../outside-review/cli';
 import { snapshotDiff, type Request } from '../outside-review/prompt';
@@ -22,7 +22,8 @@ import {
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
 export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap'] as const;
-export interface Deps { platform?: string; bwrapPaths?: readonly string[] }
+/** Test seams for what the sandbox checks read: the platform, bwrap paths, uid, architecture and passwd-home lookup. */
+export interface Deps { platform?: string; bwrapPaths?: readonly string[]; uid?: number; arch?: string; accountHome?: () => string }
 const CHILD_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const;
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void }
@@ -65,6 +66,9 @@ function isWithin(parent: string, child: string): boolean {
   const rel = relative(parent, child);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
+
+/** A path as written and with its symlinks resolved, so a symlinked ancestor cannot disguise a hidden path. */
+const pathForms = (path: string) => [...new Set([path, realpathBelow(path)])];
 
 /** The account's home from the passwd database: Bun's os.userInfo() reports $HOME instead, so it cannot see a HOME override. */
 export function passwdHome(): string {
@@ -173,6 +177,8 @@ function parseArgs(argv: string[]): 'help' | Options {
 function resolveSandboxBwrap(deps: Deps = {}): string | null {
   const platform = deps.platform ?? process.platform;
   if (platform !== 'linux') return null;
+  // As uid 0 the sandbox could read every root-only file, and without a seccomp table the kernel keyrings stay reachable.
+  if ((deps.uid ?? process.getuid?.()) === 0 || !keyringSeccomp(deps.arch ?? process.arch)) return null;
   const paths = deps.bwrapPaths ?? BWRAP_PATHS;
   let bwrap: string | null = null;
   for (const candidate of paths) {
@@ -229,18 +235,18 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
     .filter(({ provider }) => provider.access === 'repo');
   let home: string | undefined;
   let privateDirs: string[] = [];
+  let accountHomeOk = true;
   if (repoProviders.length > 0) {
-    // As uid 0 the sandbox could read every root-only file, and without a seccomp table the kernel keyrings stay reachable.
-    if (process.getuid?.() === 0 || !keyringSeccomp(process.arch)) return refuse('sandbox-unavailable');
     const rawHome = process.env.HOME;
     const badHome = 'HOME must be an absolute path other than /, without control characters, for a repo-mode provider';
     if (!rawHome || !isAbsolute(rawHome) || CONTROL_RE.test(rawHome)) return refuse('config-malformed', badHome);
     home = resolve(rawHome);
     if (home === '/') return refuse('config-malformed', badHome);
-    const accountHome = passwdHome();
-    // A path as written and with its symlinks resolved, so a symlinked ancestor cannot disguise a hidden path.
-    const forms = (path: string) => [...new Set([path, realpathBelow(path)])];
-    const homes = [home, ...(accountHome && isAbsolute(accountHome) && !CONTROL_RE.test(accountHome) ? [resolve(accountHome)] : [])]
+    const accountHome = (deps.accountHome ?? passwdHome)();
+    // Without the account's home from the passwd database, an overridden HOME would leave the real home unhidden: refused below.
+    accountHomeOk = !!accountHome && isAbsolute(accountHome) && !CONTROL_RE.test(accountHome);
+    const forms = pathForms;
+    const homes = [home, ...(accountHomeOk ? [resolve(accountHome)] : [])]
       .filter((path) => path !== '/').flatMap(forms);
     const temp = forms(resolve(tmpdir())).filter((path) => path !== '/');
     // Every private directory beyond HOME gets its own tmpfs; one that does not exist holds nothing and could not take a mount point.
@@ -285,6 +291,11 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
       // Every hop of argv[0]'s link chain that lies under a hidden root needs a listed path around it, with no vanishing symlink.
       const entryPaths = entries.map((entry) => realpathBelow(entry));
       const hops = linkChain(provider.argv[0]!);
+      // The sandbox hides the reviewed repository and the calls directory, so a command installed there could never start.
+      if (hops.some((hop) => repoPaths.some((path) => isWithin(path, hop)))) {
+        return refuse('config-malformed', `provider ${label} argv[0] ${JSON.stringify(provider.argv[0])} lies inside the reviewed repository or `
+          + 'the calls directory, which the sandbox hides');
+      }
       const uncovered = hops.some((hop) => hiddenRoots.some((root) => isWithin(root, hop)) && !entryPaths.some((entry) => isWithin(entry, hop)));
       if (uncovered || [provider.argv[0]!, ...hops].some((path) => symlinkVanishes(path, entries))) {
         return refuse('config-malformed', `provider ${label} argv[0] ${JSON.stringify(provider.argv[0])} needs an expose entry around its `
@@ -334,6 +345,7 @@ async function prepare(options: Options, deps: Deps = {}): Promise<Preparation> 
   }
   let bwrap: string | undefined;
   if (repoProviders.length > 0) {
+    if (!accountHomeOk) return refuse('sandbox-unavailable', 'the account home could not be read from the passwd database, so the sandbox cannot hide it');
     const resolvedBwrap = resolveSandboxBwrap(deps);
     if (!resolvedBwrap) return refuse('sandbox-unavailable');
     bwrap = resolvedBwrap;
@@ -399,14 +411,25 @@ interface RepoSandboxSpec {
   home: string;
   privateDirs: readonly string[];
   repo: string;
+  base: string;
   candidate: string;
   calls: string;
   expose: readonly string[];
 }
 
 /** A repo-mode setup step that failed before the provider started; `timedOut` when the part's deadline ran out first. */
-class SetupFailure extends Error {
+export class SetupFailure extends Error {
   constructor(readonly step: string, readonly timedOut = false, readonly code: number | null = null) { super(step); }
+}
+
+/** Settle with the operation, or fail the setup step once the part's time runs out, so a stalled filesystem call cannot hold the part. */
+export function withinDeadline<T>(operation: Promise<T>, remainingMs: () => number, step: string): Promise<T> {
+  const rem = remainingMs();
+  if (rem <= 0) return Promise.reject(new SetupFailure(step, true));
+  return new Promise((resolveOp, rejectOp) => {
+    const timer = setTimeout(() => rejectOp(new SetupFailure(step, true)), rem);
+    operation.then((value) => { clearTimeout(timer); resolveOp(value); }, (error: unknown) => { clearTimeout(timer); rejectOp(error); });
+  });
 }
 
 /**
@@ -450,7 +473,7 @@ export function parseWorktreeList(output: string): string[] {
 
 /**
  * Hide the real repository, stage the expose paths, and build the disposable copy: an empty repository that fetches only
- * the candidate (a frozen snapshot commit no ref reaches included), then checks it out detached with hooks and LFS filters off.
+ * the candidate and the base (frozen snapshot commits no ref reaches included), then checks it out detached with hooks and LFS filters off.
  */
 async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: () => number): Promise<SandboxInput> {
   const emptyHome = join(cwd, 'git-home');
@@ -473,12 +496,12 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   for (const path of [resolve(top), resolve(gitDir), resolve(spec.repo, commonDir), resolve(spec.calls), ...worktrees.map((tree) => resolve(tree))]) hide(path);
   // A listed path at or inside a hidden repository path (a linked worktree or the common git dir) would show the live checkout.
   // One above it is fine: the --tmpfs mounts over those paths come after every expose layer.
-  const forms = (path: string) => [path, realpathBelow(path)];
+  const forms = pathForms;
   if (spec.expose.some((entry) => forms(entry).some((form) => hidden.some((path) => isWithin(path, form))))) {
     throw new SetupFailure('expose');
   }
   const rawXdg = process.env.XDG_RUNTIME_DIR;
-  const entriesUnderRun = spec.expose.some((path) => [path, realpathBelow(path)].some((form) => isWithin('/run', form)));
+  const entriesUnderRun = spec.expose.some((path) => pathForms(path).some((form) => isWithin('/run', form)));
   const uid = process.getuid?.();
   if (entriesUnderRun && uid !== undefined) hide(`/run/user/${uid}`);
   if (rawXdg && isAbsolute(rawXdg) && !CONTROL_RE.test(rawXdg) && resolve(rawXdg) !== '/') {
@@ -499,30 +522,32 @@ async function prepareRepoCopy(spec: RepoSandboxSpec, cwd: string, remainingMs: 
   try {
     for (let i = 0; i < spec.expose.length; i++) {
       const entry = spec.expose[i]!;
-      const stat = lstatSync(entry);
+      const stat = await withinDeadline(lstat(entry), remainingMs, 'expose');
       if (stat.isSymbolicLink()) throw new SetupFailure('expose');
       if (stat.isDirectory()) {
         expose.push({ kind: 'dir', path: entry });
       } else if (stat.isFile()) {
         mkdirSync(stagedDir, { recursive: true, mode: 0o700 });
         const staged = join(stagedDir, String(i));
-        await copyFile(entry, staged);
+        await withinDeadline(copyFile(entry, staged), remainingMs, 'expose');
         expose.push({ kind: 'file', path: entry, staged });
       } else {
         throw new SetupFailure('expose');
       }
     }
-  } catch { throw new SetupFailure('expose'); }
+  } catch (error) { throw error instanceof SetupFailure ? error : new SetupFailure('expose'); }
 
   const copy = join(cwd, 'repo');
   await git(['init', '--quiet', '--template=', copy], 'init');
   await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--no-recurse-submodules',
-    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.repo, spec.candidate], 'fetch');
+    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.repo, spec.candidate, ...(spec.base !== spec.candidate ? [spec.base] : [])], 'fetch');
   await git(['-C', copy, '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false',
     'checkout', '--quiet', '--detach', spec.candidate], 'checkout');
   const emptyFile = join(cwd, 'empty');
   try { writeFileSync(emptyFile, '', { mode: 0o600 }); } catch { throw new SetupFailure('setup'); }
-  return { home: spec.home, privateDirs: spec.privateDirs, hidden, resolvDir, expose, copy, emptyFile };
+  // A kernel without CONFIG_KEYS has neither file, and bwrap cannot create a mount point inside procfs.
+  const procMasks = ['/proc/keys', '/proc/key-users'].filter((path) => existsSync(path));
+  return { home: spec.home, privateDirs: spec.privateDirs, hidden, resolvDir, expose, copy, emptyFile, procMasks };
 }
 
 /** One process in its own group, an empty private cwd (or a bubblewrap-sandboxed copy), an allowlisted env and bounded output. */
@@ -607,6 +632,8 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number, repoSpe
     }
     prepareRepoCopy(repoSpec, cwd, remainingMs).then((input) => {
       env.TMPDIR = '/tmp';
+      // The working directory is the reviewed copy, so an empty or relative PATH entry would resolve commands from it.
+      if (env.PATH !== undefined) env.PATH = env.PATH.split(':').filter((dir) => isAbsolute(dir)).join(':');
       // The keyring seccomp program reaches bwrap as descriptor 3 (prepare() refused an architecture without one).
       const program = keyringSeccomp(process.arch)!;
       try {
@@ -672,7 +699,7 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
     catch (error) { return fellBack((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'unresolved-claim' : 'failed'); }
     dispatchedAt = new Date().toISOString();
     const repoSpec: RepoSandboxSpec | undefined = access === 'repo'
-      ? { bwrap: prepared.bwrap!, home: prepared.home!, privateDirs: prepared.privateDirs ?? [], repo: options.repo, candidate: options.candidate, calls: options.calls,
+      ? { bwrap: prepared.bwrap!, home: prepared.home!, privateDirs: prepared.privateDirs ?? [], repo: options.repo, base: options.base, candidate: options.candidate, calls: options.calls,
         expose: provider.expose ?? [] }
       : undefined;
     spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s, repoSpec);

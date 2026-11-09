@@ -217,9 +217,13 @@ runs every part on the host.
   run, an entry at or inside any hidden repository path (worktrees and the
   common git dir included) fails setup (`expose`). At run time each listed path
   is checked with `lstat`: a directory becomes a throwaway overlay, and a
-  regular file is staged into `<tmp>/staged/<n>` and bound at its path, so a
-  write to it changes only the staged copy. Missing paths, symlinks, sockets or
-  other file types fail that part (`failed`).
+  regular file is staged into `<tmp>/staged/<n>` and bound at its path, so an
+  in-place write to it changes only the staged copy. A bound file cannot be
+  replaced by a rename or deleted inside the sandbox (`EBUSY`), so expose the
+  containing directory for a file that a CLI rewrites atomically (write a
+  temporary file, then rename). Missing paths, symlinks, sockets or other file
+  types fail that part (`failed`), and staging is bounded by the part's
+  `timeout_s` like every setup step.
 - **The command must be visible.** The sandbox hides `HOME`, the passwd home,
   `/tmp`, `/var`, `/run` and the runner's temporary directory. The runner
   follows `argv[0]`'s link chain (at most 16 hops) and compares each hop, with
@@ -228,13 +232,18 @@ runs every part on the host.
   that directory, or the provider is `config-malformed` at `check`. The runner
   cannot see the command's other needs: an interpreter's script, a runtime under
   `HOME` (for example an `npm`, `bun` or `mise` install), its configuration and
-  its login. List each in `expose`, or the part fails on every call.
+  its login. List each in `expose`, or the part fails on every call. At `run`,
+  an `argv[0]` hop inside the reviewed repository or `--calls` is
+  `config-malformed` too, since the sandbox hides both. Empty and relative
+  `PATH` entries are dropped from the child environment, because the working
+  directory is the reviewed copy.
 - **What the runner builds.** On Linux with bubblewrap (`bwrap`), the runner
   first hides the real repository and stages the listed paths, then creates a
   disposable copy: `git init --template=` of an empty repository, a
-  `git fetch --no-tags --no-recurse-submodules` of `--candidate` alone from the
-  real repository (through `upload-pack` with `uploadpack.allowAnySHA1InWant`,
-  so a frozen snapshot commit that no ref reaches is fetched too), and a detached
+  `git fetch --no-tags --no-recurse-submodules` of `--candidate` and `--base`
+  from the real repository (through `upload-pack` with
+  `uploadpack.allowAnySHA1InWant`, so frozen snapshot commits that no ref
+  reaches are fetched too), and a detached
   checkout with hooks and LFS smudge/process filters disabled
   (`-c core.hooksPath=/dev/null -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false`).
   Every setup `git` call runs without the caller's `GIT_*` variables and with
@@ -251,9 +260,11 @@ runs every part on the host.
     (`EPERM`) for every x86_64, i386, aarch64 and arm system call and denies any
     other architecture's calls, so sandboxed code cannot read or change the
     account's kernel keyrings (the session keyring is otherwise inherited)
-  - an empty file bound over `/proc/keys` and `/proc/key-users`, which would
-    otherwise list the account's key descriptions
   - `--ro-bind / /`, `--dev /dev`, `--proc /proc`
+  - an empty file bound over `/proc/keys` and `/proc/key-users`, which would
+    otherwise list the account's key descriptions; each is bound only when the
+    host has it (a kernel built without `CONFIG_KEYS` has neither, and bwrap
+    cannot create a file inside procfs)
   - `--tmpfs` over `/tmp`, `/var` (with an empty `/var/tmp` and
     `/var/run` linked to `../run`), `/run`, `$HOME`, the passwd home when it
     differs and the runner's temporary directory when it lies elsewhere,
@@ -280,8 +291,12 @@ runs every part on the host.
   first existing path in `['/usr/bin/bwrap', '/bin/bwrap', '/usr/local/bin/bwrap']`
   (never a `PATH` lookup), and a 10 s probe that verifies user namespaces and
   `--tmp-overlay`, and it refuses as uid 0 (the sandbox could read root-only
-  files) or on an architecture without a keyring seccomp table (anything but
-  x86_64 and aarch64). If any check fails, the whole invocation refuses before any
+  files), on an architecture without a keyring seccomp table (anything but
+  x86_64 and aarch64), or when the account's home cannot be read from the
+  passwd database (an overridden `HOME` would then leave the real home
+  unhidden). These checks run after the configuration's own checks, so a
+  malformed configuration is `config-malformed` on any host. If any check
+  fails, the whole invocation refuses before any
   call with `{"v":1,"status":"refused","reason":"sandbox-unavailable"}`, so
   every part of that call (including diff-mode parts named in the same command)
   runs on the host model.
@@ -299,7 +314,12 @@ runs every part on the host.
   host files that `/etc` or `/usr` resolve into on some systems: a CA bundle
   under `/var/lib/ca-certificates` (openSUSE), `/usr/local` or `/opt` linked into
   `/var` (Fedora Atomic), snap or flatpak runtimes, and SSSD's `/var/lib/sss`.
-  A provider that needs one fails (`failed`); list that directory in `expose`.
+  A provider that needs one fails (`failed`); list that directory in `expose`
+  by its resolved spelling (for example `/var/opt/tool`, not `/opt/tool`).
+  Mounts use the path as written, so an `expose` entry, `HOME` or the runner's
+  temporary directory reached through a symlink that points into a hidden
+  directory (such as `/home` linked to `/var/home`) fails setup on every call;
+  use the resolved spelling, or diff mode on such a host.
 - **A failed setup.** A setup step that fails (a missing or unsupported
   `expose` path, a `git` failure, the deadline) records `failed` or
   `timeout`, and the saved result's standard error names the step

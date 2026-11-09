@@ -206,7 +206,7 @@
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
 - **Description:** Repo mode hides every path `git worktree list` names, but only `parseWorktreeList` is unit-tested; nothing runs a sandboxed delegate that checks a linked worktree is empty inside the sandbox.
-- **Hypothesis (untested):** Create a linked worktree inside a `keep` directory (so only the worktree tmpfs can hide it), run the `repo-probe` fake and assert its listing is empty. Re-verify the gap first.
+- **Hypothesis (untested):** Create a linked worktree inside an exposed directory (setup allows an entry above a hidden path, so only the worktree tmpfs can hide it), run the `repo-probe` fake and assert its listing is empty. Re-verify the gap first.
 - **Upstream severity:** INFORMATIONAL
 - **Found in:** `tests/review-delegate.test.ts` (parseWorktreeList test), `src/review-delegate/cli.ts` (`prepareRepoCopy` hide list).
 - **Evidence:** Cycle-2 testing specialist of the delegate repo-access review; no failure was reproduced.
@@ -228,7 +228,7 @@
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
 - **Description:** `sandboxArgs` is tested to mount the private directories it is given, but no test proves `prepare()` puts a TMPDIR outside `/tmp` into that list.
-- **Hypothesis (untested):** Pass `deps.bwrapPaths` a shim that logs its argv and execs the real bwrap, set TMPDIR to a fresh directory, and assert `--tmpfs <TMPDIR>` precedes the expose and keep mounts. Re-verify the gap first.
+- **Hypothesis (untested):** Pass `deps.bwrapPaths` a shim that logs its argv and execs the real bwrap, set TMPDIR to a fresh directory, and assert `--tmpfs <TMPDIR>` precedes the expose mounts. Re-verify the gap first.
 - **Upstream severity:** INFORMATIONAL
 - **Found in:** `src/review-delegate/cli.ts` (`prepare`, `privateDirs`).
 - **Evidence:** Cycle-3 testing specialist; no failure was reproduced.

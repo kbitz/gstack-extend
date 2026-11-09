@@ -15,7 +15,7 @@ import {
   ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, REPO_POLICY, SPECIALIST_PARTS,
   buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, sandboxArgs, validateConfig, type Access,
 } from '../src/review-delegate/delegate';
-import { main, parseWorktreeList, passwdHome, probeSandbox, type Deps } from '../src/review-delegate/cli';
+import { SetupFailure, main, parseWorktreeList, passwdHome, probeSandbox, withinDeadline, type Deps } from '../src/review-delegate/cli';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'review-delegate');
@@ -171,13 +171,20 @@ else if (mode === 'inspect') {
   report({
     cwd: process.cwd(), head, status, log, remotes, pushStatus, outside, realRepoEntries, callsEntries,
     secretInReal, secretInCopy, homeCred, sshExists, runUser, hostsLen, exposedBefore, tmpdir: process.env.TMPDIR, tmpBack,
-    snapshotOnly, varLib, passwdHome, passwdHomeEntries, home: process.env.HOME, procKeys,
+    snapshotOnly, varLib, passwdHome, passwdHomeEntries, home: process.env.HOME, procKeys, pathEnv: process.env.PATH,
     env: Object.keys(process.env), prompt,
   });
   out('[P1] ' + JSON.stringify({
     severity: 'CRITICAL', confidence: 9, path: 'changed.txt', line: 2, category: 'adversarial',
     summary: 'verified in clone', fix: 'guard it', evidence: 'git rev-parse HEAD -> ' + head,
   }) + '\\nRecommendation: fix because reproduced in clone.');
+} else if (mode === 'base-probe') {
+  // The prompt's header line names the frozen scope; the disposable copy should hold both endpoints.
+  const header = prompt.split('\\n').find((line) => line.startsWith('{"part"'));
+  const base = header ? JSON.parse(header).base : '';
+  const type = spawnSync('git', ['cat-file', '-t', base], { encoding: 'utf8' });
+  report({ baseType: type.stdout.trim() || 'missing' });
+  out('NO_FINDINGS: none\\nRecommendation: merge because the base was checked.');
 } else if (mode === 'keyring') {
   // Ask the kernel for the session keyring id (KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING); the sandbox's seccomp filter must refuse it.
   const r = spawnSync('/usr/bin/python3', ['-c', 'import ctypes,os;libc=ctypes.CDLL(None,use_errno=True);nr={"x86_64":250,"aarch64":219}[os.uname().machine];r=libc.syscall(nr,0,-3,0);print(r,ctypes.get_errno())'], { encoding: 'utf8' });
@@ -978,7 +985,7 @@ describe('repository-mode sandbox and check', () => {
     s.candidate = git(s.repo, 'rev-parse', 'HEAD').stdout.trim();
     put(join(s.repo, 'ignored-secret.txt'), 'DONT-COPY-ME\n');
 
-    const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)], undefined, { HOME: fakeHome });
+    const r = await runInProcess([...runArgs(s, 'adversarial'), '--adversarial', adversarialPath(s)], undefined, { HOME: fakeHome, PATH: `${process.env.PATH}::.:relative/bin` });
     expect(r.status).toBe(0);
     expect(row(r.json, 'adversarial')).toMatchObject({ outcome: 'credited', fallback_reason: null });
     const report = reportOf(s, r.json, 'adversarial');
@@ -988,6 +995,8 @@ describe('repository-mode sandbox and check', () => {
     expect(report.log).toContain('ignore secret');
     // /proc/keys and /proc/key-users are masked, so not even key descriptions are listed.
     expect(report.procKeys).toBe('');
+    // Empty and relative PATH entries are dropped, since the working directory is the reviewed copy.
+    expect(String(report.pathEnv).split(':').every((dir: string) => dir.startsWith('/'))).toBe(true);
     expect(report.remotes).toBe('');
     expect(report.pushStatus).not.toBe(0);
     expect(report.outside).toBe('REPO-ONLY-MARKER\n');
@@ -1404,6 +1413,67 @@ describe('repository-mode sandbox and check', () => {
     expect(report.callsEntries).toEqual([]);
     expect(readFileSync(join(exposeDir, 'info.txt'), 'utf8')).toBe('HOST-SKILL\n');
     expect(existsSync(join(s.repo, 'clone-only.txt'))).toBe(false);
+  });
+
+  // Value: protects=an overridden HOME cannot leave the account's real home unhidden when the passwd lookup fails; fails_when=repo mode runs without the passwd home; why_new=continuation-2 cycle-1 finding (Codex); seam=Deps.accountHome
+  test('repo mode refuses with sandbox-unavailable when the account home cannot be read from the passwd database', async () => {
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
+    const r = await runInProcess(checkArgs(s, 'testing'), { accountHome: () => '' });
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+    expect(r.stderr).toContain('the account home could not be read from the passwd database');
+  });
+
+  // Value: protects=a malformed repo-mode config reads config-malformed for any uid or architecture, while uid 0 or an architecture without a seccomp table refuses sandbox-unavailable and fails the probe; fails_when=the uid/architecture refusal runs before config validation, or the probe ignores it; why_new=continuation-2 cycle-1 finding (Codex: tests failed under root); seam=Deps.uid, Deps.arch
+  test('uid 0 and an architecture without a seccomp table refuse sandbox-unavailable after config validation and fail the probe', async () => {
+    const bad = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE, PASSWD_HOME] } }, { testing: 'p' });
+    expect((await runInProcess(checkArgs(bad, 'testing'), { uid: 0 })).json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    const good = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
+    expect((await runInProcess(checkArgs(good, 'testing'), { uid: 0 })).json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+    expect((await runInProcess(checkArgs(good, 'testing'), { arch: 'ia32' })).json).toEqual({ v: 1, status: 'refused', reason: 'sandbox-unavailable' });
+    expect(probeSandbox({ uid: 0 })).toBe(false);
+    expect(probeSandbox({ arch: 'ia32' })).toBe(false);
+  });
+
+  // Value: protects=a command installed inside the reviewed repository or the calls directory is refused at run instead of failing every call; fails_when=argv[0] inside the repository passes; why_new=continuation-2 cycle-1 finding (adversarial); seam=none
+  test('an argv[0] inside the reviewed repository refuses with config-malformed at run', async () => {
+    const s = setup('nested', { p: { mode: 'clean', access: 'repo', expose: [FAKE] } }, { testing: 'p' });
+    const tool = join(s.repo, 'tool');
+    put(tool, '#!/bin/sh\n');
+    chmodSync(tool, 0o755);
+    const cfg = JSON.parse(readFileSync(s.config, 'utf8'));
+    cfg.providers.p.argv = [tool];
+    cfg.providers.p.expose = [FAKE, ...RUNTIME_EXPOSE, dirname(s.repo)];
+    writeFileSync(s.config, JSON.stringify(cfg));
+    const r = await runInProcess(runArgs(s, 'testing'));
+    expect(r.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    expect(r.stderr).toContain('lies inside the reviewed repository or the calls directory');
+  });
+
+  // Value: protects=the disposable copy holds the delta base as well as the candidate, so a repo-mode part can inspect a dangling snapshot base; fails_when=only the candidate is fetched; why_new=continuation-2 cycle-1 finding (red team); seam=none
+  test.if(probe)('the disposable copy holds a dangling snapshot base as well as the candidate', async () => {
+    const s = setup('nested', { b: { mode: 'base-probe', access: 'repo', expose: [FAKE] } }, { testing: 'b' });
+    const tree = git(s.repo, 'rev-parse', `${s.candidate}^{tree}`).stdout.trim();
+    s.base = git(s.repo, 'commit-tree', tree, '-p', s.candidate, '-m', 'snapshot').stdout.trim();
+    const r = await runInProcess(runArgs(s, 'testing'));
+    expect(row(r.json, 'testing')).toMatchObject({ outcome: 'credited' });
+    expect(reportOf(s, r.json, 'testing').baseType).toBe('commit');
+  });
+
+  // Value: protects=the empty file covers only the procfs key files present on the host, since bwrap cannot create a file inside procfs; fails_when=both masks are bound unconditionally; why_new=continuation-2 cycle-1 QA finding (bwrap: Can't create file); seam=none
+  test('sandboxArgs binds the empty file only over the procfs key files it is given', () => {
+    const base = { home: '/h', hidden: [], resolvDir: null, expose: [], copy: '/c', emptyFile: '/e' };
+    const one = sandboxArgs({ ...base, procMasks: ['/proc/keys'] }).join(' ');
+    expect(one).toContain('--ro-bind /e /proc/keys');
+    expect(one).not.toContain('/proc/key-users');
+    expect(sandboxArgs({ ...base, procMasks: [] }).join(' ')).not.toContain('/proc/key');
+  });
+
+  // Value: protects=a stalled filesystem call during setup fails the step at the part's deadline instead of holding the call; fails_when=staging has no deadline; why_new=continuation-2 cycle-1 finding (Codex); seam=withinDeadline
+  test('withinDeadline fails a stalled setup step as a timeout and passes a settled one through', async () => {
+    const error = await withinDeadline(new Promise<never>(() => {}), () => 30, 'expose').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SetupFailure);
+    expect((error as SetupFailure).timedOut).toBe(true);
+    expect(await withinDeadline(Promise.resolve(7), () => 1000, 'expose')).toBe(7);
   });
 
   // Value: protects=no symlink that vanishes with a hidden root is trusted (bwrap mounts and execs the written spelling), while a symlink inside a listed directory survives; fails_when=symlinked ancestors pass, or a working link inside an exposed dir is refused; why_new=review findings (Codex, adversarial, testing); seam=none
