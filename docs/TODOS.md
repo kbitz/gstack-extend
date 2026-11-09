@@ -266,6 +266,56 @@
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (2026-11-08).
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=tests/review-delegate.test.ts|src/review-delegate/cli.ts] Test gap: repo-mode timeout removes the disposable root
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The repo-mode timeout test's title says it removes the disposable root, but it asserts only the part's outcome row.
+- **Hypothesis (untested):** Have the sleep fake report its working directory through stderr, then assert that path no longer exists after the run. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/review-delegate.test.ts` (repo-mode timeout test).
+- **Evidence:** Continuation-2 cycle-1 testing specialist and core pass; no failure reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: repo-mode setup hardening
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Setup git's absolute-only `PATH` and working directory, the fixed-path `getent` and `chmod` (including the case where neither exists) and the 30 s cleanup cap have no test.
+- **Hypothesis (untested):** Plant a `git` in a relative `PATH` entry inside the reviewed repository and assert it never runs while the part is credited; inject the cleanup limit to exercise the cap. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`setupGitEnv`, `passwdHome`, `spawnProvider` cleanup).
+- **Evidence:** Continuation-2 cycle-3 testing specialist and native adversarial pass; no failure reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|src/review-delegate/delegate.ts] Repo mode: mount layers at their resolved spelling
+
+- **What:** Mount every tmpfs, expose layer and the copy at its resolved spelling, so an `expose` entry, `HOME` or the runner's temporary directory reached through a symlink into a hidden directory (for example `/home` linked to `/var/home`) works instead of failing setup on every call.
+- **Why deferred:** It fails closed and is documented; end-to-end tests need fixtures outside every hidden root. Auto-chosen at the continuation-2 cycle-1 stop.
+- **Revisit when:** A host with a symlinked home or temporary directory adopts repo mode, or the next Track touches the mount code.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
+
+### [review:files=tests/review-delegate.test.ts] Background-child test relies on fixed timers
+
+- **What:** The test that a background child inside bwrap dies with its parent asserts a negative after a fixed 1.5 s child timer and a 2.5 s wait. Add a heartbeat or a positive control so it cannot pass vacuously under load.
+- **Why deferred:** Auto-chosen at the continuation-2 cycle-1 review; no failure observed.
+- **Revisit when:** The next Track touches that test or the PID-namespace handling.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
+
+### [review:files=src/review-delegate/cli.ts|src/review-delegate/delegate.ts] Repo mode: retry a setup failure and keep a credited result past slow cleanup
+
+- **What:** A setup failure (the provider never started) is saved like any failed call, so the same frozen scope replays `failed`; and a removal of the disposable root that passes the 30 s cleanup cap turns a credited result into a saved failure. Save a distinct setup status a later run may retry, and settle with the provider's result plus a separate root-remained signal.
+- **Why deferred:** The plan keeps claims, replay and `decide` unchanged; both cases are documented. Auto-chosen at the continuation-2 cycle-2 and cycle-3 reviews.
+- **Revisit when:** A repo-mode part is seen replaying a setup failure, or cleanup is seen hitting the cap.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
+
+### [review:files=src/review-delegate/delegate.ts|docs/delegated-review.md] Repo mode: network isolation beyond --share-net
+
+- **What:** Repo mode shares the host network, so code from the reviewed head reaches every loopback service on the host. Consider `--unshare-net` with an API-only path (a proxy over a Unix socket, or pasta/slirp4netns with loopback blocked).
+- **Why deferred:** The owner accepted the network bound as the provider command's job (plan answer "4 accept"); the loopback exposure is documented. Auto-chosen at the continuation-2 cycle-3 review.
+- **Revisit when:** Repo mode is used on a host that runs unauthenticated loopback services, or a provider offers an API-only network mode.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c3bb147 (2026-11-09).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
