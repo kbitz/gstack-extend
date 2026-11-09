@@ -1277,6 +1277,19 @@ describe('(C) doc and producers agree', () => {
     expect(has(squash(SKILLS['review-and-prep']), 'A blocked preparation gets a resume summary instead of a ship/merge prompt.')).toBe(true);
     expect(has(squash(SKILLS['review-and-prep']), '**PAUSED — manual testing required**')).toBe(true);
   });
+
+  test('pair-review and review-and-prep share the narrowed human-testing definition and H-C Results coverage note', () => {
+    const shared =
+      'judging look and feel, testing on a physical device the agent cannot drive, using credentials or an account only the user holds, or making a decision, including authorizing a destructive action against a shared environment';
+    expect(has(squash(SKILLS['pair-review']), shared)).toBe(true);
+    expect(has(squash(SKILLS['review-and-prep']), shared)).toBe(true);
+    expect(
+      has(
+        squash(DOC),
+        '`Results` keeps its form; `(<C> by coverage)` counts coverage passes an older `/pair-review` session recorded, and a session started since `/pair-review` stopped writing them reports `(0 by coverage)`.',
+      ),
+    ).toBe(true);
+  });
 });
 
 /** Replace a template's placeholders with synthetic values. */
