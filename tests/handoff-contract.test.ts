@@ -1488,6 +1488,18 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(has(squash(DOC), 'the H-E prompt is unchanged')).toBe(true);
     expect(has(prep, 'Full-review evidence: unavailable')).toBe(true);
   });
+
+  // Value: protects=the skill and the handoff contract doc publish the same 45,000-character PR-body budget and state that neither the budget nor the late-record provenance adds a consumer binding; fails_when=the budget numbers diverge or either paragraph stops stating that no consumer binding is added; why_new=PR-body budget and late-record provenance contract documentation; seam=none; no_claim=installed-agent execution
+  test('the skill and the doc name the same PR-body budget and state that no consumer binding is added', () => {
+    const doc = squash(DOC);
+    const skillBudget = /the (\d{2},\d{3})-character budget/.exec(prep)?.[1];
+    const docBudget = /at or under (\d{2},\d{3}) characters/.exec(doc)?.[1];
+    expect(skillBudget).toBe('45,000');
+    expect(docBudget).toBe(skillBudget);
+    expect(has(doc, 'a record written there carries `provenance: late`, named in the stop\'s internal record and the dedicated evidence comment. The stopped receipt\'s portable row stays `Full-review evidence: unavailable`, the four reasons are unchanged and the H-E prompt is unchanged, so this adds no binding for a consumer.')).toBe(true);
+    expect(has(doc, 'The producer keeps every PR body it writes at or under 45,000 characters (counted as the JavaScript string length of `--body-file`), moving bulky evidence')).toBe(true);
+    expect(has(doc, 'Because consumers read the marked receipt comment first and already accept a linked completion matrix, this adds no binding for a consumer.')).toBe(true);
+  });
 });
 
 // ─── (E) Track 48A: the external full-suite gate (H-F) and lean parent reads ───

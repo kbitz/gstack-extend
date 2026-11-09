@@ -7,7 +7,8 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
@@ -1437,8 +1438,8 @@ describe('review-and-prep final-gate repair', () => {
     expect(baseline).toContain('A cycle-1-reproduced probe without such a result, including one marked not applicable in cycle 2, is `not-run`.');
     expect(baseline).toContain('Allowed cycle 2 skips are gate skips plus the recorded `skipped — light default repair cycle` and `skipped — bounded-wait host, cycle 1 only` skips (the latter is the host rule that runs the Red Team on cycle 1 only, not a stalled reviewer).');
     expect(baseline).toContain('Write the records as `cycle-1-baseline.json` and `cycle-1-fix-review.json`, each with a `schema` field (`review-and-prep-cycle-1-baseline/v1`, `review-and-prep-cycle-1-fix-review/v1`)');
-    expect(baseline).toContain("Create each file with an exclusive create (`set -C` before a shell redirect, or `node:fs.writeFileSync(path, contents, {flag: 'wx'})` under Bun), so no duplicate can exist.");
-    expect(baseline).toContain('A record not written at its write point is never written later. A parse failure, or a missing or invalid required field, makes a record unreadable; an unreadable or duplicate record counts as no record of that kind.');
+    expect(baseline).toContain('Write each record with the fence\'s `write` action, which creates the file exclusively (`{flag: "wx"}`), so no duplicate can exist.');
+    expect(baseline).toContain("A record not written at its write point is never written later, except through the single **Late write** at the next cycle's start above. A parse failure, or a missing or invalid required field, makes a record unreadable; an unreadable or duplicate record counts as no record of that kind.");
     expect(baseline).toContain("The records belong to the invocation's first `/review` run; a later `/review` run in the same invocation (Step 5's delta re-review, or a full-scope fallback) writes neither.");
     expect(baseline).toContain("A gate skip is a reviewer that `/review`'s own selection gates did not select: its small-diff, simplification, Red Team and structured-review size gates and its scope signals");
     expect(baseline).toContain('That includes a structured review that `/review` logs as size-gated (`gate: skipped`, `completed:false`). A gate skip is never an incomplete reviewer.');
@@ -1450,7 +1451,7 @@ describe('review-and-prep final-gate repair', () => {
   // Value: protects=the stop's own decision record, evidence comment content and unavailable reasons stay as specified, and the guard and in-cap text this Track must not touch stay unchanged; fails_when=a record is rewritten at the stop, the placeholder repeats, the reason list changes, or a guard or in-cap sentence drifts; why_new=Track 32A unchanged-guard lock; seam=none; no_claim=installed-agent execution
   test('the stop record, evidence comment and unchanged guards stay pinned', () => {
     expect(stop).toContain("The stop's own record, the one that carries the printed unavailable line, names which table row applied and its cause; the stop never writes into `cycle-1-baseline` or `cycle-1-fix-review`.");
-    expect(stop).toContain("An unreadable or duplicate record counts as no record of that kind, and a record not written at its write point is never written later.");
+    expect(stop).toContain('An unreadable or duplicate record counts as no record of that kind, and a record not written at its write point is never written later, except through the single `next-cycle` late write above.');
     expect(stop).toContain("The dedicated evidence comment carries each probe's contract label, ID, outcome and, for `reproduced`, its fingerprint, plus cycle 2's fix-review results and a statement that `completed=true` records coverage, not a clean review; the exact probe commands and requests stay in the local records.");
     // The printed placeholder occurs once, because the handoff contract reads its first occurrence.
     expect(flat.split('`Full-review evidence unavailable: <').length - 1).toBe(1);
@@ -1466,7 +1467,349 @@ describe('review-and-prep final-gate repair', () => {
     expect(inCap).toContain('`A pass covers Steps 3–5, including all reviewers before fixes.`');
     expect(inCap).toContain('`Allow at most 3 fix cycles`');
     expect(inCap).toContain('`DIFF_BASE=$(git merge-base origin/<base> HEAD)`');
-    for (const added of ['cycle-1-fix-review', 'cycle-1-baseline', 'pending-fix-review', 'fix-reviewed']) expect(inCap).not.toContain(added);
+    for (const added of ['cycle-1-fix-review', 'cycle-1-baseline', 'pending-fix-review', 'fix-reviewed', 'FULL_REVIEW_RECORD', 'provenance']) expect(inCap).not.toContain(added);
+  });
+
+  // Value: protects=checkpoints catch a missed record before the first fix or at the next cycle start, late writes require retained snapshot-bound evidence files and never run at the stop, and the stop carries late provenance; fails_when=a checkpoint, late-write source rule, no-late-write-at-stop boundary or stop provenance rule drifts; why_new=missed full-review record recovery contract; seam=none; no_claim=installed-agent execution
+  test('checkpoints, late-write source rules and stop provenance stay pinned', () => {
+    expect(baseline).toContain("(1) `before-fix`, after the write point and before Step 5 applies the cycle's first fix (cycle 1 for `cycle-1-baseline`; cycle 2 for `cycle-1-fix-review` when that record is required).");
+    expect(baseline).toContain('`missing` there is still inside the write point because no fix has been applied: write the record now from the same collection results, check again, and apply no fix until it says `present`.');
+    expect(baseline).toContain("(2) `next-cycle`, at the next cycle's Step 3 (cycle 2 for `cycle-1-baseline`, cycle 3 for `cycle-1-fix-review`), before any of that cycle's readers or probes start.");
+    expect(baseline).toContain("print `Full-review record missed: <kind> — detected at cycle <n>'s start`, and from then on only the late write below can make the record available.");
+    expect(baseline).toContain('(3) `stop`: the cap stop reads both records only through this action.');
+    expect(baseline).toContain("The fix-review checkpoints run only when the baseline says `pending-fix-review` and cycle 2 runs as the in-cap delta from cycle 1's snapshot, matching **Fix-review record**.");
+    expect(baseline).toContain('Allowed once, at the `next-cycle` checkpoint that recorded the miss and before any reader or probe of that cycle starts.');
+    expect(baseline).toContain("Each stage's result and each probe's outcome come only from evidence-directory files written during that cycle's review collection that name its snapshot (the per-review evidence and Step 4.7 results kept under **Capture evidence and commit**), listed as `sources`.");
+    expect(baseline).toContain('Never take a value from memory or chat, a later cycle, the final materialized verdict or a later relabel.');
+    expect(baseline).toContain('Without such a source for every value, leave the miss: the stop reports `record-missing`.');
+    expect(baseline).toContain('There is no late write at the stop or at any later boundary.');
+    expect(stop).toContain("Read each record with the fence's `check` action at `stop`: `present` supplies the record's values to the table above, and `missing`, `missed` or `unreadable` counts as no record (or no readable record).");
+    expect(stop).toContain("For a late record, the stop's own record also names its provenance and boundary (`provenance: late (next-cycle)`).");
+    expect(stop).toContain("For a late record, the dedicated evidence comment also carries `provenance: late (next-cycle)` and its sources' SHA-256 values, while local paths stay in the local records.");
+  });
+
+  describe('full-review record fence', () => {
+    const fences = extractFences(baselineRaw).filter((f) => f.body.includes('FULL_REVIEW_RECORD:'));
+    const block = fences[0]?.body ?? '';
+    const snapBlock = extractFences(skillSection(prep, '### Scope a re-review to its delta')).find((f) => f.body.includes('CANDIDATE_SNAPSHOT:'))?.body ?? '';
+    const tmp = makeBaseTmp('skill-protocols-record-');
+    afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+    const home = join(tmp, 'home');
+    mkdirSync(home, { recursive: true });
+    const env = scopedEnv(home, {
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
+      GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    });
+    const git = (cwd: string, args: string[]) => {
+      const r = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], { cwd, env, encoding: 'utf8', timeout: 15_000 });
+      if (r.status !== 0) throw new Error(`fixture git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const sha256Hex = (buf: Buffer | string) => createHash('sha256').update(buf).digest('hex');
+    let n = 0;
+    function setupRepo(sh: { shell: string; args: string[] }) {
+      const cwd = join(tmp, `repo-${++n}`);
+      const evDir = join(tmp, `ev-${n}`);
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(evDir, { recursive: true });
+      git(cwd, ['init', '--quiet', '--initial-branch=feature/record']);
+      writeFileSync(join(cwd, 'app.ts'), 'export const a = 1;\n');
+      git(cwd, ['add', 'app.ts']);
+      git(cwd, ['commit', '--quiet', '-m', 'feat: base']);
+      const b = git(cwd, ['rev-parse', 'HEAD']);
+      const t = git(cwd, ['rev-parse', 'HEAD^{tree}']);
+      const takeSnap = () => {
+        const r = runShell(sh.shell, sh.args, snapBlock.replaceAll('<workspace>', cwd), env, cwd);
+        expect(r.status, r.stderr).toBe(0);
+        return /CANDIDATE_SNAPSHOT: ([0-9a-f]{40})/.exec(r.stdout)![1]!;
+      };
+      const s1 = takeSnap();
+      const runFence = (action: string, kind: string, arg: string, dir = evDir) => {
+        const script = block
+          .replaceAll('<workspace>', cwd)
+          .replaceAll('<evidence-directory>', dir)
+          .replaceAll('<action>', action)
+          .replaceAll('<kind>', kind)
+          .replaceAll('<record-file-or-boundary>', arg);
+        return runShell(sh.shell, sh.args, script, env, cwd);
+      };
+      const writeInput = (data: unknown): string => {
+        const p = join(tmp, `input-${++n}.json`);
+        writeFileSync(p, JSON.stringify(data, null, 2));
+        return p;
+      };
+      const baseRecord = (overrides: Record<string, unknown> = {}) => ({
+        schema: 'review-and-prep-cycle-1-baseline/v1',
+        provenance: 'write-point',
+        b,
+        t,
+        snapshot: s1,
+        snapshot_tree_equals_t: true,
+        stages: [{ name: 'core', result: 'completed' }],
+        probes: [{ id: '0123456789ab', key: 'cli:bun test', outcome: 'passed' }],
+        completed: 'true',
+        ...overrides,
+      });
+      return { cwd, evDir, b, t, s1, takeSnap, runFence, writeInput, baseRecord };
+    }
+
+    // Value: protects=single record fence in the baseline section with the five documented placeholders; fails_when=the fence is duplicated, removed or changes its placeholder signature; why_new=record fence contract; seam=none
+    test('the section has exactly one record fence with the five placeholders', () => {
+      expect(fences.length).toBe(1);
+      expect(block).toContain('"<workspace>" "<evidence-directory>" "<action>" "<kind>" "<record-file-or-boundary>"');
+    });
+
+    for (const sh of agentShells()) {
+      // Value: protects=catching a missed baseline write at before-fix and writing within the window; fails_when=before-fix misses the absence, creates a miss record prematurely or rejects the write-point record; why_new=reproduced missed-write case caught in the window; seam=none
+      test(`${sh.shell}: missed write caught at before-fix writes cleanly at write-point`, () => {
+        const { evDir, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const c1 = runFence('check', 'cycle-1-baseline', 'before-fix');
+        expect(c1.status).toBe(1);
+        expect(c1.stdout.trim()).toBe('FULL_REVIEW_RECORD: missing cycle-1-baseline');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.missed.json'))).toBe(false);
+
+        const w = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()));
+        expect(w.status, w.stderr).toBe(0);
+        expect(w.stdout.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+
+        const c2 = runFence('check', 'cycle-1-baseline', 'before-fix');
+        expect(c2.status, c2.stderr).toBe(0);
+        expect(c2.stdout.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-baseline; provenance=write-point; completed=true');
+      });
+
+      // Value: protects=detecting a missed record at next-cycle, refusing write-point and uncorroborated late writes, and recording provenance and hashes on a valid late write; fails_when=next-cycle fails to persist the miss, allows write-point after a miss, accepts missing/outside/unrelated sources, or omits source and miss hashes; why_new=reproduced missed-write case past the window; seam=none
+      test(`${sh.shell}: missed write past the window locks out write-point and requires snapshot-bound evidence for late write`, () => {
+        const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const cNext = runFence('check', 'cycle-1-baseline', 'next-cycle');
+        expect(cNext.status).toBe(1);
+        expect(cNext.stdout.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-baseline at next-cycle');
+        const missPath = join(evDir, 'cycle-1-baseline.missed.json');
+        expect(existsSync(missPath)).toBe(true);
+
+        const wPoint = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()));
+        expect(wPoint.status).toBe(3);
+        expect(wPoint.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: missed at next-cycle');
+
+        const wNoSources = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late' })));
+        expect(wNoSources.status).toBe(3);
+        expect(wNoSources.stdout.trim()).toContain('FULL_REVIEW_RECORD: refused cycle-1-baseline:');
+
+        const outsideFile = join(tmp, `outside-${++n}.txt`);
+        writeFileSync(outsideFile, `reviewed snapshot ${s1}\n`);
+        const wOutside = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: [outsideFile] })));
+        expect(wOutside.status).toBe(3);
+        expect(wOutside.stdout.trim()).toContain('outside the evidence directory');
+
+        const noSnapFile = join(evDir, 'review-no-snap.txt');
+        writeFileSync(noSnapFile, 'reviewed some other commit\n');
+        const wNoSnap = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['review-no-snap.txt'] })));
+        expect(wNoSnap.status).toBe(3);
+        expect(wNoSnap.stdout.trim()).toContain('does not name the snapshot');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        const evFile = join(evDir, 'review-cycle-1.txt');
+        writeFileSync(evFile, `core review complete for snapshot ${s1}\n`);
+        const wLate = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['review-cycle-1.txt'] })));
+        expect(wLate.status, wLate.stderr).toBe(0);
+        expect(wLate.stdout.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=late; sha256=[0-9a-f]{64}$/);
+
+        const written = JSON.parse(readFileSync(join(evDir, 'cycle-1-baseline.json'), 'utf8'));
+        expect(written.sources).toBeUndefined();
+        expect(written.late).toEqual({
+          boundary: 'next-cycle',
+          miss_sha256: sha256Hex(readFileSync(missPath)),
+          sources: [{ path: 'review-cycle-1.txt', sha256: sha256Hex(readFileSync(evFile)) }],
+        });
+
+        const cStop = runFence('check', 'cycle-1-baseline', 'stop');
+        expect(cStop.status, cStop.stderr).toBe(0);
+        expect(cStop.stdout.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-baseline; provenance=late; completed=true');
+      });
+
+      // Value: protects=an unrepaired miss remains missed at stop with no record file created; fails_when=stop creates a record or loses the next-cycle miss boundary; why_new=record-missing stop path; seam=none
+      test(`${sh.shell}: an unrepaired miss reports missed at stop with no record file`, () => {
+        const { evDir, runFence } = setupRepo(sh);
+        expect(runFence('check', 'cycle-1-baseline', 'next-cycle').status).toBe(1);
+        const cStop = runFence('check', 'cycle-1-baseline', 'stop');
+        expect(cStop.status).toBe(1);
+        expect(cStop.stdout.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-baseline at next-cycle');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+      });
+
+      // Value: protects=late writes are refused when no next-cycle miss record exists or when the miss boundary differs; fails_when=a late write succeeds without a next-cycle miss record; why_new=late-write boundary gate; seam=none
+      test(`${sh.shell}: late write without a next-cycle miss record is refused`, () => {
+        const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);
+        writeFileSync(join(evDir, 'review-cycle-1.txt'), `snapshot ${s1}\n`);
+        const lateInput = writeInput(baseRecord({ provenance: 'late', sources: ['review-cycle-1.txt'] }));
+
+        const wNone = runFence('write', 'cycle-1-baseline', lateInput);
+        expect(wNone.status).toBe(3);
+        expect(wNone.stdout.trim()).toContain('FULL_REVIEW_RECORD: refused cycle-1-baseline:');
+
+        writeFileSync(
+          join(evDir, 'cycle-1-baseline.missed.json'),
+          JSON.stringify({ schema: 'review-and-prep-record-miss/v1', kind: 'cycle-1-baseline', boundary: 'stop', detected_at: '2026-11-09T00:00:00.000Z' }),
+        );
+        const wStopBoundary = runFence('write', 'cycle-1-baseline', lateInput);
+        expect(wStopBoundary.status).toBe(3);
+        expect(wStopBoundary.stdout.trim()).toContain('FULL_REVIEW_RECORD: refused cycle-1-baseline:');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+      });
+
+      // Value: protects=write-once exclusivity on record files; fails_when=a second write overwrites the file or exits 0; why_new=write-once mechanical guarantee; seam=none
+      test(`${sh.shell}: second write prints exists, exits 2 and leaves the file unchanged`, () => {
+        const { evDir, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const w1 = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()));
+        expect(w1.status, w1.stderr).toBe(0);
+        const recFile = join(evDir, 'cycle-1-baseline.json');
+        const before = readFileSync(recFile);
+
+        const w2 = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: 'false', cause: 'reviewer-incomplete: red-team' })));
+        expect(w2.status).toBe(2);
+        expect(w2.stdout.trim()).toBe('FULL_REVIEW_RECORD: exists cycle-1-baseline');
+        expect(readFileSync(recFile)).toEqual(before);
+      });
+
+      // Value: protects=schema, exact string completion, Git tree agreement and corrupt-file detection; fails_when=boolean completed, missing keys or wrong snapshot_tree_equals_t is accepted or corrupt JSON passes check; why_new=mechanical record validation; seam=none
+      test(`${sh.shell}: validation rejects missing keys, boolean completed and tree disagreement, and flags corrupt files as unreadable`, () => {
+        const { cwd, evDir, runFence, writeInput, baseRecord, takeSnap } = setupRepo(sh);
+        const noStages = baseRecord();
+        delete (noStages as Record<string, unknown>).stages;
+        const rMissing = runFence('write', 'cycle-1-baseline', writeInput(noStages));
+        expect(rMissing.status).toBe(3);
+        expect(rMissing.stdout.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: stages');
+
+        const rBool = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: true })));
+        expect(rBool.status).toBe(3);
+        expect(rBool.stdout.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: completed');
+
+        writeFileSync(join(cwd, 'app.ts'), 'export const a = 2;\n');
+        const dirtySnap = takeSnap();
+        const rTree = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ snapshot: dirtySnap, snapshot_tree_equals_t: true })));
+        expect(rTree.status).toBe(3);
+        expect(rTree.stdout.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: snapshot_tree_equals_t');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        writeFileSync(join(evDir, 'cycle-1-baseline.json'), '{not valid json\n');
+        const cCorrupt = runFence('check', 'cycle-1-baseline', 'stop');
+        expect(cCorrupt.status).toBe(1);
+        expect(cCorrupt.stdout.trim()).toBe('FULL_REVIEW_RECORD: unreadable cycle-1-baseline: json');
+      });
+
+      // Value: protects=miss persistence failures cannot masquerade as a saved lock; fails_when=an absent evidence directory prints missed or write emits an unstructured exception; why_new=reproduced miss-lock I/O failure; seam=none
+      test(`${sh.shell}: record I/O failures are explicit and never report a persisted miss`, () => {
+        const { evDir, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const absent = join(evDir, 'absent');
+        const miss = runFence('check', 'cycle-1-baseline', 'next-cycle', absent);
+        expect(miss.status).toBe(1);
+        expect(miss.stdout.trim()).toBe('FULL_REVIEW_RECORD: unreadable cycle-1-baseline: miss record (ENOENT)');
+        expect(miss.stderr).toBe('');
+        expect(existsSync(join(absent, 'cycle-1-baseline.missed.json'))).toBe(false);
+        const write = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), absent);
+        expect(write.status).toBe(3);
+        expect(write.stdout.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: record write (ENOENT)');
+        expect(write.stderr).toBe('');
+      });
+
+      // Value: protects=corrupt miss records retain structured fail-closed output; fails_when=JSON null or a primitive throws before the fence status or permits write-point recovery; why_new=coverage audit found an uncaught null miss; seam=none
+      test(`${sh.shell}: non-object miss records fail closed with structured output`, () => {
+        const { evDir, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const missPath = join(evDir, 'cycle-1-baseline.missed.json');
+        for (const value of [null, true, 1, 'invalid', []]) {
+          const bytes = JSON.stringify(value);
+          writeFileSync(missPath, bytes);
+          const check = runFence('check', 'cycle-1-baseline', 'next-cycle');
+          expect(check.status).toBe(1);
+          expect(check.stdout.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-baseline at unreadable');
+          expect(check.stderr).toBe('');
+          const write = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()));
+          expect(write.status).toBe(3);
+          expect(write.stdout).toContain('refused cycle-1-baseline: missed at unreadable');
+          expect(readFileSync(missPath, 'utf8')).toBe(bytes);
+          expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+        }
+      });
+
+      // Value: protects=late evidence must be separate from the assembled input and generated records; fails_when=a record certifies itself or a generated record qualifies as review evidence; why_new=late-source self-corroboration regression; seam=none
+      test(`${sh.shell}: late records cannot use their own input or generated record files as sources`, () => {
+        const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);
+        expect(runFence('check', 'cycle-1-baseline', 'next-cycle').status).toBe(1);
+        const input = join(evDir, 'assembled.json');
+        writeFileSync(input, JSON.stringify(baseRecord({ provenance: 'late', sources: ['assembled.json'] })));
+        const self = runFence('write', 'cycle-1-baseline', input);
+        expect(self.status).toBe(3);
+        expect(self.stdout).toContain('is not review evidence');
+        writeFileSync(join(evDir, 'cycle-1-fix-review.json'), JSON.stringify({ cycle_2_snapshot: s1 }));
+        const generated = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['cycle-1-fix-review.json'] })));
+        expect(generated.status).toBe(3);
+        expect(generated.stdout).toContain('is not review evidence');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+        writeFileSync(join(evDir, '..notes.txt'), `core reviewed ${s1}\n`);
+        const retained = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['..notes.txt'] })));
+        expect(retained.status, retained.stderr).toBe(0);
+      });
+
+      // Value: protects=completion flags retain the documented probe outcome rules; fails_when=a passed baseline or fix review contains an incomplete probe or pending-fix-review contains no reproduced probe; why_new=completion consistency regression; seam=none
+      test(`${sh.shell}: completion flags reject inconsistent probe outcomes`, () => {
+        const { evDir, s1, runFence, writeInput, baseRecord } = setupRepo(sh);
+        for (const outcome of ['blocked', 'inconclusive', 'not-run', 'reproduced']) {
+          const probes = [{ id: '0123456789ab', key: 'cli:bun test', outcome, fingerprint: 'app.ts:1:contract' }];
+          const baseline = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ probes })));
+          expect(baseline.status).toBe(3);
+          expect(baseline.stdout).toContain('invalid cycle-1-baseline: completed');
+          if (outcome !== 'reproduced') {
+            const fix = runFence('write', 'cycle-1-fix-review', writeInput({
+              schema: 'review-and-prep-cycle-1-fix-review/v1', provenance: 'write-point',
+              cycle_1_snapshot: s1, cycle_2_snapshot: s1, scope: `delta from ${s1}`,
+              stages: [{ name: 'core', result: 'completed' }], probes, fix_reviewed: 'true',
+            }));
+            expect(fix.status).toBe(3);
+            expect(fix.stdout).toContain('invalid cycle-1-fix-review: fix_reviewed');
+          }
+        }
+        const pending = runFence('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: 'pending-fix-review', cause: 'no reproduced probe' })));
+        expect(pending.status).toBe(3);
+        expect(pending.stdout).toContain('invalid cycle-1-baseline: completed');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+        expect(existsSync(join(evDir, 'cycle-1-fix-review.json'))).toBe(false);
+      });
+
+      // Value: protects=cycle-1-fix-review checkpoints and late-write verification bound to cycle_2_snapshot; fails_when=fix-review skips cycle_2_snapshot verification or reports the wrong check summary; why_new=paired fix-review record path; seam=none
+      test(`${sh.shell}: cycle-1-fix-review supports before-fix, next-cycle and late write naming cycle_2_snapshot`, () => {
+        const { cwd, evDir, s1, runFence, writeInput, takeSnap } = setupRepo(sh);
+        writeFileSync(join(cwd, 'app.ts'), 'export const a = 2;\n');
+        const s2 = takeSnap();
+        const fixRecord = (overrides: Record<string, unknown> = {}) => ({
+          schema: 'review-and-prep-cycle-1-fix-review/v1',
+          provenance: 'write-point',
+          cycle_1_snapshot: s1,
+          cycle_2_snapshot: s2,
+          scope: `delta from ${s1}`,
+          stages: [{ name: 'core', result: 'completed' }],
+          probes: [{ id: '0123456789ab', key: 'cli:bun test', outcome: 'passed', evidence: 'probe-rerun.txt' }],
+          fix_reviewed: 'true',
+          ...overrides,
+        });
+
+        expect(runFence('check', 'cycle-1-fix-review', 'before-fix').stdout.trim()).toBe('FULL_REVIEW_RECORD: missing cycle-1-fix-review');
+        expect(runFence('check', 'cycle-1-fix-review', 'next-cycle').stdout.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-fix-review at next-cycle');
+
+        writeFileSync(join(evDir, 'cycle-1-only.txt'), `only names ${s1}\n`);
+        const wWrongSnap = runFence('write', 'cycle-1-fix-review', writeInput(fixRecord({ provenance: 'late', sources: ['cycle-1-only.txt'] })));
+        expect(wWrongSnap.status).toBe(3);
+        expect(wWrongSnap.stdout.trim()).toContain('does not name the snapshot');
+
+        writeFileSync(join(evDir, 'cycle-2-review.txt'), `delta from ${s1} to ${s2} reviewed\n`);
+        const wLate = runFence('write', 'cycle-1-fix-review', writeInput(fixRecord({ provenance: 'late', sources: ['cycle-2-review.txt'] })));
+        expect(wLate.status, wLate.stderr).toBe(0);
+        expect(wLate.stdout.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-fix-review; provenance=late; sha256=[0-9a-f]{64}$/);
+
+        const cStop = runFence('check', 'cycle-1-fix-review', 'stop');
+        expect(cStop.status, cStop.stderr).toBe(0);
+        expect(cStop.stdout.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-fix-review; provenance=late; fix-reviewed=true');
+      });
+    }
   });
 });
 
@@ -3205,4 +3548,78 @@ describe('review-and-prep agent-checkable verification before human testing', ()
     );
     expect(sectionRaw).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
+});
+
+describe('review-and-prep PR body size budget', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const step3Raw = skillSection(prep, '## 3. Push and create or update the draft');
+  const step3 = step3Raw.replace(/\s+/g, ' ');
+  const step6 = skillSection(prep, '## 6. Final readiness gate and handoff').replace(/\s+/g, ' ');
+  const fences = extractFences(step3Raw).filter((f) => f.body.includes('PR_BODY_SIZE:'));
+  const block = fences[0]?.body ?? '';
+  const tmp = makeBaseTmp('skill-protocols-pr-body-');
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+  const home = join(tmp, 'home');
+  mkdirSync(home, { recursive: true });
+  const env = scopedEnv(home);
+
+  // Value: protects=Step 3 and Step 6 agree on the 45,000-character budget, replace the 65,536-only matrix trigger, and keep the required lines in the body; fails_when=the budget number drifts, the old 65,536-only trigger returns, or a never-move item is dropped; why_new=PR-body budget contract; seam=none; no_claim=installed-agent execution
+  test('prose and fence name the same 45,000 budget, remove the 65,536-only trigger and lock the move and never-move rules', () => {
+    expect(fences.length).toBe(1);
+    const fenceBudget = /budget (\d+)/.exec(block)?.[1];
+    expect(fenceBudget).toBe('45000');
+    expect(step3).toContain('45,000-character budget');
+    expect(step6).toContain('45,000-character budget');
+    expect(step6).toContain('over the 45000 budget after moving evidence');
+    expect(prep).not.toContain("If the rendered body would exceed GitHub's 65,536-character limit, put the full matrix in one dedicated PR comment");
+    expect(step3).toContain('Before every title/body write (creation, later refreshes, and the Step 6 receipt, including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt)');
+    expect(step3).toContain('For draft creation, prepare a concise body within the budget without moving evidence; after the PR exists, post any needed evidence comment before refreshing the body with its permalink.');
+    expect(step6).toContain('The budget exception never excuses a failed GitHub body or comment write: preparation stays incomplete if the API rejects it');
+    expect(step6).toContain('(1) the completion matrix, (2) per-review and per-specialist outcome detail and finding-disposition tables, and (3) sanitized output excerpts, into one dedicated PR comment, leaving in the receipt each moved item\'s location and the SHA-256 the receipt already names.');
+    for (const keep of [
+      'the `## Review and prep` heading and status line',
+      '`PAUSED — manual testing required`',
+      '`STOPPED — review cycle cap`',
+      '`BLOCKED — provider failures`',
+      'markers',
+      'the five stopped labels',
+      '`reviewRestrictionResolved: true`',
+      'every `Auto-chosen` line',
+      'every labeled line the stage-handoff contract lists as validated or receipt-present (including `Ship gates` with the documentation section\'s exact text, which `/ship-and-land` may rebuild from receipt text)',
+      'user decisions and quotes',
+      'human-authored text',
+    ]) {
+      expect(step6).toContain(keep);
+    }
+  });
+
+  for (const sh of agentShells()) {
+    // Value: protects=exact JS string-length measurement at 45,000/45,001, astral character surrogate-pair counting and missing-file rejection; fails_when=byte length or code-point count replaces JS length, the boundary is off by one, or a missing file exits 0 or prints within; why_new=executable PR_BODY_SIZE fence; seam=none
+    test(`${sh.shell}: body fence enforces 45000 JS characters, counts astral chars as 2, and rejects a missing file`, () => {
+      const runBody = (file: string) => runShell(sh.shell, sh.args, block.replaceAll('<body-file>', file), env, tmp);
+
+      const f45000 = join(tmp, `body-45000-${sh.shell}.md`);
+      writeFileSync(f45000, 'a'.repeat(45_000));
+      const rWithin = runBody(f45000);
+      expect(rWithin.status, rWithin.stderr).toBe(0);
+      expect(rWithin.stdout.trim()).toBe('PR_BODY_SIZE: 45000 characters; budget 45000; within');
+
+      const f45001 = join(tmp, `body-45001-${sh.shell}.md`);
+      writeFileSync(f45001, 'a'.repeat(45_001));
+      const rOver = runBody(f45001);
+      expect(rOver.status).toBe(1);
+      expect(rOver.stdout.trim()).toBe('PR_BODY_SIZE: 45001 characters; budget 45000; over');
+
+      // 44,999 ASCII + 1 astral character ('😀' = 2 UTF-16 code units) => 45,001 JS length (over).
+      const fAstral = join(tmp, `body-astral-${sh.shell}.md`);
+      writeFileSync(fAstral, 'a'.repeat(44_999) + '😀');
+      const rAstral = runBody(fAstral);
+      expect(rAstral.status).toBe(1);
+      expect(rAstral.stdout.trim()).toBe('PR_BODY_SIZE: 45001 characters; budget 45000; over');
+
+      const rMissing = runBody(join(tmp, 'no-such-body-file.md'));
+      expect(rMissing.status).not.toBe(0);
+      expect(rMissing.stdout).not.toContain('within');
+    });
+  }
 });
