@@ -275,6 +275,9 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(prep).toContain('Move only evidence captures this invocation owns');
     expect(prep).toContain('Persist a tracked-file blocker in `session.yaml`');
     expect(prep).toContain('Every checkpoint and fix commit refuses an unresolved blocker');
+    expect(content).toContain('tracked_file_blocker: null');
+    expect(prep).toContain('On that answer only, recheck the contents and status, establish the approved baseline');
+    expect(prep).toContain('Resume reads this field before any observation or commit');
     expect(prep).toContain('These safety rules apply to every agent-driven preparation, reproduction, rebuild and verification');
     expect(normalized).toContain('Apply the Prepare-the-item safety rules to this observation');
     expect(normalized).toContain('Apply the Prepare-the-item safety rules throughout this parked-bug flow');
@@ -283,7 +286,9 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
   test('the rendered prepared state attaches current evidence from an owned build', () => {
     const prep = flatProse(skillSection(content, '### Prepare the item'));
     expect(prep).toContain('Copy the `Agent evidence:` path and short observation into `Prepared:`');
-    expect(prep).toContain("Reuse only this invocation's own build while its source is unchanged");
+    expect(prep).toContain("Reuse only this session's own build while its source is unchanged");
+    expect(content).toContain('build_run: null');
+    expect(prep).toContain('On resume, recover that handle only after verifying its ownership and target');
     expect(prep).toContain('Inspect the recipe destinations before running it; execute only owned local steps');
     const fix = flatProse(skillSection(content, '### On FIX NOW'));
     expect(fix).toContain('Refresh `Prepared:` and `Agent evidence:` on the verified build before presenting the retest');
@@ -297,6 +302,9 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(completion).toContain('A `Fix:` field alone or a pending human retest never completes an item');
     expect(completion).toContain('A FAILED item with a linked parked bug remains unresolved');
     expect(normalized).toContain('Every passed tally and all-passed predicate follows the Legacy sessions rule');
+    expect(normalized).toContain('On "Continue testing", create a linked parked bug from the recorded failure without another description question');
+    expect(normalized).toContain("after agent verification present a linked item's original action/PASS/FAIL as the human retest");
+    expect(normalized).toContain("recompute the group's status even if it is already in `completed_groups`");
   });
 
   test('batch individual results append history and batching offers require shared state', () => {
