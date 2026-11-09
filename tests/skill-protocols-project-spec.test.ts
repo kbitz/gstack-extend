@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './helpers/child-stdio.ts';
 // The Validate snippet imports this parser in a subprocess. Keep that runtime
 // dependency visible to diff-based test selection for parser-only changes.
 import '../src/audit/parsers/roadmap.ts';

@@ -2,6 +2,42 @@
 
 ## Unprocessed
 
+### [review:files=src/upstream-check/probe.ts|tests/upstream-check.test.ts] Test gap: probe typed writes and callbacks
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Probe fixtures cover ordinary stdout/stderr strings, noise, overflow and abrupt exits, but do not directly assert typed buffers, explicit encodings or write callbacks.
+- **Hypothesis (untested):** Extend the subprocess fixtures to assert exact bytes and callback results; re-verify the gap first without adding production exports.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/probe.ts:87`, `src/upstream-check/probe.ts:107`.
+- **Evidence:** Coverage audit and full source-context recovery read the writer and owning tests; no failure reproduced for these cases. Track 72D's required overflow, deadline and attribution tests remain intact.
+- **Context:** Filed by `/review-and-prep` at `7d7fb5d` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or changes the probe stream adapter.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/upstream-check/probe.ts|tests/upstream-check.test.ts] Test gap: bounded probe write errors
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Existing large-output and flood fixtures do not deterministically assert recovery, exhaustion and permanent-error branches of the synchronous writer's backoff.
+- **Hypothesis (untested):** Exercise the subprocess boundary with test-only write fault injection, checking intact output and bounded completion; re-verify before implementing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/probe.ts:93`.
+- **Evidence:** Audit read the bounded EAGAIN/EWOULDBLOCK loop and current probe fixtures; current integration tests pass, and no write-error defect was reproduced. No production seam is proposed.
+- **Context:** Filed by `/review-and-prep` at `7d7fb5d` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or changes write retry handling.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=tests/helpers/child-stdio.ts|tests/child-stdio.test.ts] Test gap: child stdio creation-failure cleanup
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Helper tests assert cleanup after success, nonzero exit and failed child launch, but do not directly inject capture-file or FIFO creation failures.
+- **Hypothesis (untested):** Extend the lifecycle tests with a failing mkfifo fixture and appropriate file-open failure, asserting no temporary resources remain; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/helpers/child-stdio.ts:172`, `tests/helpers/child-stdio.ts:231`.
+- **Evidence:** Audit read the creation error handlers and existing unit tests; no creation failure or leak was reproduced. Track 72D's required native failed-spawn and cleanup tests pass.
+- **Context:** Filed by `/review-and-prep` at `7d7fb5d` on 2026-11-08, before draft PR creation.
+- **Revisit when:** The next Track touches either tagged path or changes helper resource creation.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=skills/pair-review.md|tests/skill-protocols-pair-review.test.ts] Test gap: pair-review stage-line value bindings
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.

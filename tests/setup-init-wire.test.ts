@@ -47,6 +47,7 @@ function runSetup(s: ReturnType<typeof scope>, extraArgs: string[] = []) {
       HOME: s.home,
       GSTACK_EXTEND_STATE_DIR: s.state,
       GSTACK_STATE_ROOT: s.groot,
+      ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
     },
     timeout: 60_000,
   });
@@ -335,6 +336,7 @@ function runCopied(
       HOME: s.home,
       GSTACK_EXTEND_STATE_DIR: s.state,
       GSTACK_STATE_ROOT: s.groot,
+      ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
       ...extraEnv,
     },
     timeout: 60_000,
@@ -505,5 +507,31 @@ exit "$(cat "$AUDIT_RECORD/exit")"
     expect(retries[0]).toContain('--name gstack-extend');
     expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(true);
     expect(existsSync(homeRegistry(s.home))).toBe(false);
+  });
+
+  // Value: protects=setup allocates its self-registration log template under ${TMPDIR:-/tmp} rather than a hardcoded /tmp; fails_when=setup:1675 calls mktemp /tmp/gstack-extend-self-register.XXXXXX and ignores TMPDIR; why_new=pins AC8 so sandboxes with read-only /tmp can run setup down the self-registration path; seam=mktemp stub at front of PATH logging argv before execing real mktemp
+  test('self-registration log template honors TMPDIR', () => {
+    const s = scope('setup-tmpdir-self-reg');
+    const customTmp = join(baseTmp, 'custom-self-reg-tmp');
+    const stubBin = join(baseTmp, 'mktemp-stub-bin');
+    const argLog = join(baseTmp, 'mktemp-args.log');
+    mkdirSync(customTmp, { recursive: true });
+    mkdirSync(stubBin, { recursive: true });
+    const realMktemp = spawnSync('sh', ['-c', 'command -v mktemp'], { encoding: 'utf8' }).stdout.trim() || '/usr/bin/mktemp';
+    const stubPath = join(stubBin, 'mktemp');
+    writeFileSync(
+      stubPath,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${argLog}'\nexec '${realMktemp}' "$@"\n`,
+    );
+    chmodSync(stubPath, 0o755);
+    const r = runCopied(SETUP, s, [], {
+      PATH: `${stubBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      TMPDIR: customTmp,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain('Self-registered gstack-extend');
+    const logged = readFileSync(argLog, 'utf8').trim().split('\n');
+    expect(logged).toContain(`${customTmp}/gstack-extend-self-register.XXXXXX`);
+    expect(logged.some((line) => line.startsWith('/tmp/gstack-extend-self-register.'))).toBe(false);
   });
 });

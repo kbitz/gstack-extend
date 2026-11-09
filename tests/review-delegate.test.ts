@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './helpers/child-stdio';
 import { createServer, type Socket } from 'node:net';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
@@ -90,37 +90,52 @@ function repository() {
 }
 
 const FAKE = join(fresh('fake'), 'delegate.ts');
-put(FAKE, `import { appendFileSync, existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
+put(FAKE, `import { appendFileSync, existsSync, readdirSync, writeFileSync, readFileSync, writeSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 const [, , mode, state] = process.argv;
 // Repo mode persists nothing on the host, so sandboxed modes report through stderr (the runner saves it, never parses it) or a localhost socket.
-const report = (value) => console.error('REPORT ' + JSON.stringify(value));
+const report = (value) => err('REPORT ' + JSON.stringify(value));
 const prompt = await Bun.stdin.text();
 try { appendFileSync(join(state, 'spawns.log'), mode + '\\n'); } catch {}
+const writeAll = (fd, text) => {
+  const buf = Buffer.from(text, 'utf8');
+  let off = 0;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  while (off < buf.length) {
+    try {
+      off += writeSync(fd, buf, off, Math.min(65536, buf.length - off));
+    } catch (e) {
+      if (e && (e.code === 'EAGAIN' || e.code === 'EWOULDBLOCK')) { Atomics.wait(wait, 0, 0, 5); continue; }
+      throw e;
+    }
+  }
+};
+const out = (line) => writeAll(1, line + '\\n');
+const err = (line) => writeAll(2, line + '\\n');
 const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 8, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
 const rec = 'Recommendation: fix because a gap remains.';
 const envelope = (result, usage) => JSON.stringify({ result, usage });
-if (mode === 'findings') console.log(envelope(finding('CRITICAL', '[P1]') + '\\n' + finding('INFORMATIONAL', '[P3]') + '\\n' + rec, { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 7, cache_creation_input_tokens: 0 }));
-else if (mode === 'plain') console.log(finding('CRITICAL', '[P0]') + '\\n' + rec);
-else if (mode === 'clean') console.log(envelope('NO_FINDINGS: none\\nRecommendation: merge because nothing is wrong.', { input_tokens: 90, output_tokens: 4 }));
-else if (mode === 'exit') { console.error('STDERR-MARKER boom'); process.exit(3); }
+if (mode === 'findings') out(envelope(finding('CRITICAL', '[P1]') + '\\n' + finding('INFORMATIONAL', '[P3]') + '\\n' + rec, { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 7, cache_creation_input_tokens: 0 }));
+else if (mode === 'plain') out(finding('CRITICAL', '[P0]') + '\\n' + rec);
+else if (mode === 'clean') out(envelope('NO_FINDINGS: none\\nRecommendation: merge because nothing is wrong.', { input_tokens: 90, output_tokens: 4 }));
+else if (mode === 'exit') { err('STDERR-MARKER boom'); process.exit(3); }
 else if (mode === 'sleep') { try { writeFileSync(join(state, 'pid.txt'), String(process.pid)); } catch {} await new Promise((resolve) => setTimeout(resolve, 5000)); try { writeFileSync(join(state, 'finished.txt'), 'natural completion'); } catch {} }
-else if (mode === 'refusal') console.log('I cannot review this.\\nRecommendation: none because I refuse.');
-else if (mode === 'needs-context') console.log('NEEDS_CONTEXT: the callers of changed.txt\\nNO_FINDINGS: none\\nRecommendation: wait because callers are missing.');
-else if (mode === 'uncredited') console.log('Looks fine to me.\\nRecommendation: merge because it reads well.');
-else if (mode === 'not-json') console.log('[P1] not json\\n' + rec);
-else if (mode === 'mismatch') console.log(finding('CRITICAL', '[P2]') + '\\n' + rec);
-else if (mode === 'missing-field') console.log('[P1] {"severity":"CRITICAL","path":"changed.txt","category":"testing","summary":"x"}\\n' + rec);
-else if (mode === 'is-error') console.log(JSON.stringify({ result: 'NO_FINDINGS: none\\nRecommendation: merge because clean.', usage: {}, is_error: true }));
-else if (mode === 'overflow') process.stdout.write('x'.repeat(1024 * 1024 + 4096));
-else if (mode === 'write') { writeFileSync(join(readFileSync(join(state, 'repo.txt'), 'utf8'), 'leak.txt'), 'x'); console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.'); }
-else if (mode === 'rewrite') { writeFileSync(readFileSync(join(state, 'target.txt'), 'utf8'), 'after\\n'); console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.'); }
+else if (mode === 'refusal') out('I cannot review this.\\nRecommendation: none because I refuse.');
+else if (mode === 'needs-context') out('NEEDS_CONTEXT: the callers of changed.txt\\nNO_FINDINGS: none\\nRecommendation: wait because callers are missing.');
+else if (mode === 'uncredited') out('Looks fine to me.\\nRecommendation: merge because it reads well.');
+else if (mode === 'not-json') out('[P1] not json\\n' + rec);
+else if (mode === 'mismatch') out(finding('CRITICAL', '[P2]') + '\\n' + rec);
+else if (mode === 'missing-field') out('[P1] {"severity":"CRITICAL","path":"changed.txt","category":"testing","summary":"x"}\\n' + rec);
+else if (mode === 'is-error') out(JSON.stringify({ result: 'NO_FINDINGS: none\\nRecommendation: merge because clean.', usage: {}, is_error: true }));
+else if (mode === 'overflow') writeAll(1, 'x'.repeat(1024 * 1024 + 4096));
+else if (mode === 'write') { writeFileSync(join(readFileSync(join(state, 'repo.txt'), 'utf8'), 'leak.txt'), 'x'); out('NO_FINDINGS: none\\nRecommendation: merge because clean.'); }
+else if (mode === 'rewrite') { writeFileSync(readFileSync(join(state, 'target.txt'), 'utf8'), 'after\\n'); out('NO_FINDINGS: none\\nRecommendation: merge because clean.'); }
 else if (mode === 'inspect') {
   writeFileSync(join(state, 'inspect.json'), JSON.stringify({ cwd: process.cwd(), entries: readdirSync(process.cwd()), env: Object.keys(process.env), prompt }));
-  console.error('STDERR-MARKER inspected');
-  console.log('NO_FINDINGS: none\\nRecommendation: merge because inspected.');
+  err('STDERR-MARKER inspected');
+  out('NO_FINDINGS: none\\nRecommendation: merge because inspected.');
 } else if (mode === 'repo-probe') {
   const realRepo = readFileSync(join(state, 'repo.txt'), 'utf8').trim();
   const exposeDir = readFileSync(join(state, 'expose-dir.txt'), 'utf8').trim();
@@ -159,7 +174,7 @@ else if (mode === 'inspect') {
     snapshotOnly, varLib, passwdHome, passwdHomeEntries, home: process.env.HOME, procKeys,
     env: Object.keys(process.env), prompt,
   });
-  console.log('[P1] ' + JSON.stringify({
+  out('[P1] ' + JSON.stringify({
     severity: 'CRITICAL', confidence: 9, path: 'changed.txt', line: 2, category: 'adversarial',
     summary: 'verified in clone', fix: 'guard it', evidence: 'git rev-parse HEAD -> ' + head,
   }) + '\\nRecommendation: fix because reproduced in clone.');
@@ -167,7 +182,7 @@ else if (mode === 'inspect') {
   // Ask the kernel for the session keyring id (KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING); the sandbox's seccomp filter must refuse it.
   const r = spawnSync('/usr/bin/python3', ['-c', 'import ctypes,os;libc=ctypes.CDLL(None,use_errno=True);nr={"x86_64":250,"aarch64":219}[os.uname().machine];r=libc.syscall(nr,0,-3,0);print(r,ctypes.get_errno())'], { encoding: 'utf8' });
   report({ keyring: (r.stdout ?? '').trim() });
-  console.log('NO_FINDINGS: none\\nRecommendation: merge because keyring probed.');
+  out('NO_FINDINGS: none\\nRecommendation: merge because keyring probed.');
 } else if (mode === 'escape-write') {
   const realRepo = readFileSync(join(state, 'repo.txt'), 'utf8').trim();
   const attempts: Record<string, string> = {};
@@ -184,12 +199,12 @@ else if (mode === 'inspect') {
     catch (err: any) { attempts[name] = err?.code ?? 'error'; }
   }
   report(attempts);
-  console.log('NO_FINDINGS: none\\nRecommendation: merge because escape probes ran.');
+  out('NO_FINDINGS: none\\nRecommendation: merge because escape probes ran.');
 } else if (mode === 'background') {
   const port = Number(readFileSync(join(state, 'port.txt'), 'utf8'));
   const child = spawn(process.execPath, ['-e', \`setTimeout(() => { const s = require('node:net').connect(\${port}, '127.0.0.1', () => s.end('alive')); s.on('error', () => {}); }, 1500);\`], { detached: true, stdio: 'ignore' });
   child.unref();
-  console.log('NO_FINDINGS: none\\nRecommendation: merge because background spawned.');
+  out('NO_FINDINGS: none\\nRecommendation: merge because background spawned.');
 } else if (mode === 'signal-wait') {
   const port = Number(readFileSync(join(state, 'port.txt'), 'utf8'));
   await new Promise((resolve) => {
@@ -198,7 +213,7 @@ else if (mode === 'inspect') {
     socket.on('error', () => resolve(null));
     setTimeout(() => resolve(null), 5000);
   });
-  console.log('NO_FINDINGS: none\\nRecommendation: merge because signal received.');
+  out('NO_FINDINGS: none\\nRecommendation: merge because signal received.');
 }
 `);
 
@@ -228,9 +243,47 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
 }
 const spawns = (s: Setup) => existsSync(join(s.state, 'spawns.log')) ? readFileSync(join(s.state, 'spawns.log'), 'utf8').split('\n').filter(Boolean) : [];
 
+const PRELOAD = join(fresh('preload'), 'preload.ts');
+put(PRELOAD, `import { closeSync, writeSync, WriteStream } from 'node:fs';
+const origEnd = WriteStream.prototype.end;
+WriteStream.prototype.end = function (this: any, chunk?: any, enc?: any, cb?: any) {
+  for (const s of Object.getOwnPropertySymbols(this)) {
+    if (s.toString() === 'Symbol(kWriteStreamFastPath)' && this[s] && typeof this[s]._getFd === 'function') {
+      const fd = this[s]._getFd();
+      if (typeof fd === 'number' && fd >= 0) {
+        try {
+          if (chunk !== undefined && chunk !== null && typeof chunk !== 'function') {
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), typeof enc === 'string' ? (enc as BufferEncoding) : 'utf8');
+            let off = 0;
+            const wait = new Int32Array(new SharedArrayBuffer(4));
+            while (off < buf.length) {
+              try {
+                off += writeSync(fd, buf, off, Math.min(65536, buf.length - off));
+              } catch (e: any) {
+                if (e && (e.code === 'EAGAIN' || e.code === 'EWOULDBLOCK')) { Atomics.wait(wait, 0, 0, 5); continue; }
+                throw e;
+              }
+            }
+          }
+        } catch (e) {
+          this.emit('error', e);
+        }
+        try { closeSync(fd); } catch {}
+        this[s] = { end: () => 0, close: () => 0, flush: () => 0, write: () => 0, ref: () => {}, unref: () => {}, _getFd: () => -1 };
+        if (typeof chunk === 'function') chunk();
+        else if (typeof enc === 'function') enc();
+        else if (typeof cb === 'function') cb();
+        return this;
+      }
+    }
+  }
+  return origEnd.apply(this, arguments as any);
+};
+`);
+
 function cli(args: string[], env: Record<string, string> = {}) {
-  const r = spawnSync(LAUNCHER, args, { encoding: 'utf8', timeout: 60_000, maxBuffer: 16 * 1024 * 1024,
-    env: { PATH: process.env.PATH ?? '', HOME: fresh('home'), ...env } });
+  const r = spawnSync(LAUNCHER, args, { encoding: 'utf8', timeout: 60_000,
+    env: { PATH: process.env.PATH ?? '', HOME: fresh('home'), BUN_OPTIONS: `--preload=${PRELOAD}`, ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}), ...env } });
   let json: any;
   try { json = JSON.parse(r.stdout); } catch { json = undefined; }
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json };
@@ -559,9 +612,10 @@ describe('run', () => {
     const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
     const script = join(fresh('mover'), 'mover.ts');
     put(script, `import { spawnSync } from 'node:child_process';
+import { writeSync } from 'node:fs';
 await Bun.stdin.text();
 spawnSync('git', ['-C', ${JSON.stringify(s.repo)}, 'commit', '-q', '--allow-empty', '-m', 'moved']);
-console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
+writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
 `);
     put(s.config, JSON.stringify({ schema: CONFIG_SCHEMA, parts: { testing: 'alpha' },
       providers: { alpha: { argv: [process.execPath, script], timeout_s: 30, model: 'model-a' } } }));

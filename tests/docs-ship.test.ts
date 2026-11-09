@@ -5,7 +5,7 @@
  * anchor, SHA and quotation findings, and the PR-body receipt binding.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './helpers/child-stdio.ts';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

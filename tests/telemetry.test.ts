@@ -61,7 +61,7 @@ describe('shipped blocks and installation lookup', () => {
       const setupTools = join(fix.home, 'setup-tools');
       mkdirSync(setupTools);
       symlinkSync(process.execPath, join(setupTools, 'bun'));
-      const result = spawnSync(join(ROOT, 'setup'), ['--host', host, '--quiet'], { env: { ...fix.env, PATH: setupTools + ':' + fix.env.PATH }, encoding: 'utf8', timeout: 20_000 });
+      const result = spawnSync(join(ROOT, 'setup'), ['--host', host, '--quiet'], { env: { ...fix.env, PATH: setupTools + ':' + fix.env.PATH, ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}) }, encoding: 'utf8', timeout: 20_000 });
       expect(result.status).toBe(0);
       const hostDir = host === 'claude' ? '.claude/skills' : host === 'codex' ? '.codex/skills' : host === 'cursor' ? '.cursor/skills' : '.config/opencode/skills';
       const path = join(fix.home, hostDir, 'full-review/SKILL.md');

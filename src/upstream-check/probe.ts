@@ -6,6 +6,7 @@
  * `<nonce> begin <what>` before each import or the golden run, and one
  * `<nonce> result <json>` line at the end. Everything else is drained.
  */
+import { writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { recover, type Classifier } from '../outside-review/recovery.ts';
@@ -81,9 +82,42 @@ export async function probe(root: string, helpers: readonly { module: string; na
 
 if (import.meta.main) {
   const [nonce, root, helpersJson] = process.argv.slice(2) as [string, string, string];
-  const write = (line: string) => new Promise<void>((done, reject) => {
-    process.stdout.write(`\n${line}\n`, (error) => error ? reject(error) : done());
-  });
+  const waitBuf = new Int32Array(new SharedArrayBuffer(4));
+  const writeAllSync = (fd: number, chunk: string | Uint8Array, encoding?: BufferEncoding) => {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk, encoding ?? 'utf8') : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    let offset = 0;
+    let retries = 0;
+    while (offset < buf.length) {
+      try {
+        offset += writeSync(fd, buf, offset, Math.min(65536, buf.length - offset));
+        retries = 0;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if ((code === 'EAGAIN' || code === 'EWOULDBLOCK') && retries++ < 200) {
+          Atomics.wait(waitBuf, 0, 0, 5);
+          continue;
+        }
+        throw err;
+      }
+    }
+  };
+  const wrapStdWrite = (fd: number) => ((chunk: string | Uint8Array, encOrCb?: BufferEncoding | ((err?: Error | null) => void), cb?: (err?: Error | null) => void) => {
+    const enc = typeof encOrCb === 'string' ? encOrCb : undefined;
+    const done = typeof encOrCb === 'function' ? encOrCb : cb;
+    try {
+      writeAllSync(fd, chunk, enc);
+      done?.(null);
+      return true;
+    } catch (err) {
+      done?.(err as Error);
+      return false;
+    }
+  }) as typeof process.stdout.write;
+  process.stdout.write = wrapStdWrite(1);
+  process.stderr.write = wrapStdWrite(2);
+  const write = async (line: string) => {
+    writeAllSync(1, `\n${line}\n`, 'utf8');
+  };
   try {
     // Flush each attribution frame before importing code that may exit abruptly.
     await probe(resolve(root), JSON.parse(helpersJson), nonce, write);

@@ -13,7 +13,8 @@
  * mock $HOME. The helper enforces this at the type level.
  */
 
-import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
+import type { SpawnSyncOptions } from 'node:child_process';
+import { spawnSync } from './child-stdio.ts';
 
 export type RunBinOpts = {
   /**

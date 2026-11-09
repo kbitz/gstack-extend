@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { openChildStdio, spawnSync } from './helpers/child-stdio.ts';
 import {
   chmodSync,
   existsSync,
@@ -173,8 +173,8 @@ fs.writeFileSync(countFile, String(n + 1));
 const steps = JSON.parse(fs.readFileSync(path.join(dir, 'gh.steps.json'), 'utf8'));
 const step = steps[Math.min(n, steps.length - 1)];
 if (step.sleepMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, step.sleepMs);
-if (step.stderr) process.stderr.write(step.stderr);
-if (step.stdout !== undefined) process.stdout.write(typeof step.stdout === 'string' ? step.stdout : JSON.stringify(step.stdout));
+if (step.stderr) fs.writeSync(2, step.stderr);
+if (step.stdout !== undefined) fs.writeSync(1, typeof step.stdout === 'string' ? step.stdout : JSON.stringify(step.stdout));
 process.exit(step.exit ?? 0);
 `;
 
@@ -935,17 +935,22 @@ describe('pull request mode', () => {
     const state = tmp('state-');
     const path = shimDir({ gh: [{ stdout: prJson(pr), sleepMs: 200 }] });
     const env = { ...process.env, HOME: tmp('home-'), GSTACK_EXTEND_STATE_DIR: state, GSTACK_EXTEND_MERGE_GATE_TEST: '1', GSTACK_EXTEND_MERGE_GATE_RETRY_MS: '0', PATH: path };
-    const procs = [0, 1].map(() => Bun.spawn([BIN, 'check', '--pr', '7', '--decision-id', 'race', '--json'], { cwd: pr.repo, env, stdout: 'pipe', stderr: 'pipe' }));
-    const results = await Promise.all(procs.map(async p => ({ status: await p.exited, body: JSON.parse(await new Response(p.stdout).text()) as J })));
-    expect(results.map(r => r.status)).toEqual([0, 0]);
-    expect(results[0]?.body.evidence_id).toBe(results[1]?.body.evidence_id);
-    const authoritative = results.map(({ body }) => {
-      const { idempotent: _hit, ...verdict } = body;
-      return verdict;
-    });
-    expect(authoritative[0]).toEqual(authoritative[1]);
-    expect(readdirSync(join(state, 'merge-gate/decisions')).filter(n => n.endsWith('.json'))).toHaveLength(1);
-    expect(readVerdictLog(join(state, 'merge-gate/verdicts.jsonl')).verdicts).toHaveLength(1);
+    const ios = [0, 1].map(() => openChildStdio());
+    try {
+      const procs = ios.map(io => Bun.spawn([BIN, 'check', '--pr', '7', '--decision-id', 'race', '--json'], { cwd: pr.repo, env, stdout: io.stdoutFd, stderr: io.stderrFd }));
+      const results = await Promise.all(procs.map(async (p, i) => ({ status: await p.exited, body: JSON.parse(ios[i]!.read().stdout) as J })));
+      expect(results.map(r => r.status)).toEqual([0, 0]);
+      expect(results[0]?.body.evidence_id).toBe(results[1]?.body.evidence_id);
+      const authoritative = results.map(({ body }) => {
+        const { idempotent: _hit, ...verdict } = body;
+        return verdict;
+      });
+      expect(authoritative[0]).toEqual(authoritative[1]);
+      expect(readdirSync(join(state, 'merge-gate/decisions')).filter(n => n.endsWith('.json'))).toHaveLength(1);
+      expect(readVerdictLog(join(state, 'merge-gate/verdicts.jsonl')).verdicts).toHaveLength(1);
+    } finally {
+      for (const io of ios) io.dispose();
+    }
   }, 20_000);
 
   test('a failed append is repaired by the retry, not skipped (ENG-4, ENG-2)', () => {
@@ -1585,9 +1590,10 @@ describe('review regressions: Git trust and error boundaries', () => {
         const dir = shimDir();
         const script = join(dir, 'git-error.js');
         writeFileSync(script, `const { spawnSync } = require('node:child_process')
+const { writeSync } = require('node:fs')
 const args = process.argv.slice(2)
 if (args.includes('${operation}')) {
-  process.stderr.write('fatal: simulated I/O failure\\n')
+  writeSync(2, 'fatal: simulated I/O failure\\n')
   ${failure === 'signal' ? "process.kill(process.pid, 'SIGKILL')" : 'process.exit(128)'}
 }
 process.exit(spawnSync(${JSON.stringify(REAL_GIT)}, args, { stdio: 'inherit' }).status ?? 1)

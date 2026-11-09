@@ -108,11 +108,11 @@ describe('merge-gate review regressions', () => {
       };
       const responses = retry ? [{ ...response, mergeable: 'UNKNOWN' }, response] : [response];
       writeExec(join(shim, 'gh'), `
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 const path = ${JSON.stringify(ghCount)};
 const count = existsSync(path) ? Number(readFileSync(path, 'utf8')) : 0;
 writeFileSync(path, String(count + 1));
-process.stdout.write(JSON.stringify(${JSON.stringify(responses)}[count]));
+writeSync(1, JSON.stringify(${JSON.stringify(responses)}[count]));
 `);
       writeExec(join(shim, 'git'), `
 import { writeFileSync } from 'node:fs';
@@ -265,9 +265,10 @@ describe('merge-gate explicit plan contracts', () => {
     const raw = `:100644 100644 ${'a'.repeat(40)} ${'b'.repeat(40)} X\0a.txt\0` + '1\t0\ta.txt\0';
     writeExec(join(shim, 'git'), `
 import { spawnSync } from 'node:child_process';
+import { writeSync } from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes('--raw')) {
-  process.stdout.write(${JSON.stringify(raw)});
+  writeSync(1, ${JSON.stringify(raw)});
   process.exit(0);
 }
 const result = spawnSync(${JSON.stringify(GIT)}, args, { stdio: 'inherit' });
