@@ -1649,17 +1649,16 @@ table below is the reader's reference; the schema is authoritative where they di
 | `branch` | Branch at finish; null outside git or when detached |
 | `work_item` | The launcher's key: finish's `--work-item`, else the value start saved from `GSTACK_EXTEND_WORK_ITEM`, else that variable at finish; null when none is valid |
 | `source` | `gstack-extend`: the writer label, which any caller can choose |
-| `route` | `cli`, `conductor`, `sdk`, or `unknown`, from the selected harness markers |
+| `route` | `cli`, `sdk`, or `unknown`; v2/v3 rows may carry historical `conductor` |
 | `entrypoint_raw` | The selected harness entrypoint marker, when present |
-| `schema_version` | `3`: the row format, not a release |
+| `schema_version` | `4`: the row format, not a release |
 | `producer_version` | Release in the VERSION file of the gstack-extend installation that constructed the row; null when unknown |
 | `agent_source` | `flag`, `detected`, or `unknown`: where `agent` came from |
 | `model_source` | `flag`, `detected`, `requested`, or `unknown`: where `model` came from |
 | `effort_source` | `flag`, `detected`, `requested`, or `unknown`: where `effort` came from |
-| `workspace_host` | `paseo`, `conductor`, or `unknown`: explicit inherited launch context |
-| `host_agent_id` | Exact host launch ID (1–200 printable Unicode code points, not blank), or null; unknown host requires null |
+| `workspace_host` | `GSTACK_EXTEND_WORKSPACE_OWNER` label (1–200 printable Unicode code points, not blank), or null; see [Host attribution](#host-attribution) |
 | `run_mode` | `user-directed`, `orchestrated`, or `unknown`: whether the run was driven interactively by a user or launched by an orchestrator; see [Run mode](#run-mode) |
-| `run_mode_source` | `session-kind`, `work-item`, `run-mode-env`, `unrecognized-run-mode-env`, `launcher-state-root`, `cli`, `Paseo`, `sdk-cli`, `sdk-ts`, `acp`, or `none`: which signal decided `run_mode`; see [Run mode](#run-mode) |
+| `run_mode_source` | `session-kind`, `work-item`, `run-mode-env`, `unrecognized-run-mode-env`, `launcher-state-root`, `malformed-signal`, `host-managed-workspace`, `cli`, `paseo-entrypoint`, `entrypoint-unqualified`, `entrypoint-unavailable`, `harness-unqualified`, or `no-harness`: which signal decided `run_mode`; see [Run mode](#run-mode) |
 | `questions` | Non-negative integer count of distinct `AskUserQuestion` tool-use blocks in the stage window on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
 | `user_wait_s` | Non-negative integer rounded total seconds waiting on `AskUserQuestion` tool results and post-`end_turn` human resumes in the stage window on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
 | `resumes` | Non-negative integer count of in-window human prompts immediately following an `end_turn` assistant record on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
@@ -1694,42 +1693,39 @@ source, because the run's `--output-format json` result names no model.
 
 ### Host attribution
 
-`workspace_host` is separate from the executing harness (`agent`) and historical
+`workspace_host` is separate from the executing harness (`agent`) and
 launch classifier (`route`/`entrypoint_raw`). At the first finish that constructs
-a row, only nonblank `PASEO_AGENT_ID` and `CONDUCTOR_SESSION_ID` identify a host.
-With neither, attribution is unknown/null. With one, its host is retained and its
-ID is copied exactly if `clean()` accepts it: 1–200 printable Unicode code points,
-not blank, with outer spaces preserved. An invalid nonblank ID keeps its host
-with null ID. Two nonblank markers, even invalid+valid, yield unknown/null.
-The draft-07 ID constraints use Unicode categories and code-point length. Tests
+a v4 row, only `GSTACK_EXTEND_WORKSPACE_OWNER` supplies `workspace_host`
+([Orchestration contract](orchestration-contract.md#what-a-host-or-orchestrator-provides)).
+When the variable is unset or empty, `workspace_host` is `null`. When it is set,
+its value is copied verbatim if `clean()` accepts it: 1–200 printable Unicode
+code points, not blank, with outer spaces preserved. A non-empty value that fails
+`clean()` yields `null` and emits a value-free debug trace
+with code `HOST_LABEL_INVALID`, the variable name, its validation rule and the null result.
+The draft-07 label constraints use Unicode categories and code-point length. Tests
 compare the supported Python/Bun runtimes on a bounded corpus; they do not prove
-equivalence across every Unicode-version pair. A plain hand-run has null ID.
-PASEO_HOME, default/custom/configured worktree roots,
+equivalence across every Unicode-version pair. A plain hand-run has `null`
+`workspace_host`. `PASEO_HOME`, default/custom/configured worktree roots,
 arbitrary cwd and lookalike directory names never establish a launch.
 
-The marker sources are Paseo commit
+Historical v2 and v3 rows recorded `workspace_host` (`paseo`, `conductor`, or
+`unknown`) and `host_agent_id` from `PASEO_AGENT_ID` (Paseo commit
 [14e638451652e443ac8b9f74c50c9bfd4b967cb6](https://github.com/getpaseo/paseo/blob/14e638451652e443ac8b9f74c50c9bfd4b967cb6/packages/server/src/server/agent/agent-manager.ts),
-`buildLaunchContext` exporting `PASEO_AGENT_ID`, and Conductor's
-[environment-variable contract](https://www.conductor.build/docs/reference/environment-variables),
-which exports `CONDUCTOR_SESSION_ID` in agent processes, not ordinary terminals.
-Availability can differ on older/cloud hosts; installed availability remains
-unverified until scheduled host acceptance. Custom roots in tests are inputs,
-never launch evidence. Paseo's ID names the hosting agent; Conductor's names the
-hosting session. Nested harnesses may inherit either; neither promises a distinct
-native-subagent ID. Environment assertions are local attribution, not authentication,
+`buildLaunchContext` exporting `PASEO_AGENT_ID`) and Conductor's
+[environment-variable contract](https://www.conductor.build/docs/reference/environment-variables)
+(`CONDUCTOR_SESSION_ID`). Those rows remain valid under the v2 and v3 schema
+branches, and saved v2/v3 retry rows keep their original construction. The v4
+writer removes `host_agent_id` and no longer reads `PASEO_AGENT_ID` or
+`CONDUCTOR_SESSION_ID`. Environment assertions are local attribution, not authentication,
 permission or ownership. They describe the constructing process's inherited context,
-not guaranteed identity at start. No new host state is saved by start.
+not guaranteed identity at start. No host state is saved by start.
 
-Host conflict affects only host attribution. It cannot change independently
-established harness, model or route evidence. Legitimate pairs include Paseo with
-route cli/sdk/unknown, and unknown host with a certified historical conductor
-route when no launch ID is exported. Route cannot replace workspace_host.
-
-Debug-only `HOST_MARKERS_CONFLICT` and `HOST_AGENT_ID_INVALID` name the relevant
-markers, rule and resulting host/ID class, never raw IDs. Saved replay cannot
-repair attribution. Ask the launcher owner for the correct original context on
-the next new invocation; never invent an ID, blindly unset a marker, or rewrite
-a saved row. Quiet mode remains silent and optional telemetry remains nonfatal.
+Host attribution is independent of harness, model or route evidence. Route cannot
+replace `workspace_host`. Debug-only `HOST_LABEL_INVALID` names the variable,
+rule and resulting `workspace_host=null` class, never raw values. Saved replay
+cannot repair attribution. Ask the launcher owner for the correct original
+context on the next new invocation; never invent a label or rewrite a saved row.
+Quiet mode remains silent and optional telemetry remains nonfatal.
 
 <a id="run-mode"></a>
 
@@ -1737,28 +1733,31 @@ a saved row. Quiet mode remains silent and optional telemetry remains nonfatal.
 
 `run_mode` and `run_mode_source` classify whether a stage run was driven interactively
 by a user (`user-directed`), launched by an orchestrator (`orchestrated`), or lacks
-sufficient evidence (`unknown`). Finish evaluates signals in this exact precedence:
+sufficient evidence (`unknown`). Finish evaluates signals in this exact 10-rule precedence:
 
-1. **Primary orchestration signals (`run_mode: "orchestrated"`):**
-   - `GSTACK_SESSION_KIND` equal to `spawned` or `unattended` (`run_mode_source: "session-kind"`).
-   - An accepted launcher work item saved at start from `GSTACK_EXTEND_WORK_ITEM` or supplied via `GSTACK_EXTEND_WORK_ITEM` in the finish environment (`run_mode_source: "work-item"`). A manual `--work-item` finish flag alone does not classify a run as orchestrated.
-   - `GSTACK_EXTEND_RUN_MODE` equal to `orchestrated` (`run_mode_source: "run-mode-env"`), a consumer-neutral environment variable that any orchestrator may set when launching a worker. Any other non-empty value of `GSTACK_EXTEND_RUN_MODE` is ignored without guessing and recorded as `run_mode: "unknown"`, `run_mode_source: "unrecognized-run-mode-env"`.
-2. **Supporting evidence blocking `user-directed` (`run_mode: "unknown"`):**
-   - With no primary orchestration signal and no `GSTACK_EXTEND_RUN_MODE`, a non-default absolute `GSTACK_HOME` (normalized path different from `$HOME/.gstack`) yields `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"`.
-   - A malformed non-empty `GSTACK_SESSION_KIND` or `GSTACK_EXTEND_WORK_ITEM` yields `run_mode: "unknown"`, `run_mode_source: "none"`.
-3. **Interactive entrypoint (`run_mode: "user-directed"`):**
-   - Requires no orchestration signal at all (none of the primary signals or `GSTACK_EXTEND_RUN_MODE`, and no non-default absolute `GSTACK_HOME`), `agent: "claude"` (detected, not overridden to another harness), and an interactive `CLAUDE_CODE_ENTRYPOINT` exported by the harness:
-     - Claude Code's `cli` (`workspace_host` in `unknown` or `paseo`, `route: "cli"`), recording `run_mode_source: "cli"`.
-     - A Paseo-hosted Claude session (`workspace_host: "paseo"`, or `route: "cli"` when `CLAUDE_CODE_ENTRYPOINT` is `Paseo`) with `CLAUDE_CODE_ENTRYPOINT` equal to `Paseo` or the SDK/ACP entrypoint Paseo uses (`sdk-cli`, `sdk-ts`, or `acp`), recording that exact entrypoint in `run_mode_source`.
-4. **Otherwise (`run_mode: "unknown"`, `run_mode_source: "none"`):**
-   - Emitted only when the entrypoint cannot be read or is not interactive (for example `conductor`, `claude-desktop`, `claude-vscode`, `github-action`, or non-Claude harnesses where an interactive entrypoint signal is not yet qualified), or when a signal is malformed.
+1. `GSTACK_SESSION_KIND` equal to `spawned` or `unattended` → `orchestrated` / `session-kind`.
+2. An accepted launcher work item saved at start from `GSTACK_EXTEND_WORK_ITEM`, else supplied by that variable at finish → `orchestrated` / `work-item`. A manual `--work-item` finish flag alone does not classify a run as orchestrated.
+3. `GSTACK_EXTEND_RUN_MODE=orchestrated` → `orchestrated` / `run-mode-env`.
+4. Any other non-empty `GSTACK_EXTEND_RUN_MODE` → `unknown` / `unrecognized-run-mode-env`.
+5. A non-default absolute `GSTACK_HOME` (normalized path different from `$HOME/.gstack`) → `unknown` / `launcher-state-root`.
+6. A malformed non-empty `GSTACK_SESSION_KIND`, a rejected saved or finish-environment `GSTACK_EXTEND_WORK_ITEM`, or a relative non-empty `GSTACK_HOME` → `unknown` / `malformed-signal`.
+7. Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, including whitespace-only or malformed values → `unknown` / `host-managed-workspace`. A host-managed checkout without an orchestration signal is not proof of hand use, even when its attribution label is rejected.
+8. No detected harness → `unknown` / `no-harness`.
+9. Detected or final harness other than Claude (including an `--agent` override to/from another harness) → `unknown` / `harness-unqualified`.
+10. Detected and final harness both Claude: missing, empty or unclean `CLAUDE_CODE_ENTRYPOINT` → `unknown` / `entrypoint-unavailable`; exactly `cli` → `user-directed` / `cli`; exactly `Paseo` → `user-directed` / `paseo-entrypoint`; every other entrypoint (`sdk-*`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, …) → `unknown` / `entrypoint-unqualified`.
 
-An orchestrator that launches workers without any signal (`GSTACK_SESSION_KIND`,
-`GSTACK_EXTEND_WORK_ITEM`, `GSTACK_EXTEND_RUN_MODE`, or an isolated `GSTACK_HOME`)
-will have runs on an otherwise eligible interactive Claude entrypoint counted as
-`user-directed` until it sets one; `run_mode_source`
-shows why each row got its mode. The classifier never inspects parent process
-command lines or orchestrator directories.
+`PASEO_AGENT_ID` is never read: Paseo sets it for every agent it launches, so it
+cannot distinguish the owner's hand session in the Paseo app from an
+orchestrated worker launched through Paseo. The run-mode signal separates them.
+An orchestrator that launches workers through Paseo (or through Claude's `cli`
+entrypoint) without setting `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
+`GSTACK_EXTEND_WORKSPACE_OWNER`, `GSTACK_EXTEND_WORK_ITEM`, or
+`GSTACK_SESSION_KIND=spawned|unattended`) will have those workers counted as
+`user-directed` (`paseo-entrypoint` or `cli`); `run_mode_source` shows why each
+row got its mode. Historical v3 rows that recorded `run_mode_source` `Paseo`,
+`sdk-cli`, `sdk-ts`, `acp`, or `none` remain valid under the v3 schema branch.
+The classifier never inspects parent process command lines or orchestrator
+directories. Hand-use capture is not yet established: no real by-hand run has been read back on the owner's machines; see [the hand-use record](acceptance/hand-use-telemetry.md).
 
 <a id="hand-run-usability-signals"></a>
 
@@ -1806,7 +1805,11 @@ Finish appends to `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs/<host>.jsonl`
 The legacy `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl` is read forever (before
 the sorted `analytics/stage-runs/*.jsonl` files) and never written again by the new writer.
 Upgrade every reader before moving the legacy file. Rollback is safe: an older writer
-appends to the legacy path again, and both locations stay readable.
+appends to the legacy path again, and both locations stay readable. Because each machine
+writes to its own `analytics/stage-runs/<host>.jsonl`, per-host files from several
+machines may be copied or synced into one state root's `analytics/stage-runs/` directory
+when each machine has a distinct `<host>`, or read in place by passing multiple
+`--state-dir DIR` flags to `gstack-extend-telemetry report`.
 
 Before syncing `analytics/` between machines, you may optionally run this manual
 no-clobber move of `stage-runs.jsonl` to `stage-runs/<host>.legacy.jsonl` (which
@@ -1871,28 +1874,66 @@ print(f"migrated rows: before={before} after={after}")'
 ~~~sh
 gstack-extend-telemetry report
 gstack-extend-telemetry report --json
+gstack-extend-telemetry report --by-host --state-dir "$HOME/.gstack-extend"
 ~~~
 
-`gstack-extend-telemetry report` reads `analytics/stage-runs.jsonl` and sorted
-`analytics/stage-runs/*.jsonl` under `$GSTACK_EXTEND_STATE_DIR` (default
-`~/.gstack-extend`) without taking locks, resolving the logger, or writing state.
-It prints the skill-by-mode table across `orchestrated`, `user-directed`, `unknown`,
-and `unrecorded` (legacy, v1, and v2 rows), with `runs`, `outcomes` (`success`,
-`error`, `abort`, `blocked`, `unknown`), and `last_seen` per cell, lists `empty_cells`
-(each installed skill × `orchestrated|user-directed|unknown` with zero runs), and
-reports `files` (`read`, `unreadable`) and `rows` (`counted`, `routed`, `malformed`,
-`invalid`, `unsupported`). It never prints session IDs, branch, repo, work item,
-host ID, or file paths.
+`gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...` reads
+`analytics/stage-runs.jsonl` and sorted `analytics/stage-runs/*.jsonl` under
+`$GSTACK_EXTEND_STATE_DIR` (default `~/.gstack-extend`) or each absolute `--state-dir DIR`
+in argument order without taking locks, resolving the logger, or writing state.
+Explicit `--state-dir` roots replace the default root. `--json` and `--by-host`
+may each appear once; `--state-dir DIR` repeats, in any order. Unknown arguments,
+duplicate singleton flags, or a missing, empty or relative `DIR` print a value-free
+invalid-arguments message to stderr and return 0, preserving the command's
+existing nonfatal convention. Symlinked root aliases are allowed; individual
+ledger symlinks and symlinked `analytics/stage-runs` directories are not followed.
+When the same underlying regular file `(st_dev, st_ino)` is reached more than once
+(for example, a repeated root, a root alias or a hard-linked ledger), it is read
+once. Distinct copied files still count separately.
+
+A missing root contributes no files. `files.unreadable` retains the existing
+per-root accounting for failed directory entries and read attempts, so a failed
+input reached through repeated or aliased roots may be counted more than once.
+
+The report accepts v3 and v4 run modes; versions 5 and above are counted under
+`rows.unsupported`. It prints the skill-by-mode table across `orchestrated`,
+`user-directed`, `unknown`, and `unrecorded` (legacy, v1, and v2 rows), with
+`runs`, `outcomes` (`success`, `error`, `abort`, `blocked`, `unknown`), and
+`last_seen` per cell. It lists `empty_cells` (each installed skill ×
+`orchestrated|user-directed|unknown` with zero runs across the combined report),
+and reports `files` (`read`, `unreadable`) and `rows` (`counted`, `routed`,
+`malformed`, `invalid`, `unsupported`).
+
+With `--by-host`, JSON adds a `hosts` array whose entries are
+`{"host": "<label>", "cells": {"<mode>": {"runs": n, "outcomes": {...}, "last_seen": null}}}`.
+Text appends a `Host` table after `Empty cells`, with one row per host × mode.
+There is no per-host skill breakdown. The label comes from the ledger filename,
+never row contents: root `analytics/stage-runs.jsonl` is `(legacy)`; otherwise the
+text before the first dot is used when it matches `[a-z0-9][a-z0-9-]{0,62}`,
+including `unknown-host`, and an invalid prefix is `(unattributed)`.
+A machine's live and migrated `<host>.legacy.jsonl` files merge under one label;
+sync conflict copies ending in `.jsonl` are also read as separate ledgers.
+Legacy files from all listed roots share `(legacy)` and cannot be separated by
+machine in that aggregate; use the per-host migration above when that historical
+breakdown is needed. `(unattributed)` similarly combines invalid filename prefixes.
+Labels sort alphabetically, with `(legacy)` and `(unattributed)` last.
+When a label appears in more than one listed root after inode deduplication,
+counts are combined and stderr warns with the duplicate-label count only:
+`telemetry report: N host label(s) appeared in more than one state directory; copied ledgers, if present, are counted twice`.
+A repeated label alone does not establish that two files are copies.
+Without the new flags, text and JSON retain their previous shape.
+It never prints session IDs, branch, repo, work item, or file paths, and prints the
+stage-runs filename stem as a host label only when `--by-host` is passed.
 `last_seen` is the greatest valid `started_at` in the cell, or null if none is valid.
 If the installed skills directory is unavailable, JSON adds `installed_skills: null`,
 retains observed stages, and leaves `empty_cells` empty because installed coverage is unknown.
 
 ### Versions
 
-Every newly constructed row has all 30 fields in table order: the v2 22 fields,
-then `run_mode`, `run_mode_source`, `questions`, `user_wait_s`, `resumes`,
-`user_signals_source`, `blocked_reason`, and `blocked_reason_source`, with
-`schema_version` 3. This is the row
+Every newly constructed row has all 29 fields in table order: the v1 20 fields,
+`workspace_host`, then `run_mode`, `run_mode_source`, `questions`, `user_wait_s`,
+`resumes`, `user_signals_source`, `blocked_reason`, and `blocked_reason_source`, with
+`schema_version` 4. This is the row
 format, unrelated to skill-usage v and the start-finish protocol marker. Changes
 to row shape or meaning add a branch and retain the historical branches; a
 release alone does not change schema_version.
@@ -1903,7 +1944,7 @@ release alone does not change schema_version.
 
 producer_version comes from the VERSION file in the wrapper's real installation
 checkout (resolving symlinks), never the caller repository, upstream gstack or an
-environment override. New v2 and v3 rows accept exactly three or four dot-separated ASCII
+environment override. New v2, v3 and v4 rows accept exactly three or four dot-separated ASCII
 numeric components after trimming, including 1.0.0 and legacy four-part releases.
 Missing, unreadable, unsafe (symlink/FIFO/hard-link/non-regular), over-128-byte,
 non-UTF-8 or malformed files degrade to null. Prefixes, suffixes, non-ASCII digits
@@ -1921,29 +1962,30 @@ upgrade remains pending.
 | v1 (schema_version 1) | Original 20 fields, no host keys | Four numeric parts or null |
 | v2 (schema_version 2) | All 22 v2 fields | Three or four numeric parts or null |
 | v3 (schema_version 3) | All 30 v3 fields | Three or four numeric parts or null |
+| v4 (schema_version 4) | All 29 v4 fields (no `host_agent_id`) | Three or four numeric parts or null |
 
 Absent legacy keys stay unknown, with no defaults or release inference. Missing
 required keys or cross-version keys are invalid; stripping a version does not
-make a metadata-bearing row legacy. Historical v0/v1/v2 acceptance is unchanged.
+make a metadata-bearing row legacy. Historical v0/v1/v2/v3 acceptance is unchanged.
 
 **Retries keep their first construction.** A failed append saves the exact row.
 A retry reuses its order, values, version, producer, host, sources, duration and
-work item without detecting markers again, including legacy/v1/v2 saved rows under
+work item without detecting markers again, including legacy/v1/v2/v3 saved rows under
 a newer writer. Completion markers still suppress an already-completed retry.
 
 **Reader-first migration and rollback.** The supported in-repo readers are
-stage-runs.schema.json and the executable validator below (legacy/v1/v2/v3),
+stage-runs.schema.json and the executable validator below (legacy/v1/v2/v3/v4),
 `gstack-extend-telemetry report`, and quota's existing-field projection of
 agent/model/effort/route across `analytics/stage-runs.jsonl` and
 `analytics/stage-runs/*.jsonl`. Before shipping the writer, the existing release
 owner checks those reader tests and publishes the schema and migration guidance
-with the release. Consumers pinned to v1 or v2 upgrade their reader/schema and
+with the release. Consumers pinned to v1, v2 or v3 upgrade their reader/schema and
 file-discovery path (`analytics/stage-runs/*.jsonl` alongside legacy
 `analytics/stage-runs.jsonl`) before opting into the new writer release. Apply
-SPEC's existing 0.x MINOR disclosure/migration policy for both the `schema_version: 3`
-row expansion and the per-host file path; no release number is reserved here. An
-old reader reports v3 unsupported and keeps it. Roll back the writer while
-retaining a reader capable of every emitted version, including v3, and retain all
+SPEC's existing 0.x MINOR disclosure/migration policy for the `schema_version: 4`
+row transition; no release number is reserved here. An
+old reader reports v4 unsupported and keeps it. Roll back the writer while
+retaining a reader capable of every emitted version, including v4, and retain all
 ledger rows. Never delete, rewrite, backfill or re-stamp them.
 Track 28A records the post-release in-repo v2 reader compatibility check,
 including three-part producers, against SPEC's stable provenance surface.
@@ -1972,11 +2014,14 @@ until finish flags or requested variables supply them:
   not a single file leaves model and effort null. With no session id, only one
   events log changed since the stage began is attributable; zero or several
   leave model and effort null.
-- **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. Conductor store
-  metadata and the native route use one captured observation, described in
-  [Cursor and quota](#cursor-and-quota). An explicit `CURSOR_INVOKED_AS` stays
-  CLI and does not read that store. Transcript mtime still breaks ties when the
-  store does not supply a usable model or effort.
+- **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. An explicit
+  `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker records
+  `route: "cli"`; otherwise `route` is `"unknown"`.
+  Conductor's private Cursor SDK store is no longer read; see
+  [Cursor and quota](#cursor-and-quota). Transcript mtime under
+  `~/.cursor/projects/*/agent-transcripts/` still breaks ties across harnesses,
+  while detected model and effort remain null (flags or
+  `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` supply them).
 
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows
@@ -2009,7 +2054,7 @@ model and effort first, so an omitted `--model` or `--effort` is then null and
 `requested`. `source` is the writer label; the three `*_source` fields are evidence
 origins. A `flag` or `requested` label records who supplied the value, not that it is correct.
 
-The v2 and v3 schemas allow outcome `blocked` and source `requested` for non-null
+The v2, v3 and v4 schemas allow outcome `blocked` and source `requested` for non-null
 model/effort only; agent_source remains flag/detected/unknown and every null value
 requires unknown. `blocked` is emitted at a deliberate pause (see Paused and resumed
 segments in the join contract below). `requested` is emitted only from
@@ -2039,11 +2084,11 @@ off, and a missing or broken gstack costs only the skill-usage rows.
 2. Read `source`. A missing, blank, or non-string `source` is invalid. Any other
    label belongs to another producer: route that row to its own contract rather
    than reporting a malformed gstack-extend row.
-3. Read `schema_version`. Absent means legacy; positive safe integers 1/2/3 select
-   v1/v2/v3. Safe integers 4 through Number.MAX_SAFE_INTEGER are unsupported: keep
+3. Read `schema_version`. Absent means legacy; positive safe integers 1/2/3/4 select
+   v1/v2/v3/v4. Safe integers 5 through Number.MAX_SAFE_INTEGER are unsupported: keep
    the row and upgrade the reader. All other types/values, including unsafe
    integers and nonfinite numbers, are invalid without echoing their value.
-4. Validate against the matching closed legacy/v1/v2/v3 schema branch. Never coerce
+4. Validate against the matching closed legacy/v1/v2/v3/v4 schema branch. Never coerce
    values, fill defaults, or drop unknown keys to make a row pass.
 
 Keep every row, duplicates included, and never rewrite the ledger to make it
@@ -2052,7 +2097,7 @@ on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
 
-The v2/v3 `host_agent_id` pattern requires Unicode property escapes and Unicode-mode
+The v2/v3 `host_agent_id` and v4 `workspace_host` patterns require Unicode property escapes and Unicode-mode
 ECMA-262 regex evaluation, as provided by the pinned Ajv's default
 `unicodeRegExp: true`. Draft-07 support alone does not establish compatibility:
 readers using other regex engines must verify these capabilities before rollout.
@@ -2076,7 +2121,7 @@ is a development dependency only; the skills and telemetry need no package. The
 command below runs with `--no-install`, so it never downloads anything. If Bun
 reports `Cannot find package 'ajv'`, run the install above. Run the command from
 the checkout root in Bash. This block defines `validate_stage_runs` for reuse below
-and, with no input, validates its included synthetic 30-field v3 row:
+and, with no input, validates its included synthetic 29-field v4 row:
 
 ~~~sh
 validate_stage_runs() {
@@ -2089,7 +2134,7 @@ const FIELDS = ["stage", "agent", "model", "effort", "rung", "outcome", "started
   "repo", "branch", "work_item", "source", "route", "entrypoint_raw", "schema_version", "producer_version",
   "agent_source", "model_source", "effort_source", "workspace_host", "host_agent_id", "run_mode", "run_mode_source",
   "questions", "user_wait_s", "resumes", "user_signals_source", "blocked_reason", "blocked_reason_source"];
-const EXAMPLE = {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":3,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"};
+const EXAMPLE = {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":4,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"example-host","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"};
 const EVIDENCE = "a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested";
 const KEEP = "keep the saved row unchanged; correct the producer to ";
 const WHY = {
@@ -2105,7 +2150,7 @@ const WHY = {
   minimum: ["a number is below the documented minimum", KEEP + "emit a nonnegative value"],
   "false schema": ["a field is forbidden in this schema branch", "keep the saved row unchanged; fix the producer or use the appropriate reader/contract"],
 };
-const counts = { rows: 0, blank: 0, v3: 0, v2: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };
+const counts = { rows: 0, blank: 0, v4: 0, v3: 0, v2: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };
 let shown = 0;
 let hidden = 0;
 function report(line, where, keyword, cause, fix) {
@@ -2188,12 +2233,12 @@ try {
         report(line, "/schema_version", "version", "not a positive safe integer", "keep the saved row unchanged; correct the producer, never guess a version");
         continue;
       }
-      if (version > 3) {
+      if (version > 4) {
         counts.unsupported++;
-        report(line, "/schema_version", "unsupported", `version ${version} is newer than supported versions 1/2/3 (and legacy)`, "keep the saved row unchanged; upgrade the reader/schema");
+        report(line, "/schema_version", "unsupported", `version ${version} is newer than supported versions 1/2/3/4 (and legacy)`, "keep the saved row unchanged; upgrade the reader/schema");
         continue;
       }
-      kind = version === 1 ? "v1" : version === 2 ? "v2" : "v3";
+      kind = version === 1 ? "v1" : version === 2 ? "v2" : version === 3 ? "v3" : "v4";
     }
     if (validate(row)) { counts[kind]++; continue; }
     counts.invalid++;
@@ -2214,7 +2259,7 @@ try {
   process.exit(1);
 }
 if (hidden) console.error(`${hidden} more diagnoses not shown`);
-console.log(`summary: rows=${counts.rows} valid=${counts.v3 + counts.v2 + counts.v1 + counts.legacy} v3=${counts.v3} v2=${counts.v2} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
+console.log(`summary: rows=${counts.rows} valid=${counts.v4 + counts.v3 + counts.v2 + counts.v1 + counts.legacy} v4=${counts.v4} v3=${counts.v3} v2=${counts.v2} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
 process.exitCode = counts.invalid || counts.unsupported ? 1 : 0;
 '
 }
@@ -2228,11 +2273,11 @@ including private input in the diagnosis.
 Expected output, with exit status 0:
 
 ~~~text
-summary: rows=1 valid=1 v3=1 v2=0 v1=0 legacy=0 invalid=0 unsupported=0 routed=0 blank=0
+summary: rows=1 valid=1 v4=1 v3=0 v2=0 v1=0 legacy=0 invalid=0 unsupported=0 routed=0 blank=0
 ~~~
 
 The included synthetic sample demonstrates shape, not installed-host evidence.
-workspace_host identifies the launch host, host_agent_id its hosting agent/session,
+workspace_host identifies the configured workspace owner (or v2/v3 launch host),
 agent the harness, route the independent launch classifier, and session_id this
 telemetry invocation. Source labels describe acquisition, not serving or billing.
 
@@ -2287,14 +2332,14 @@ parser messages, raw validator details, or the input path. It exits 1 when any r
 is invalid or unsupported, or when the input or schema cannot be read. Rows routed
 to other producers and blank lines do not fail it. Diagnoses and truncation notices
 go to stderr; the summary alone goes to stdout. The validated safe schema version
-is the only row value printed. For example, a v3 row whose
+is the only row value printed. For example, a v4 row whose
 `model` is null but whose `model_source` is `flag`, followed by a row with
-`schema_version` 4, prints (the first two lines on stderr):
+`schema_version` 5, prints (the first two lines on stderr):
 
 ~~~text
 line 1: /model_source const: a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested. Fix: correct the producer, never the saved row. See docs/telemetry.md#schema-validation
-line 2: /schema_version unsupported: version 4 is newer than supported versions 1/2/3 (and legacy). Fix: keep the saved row unchanged; upgrade the reader/schema. See docs/telemetry.md#schema-validation
-summary: rows=2 valid=0 v3=0 v2=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
+line 2: /schema_version unsupported: version 5 is newer than supported versions 1/2/3/4 (and legacy). Fix: keep the saved row unchanged; upgrade the reader/schema. See docs/telemetry.md#schema-validation
+summary: rows=2 valid=0 v4=0 v3=0 v2=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
 ~~~
 
 ### Contributor setup
@@ -2336,7 +2381,7 @@ same `session_id`.
 3. To pair gstack-extend's own stage-runs rows with skill-usage, key on `(skill, session_id)`, mapping stage-runs `stage` to `extend:<stage>`. Rows other callers write to stage-runs, and the quota ledger, join by `session_id` alone. `(skill, session_id)` is a correlation key, not a unique key: expect duplicate or conflicting rows for one key and keep them visible rather than silently picking one, especially for rows outside the guarantees below (other writers, pruned markers, a `skill_run` beyond the logger scan).
 4. A session ID without the `extend-<uuid>` shape came from explicit flags or an older writer and may stay unpaired locally. An explicit retry that reuses the original IDs pairs normally and, while its completion marker lives, writes nothing new. The `extend-` prefix alone does not prove the wrapper issued the ID.
 5. Sort per dataset. Stage-runs file order is finish order within each file: sort by `started_at` across files, null last (an unrepresentable explicit start or legacy duration). Sort `skill_start` by `ts` (its start time). A `skill_run` `ts` is its finish time. Skill-usage file order interleaves starts and finishes.
-6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1/v2/v3 row missing a required key is malformed.
+6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1/v2/v3/v4 row missing a required key is malformed.
 
 **Paused and resumed segments.** A run that pauses is several segments. Each segment is
 one start and one finish: one stage-runs row and, with the tier on, one `skill_start`
@@ -2370,7 +2415,7 @@ and one `skill_run`.
   `started_at` and saved `work_item` the row then carries, or writes nothing when none is
   open. Each skill therefore runs start again whenever work continues after a pause,
   including later in the same conversation.
-- Legacy, v1, v2 and v3 readers stay compatible across segments, and legacy and v1
+- Legacy, v1, v2, v3 and v4 readers stay compatible across segments, and legacy and v1
   rows never carry `blocked`.
 - Future cards: segments cover the resumable cross-checkout case. "Recover a telemetry
   finish run from a different repository root" keeps only a start-less finish whose own
@@ -2554,7 +2599,7 @@ loses its `skill_run` duration.
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
 {"v":1,"ts":"2026-09-20T12:00:03Z","event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","duration_s":3,"outcome":"success","source":"gstack-extend"}
-{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":3,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"}
+{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":4,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"example-host","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"}
 ~~~
 
 Copy both complete SHARED blocks below into a skill and replace the quoted
@@ -2622,9 +2667,8 @@ launching the harness. Run a synthetic debug start only inside the
 [isolation prelude](#workflow-metrics-isolation), replacing its example lines with
 `GSTACK_EXTEND_TELEMETRY_DEBUG=1 "$GXT" start --skill "extend:roadmap"`.
 The adoption reasons are defined in [Handoff adoption](#handoff-adoption).
-Conductor Cursor model and route diagnosis is in [Cursor and quota](#cursor-and-quota).
-Doctor pairing is not model coverage. For that harness, prefix the first normal
-finish in the same tool shell; a terminal export does not reach the GUI.
+Cursor model, route, and quota notes are in [Cursor and quota](#cursor-and-quota).
+Doctor pairing is not model coverage.
 
 | Reason | Meaning | Fix |
 |---|---|---|
@@ -2717,10 +2761,10 @@ marker/crash detection subsystem.
 ## Cursor and quota
 
 Cursor is an execution harness (`agent: cursor`), independently of the vendor of
-the selected model. A model and effort taken from the Conductor SDK store are
-requested configuration for one stage window. They support operator diagnosis
-and an external handoff. They are not served or billed proof, and they do not
-authorize quota routing or independence certification. Billed model and
+the selected model. Historical model and effort values taken from the Conductor
+SDK store are requested configuration for one stage window. They support operator
+diagnosis and an external handoff. They are not served or billed proof, and they
+do not authorize quota routing or independence certification. Billed model and
 consumption stay in the [quota ledger](quota-ledger.md). Telemetry start and
 finish never start a quota sampler or write quota records. Only explicit quota
 commands read vendor usage. The quota runs CLI is not this ledger: it fills
@@ -2728,186 +2772,11 @@ stage, agent, model, effort, and route from provenance and does not print
 source labels. A quota row can name a model while the stage-runs source is
 `unknown`, or take its model and effort from a `requested` stage-runs value. That is not a substitute for this row and not permission to sample.
 
-The repair does not change supported Paseo behavior or Cursor CLI behavior,
-except that a Cursor transcript read failure now prints the fixed
-`transcript-unreadable` reason instead of exception text, and that a CLI row no
-longer takes model or effort from a matching store (next sentences).
-`CURSOR_INVOKED_AS` is CLI. Finish does not copy model or effort from a matching
-store on that path; they stay null unless finish flags (`flag`) or the requested
-variables (`requested`) supply them. A row
-whose only Cursor signal is `--agent cursor` has `agent_source` `flag` and
-cannot become `route` `conductor` from a store that happens to be nearby.
-Inherited `CLAUDECODE` or `CODEX_THREAD_ID` keep the existing order: a unique
-valid native match is `conductor`, otherwise those nested markers are `cli`,
-otherwise `unknown`. `detect()` has to have selected Cursor before any
-`--agent` override. Changing another harness, or an unverifiable agent, to
-`cursor` does not certify a native route. An inherited `CONDUCTOR_SESSION_ID`
-never certifies Cursor by itself.
+Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read ([SPEC Audience and target](SPEC.md#audience-and-target) retired Conductor support on 2026-11-06); historical v1/v2/v3 rows that recorded `route: "conductor"` or detected Cursor store metadata remain valid under their schema branches, while v4 Cursor rows record `route: "cli"` when `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker is set and `"unknown"` otherwise, and take model and effort from `--model`/`--effort` or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT`.
 
-<a id="cursor-sdk-shape"></a>
-
-### Supported store shape
-
-Certification needs exactly one Conductor prompt (one run) overlapping the
-stage. A stage that spans several prompts in one conversation stays unknown
-(`ambiguous-candidates`) by design, so the store supplies no model
-or effort for those stages. The values are the model and effort Conductor requested for the
-run, not served-model proof; OpenTelemetry's GenAI conventions draw the same
-line between `gen_ai.request.model` and `gen_ai.response.model`.
-
-The store is `~/Library/Application Support/com.conductor.app/cursor-sdk-store/<shard>/`.
-The reader recognizes two Conductor-internal layouts and reads them best
-effort; anything else stays unknown. An NDJSON shard has `agents.ndjson` and
-`runs.ndjson`. A SQLite shard has `index.db`. A shard with both, a shard with
-neither (an empty directory, or only an `agents/` directory), and an `index.db`
-that is not a regular file each make the capture incomplete
-(`incomplete-evidence`, route `unknown`): neither layout can be shown to be the
-whole truth, so the reader never picks one. The `0.36.2.0` repair applied to
-NDJSON shards only. Current Conductor builds write SQLite shards, which
-`0.36.7.0` is the first release to read (its CHANGELOG entry names the layouts).
-
-An NDJSON shard is read in one bounded pass over its two regular files, then
-the stage end is sampled. A file larger than 8 MiB is not parsed; it marks the
-capture incomplete.
-Metadata and the native route share that captured selection. A later write is
-invisible to both. There is no clock tolerance: `updatedAt` later than the
-captured end is rejected.
-
-In NDJSON shards, numeric `startedAt`, `endedAt`, and `updatedAt` are
-epoch milliseconds. The NDJSON call site opts in (`numeric_unit="milliseconds"`).
-The same parser still accepts ISO-8601 strings, including a timezone and 3 to 9
-fractional digits, so an older dict-shaped record remains readable. Calls with
-no unit, including Claude, Codex, and Grok logs, stay ISO-only and reject
-numbers.
-Booleans, numeric strings, non-finite values, and values outside the UTC
-datetime range are unknown. Zero and negative finite values inside that range
-are real bounds. Missing is unknown, never a zero sentinel. An unsupported unit
-argument raises `ValueError` at the call site. SQLite timestamps are text and
-take the ISO-only path.
-
-`model` is read only when it is a dict. `model.id` is a printable string of at
-most 200 characters, independent of `params`. `params` may be a dict with
-`effort` and `reasoning_effort`, or a list of `{id, value}` entries. A valid
-`effort` wins over a valid `reasoning_effort`. An invalid `effort` falls back.
-Identical list duplicates keep that value. Conflicting values for one
-recognized key make that key unknown and do not fall back. A null effort is
-missing, not malformed, like a null model id. Entries such as
-`fast`, malformed entries, and unsupported containers are ignored. Empty or
-missing params do not erase a usable model id. A non-dict `model` yields
-unknown fields and does not raise.
-
-Identity is exact. The agent's cwd (`agents.ndjson` `cwd`, or `workspace_ref`
-in a SQLite shard) must equal the process cwd, and when
-`CURSOR_CONVERSATION_ID` is set it must equal `agentId` (`agent_id` in SQLite).
-Identity is per shard: a run counts only when its own shard's agent record
-places that agent in the process cwd. An unknown process cwd, such as a deleted directory, matches no
-agent; the store match never raises on it. Finish itself still needs a
-resolvable working directory to find its handoff. Within one shard, a
-cleaned `agentId` plus a cleaned `runId` is one run; snapshots of that run are
-not extra runs. A record with no usable `runId` stays its own candidate.
-Duplicate equivalent snapshots collapse. The newest `updatedAt` snapshot is
-kept whole, with no field merging, and only when `startedAt` is consistent.
-A snapshot is valid when its own bounds meet the contract below. A run counts
-toward uniqueness when any of its snapshots is valid and overlaps the stage. If
-that run then cannot be resolved to one valid newest snapshot (an invalid or
-unreadable snapshot, an inconsistent start, or an equal-timestamp conflict), it
-blocks certification even beside one eligible run. The newest invalid or future
-snapshot is never replaced by an older one. Distinct run ids stay ambiguous
-even when the model and effort agree. A malformed neighbor, a run with no valid
-snapshot, does not erase a well-formed record; the certification then carries
-the `malformed-neighbor` reason, unless the neighbor's readable bounds place it
-wholly before or after the stage. Unhashable ids are skipped.
-
-The stage window is inclusive `[begin, end]`; an inverted stage window
-certifies nothing. The run window is inclusive
-`[startedAt, endedAt]`. Only an absent or null `endedAt` is an open run, treated
-as open through the stage end. `startedAt` and `updatedAt` are required, with
-`startedAt <= updatedAt <= end`. A non-null `endedAt` that does not parse, an
-inverted interval, `updatedAt` before `startedAt`, or `updatedAt` after the
-captured end rejects that run. A run that ended before the stage does not
-supply metadata. An open run that began earlier can. One eligible run can
-certify `route` `conductor` and supply whatever model and effort survived
-cleaning. Zero eligible runs, or more than one, leave detected model and effort null and
-do not certify the route. A still-open stale run can overlap a later stage and
-make the result honestly ambiguous. There is no freshness TTL.
-
-In an NDJSON shard, a file over 8 MiB, a file that grew past that cap or shrank while being read,
-a file that ends in a torn, unparseable line and changed size since the read
-or was modified in the last 10 seconds (a writer mid-append, even a paused
-one), an unreadable, unsearchable, or
-non-regular sibling, a missing `agents.ndjson` next to runs, or a missing
-`runs.ndjson` next to agents cannot prove uniqueness, including when the session id is absent and a readable
-sibling looks unique. This applies to every shard in the store, not only the
-one for this cwd. Because these files only grow, one file past 8 MiB in any
-shard, including an archived workspace's, keeps every capture incomplete; there
-is no in-repo repair, and that is a revisit trigger below. A shard directory
-with neither layout, with both, or with only an `agents/` directory is not
-skipped: it makes the capture incomplete, because a stray or half-created
-directory cannot be shown to hold no run. Earlier releases skipped such a
-directory. A malformed line, including one nested too deeply
-to decode, is skipped like any other bad line, and so is a torn last line on a
-file that kept its size and has been untouched for 10 seconds (stale crash
-residue). The row still records.
-A SQLite shard is `<shard>/index.db`, opened read-only. A closed shard is read
-without creating any file. A shard whose sidecar files are in transition (a
-lone `-wal` or `-shm`, a rollback journal) is incomplete, never guessed.
-The read is one read transaction over named, byte-capped columns. Values are
-kept whole and never truncated into validity, and `metadata_json`, the agent's
-key column, is never read, nor are usage, result, event, checkpoint or
-`agents/` data. Columns map onto the contract above like this:
-
-| SQLite column | Contract field | Rule |
-|---|---|---|
-| `agents.agent_id` | `agentId` | Exact; the session match when `CURSOR_CONVERSATION_ID` is set |
-| `agents.workspace_ref` | `cwd` | Exact string equality with the process cwd |
-| `runs.run_id`, `runs.agent_id` | Run identity | One row is one run. An unreadable or invalid id makes the shard `sqlite-schema` |
-| `runs.started_at`, `runs.updated_at` | `startedAt`, `updatedAt` | Text timestamps. A NULL start leaves the snapshot invalid |
-| `runs.finished_at`, `cancelled_at`, `expired_at`, `status` | `endedAt` | Terminal-column rule below |
-| `runs.model` | `model.id` | Printable string of at most 200 characters |
-| `runs.model_params_json` | `model.params` | A decodable list or dict; anything else is ignored |
-
-Timestamps are text only. A number, a BLOB or text over its cap in a
-timestamp column is rejected, never read as milliseconds; a column whose
-declared type changed makes the shard `sqlite-schema`. A NULL `started_at`, for
-example on a queued run, is an invalid snapshot: a malformed neighbor beside a
-valid run, `malformed-bounds` alone. A terminal time (`finished_at`,
-`cancelled_at` or `expired_at`) always wins over `status`. One distinct terminal
-time is the run's end. Two or more distinct times mean the store does not say
-which is real, so the run is unresolved: it blocks certification when any
-candidate end overlaps the stage, is never certified itself, and is never
-dropped. With no terminal time, a `RUNNING` row is open, and any other status
-(including NULL) stopped no later than its last update. The store showed
-`RUNNING`, `FINISHED` and `CANCELLED`; a new status is a revisit trigger. A
-model id or params value that fails its rule behaves as in NDJSON: a bad id
-gives `malformed-metadata`, and params that do not decode to a list or dict are
-ignored, so the model id survives and effort stays unknown with no extra reason.
-
-Limits: one row is one run, not a series of snapshots; a locked shard is waited
-on for at most 0.5 s; a table past 5000 rows makes the capture incomplete
-(`sqlite-row-cap`); and each value has a byte cap (1 KiB for ids, status,
-model and timestamps, 16 KiB for `workspace_ref` and params). A value over its
-cap is rejected whole, never shortened.
-
-Side effects: the reader creates no file in the store and never changes
-`index.db` or its write-ahead log. On a shard that has sidecar files, SQLite's
-read protocol may rewrite `index.db-shm`, its shared WAL index, even when no
-writer is present. The rare exception is a writer closing during the read on
-upstream SQLite builds, which leaves empty sidecar files that Conductor reuses;
-data is unaffected.
-
-The whole capture has a 5 second budget (`capture-timeout`). It is cooperative:
-it is checked between a shard's two NDJSON files, between shards and inside
-SQLite work, so one NDJSON file read (up to 8 MiB) or one filesystem call can
-overrun it. NDJSON-only stores inherit this failure mode.
-
-Transcript mtime remains the activity fallback when no store was captured, the
-candidate set is empty, ambiguous, or incomplete, the explicit CLI path is in
-use, or both model and effort are null. A usable model with unknown effort, or
-a usable effort with an unknown model id, stays a store result. Fallback does
-not erase the field that survived, and a failed store match does not invent a
-timestamp to beat another harness. A usable store result carries its chosen
-snapshot's `updatedAt`, never the observation end, so a nested harness with
-later activity still wins when process ancestry is unavailable.
+| Reason | Problem | Cause | Safe action |
+|---|---|---|---|
+| <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
 
 <a id="cursor-sdk-historical-route"></a>
 
@@ -2919,11 +2788,7 @@ alone is not proof of a correct run window. The reader is unchanged through
 `0.36.1.0`. The statement in
 [review-independence evidence](designs/review-independence.md#8-provenance-feasibility)
 that integer dates and list params fail `cursor_turns()` is a dated pre-repair
-observation, not a current claim that those shapes stay unreadable. Its
-offline reproduction calls `cursor_turns()` without a captured selection and
-`parse_ts()` without a unit, so it still prints no turn and no integer
-timestamp after the repair. That output is expected; use the debug reasons
-from the next planned run instead. Do not
+observation, not a current claim that those shapes stay unreadable. Do not
 rewrite old rows, the dated capture below, or Track 22A receipts. Schema
 version and source labels are satisfied independently of native-route
 correctness. A row with no `producer_version` keeps unknown producer status.
@@ -2943,131 +2808,6 @@ those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
 Current finish can also fill otherwise-null CLI values from the requested variables;
 that fallback was added later.
 
-Reconsider this private reader if a supported host publishes an official
-run-metadata contract, a qualified native shape changes, the SQLite schema or
-file layout changes, store-wide completeness or exact-cwd identity proves too
-strict on a real install, or the quota reader's
-millisecond heuristic (magnitude above `100000000000`, plus numeric strings)
-diverges from this explicit-unit contract. Also reconsider it if
-`ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt)
-Conductor stages in receipt 2 or the Conductor host-qualification evidence, a SQLite shard reaches the
-row cap, a run status other than RUNNING, FINISHED or CANCELLED appears, or
-`malformed-bounds` shows on every SQLite run, which suggests the timestamp
-format changed without a schema change. That is a revisit trigger, not a
-second reader and not a quota change.
-
-<a id="cursor-sdk-sources"></a>
-
-### Sources, nulls, and native acceptance
-
-`detected` means this reader or the transcript supplied the value. `flag` means
-an accepted finish flag supplied it. `requested` means `GSTACK_EXTEND_MODEL` or
-`GSTACK_EXTEND_EFFORT` supplied a value that detection and flags left null.
-`unknown` means the value is null. A null
-is always `unknown`. A detected store effort is the effort Conductor requested for the run. None of those labels, and no schema-valid row, proves the
-served model or that the window was right. Installed Conductor acceptance is
-pending. Fixture output is not that acceptance. The next already-planned
-Conductor Cursor run is the check: installed revision, host, harness, and
-upstream versions, the known conversation and stage bounds, the expected model
-and effort, sanitized booleans for process-cwd versus store-cwd equality and
-for live conversation id versus store `agentId`, the observed snapshot shape,
-and the fixed debug reasons. Unknown or absent identity stays unknown. No extra
-launch is part of this repair. Logical and physical paths can disagree; compare
-`pwd -P` with the store cwd privately and do not paste either path into a
-receipt. Receipt 2 checks a SQLite-shard row. Take its expected effort from
-the Conductor picker at stage start: Cursor offers low, medium, high and
-xhigh, so `none` is not a valid expectation. Run it on a deliberately
-single-prompt stage so it can meet the Done-when. Record a multi-prompt stage
-separately, noting that it spanned more than one prompt, and copy the cause
-tokens. The procedure is otherwise unchanged.
-
-<a id="cursor-sdk-diagnosis"></a>
-
-### Diagnosis
-
-Start here:
-
-1. Read the row's model, effort, route and sources with the
-   [ledger recipe](#cursor-ledger-recipe).
-2. Values with source `detected` are the configuration found by the reader;
-   `flag` and `requested` identify caller-supplied values. Stop for each non-null value.
-3. If they are unknown, the row itself cannot say why. Unless debug lines were
-   captured for that finish, report "historical cause unavailable".
-4. To classify the next occurrence, capture debug on the next normal finish
-   with the procedure below, keeping only `telemetry: cursor-sdk` lines.
-5. Look up the reason in the first table, then any cause in the second.
-
-The 2-5 minute target covers this classification, not the recovery of a past
-cause.
-
-Doctor reports skill-usage pairing, not model coverage. Classify a known row in
-three steps: locate it, read the whitelisted fields and source labels, then
-follow the reason below. The 2-5 minute target is an unmeasured human
-classification from an already-installed known row. It is not fresh-install
-time, not an agent run, and it cannot recover why a null was written. Default
-telemetry stays quiet. On the next already-planned run, prefix the first normal
-finish in that tool shell with `GSTACK_EXTEND_TELEMETRY_DEBUG=1` and the
-caller's existing arguments. Do not export it only in a terminal the GUI will
-not inherit, and do not add a second start or finish. Whether the host UI keeps
-that stderr is unverified. The `cursor-sdk` reason lines are fixed tokens plus
-the anchor. They omit store fields, cwd, identity, exception text, and values.
-The same debug output also carries other lines, such as the sink line with
-the ledger path, the logger and config paths, skipped-output reasons, other
-harnesses' detection errors, and the `provenance agent=… model=… effort=…`
-line with the values the row records. Copy only lines that begin
-`telemetry: cursor-sdk` into a receipt.
-
-The tables describe detection before finish flags and requested-variable fallback.
-Either can fill otherwise-null model or effort; neither certifies the route.
-
-| Reason | Problem | Cause | Safe action |
-|---|---|---|---|
-| <a id="cursor-sdk-store-absent"></a>`store-absent` | No store metadata | The SDK directory is not there | Confirm Conductor wrote a store for this host. Do not invent a model |
-| <a id="cursor-sdk-store-unreadable"></a>`store-unreadable` | No store metadata | The store directory cannot be listed | Restore the directory's permissions privately. The reason line is the whole diagnostic |
-| <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | In any shard, something could hide a run: an unrecognized, mixed or unreadable layout, a locked or changed SQLite shard, an NDJSON file over 8 MiB or one that grew, shrank or tore while being read, or an exceeded capture budget. The debug line adds `(causes: …)` | Do not treat a readable shard as unique. The row stays unknown. Look each cause up in [Incomplete-evidence causes](#cursor-causes) |
-| <a id="cursor-sdk-no-cwd-agent"></a>`no-cwd-agent` | No store metadata | No agent cwd equals the process cwd, including a finish run from a subdirectory of the workspace | Compare `pwd -P` with the store privately. Exact match is required; run finish from the workspace root. Do not paste paths |
-| <a id="cursor-sdk-no-session-match"></a>`no-session-match` | No store metadata | The conversation id matches no agent or run | Record identity as unknown or absent. Do not copy the id into a receipt |
-| <a id="cursor-sdk-malformed-bounds"></a>`malformed-bounds` | No certified route | A required bound is missing or unreadable, the run or stage interval is inverted, or `updatedAt` is in the future | Keep the null. Do not widen the window or fall back to an older snapshot |
-| <a id="cursor-sdk-no-eligible-window"></a>`no-eligible-window` | No store metadata | Runs were readable and none overlap the stage | Confirm the stage begin and end. A completed earlier run is not this stage |
-| <a id="cursor-sdk-ambiguous-candidates"></a>`ambiguous-candidates` | No certified route | More than one run overlaps, or a run with a valid overlapping snapshot cannot be resolved | Leave model, effort, and route unknown. A stage that spans more than one Conductor prompt in one conversation does this, since each prompt is its own run; so can a stale open run |
-| <a id="cursor-sdk-malformed-metadata"></a>`malformed-metadata` | A field is null | The model or a recognized effort value failed cleaning, or effort values conflicted | Keep a usable sibling field. Do not guess the dropped one |
-| <a id="cursor-sdk-malformed-neighbor"></a>`malformed-neighbor` | Route certified beside a dropped run | Another run for this identity had no valid snapshot (a missing or unreadable bound, an inverted interval, or an `updatedAt` after the captured end), and its readable bounds did not place it outside the stage | Treat the certification as provisional. Record the reason in the receipt so the native check can judge that rule |
-| <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read, with no store observed (explicit CLI) or no usable store result | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
-
-<a id="cursor-causes"></a>
-
-#### Incomplete-evidence causes
-
-Only the `incomplete-evidence` debug line carries causes:
-`telemetry: cursor-sdk incomplete-evidence (causes: a, b). See …`. Tokens are
-fixed, listed in the order below, and carry no path, id, value or exception
-text; they are not row fields. A class is a first guess. *Transient* may clear
-on a subsequent normal finish. *Store-changed* means Conductor changed its
-store. *Persistent* stays until the store or environment changes. *Reader-bug*
-is ours. Escalate a transient or store-changed cause that repeats across
-finishes: a crash-left `-wal`, an abandoned empty directory or a mid-creation
-shard can each persist. In every case, never delete or edit store files. To
-record values while the store stays incomplete, use `--model` and `--effort`
-(source `flag`) or the requested variables (source `requested`); neither
-certifies the route.
-
-| Token | Meaning | Class | Safe action |
-|---|---|---|---|
-| <a id="cursor-cause-shard-unreadable"></a>`shard-unreadable` | A store child cannot be stat'ed, or every probe inside a shard is unreadable (an unsearchable directory) | transient | May clear on a subsequent normal finish. Restore directory permissions privately; record the token if it repeats |
-| <a id="cursor-cause-ndjson-incomplete"></a>`ndjson-incomplete` | An NDJSON file is over 8 MiB, grew, shrank or tore while being read, is non-regular, or is missing its sibling | transient | May clear on a subsequent normal finish (a mid-append read). A file past 8 MiB stays until the store changes; record the token if it repeats |
-| <a id="cursor-cause-ndjson-vanished"></a>`ndjson-vanished` | An NDJSON shard was seen, then both its files were gone at read | transient | May clear on a subsequent normal finish; record the token if it repeats |
-| <a id="cursor-cause-mixed-layout"></a>`mixed-layout` | NDJSON files beside `index.db` in one shard | store-changed | Conductor changed its store. Record the reason and cause, then follow the revisit trigger |
-| <a id="cursor-cause-unrecognized-layout"></a>`unrecognized-layout` | Neither NDJSON files nor a regular `index.db`, including an empty or `agents/`-only directory | store-changed | Conductor changed its store, or left an abandoned shard. Record the reason and cause, then follow the revisit trigger; do not delete the directory |
-| <a id="cursor-cause-sqlite-sidecars"></a>`sqlite-sidecars` | `index.db` has a sidecar state other than live or closed (a lone `-wal`, a `-journal`) | transient | May clear on a subsequent normal finish. A crash-left `-wal` stays until Conductor next opens the shard; record the token if it repeats |
-| <a id="cursor-cause-sqlite-changed"></a>`sqlite-changed` | A closed shard changed while it was read | transient | May clear on a subsequent normal finish |
-| <a id="cursor-cause-sqlite-open"></a>`sqlite-open` | The database stayed locked past 0.5 s, or could not be opened (permission, I/O) | transient | May clear on a subsequent normal finish. If it repeats, check privately that the shard file is readable |
-| <a id="cursor-cause-sqlite-schema"></a>`sqlite-schema` | A needed table or column is missing, is not a table, or has another declared type; the file is empty or not a database; or a run's identity is unreadable | store-changed | Conductor changed its store. Record the reason and cause, then follow the revisit trigger |
-| <a id="cursor-cause-sqlite-error"></a>`sqlite-error` | Another SQLite error after the schema check | transient | May clear on a subsequent normal finish; record the token if it repeats |
-| <a id="cursor-cause-reader-error"></a>`reader-error` | A bug in this reader, not a Conductor change | reader-bug | File an issue with the cause token only |
-| <a id="cursor-cause-sqlite-row-cap"></a>`sqlite-row-cap` | A table has more than 5000 rows | persistent | Stays until the store changes, like a file past 8 MiB. There is no in-repo repair; it is a revisit trigger |
-| <a id="cursor-cause-sqlite-module-missing"></a>`sqlite-module-missing` | This Python has no `sqlite3` module | persistent | Check privately in the same tool shell with `python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`, then run finish under a Python that has the module |
-| <a id="cursor-cause-capture-timeout"></a>`capture-timeout` | The 5 second capture budget passed | transient | May clear on a subsequent normal finish; a very large store or a stuck volume can repeat it |
-
 <a id="cursor-ledger-recipe"></a>
 
 ### Read a known row
@@ -3076,15 +2816,13 @@ The projections below are synthetic. They are not native evidence.
 
 | Projection | What the whitelisted fields show |
 |---|---|
-| detected | `model_source` and `effort_source` are `detected`, and a unique in-window store match can set `route` to `conductor` |
+| detected | `model_source` and `effort_source` are `detected`, and a historical unique in-window store match could set `route` to `conductor` |
 | flag | `model_source` or `effort_source` is `flag` because finish passed `--model` or `--effort`. CLI stays `route` `cli` |
 | requested | `model_source` or `effort_source` is `requested` because `GSTACK_EXTEND_MODEL` or `GSTACK_EXTEND_EFFORT` filled a null value after detection and flags. CLI stays `route` `cli` |
-| unknown | `model` and `effort` are null and those sources are `unknown`. The route is certified only when one store run matched; such a run can still carry no usable model or effort |
+| unknown | `model` and `effort` are null and those sources are `unknown` |
 
 Several stage-runs lines for one session are a ledger choice: narrow with
 `stage` and `started_at`. Do not keep the last line because it is last.
-Several SDK runs are a different event: detection leaves model and effort null and the
-route is not certified. Finish flags or requested variables can still fill those values.
 The recipe never reads the SDK store, never prints an
 unlisted key, and never writes.
 
@@ -3197,109 +2935,6 @@ the session, and any stage or start you passed, hit nothing. `multiple-match`
 means more than one ledger line still qualifies; read those projections and
 narrow the selectors. `malformed-lines: N` counts skipped lines, including
 lines that are not UTF-8, and does not print them. None of these results is a native Conductor receipt.
-
-<a id="cursor-smoke-recipe"></a>
-
-### Live smoke before shipping a reader change
-
-A fixture is not the store. Before shipping a change to this reader, run the
-program below once on a machine with a current Conductor build, from a
-Conductor tool shell, using the `python3` that `command -v python3` resolves
-there. Its argument is the checkout's `bin/lib`, so it tests that branch's
-reader and not an installed one. It takes one capture, never opens `index.db`
-itself, and prints only fixed tokens, integers, booleans and the SQLite
-version. This is a smoke check, not acceptance and not O4 evidence.
-
-```python
-# gstack-extend-cursor-smoke-recipe
-import os
-import sys
-import time
-
-sys.path.insert(0, sys.argv[1])
-import telemetry
-
-try:
-    import sqlite3
-    SQLITE_VERSION = sqlite3.sqlite_version
-except ImportError:
-    SQLITE_VERSION = "none"
-
-
-def words(tokens):
-    return ",".join(tokens) if tokens else "none"
-
-
-def flag(value):
-    return str(bool(value)).lower()
-
-
-def newest_start(shard, agent_id):
-    starts = [telemetry.parse_ts(run.get("startedAt")) for run in shard["runs"] if run.get("agentId") == agent_id]
-    starts = [start for start in starts if start is not None]
-    return max(starts) if starts else None
-
-
-def judge(capture, cwd, session, begin, end):
-    # (certified with a model, printable summary). Only booleans and fixed reason tokens leave this function.
-    if begin is None:
-        return False, "certify=false reasons=malformed-bounds model=false effort=false"
-    found = telemetry.select_cursor(capture, cwd, session, begin, end)
-    text = "certify=%s reasons=%s model=%s effort=%s" % (
-        flag(found.certify), words(found.reasons), flag(found.model), flag(found.effort))
-    return bool(found.certify and found.model), text
-
-
-capture = telemetry.capture_cursor_store()
-end = time.time()  # sampled after the capture, as finish does
-causes = [token for token, _ in telemetry.CURSOR_SDK_CAUSES if token in capture.causes]
-sqlite_shards = [shard for shard in capture.shards if shard.get("layout") == "sqlite"]
-print("sqlite_version", SQLITE_VERSION)
-print("status", capture.status)
-print("layouts", " ".join("%s=%d" % (name, capture.layouts[name])
-                          for name in ("ndjson", "sqlite", "mixed", "unrecognized", "unreadable")))
-print("complete", flag(capture.complete))
-print("causes", words(causes))
-ok = capture.status == "read" and capture.complete and capture.layouts["sqlite"] > 0
-for index, shard in enumerate(sqlite_shards, 1):
-    # Identity comes from the shard's own agent record, and the window opens at its newest run.
-    record = next((item for item in shard["agents"]
-                   if isinstance(item.get("agentId"), str) and isinstance(item.get("cwd"), str)), {})
-    good, result = judge(capture, record.get("cwd"), record.get("agentId"), newest_start(shard, record.get("agentId")), end)
-    low, high, count = ["none" if value is None else value for value in (shard.get("turns") or (None, None, 0))]
-    print("shard %d %s turns=%s,%s,%s" % (index, result, low, high, count))
-    ok = ok and good
-# The join identity of a real finish: the process cwd and CURSOR_CONVERSATION_ID, which the shard identity above skips.
-session = os.environ.get("CURSOR_CONVERSATION_ID") or None
-try:
-    where = os.getcwd()
-except OSError:
-    where = None
-ours = [(newest_start(shard, item.get("agentId")), item.get("agentId")) for shard in sqlite_shards for item in shard["agents"]
-        if item.get("cwd") == where and (session is None or item.get("agentId") == session)]
-ours = [pair for pair in ours if pair[0] is not None]
-if ours:
-    print("real-identity", judge(capture, where, session, max(ours)[0], end)[1])
-else:
-    print("real-identity no-match")
-print("result", "ok" if ok else "blocked")
-sys.exit(0 if ok else 1)
-```
-
-```sh
-python3 -I - "<checkout>/bin/lib" <<'PY'
-# gstack-extend-cursor-smoke-recipe
-# paste the fenced program above
-PY
-```
-
-Every SQLite shard must certify with a model present, and the capture must be
-complete with at least one SQLite shard; the last line says `ok` or `blocked`
-and sets the exit status. Anything else blocks the release until it is
-explained. A turn gap (`count` different from `max - min + 1`) is reported, not
-judged. `real-identity` repeats the join with this shell's cwd and
-`CURSOR_CONVERSATION_ID`; `no-match` is expected when run from elsewhere.
-Paste nothing else.
 
 ## Evidence
 

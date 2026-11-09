@@ -213,6 +213,9 @@
     "docs/acceptance/external-gate.md": [
       "tests/handoff-contract.test.ts"
     ],
+    "docs/acceptance/hand-use-telemetry.md": [
+      "tests/telemetry-contract.test.ts"
+    ],
     "docs/acceptance/review-fix-policy.md": [
       "tests/handoff-contract.test.ts"
     ],

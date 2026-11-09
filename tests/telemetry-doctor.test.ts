@@ -626,7 +626,7 @@ describe('gstack helper warning', () => {
       blocked_reason_source: 'orchestrated',
     };
     const foreignRow = { ...legacyV2, source: 'other-tool' };
-    const futureV4 = { ...legacyV2, schema_version: 4 };
+    const futureV5 = { ...legacyV2, schema_version: 5 };
     const invalidRow = { source: 'gstack-extend', schema_version: 3, stage: 'roadmap', run_mode: 'user-directed', outcome: 'not-an-outcome' };
     writeFileSync(
       legacyPath,
@@ -637,7 +637,7 @@ describe('gstack helper warning', () => {
         '{malformed-json',
         '[]',
         JSON.stringify(invalidRow),
-        JSON.stringify(futureV4),
+        JSON.stringify(futureV5),
       ].join('\n') + '\n',
     );
     const symlinkHost = join(fix.home, '.gstack-extend/analytics/stage-runs/symlink-host.jsonl');
@@ -720,11 +720,11 @@ describe('gstack helper warning', () => {
     // Help and invalid argument handling
     const helpRep = spawnSync(telBin, ['report', '--help'], { env: fix.env, encoding: 'utf8' });
     expect([helpRep.status, helpRep.stderr]).toEqual([0, '']);
-    expect(helpRep.stdout).toContain('Usage: gstack-extend-telemetry report [--json]');
+    expect(helpRep.stdout).toContain('Usage: gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...');
 
     const badArg = spawnSync(telBin, ['report', '--bad-arg'], { env: fix.env, encoding: 'utf8' });
     expect(badArg.status).toBe(0);
-    expect(badArg.stderr).toContain("telemetry report: invalid arguments; use 'gstack-extend-telemetry report [--json]'");
+    expect(badArg.stderr).toContain("telemetry report: invalid arguments; use 'gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...'");
   });
 });
 
