@@ -5,8 +5,10 @@ caller configures, and run any part whose delegate fails on the host model. It
 is an opt-in `Review policy:` value. Without it the review runs as today, and
 the default delegates nothing.
 
-Nothing here names a particular provider, tool or plugin: the caller supplies a
-command and a model name, and the examples use placeholders.
+In default diff mode (`"access": "diff"` or omitted), nothing here names a
+particular provider, tool or plugin: the caller supplies a command and a model
+name, and the examples use placeholders. For opt-in tools-mode delegation
+(`"access": "tools"`), see [Tools mode](#tools-mode).
 
 ## Scope
 
@@ -89,13 +91,14 @@ model needs a caller that configures that provider.
   unknown label is malformed.
 - The prompt goes on the command's standard input only. There is no placeholder
   substitution and no shell.
-- The command must run with no tools, no agents and no write access. The runner
-  grants and requests none, and it cannot observe what a command does inside
-  itself: that limit is yours to configure (see [Limits](#limits)).
+- In default diff mode, the command must run with no tools, no agents and no
+  write access. The runner grants and requests none, and it cannot observe what
+  a command does inside itself: that limit is yours to configure (see
+  [Limits](#limits) and [Tools mode](#tools-mode)).
 
 ## The call
 
-A delegated part is one bounded, read-only call:
+A delegated part is one bounded call:
 
 - **Sent.** A fixed policy, one JSON line `{part, base, candidate}`, then
   `{"diff": ..., "checklist": ...}` for the four specialists and `adversarial`,
@@ -121,10 +124,13 @@ A delegated part is one bounded, read-only call:
   for the Security specialist and the Red Team. Nothing else: no learnings,
   stack notes, repository files, skill text or plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
-  TZ`, and only those that are set. No key or credential is passed; a command
-  keeps its own login under `HOME`.
-- **Where it runs.** A fresh, empty, private temporary directory as its working
-  directory, removed afterwards, in its own process group.
+  TZ`, and only those that are set (plus `DISABLE_AUTOUPDATER=1` and `PATH`
+  filtered to absolute entries in [Tools mode](#tools-mode)). No key or
+  credential is passed; a command keeps its own login under `HOME`.
+- **Where it runs.** In diff mode, a fresh, empty, private temporary directory
+  as its working directory, removed afterwards, in its own process group (in
+  [Tools mode](#tools-mode), a detached shallow copy of the repository at
+  `--candidate`).
 - **Bounds.** Its configured timeout (the whole group gets SIGKILL, and the exit
   is recorded as the classifier's timeout code, 124), standard output capped at
   1 MiB and standard error at 64 KiB. One process per part, never retried with
@@ -224,17 +230,21 @@ writes the file through a temporary file in that directory renamed into place
 reuses it unchanged on a resume.
 
 `check` validates without any call. Exit 0 prints
-`{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`.
+`{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`
+(adding `"access":"tools"` on parts whose provider configures tools mode).
 Exit 1 prints `{"v":1,"status":"refused","reason":...}` with `config-missing`,
-`config-malformed`, `part-unmapped`, `helper-missing` (the installed classifier
-cannot be loaded) or `checklist-anchor` (a named part's checklist or
-`--adversarial` file no longer matches the anchors, or its adversarial framing
-line does not directly follow the one `Subagent prompt:` line, or the prompt or
-criteria line does not occur once). Exit 2 is a usage error decided before
-any work (an unknown flag, a part outside the six, a repeated part, a missing or
-extra `--adversarial` or `--caught`, a relative path, a `--calls` or `--caught`
-inside `--repo`): standard output is empty and standard error has
-`ERROR USAGE: ...` and `FIX: ...`.
+`config-malformed`, `tools-unsupported`, `part-unmapped`, `helper-missing` (the
+installed classifier cannot be loaded) or `checklist-anchor` (a named part's
+checklist or `--adversarial` file no longer matches the anchors, or its
+adversarial framing line does not directly follow the one `Subagent prompt:`
+line, or the prompt or criteria line does not occur once). When a tools-mode
+provider is refused by configuration validation, `ERROR <reason>: <detail>` and
+`FIX: <fix>` are also written to standard error naming `provider <label>
+<key>[<index>]` without echoing configuration values. Exit 2 is a usage error
+decided before any work (an unknown flag, a part outside the six, a repeated
+part, a missing or extra `--adversarial` or `--caught`, a relative path, a
+`--calls` or `--caught` inside `--repo`): standard output is empty and standard
+error has `ERROR USAGE: ...` and `FIX: ...`.
 
 `run` takes the same flags plus the repository, the frozen scope's two full
 SHAs, the calls directory and (for `red-team`) `--caught`. It runs `check`
@@ -247,7 +257,9 @@ means a part fell back, and 1 means a refusal before any call or a
 `part provider model call_id replay dispatched dispatched_at returned_at wall_ms
 input_tokens output_tokens cache_read_input_tokens cache_creation_input_tokens
 parse verdict outcome fallback_reason findings`. The output never carries prompt
-text, reply prose or standard error.
+text, reply prose or standard error; when a tools-mode part falls back, standard
+error prints `review-delegate: <part> fell back (<reason>); saved result:
+<calls>/<call_id>.json`.
 
 `/review-and-prep` makes one `run` call per review stage that runs named parts.
 After a refusal (exit 1) or a usage error (exit 2) it runs that stage's parts on
@@ -304,8 +316,9 @@ effect together. A `Review delegates:` line beside a policy that carries only
 
 ## Receipts and metrics
 
-- The receipt records `delegation: active (parts=<list>; config=<sha256>)` or
-  `delegation: inactive — <reason>`, one `specialists-dispatched:` line when the
+- The receipt records `delegation: active (parts=<list>; config=<sha256>; tools=<part>[,<part>...])`
+  when any check row carries `"access":"tools"`, `delegation: active (parts=<list>; config=<sha256>)`
+  otherwise, or `delegation: inactive — <reason>`, one `specialists-dispatched:` line when the
   section is active (`waived`, `met`, `not declared` or `unmet`), one
   `adversarial-pass:` line while `delegate=adversarial` is active (`waived`,
   `met`, `not declared` or `unmet`), one `Red team:` line when the policy
@@ -351,26 +364,226 @@ because the two values exclude each other. No saving is claimed here: record a
 real run's wall time and per-provider usage (`data.delegated`) beside the
 default before treating delegation as an optimization, as SPEC P1 requires.
 The attacker parts' pending by-hand and orchestrated runs are listed in
-[the attacker-parts record](acceptance/attacker-parts.md).
+[the attacker-parts record](acceptance/attacker-parts.md), and tools-mode
+qualification and post-merge verification live in
+[the tools-mode acceptance record](acceptance/delegate-tools-mode.md).
 
 ## Limits
 
-- The runner builds every control it can observe: no tool or agent grant, a
-  prompt that forbids tools, an empty temporary directory, an environment
-  allowlist, one process per part and a before-and-after work-tree check. It
-  cannot see inside a configured command, so "starts no subagents and writes
-  nothing" depends on that command's own configuration, and a write that lands
-  outside the work tree is not detected. Ignored files are outside the check.
-  A before-and-after snapshot
-  also cannot detect a write that is restored before the second snapshot.
-- After a normal exit the runner does not signal the command's process group, so
-  a command that leaves a background process behind must clean it up itself.
+- In diff mode, the runner builds every control it can observe: no tool or agent
+  grant, a prompt that forbids tools, an empty temporary directory, an
+  environment allowlist, one process per part and a before-and-after work-tree
+  check. It cannot see inside a configured command, so "starts no subagents and
+  writes nothing" depends on that command's own configuration, and a write that
+  lands outside the work tree is not detected. Ignored files are outside the
+  check. A before-and-after snapshot also cannot detect a write that is restored
+  before the second snapshot.
+- In diff mode, after a normal exit the runner does not signal the command's
+  process group, so a command that leaves a background process behind must clean
+  it up itself (tools mode kills the process group on exit; see
+  [Tools mode](#tools-mode)).
 - Concurrent parts on one provider can hit its rate limit together and all fall
   back; that costs spend, not coverage.
-- A delegated attacker part sees only the diff, never repository files, unlike
-  the native subagent; fixture bytes go in full, as they already do to outside
-  voices.
+- In diff mode, a delegated attacker part sees only the diff, never repository
+  files, unlike the native subagent; fixture bytes go in full, as they already
+  do to outside voices (for repository and test-execution access, see
+  [Tools mode](#tools-mode)).
 - The six parts are the only delegable ones, `/ship-and-land` and
   `/full-review` do not delegate, and routing by remaining quota is a non-goal.
 - An older helper answers `unsupported-version` to a v3 `pass` and reads a stored
   v3 line as `malformed-record`.
+
+## Tools mode
+
+A provider may opt into subagent-style tool access (`"access": "tools"`) so a
+delegated part (such as `adversarial` or `red-team` from a non-Claude host or a
+separate subscription pool) can read surrounding files, edit files inside a
+disposable copy at `--candidate`, and run named `Bash(<entry>)` test commands to
+verify hypotheses before emitting findings.
+
+**Prerequisite:** Enable tools mode only on candidates whose tests you would run
+on the host. Its exposure is the same as a host subagent running the diff's
+tests: the delegate CLI runs with the caller's normal environment and sign-in,
+without an OS sandbox.
+
+### Quickstart
+
+1. **Resolve the real binary** (never use a version-manager shim such as
+   `~/.local/share/mise/shims/claude`):
+   ```bash
+   mise which claude
+   ```
+2. **Probe caller support** before passing a tools-mode config:
+   ```bash
+   "<extend-root>/bin/review-delegate" --help | grep -qF '"access": "tools"'
+   ```
+   Exit `0` means the installed `review-delegate` supports `"access": "tools"`;
+   exit `1` means an older install is loaded (keep diff-only providers or omit
+   `delegate=`).
+3. **Configure a tools-mode provider:**
+
+```json
+{
+  "schema": "review-delegates/v1",
+  "providers": {
+    "claude-tools": {
+      "access": "tools",
+      "cli": "claude-code",
+      "argv": ["/path/to/claude", "--effort", "high", "--max-budget-usd", "0.25"],
+      "timeout_s": 600,
+      "model": "sonnet",
+      "commands": ["bun install --frozen-lockfile", "bun test *"]
+    }
+  },
+  "parts": {
+    "adversarial": "claude-tools"
+  }
+}
+```
+4. **Validate (`check`):**
+   ```bash
+   "<extend-root>/bin/review-delegate" check \
+     --config /absolute/path/to/review-delegates.json \
+     --gstack-root "<upstream-root>" \
+     --parts adversarial \
+     --adversarial "<upstream-root>/review/sections/adversarial.md"
+   ```
+   Expected stdout includes `"access":"tools"` on the part row:
+   `{"v":1,"status":"ok","config_sha256":"...","parts":[{"part":"adversarial","provider":"claude-tools","model":"sonnet","access":"tools"}]}`.
+5. **Smoke-run by hand (`run`):**
+   ```bash
+   "<extend-root>/bin/review-delegate" run \
+     --config /absolute/path/to/review-delegates.json \
+     --gstack-root "<upstream-root>" \
+     --parts adversarial \
+     --adversarial "<upstream-root>/review/sections/adversarial.md" \
+     --repo "<repo>" --base "<base-sha>" --candidate "<candidate-sha>" \
+     --calls /tmp/delegate-smoke-calls
+   ```
+   Exit `0` prints `"status":"ran"` with `"outcome":"credited"` on the
+   `adversarial` row.
+
+### Configuration grammar (`"access": "tools"`)
+
+- `"access"` is optional on a provider (`"diff"` default, or `"tools"`).
+- When `"access": "tools"`:
+  - `"cli"` is required (`[a-z][a-z0-9-]{0,31}`). Structural validation runs
+    first; any structurally valid `"cli"` other than `"claude-code"` refuses
+    with `tools-unsupported` (exit 1).
+  - `"argv"` allows only `argv[0]` (the absolute path to the real `claude`
+    binary) followed by optional `--effort <value>` and `--max-budget-usd
+    <value>` flag pairs (each at most once, with a non-empty value not starting
+    with `-`). Passing `--model` or any other flag in `argv` refuses with
+    `config-malformed` because the runner supplies `--model <provider.model>` and
+    all permission flags.
+  - `"commands"` is a non-empty array of unique strings matching words in
+    `[A-Za-z0-9_./:=@+-]+` (no commas) separated by single spaces, no word
+    ending in `:` (`Bash(prefix:*)` is deprecated; use a space before `*`), and
+    an optional final word `*`. Pin install commands without ` *` (for example
+    `"bun install --frozen-lockfile"`).
+
+### Runner-owned flags, copy lifecycle, and environment
+
+- **Appended flags (`effectiveArgv`):** After `provider.argv`, the runner appends
+  `--model <provider.model>` and then:
+  ```text
+  -p --output-format json --safe-mode --restricted --strict-mcp-config --disable-slash-commands --no-session-persistence --permission-mode dontAsk --permission-prompts none --tools Read,Grep,Glob,Bash,Edit,Write --allowedTools Read Grep Glob Edit(./**) <one Bash(<entry>) per commands entry> --disallowedTools NotebookEdit WebFetch WebSearch Agent Task
+  ```
+  `callId` hashes `[prompt, effectiveArgv(provider), provider.model, label]`, so
+  any change to `commands` or runner-owned flags produces a distinct call id.
+- **Prompt (`TOOLS_POLICY`):** Replaces the diff-only no-tools lines while
+  keeping the response format (`POLICY_FORMAT`) identical. The prompt names each
+  allowed `Bash(<entry>)` pattern, instructs the delegate to clean up
+  reproduction edits or include a unified diff in the finding's `evidence`
+  field, and requires the host to re-verify reproduction claims:
+  `A tools-mode finding's reproduction evidence is the delegate's claim: re-run it, after applying any reproduction patch it carries, before relying on it.`
+- **Disposable copy (`prepareCopy`):** Inside `$TMPDIR/extend-delegate-*/copy`,
+  the runner executes three async steps under the part's `timeout_s` budget:
+  1. `git init -q <copy>`
+  2. `git -C <copy> fetch -q --depth=1 --upload-pack="git -c uploadpack.allowAnySHA1InWant=true upload-pack" <real-top> <base> <candidate>`
+  3. `git -C <copy> checkout -q --detach <candidate>`
+  Requires git 2.32+. `GIT_*` variables are stripped, `GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, and `PATH` is filtered to
+  absolute entries. Git LFS pointer files are not hydrated unless an allowed
+  command fetches them; repositories requiring submodules or partial-clone
+  promisor fetches that cannot shallow-fetch `<base>` and `<candidate>` locally
+  fail setup cleanly (`failed`). Concurrent tools-mode parts each fetch into
+  their own copy and count against their `timeout_s`.
+- **Environment and sign-in:** `CHILD_ENV` (`HOME`, `PATH` filtered to absolute
+  entries, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`,
+  `TZ`) plus `DISABLE_AUTOUPDATER=1`. Supported sign-in is Claude Code's stored
+  login under the caller's normal `HOME`. Unsupported sign-in methods
+  (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, a relocated
+  `CLAUDE_CONFIG_DIR`, or settings-file `apiKeyHelper`/`env` entries requiring
+  stripped variables) are not passed. Qualified on Linux with Claude Code
+  `2.1.319`; macOS Keychain sign-in is unexercised. When upgrading Claude Code,
+  re-run the behavioral permission probe in
+  [docs/acceptance/delegate-tools-mode.md](acceptance/delegate-tools-mode.md).
+- **Exit and cleanup:** On normal exit or timeout, the runner sends `SIGKILL` to
+  the child's process group (`-pid`) and removes the temporary directory
+  asynchronously (`rm`, retrying once after `chmod -R u+rwx <cwd>`, bounded by
+  5 s) so a read-only mode-`0500` artifact or a slow removal does not stall
+  sibling parts.
+
+### Trust boundary
+
+- **Protects against:**
+  - `Edit` or `Write` tool calls modifying files outside the disposable copy or
+    creating new files (`--restricted`, `Edit(./**)` in `--allowedTools`, and
+    `Write` omitted from `--allowedTools`), including symlink targets outside
+    the copy and protected `.git/` or `.claude/` paths inside the copy.
+  - `Bash` tool calls outside the configured `commands` allowlist.
+  - Candidate repository `.claude/settings.local.json`, MCP servers, slash
+    commands, or hooks widening permissions (`--safe-mode --strict-mcp-config
+    --disable-slash-commands`).
+  - Relative `PATH` entries or version-manager shims hijacking `git` or
+    `claude`.
+  - Unverified reproduction claims being trusted without host re-run.
+  - Mutations to the real repository's `HEAD`, index, tracked files, or
+    nonignored untracked files (`worktreeState` before-and-after check ->
+    `worktree-changed`).
+- **Does not protect against:**
+  - Arbitrary actions by code executed inside an allowed `Bash(<entry>)` command
+    (such as `bun test *` or `bun install --frozen-lockfile` running candidate
+    tests or package scripts with the caller's `HOME` and network).
+  - Background processes that call `setsid` to escape the child's process group
+    before exit-time `SIGKILL`.
+  - Reads outside the copy (`--restricted` bounds writes to the working
+    directory, not reads; `a reply can quote anything the delegate read or an
+    allowed command printed`).
+  - Writes outside the real repository's `worktreeState` check: `--calls`
+    (including planted saved results), the gstack root, the extend root,
+    `~/.claude`, or gitignored files in the real repository.
+
+### Pre-enable checklist
+
+1. Candidate diff has been inspected enough that you would run its tests on the
+   host.
+2. `argv[0]` points to the real `claude` binary (`mise which claude`), not a
+   shim, and matches the qualified version (or has passed the behavioral
+   requalification probe).
+3. `commands` pins install commands without ` *` (for example `"bun install
+   --frozen-lockfile"`) and scopes test runners narrowly.
+4. `--max-budget-usd` and `timeout_s` are sized for shallow fetch + install +
+   test execution.
+
+### Diagnosing a tools-mode fallback
+
+When a tools-mode part falls back, the runner prints the saved result path on
+stderr:
+`review-delegate: <part> fell back (<reason>); saved result: <calls>/<call_id>.json`.
+Inspect setup timing and CLI stderr with:
+
+```bash
+jq -r .spawned.stderr "<calls>/<call_id>.json"
+```
+
+| Symptom in `.spawned.stderr` or `.spawned.stdout` | Meaning and fix |
+|---|---|
+| `review-delegate: tools-mode setup failed (init\|fetch\|checkout)` | Disposable copy setup failed (for example git < 2.32, missing commit, or submodule/promisor fetch). Fix the repository state; remove the saved `<call_id>.claim` and `<call_id>.json` only when intentionally resetting a by-hand smoke run. |
+| `review-delegate: tools-mode setup failed (<step>: timeout)` | Copy setup exceeded `timeout_s`. Increase `timeout_s` in the provider config (which changes `config_sha256`, or if `argv`/`commands` change, `call_id`). |
+| `error: unknown option '--restricted'` (or another runner-owned flag) | The configured `claude` binary predates the qualified CLI flags. Point `argv[0]` at Claude Code `2.1.319`+. |
+| Authentication / login error in stdout or stderr | Stored login under `HOME` is missing or expired, or sign-in relies on an unsupported env var (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`). Run `claude` interactively under normal `HOME` to refresh stored sign-in. |
+| `"subtype":"error_max_budget_usd"` (`is_error: true`) | The delegate exceeded `--max-budget-usd` during tool turns. Raise `--max-budget-usd` in `argv` (which produces a new `call_id`). |
+| Version-manager shim failure (`mise` / `asdf` env error) | `argv[0]` points to a shim instead of the real binary. Replace `argv[0]` with the output of `mise which claude`. |
+| `fallback_reason: "worktree-changed"` (exit 1) | The real repository's `HEAD`, index, tracked files, or nonignored untracked files changed while parts ran. Stop before any commit, inspect `git status` in the real work tree, and do not delete claims. |

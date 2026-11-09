@@ -4,9 +4,10 @@
  * `run` makes one bounded, read-only call per part and reports which parts the
  * host must run itself. Contract and recovery: docs/delegated-review.md.
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,15 +16,19 @@ import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
 import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, extractAdversarialChecklist, validateConfig,
+  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, effectiveArgv, extractAdversarialChecklist, validateConfig,
   type DelegateConfig, type Part, type PartResult, type RefusalReason, type SpecialistPart, type Spawned,
 } from './delegate';
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
 const CHILD_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const;
+const CHMOD_PATHS = ['/usr/bin/chmod', '/bin/chmod'] as const;
+const firstExisting = (paths: readonly string[]) => paths.find((path) => existsSync(path));
+const CLEANUP_LIMIT_MS = 30_000;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void }
+export interface Deps { cleanupRm?: (path: string) => Promise<void>; cleanupLimitMs?: number }
 
 class UsageError extends Error {
   constructor(message: string, readonly fix: string) { super(message); }
@@ -129,7 +134,7 @@ function parseArgs(argv: string[]): 'help' | Options {
 interface Prepared {
   config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string;
 }
-type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason };
+type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason; detail?: string; fix?: string };
 
 /** Everything `check` establishes, in refusal order, with no model call. */
 async function prepare(options: Options): Promise<Preparation> {
@@ -139,7 +144,14 @@ async function prepare(options: Options): Promise<Preparation> {
   if (!read.ok) return refuse(/not found/.test(read.reason) ? 'config-missing' : 'config-malformed');
   if (read.bytes.length > CONFIG_LIMIT) return refuse('config-malformed');
   const parsed = validateConfig(read.bytes.toString('utf8'));
-  if (!parsed.ok) return refuse(parsed.reason);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      reason: parsed.reason,
+      ...(parsed.detail !== undefined ? { detail: parsed.detail } : {}),
+      ...(parsed.fix !== undefined ? { fix: parsed.fix } : {}),
+    };
+  }
   for (const part of options.parts) if (!parsed.config.parts[part]) return refuse('part-unmapped');
 
   const entry = UPSTREAM_HELPERS.find((helper) => helper.name === 'classifyOutsideReview')!;
@@ -190,10 +202,16 @@ async function prepare(options: Options): Promise<Preparation> {
   return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists, ...(caught !== undefined ? { caught } : {}) } };
 }
 
+/** Strip inherited GIT_* variables and apply isolated git settings. */
+function gitEnv(extra: Record<string, string> = {}): Record<string, string> {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  return { ...env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C', ...extra };
+}
+
 /** Hash HEAD, status, index entries and nonignored file bytes without following symlinks. */
 function worktreeState(repo: string): string | undefined {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
-  const git = (args: string[]) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } });
+  const env = gitEnv();
+  const git = (args: string[]) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env });
   const status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
   const head = git(['rev-parse', 'HEAD']);
   const index = git(['ls-files', '--stage', '-z']);
@@ -228,10 +246,68 @@ function worktreeState(repo: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** One process in its own group, an empty private cwd, an allowlisted env and bounded output. */
-function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promise<Spawned> {
+interface CopySpec {
+  top: string;
+  base: string;
+  candidate: string;
+}
+
+type SetupStep = 'init' | 'fetch' | 'checkout';
+
+export class SetupFailure extends Error {
+  constructor(readonly step: SetupStep, readonly reason: 'failed' | 'timeout') {
+    super(`tools-mode setup failed (${step}${reason === 'timeout' ? ': timeout' : ''})`);
+  }
+}
+
+/** Bound an async step without leaving a losing timer behind. */
+export function withinDeadline<T>(work: Promise<T>, limitMs: number, onTimeout?: () => void): Promise<{ ok: true; value: T } | { ok: false }> {
+  if (limitMs <= 0) { onTimeout?.(); return Promise.resolve({ ok: false }); }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work.then((value) => ({ ok: true as const, value })),
+    new Promise<{ ok: false }>((resolve) => { timer = setTimeout(() => { onTimeout?.(); resolve({ ok: false }); }, limitMs); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+function setupGitEnv(): Record<string, string> {
+  const pathEntries = (process.env.PATH ?? '').split(':').filter((entry) => isAbsolute(entry));
+  return gitEnv({ PATH: pathEntries.join(':'), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' });
+}
+
+async function runSetupGit(step: SetupStep, args: string[], remainingMs: () => number, env = setupGitEnv()): Promise<void> {
+  const limitMs = remainingMs();
+  if (limitMs <= 0) throw new SetupFailure(step, 'timeout');
+  let child: ReturnType<typeof spawn> | undefined;
+  const killGroup = () => { try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
+  const outcome = await withinDeadline(new Promise<boolean>((resolve) => {
+    try { child = spawn('git', args, { env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] }); }
+    catch { resolve(false); return; }
+    child.on('error', () => resolve(false));
+    child.on('close', (code, signal) => resolve(code === 0 && signal === null));
+  }), limitMs, killGroup);
+  if (!outcome.ok) throw new SetupFailure(step, 'timeout');
+  if (!outcome.value) throw new SetupFailure(step, 'failed');
+}
+
+/** Populate a detached shallow copy at candidate inside the part's temporary directory. */
+async function prepareCopy(spec: CopySpec, parentDir: string, remainingMs: () => number): Promise<string> {
+  const copy = join(parentDir, 'copy');
+  mkdirSync(copy, { mode: 0o700 });
+  const env = setupGitEnv();
+  await runSetupGit('init', ['init', '-q', copy], remainingMs, env);
+  await runSetupGit('fetch', ['-C', copy, 'fetch', '-q', '--depth=1',
+    '--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack', spec.top, spec.base, spec.candidate], remainingMs, env);
+  await runSetupGit('checkout', ['-C', copy, 'checkout', '-q', '--detach', spec.candidate], remainingMs, env);
+  return copy;
+}
+
+/** One process in its own group, an empty private cwd (or disposable copy), an allowlisted env and bounded output. */
+function spawnProvider(argv: string[], prompt: string, timeoutS: number, copySpec?: CopySpec, deps?: Deps): Promise<Spawned> {
   return new Promise((settle) => {
     const started = Date.now();
+    const totalBudgetMs = timeoutS * 1000;
+    const remainingMs = () => totalBudgetMs - (Date.now() - started);
     let cwd: string;
     try { cwd = mkdtempSync(join(tmpdir(), 'extend-delegate-')); }
     catch {
@@ -239,50 +315,110 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promis
         stdout: '', stderr: '', wall_ms: Date.now() - started });
       return;
     }
-    const env: Record<string, string> = {};
-    for (const key of CHILD_ENV) if (process.env[key] !== undefined) env[key] = process.env[key]!;
+    const removeDir = deps?.rmDir ?? ((target: string) => rm(target, { recursive: true, force: true }));
+    const cleanupLimitMs = deps?.cleanupLimitMs ?? CLEANUP_LIMIT_MS;
+    const cleanupCopy = async () => {
+      if (!copySpec) {
+        try { rmSync(cwd, { recursive: true, force: true }); return true; } catch { return false; }
+      }
+      const attempt = async () => { try { await removeDir(cwd); return true; } catch { return false; } };
+      const repairAndRetry = async () => {
+        if (await attempt()) return true;
+        await new Promise<void>((resolve) => {
+          try {
+            const fixer = spawn('chmod', ['-R', 'u+rwx', cwd], { stdio: 'ignore' });
+            fixer.on('error', () => resolve());
+            fixer.on('close', () => resolve());
+          } catch { resolve(); }
+        });
+        return attempt();
+      };
+      const bounded = await withinDeadline(repairAndRetry(), cleanupLimitMs);
+      return bounded.ok && bounded.value;
+    };
+    let setupNote = '';
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let outSize = 0, errSize = 0;
     let timedOut = false, overflow = false, spawnError = false, finished = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
-    let child: ReturnType<typeof spawn>;
+    let child: ReturnType<typeof spawn> | undefined;
     const killGroup = () => { try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
     const finish = (code: number | null, signal: string | null) => {
       if (finished) return;
       finished = true;
       clearTimeout(deadline);
       clearTimeout(grace);
+      if (copySpec) killGroup();
       child?.stdout?.destroy();
       child?.stderr?.destroy();
-      try { rmSync(cwd, { recursive: true, force: true }); } catch { spawnError = true; }
-      settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
-        stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: Buffer.concat(err, errSize).toString('utf8'), wall_ms: Date.now() - started });
+      void cleanupCopy().then((cleaned) => {
+        if (!cleaned && !copySpec) spawnError = true;
+        const rawStderr = Buffer.concat(err, errSize).toString('utf8');
+        const stderr = setupNote ? `${setupNote}${rawStderr}`.slice(0, STDERR_LIMIT) : rawStderr;
+        settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
+          stdout: Buffer.concat(out, outSize).toString('utf8'), stderr, wall_ms: Date.now() - started });
+      });
     };
-    const deadline = setTimeout(() => { timedOut = true; killGroup(); }, timeoutS * 1000);
-    try {
-      child = spawn(argv[0]!, argv.slice(1), { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch {
-      spawnError = true;
-      finish(null, null);
-      return;
-    }
-    child.stdout!.on('data', (chunk: Buffer) => {
-      if (outSize + chunk.length > STDOUT_LIMIT) { overflow = true; killGroup(); return; }
-      out.push(chunk);
-      outSize += chunk.length;
-    });
-    child.stderr!.on('data', (chunk: Buffer) => {
-      const room = STDERR_LIMIT - errSize;
-      if (room <= 0) return;
-      err.push(chunk.subarray(0, room));
-      errSize += Math.min(room, chunk.length);
-    });
-    child.stdin!.on('error', () => { /* the delegate may close stdin early */ });
-    child.stdin!.end(prompt);
-    child.on('error', () => { spawnError = true; finish(null, null); });
-    child.on('close', (code, signal) => finish(code, signal));
-    child.on('exit', (code, signal) => { grace = setTimeout(() => finish(code, signal), 250); });
+    void (async () => {
+      let launchCwd = cwd;
+      if (copySpec) {
+        const setupStarted = Date.now();
+        try {
+          launchCwd = await prepareCopy(copySpec, cwd, remainingMs);
+          setupNote = `review-delegate: tools-mode setup took ${Date.now() - setupStarted} ms\n`;
+        } catch (error) {
+          const setupMs = Date.now() - setupStarted;
+          if (error instanceof SetupFailure) {
+            setupNote = `review-delegate: tools-mode setup failed (${error.step}${error.reason === 'timeout' ? ': timeout' : ''})\nreview-delegate: tools-mode setup took ${setupMs} ms\n`;
+            if (error.reason === 'timeout') timedOut = true;
+            else spawnError = true;
+          } else {
+            setupNote = `review-delegate: tools-mode setup failed\nreview-delegate: tools-mode setup took ${setupMs} ms\n`;
+            spawnError = true;
+          }
+          finish(null, null);
+          return;
+        }
+      }
+      const leftMs = copySpec ? remainingMs() : totalBudgetMs;
+      if (leftMs <= 0) {
+        timedOut = true;
+        finish(null, null);
+        return;
+      }
+      const env: Record<string, string> = {};
+      for (const key of CHILD_ENV) if (process.env[key] !== undefined) env[key] = process.env[key]!;
+      if (copySpec) {
+        env.PATH = (env.PATH ?? '').split(':').filter((entry) => isAbsolute(entry)).join(':');
+        env.DISABLE_AUTOUPDATER = '1';
+      }
+      deadline = setTimeout(() => { timedOut = true; killGroup(); }, leftMs);
+      try {
+        child = spawn(argv[0]!, argv.slice(1), { cwd: launchCwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      } catch {
+        spawnError = true;
+        finish(null, null);
+        return;
+      }
+      child.stdout!.on('data', (chunk: Buffer) => {
+        if (outSize + chunk.length > STDOUT_LIMIT) { overflow = true; killGroup(); return; }
+        out.push(chunk);
+        outSize += chunk.length;
+      });
+      child.stderr!.on('data', (chunk: Buffer) => {
+        const room = STDERR_LIMIT - errSize;
+        if (room <= 0) return;
+        err.push(chunk.subarray(0, room));
+        errSize += Math.min(room, chunk.length);
+      });
+      child.stdin!.on('error', () => { /* the delegate may close stdin early */ });
+      child.stdin!.end(prompt);
+      child.on('error', () => { spawnError = true; finish(null, null); });
+      child.on('close', (code, signal) => finish(code, signal));
+      child.on('exit', (code, signal) => { grace = setTimeout(() => finish(code, signal), 250); });
+    })();
   });
 }
 
@@ -299,10 +435,11 @@ const NO_CALL = { replay: false, dispatched: false, dispatched_at: null, returne
   input_tokens: null, output_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null,
   parse: 'not-applicable', verdict: 'unavailable' as string, outcome: 'fell-back' as const, findings: [] };
 
-async function runPart(part: Part, prepared: Prepared, options: Options, diff: string): Promise<PendingPart> {
+async function runPart(part: Part, prepared: Prepared, options: Options, diff: string, deps?: Deps): Promise<PendingPart> {
   const label = prepared.config.parts[part]!;
   const provider = prepared.config.providers[label]!;
-  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined);
+  const commands = provider.access === 'tools' ? provider.commands : undefined;
+  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined, commands);
   const id = callId(prompt, provider, label);
   const identity = { part, provider: label, model: provider.model, call_id: id };
   const saved = join(options.calls, `${id}.json`);
@@ -326,7 +463,10 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
     try { writeFileSync(claim, claimBody(id, part, new Date().toISOString(), prompt), { flag: 'wx', mode: 0o600 }); }
     catch (error) { return fellBack((error as NodeJS.ErrnoException).code === 'EEXIST' ? 'unresolved-claim' : 'failed'); }
     dispatchedAt = new Date().toISOString();
-    spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s);
+    const copySpec = provider.access === 'tools'
+      ? { top: resolve(options.repo), base: options.base, candidate: options.candidate }
+      : undefined;
+    spawned = await spawnProvider(effectiveArgv(provider), prompt, provider.timeout_s, copySpec, deps);
     returnedAt = new Date().toISOString();
   }
   const verdict = decide(part, spawned, prepared.classify);
@@ -345,7 +485,7 @@ Usage: review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [-
        review-delegate --help
 
 Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on the host model.
-  --config FILE       absolute path of a review-delegates/v1 JSON file (at most 64 KiB)
+  --config FILE       absolute path of a review-delegates/v1 JSON file (at most 64 KiB); providers may opt into "access": "tools" with "cli": "claude-code" and "commands"
   --gstack-root DIR   absolute path of the installed gstack root the review uses (its review/specialists and lib are read)
   --repo DIR          absolute path of the repository under review (run only)
   --base, --candidate full SHAs of the frozen scope's endpoints (run only)
@@ -354,8 +494,8 @@ Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on
   --caught FILE       absolute path of the already-caught findings file outside --repo, at most 64 KiB (run only; required when --parts includes red-team)
 
 Output (stdout, one JSON line):
-  check: {"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}
-         {"v":1,"status":"refused","reason":"config-missing|config-malformed|part-unmapped|helper-missing|checklist-anchor"}
+  check: {"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model",..."access":"tools"}]}
+         {"v":1,"status":"refused","reason":"config-missing|config-malformed|tools-unsupported|part-unmapped|helper-missing|checklist-anchor"}
   run:   {"v":1,"status":"ran","config_sha256":...,"parts":[...]} or the same refused form (also reasons caught-unreadable and repo-unreadable)
 Exit: 0 every part credited; 4 a part fell back to the host; 1 refused before any call, or the work tree changed
       during the calls; 2 usage error (stdout empty; "ERROR USAGE: ..." and "FIX: ..." on stderr).
@@ -363,7 +503,7 @@ Docs: docs/delegated-review.md
 `;
 }
 
-export async function main(argv: string[], io: CliIo): Promise<number> {
+export async function main(argv: string[], io: CliIo, deps?: Deps): Promise<number> {
   let options: ReturnType<typeof parseArgs>;
   try { options = parseArgs(argv); } catch (error) {
     if (!(error instanceof UsageError)) throw error;
@@ -373,10 +513,27 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
   if (options === 'help') { io.stdout(help()); return EXIT.ok; }
   const print = (value: object) => io.stdout(`${JSON.stringify({ v: 1, ...value })}\n`);
   const prepared = await prepare(options);
-  if (!prepared.ok) { print({ status: 'refused', reason: prepared.reason }); return EXIT.refused; }
+  if (!prepared.ok) {
+    if (prepared.fix) io.stderr(`ERROR ${prepared.reason}: ${prepared.detail}\nFIX: ${prepared.fix}\n`);
+    print({ status: 'refused', reason: prepared.reason });
+    return EXIT.refused;
+  }
   const { config, sha } = prepared.prepared;
   if (options.command === 'check') {
-    print({ status: 'ok', config_sha256: sha, parts: options.parts.map((part) => ({ part, provider: config.parts[part]!, model: config.providers[config.parts[part]!]!.model })) });
+    print({
+      status: 'ok',
+      config_sha256: sha,
+      parts: options.parts.map((part) => {
+        const label = config.parts[part]!;
+        const provider = config.providers[label]!;
+        return {
+          part,
+          provider: label,
+          model: provider.model,
+          ...(provider.access === 'tools' ? { access: 'tools' as const } : {}),
+        };
+      }),
+    });
     return EXIT.ok;
   }
 
@@ -385,7 +542,7 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
   try { diff = snapshotDiff({ repo: options.repo, base: options.base, candidate: options.candidate, scope: 'full' } as Request); } catch { diff = undefined; }
   if (before === undefined || diff === undefined) { print({ status: 'refused', reason: 'repo-unreadable' }); return EXIT.refused; }
   mkdirSync(options.calls, { recursive: true, mode: 0o700 });
-  const pending = await Promise.all(options.parts.map((part) => runPart(part, prepared.prepared, options, diff)));
+  const pending = await Promise.all(options.parts.map((part) => runPart(part, prepared.prepared, options, diff, deps)));
   const results = pending.map((part) => part.result);
   const changed = worktreeState(options.repo) !== before;
   if (changed) {
@@ -397,6 +554,12 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
   for (const { save } of pending) if (save) {
     const value: Saved = { v: 1, spawned: save.spawned, worktree_changed: changed };
     try { writeFileSync(save.path, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); } catch { /* the claim still blocks a resend */ }
+  }
+  for (const result of results) {
+    const provider = config.providers[result.provider];
+    if (result.outcome === 'fell-back' && provider?.access === 'tools') {
+      io.stderr(`review-delegate: ${result.part} fell back (${result.fallback_reason}); saved result: ${join(options.calls, `${result.call_id}.json`)}\n`);
+    }
   }
   print({ status: 'ran', config_sha256: sha, parts: results });
   return changed || results.some((result) => result.fallback_reason === 'worktree-changed') ? EXIT.refused

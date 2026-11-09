@@ -2357,6 +2357,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(section).toContain('On the nested layout, the named parts that Review Army selects at Step 4.5 run through the delegate, so delegation never adds or removes a part there. On the sibling layout every named part runs through its delegate.');
     expect(section).toContain('nested dispatches them as Review Army would, and sibling has the host apply that checklist to the frozen diff with the same output contract');
     expect(section).toContain('The host model decides every finding\'s disposition and every fix under Fix-First, unchanged.');
+    expect(section).toContain("A tools-mode finding's reproduction evidence is the delegate's claim: re-run it, after applying any reproduction patch it carries, before relying on it.");
     expect(section).toContain('stop before any commit, report the change to the user and revert nothing');
     expect(section).toContain('Every dispatched result is discarded; host coverage remains incomplete until those parts actually run on the host.');
     expect(section).not.toContain('every part that call dispatched ran on the host');
@@ -2378,7 +2379,11 @@ describe('review-and-prep delegate=<part>', () => {
     expect(flat).toContain('(the PAUSED and STOPPED receipts carry them too when they carry Step 2 review evidence; the receipt names the configuration\'s SHA-256 and labels, never its path)');
     expect(flat).toContain('Record the `delegation:` status and every `Delegated part:` line the same way. When Greptile applies,');
     expect(flat).toContain('Add the `delegation:` status and every `Delegated part:` line. Post it once as a comment marked');
-    for (const status of ['`delegation: active (parts=<list>; config=<sha256>)`', '`delegation: inactive — <reason>`']) expect(section.replace(/\s+/g, ' ')).toContain(status.replace(/\s+/g, ' '));
+    for (const status of [
+      '`delegation: active (parts=<list>; config=<sha256>; tools=<part>[,<part>...])`',
+      '`delegation: active (parts=<list>; config=<sha256>)`',
+      '`delegation: inactive — <reason>`',
+    ]) expect(section.replace(/\s+/g, ' ')).toContain(status.replace(/\s+/g, ' '));
   });
 
   // Value: protects=the v3 sentence beside the locked v2 sentence, the per-part found_by mapping, and the voices.jsonl delegate object; fails_when=the v2 rule is rewritten, a new found_by label is invented or the v3 attempt rule is lost; why_new=criterion 3, 6; seam=none
