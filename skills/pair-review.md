@@ -645,6 +645,9 @@ not the rendered `Prepared:` line. On resume, recover that handle only after
 verifying its ownership and target; if uncertain, leave it untouched and ask
 the user to stop it. Build outputs and fixture state must be owned; never alter
 the user's pre-existing untracked or ignored files.
+`source_build` binds HEAD plus content fingerprints of tracked and owned
+untracked build inputs. Compare those inputs before every reuse, including on
+resume; HEAD alone never proves unchanged source. A mismatch requires a rebuild.
 Reach the screen, command or state the action needs, using fixtures the agent
 owns. Capture what you observed (a screenshot or command output) in
 `<SESSION_DIR>/evidence/`, then write `Prepared:` and `Agent evidence:` to the
@@ -662,11 +665,16 @@ preparation: report it, revert nothing and do not checkpoint, because the
 checkpoint commits run `git add -u`. Persist a tracked-file blocker in
 `session.yaml` until the user resolves the changed files; never clear it
 automatically. Every checkpoint and fix commit refuses an unresolved blocker.
+Every observation also refuses while it is set, so a later detection cannot
+replace an unresolved blocker.
 To resolve it, show the affected paths and content changes, then ask the user
 to handle those files and explicitly confirm resolution. On that answer only,
 recheck the contents and status, establish the approved baseline and set
 `tracked_file_blocker: null`; otherwise leave it set. Resume reads this field
 before any observation or commit. Never restore or include the files by default.
+Clear it only after every listed path is clean: the user must commit, stash or
+move aside their changes themselves. Confirmation with dirty paths keeps the
+blocker set; a subsequent `git add -u` must not absorb them.
 These safety rules apply to every agent-driven preparation, reproduction,
 rebuild and verification, including parked-bug flows; compare contents around
 each observation, separately from intentional implementation edits. Item,
@@ -739,7 +747,9 @@ Wait for the user's response.
    - Options: ["Fix now", "Continue testing"]
 
 On "Continue testing", create a linked parked bug from the recorded failure
-without another description question. Keep the item FAILED and its `Attempts:`
+without another description question only if no linked bug exists. Otherwise
+reuse the existing record, reopening it as PARKED on a failed human retest.
+Keep the item FAILED and its `Attempts:`
 unchanged, then continue to the next UNTESTED item; parking never passes it.
 
 ### On FIX NOW

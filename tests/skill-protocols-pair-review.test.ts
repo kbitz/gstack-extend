@@ -278,6 +278,9 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(content).toContain('tracked_file_blocker: null');
     expect(prep).toContain('On that answer only, recheck the contents and status, establish the approved baseline');
     expect(prep).toContain('Resume reads this field before any observation or commit');
+    expect(prep).toContain('Every observation also refuses while it is set');
+    expect(prep).toContain('Clear it only after every listed path is clean');
+    expect(prep).toContain('Confirmation with dirty paths keeps the blocker set');
     expect(prep).toContain('These safety rules apply to every agent-driven preparation, reproduction, rebuild and verification');
     expect(normalized).toContain('Apply the Prepare-the-item safety rules to this observation');
     expect(normalized).toContain('Apply the Prepare-the-item safety rules throughout this parked-bug flow');
@@ -289,6 +292,8 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(prep).toContain("Reuse only this session's own build while its source is unchanged");
     expect(content).toContain('build_run: null');
     expect(prep).toContain('On resume, recover that handle only after verifying its ownership and target');
+    expect(prep).toContain('`source_build` binds HEAD plus content fingerprints of tracked and owned untracked build inputs');
+    expect(prep).toContain('HEAD alone never proves unchanged source');
     expect(prep).toContain('Inspect the recipe destinations before running it; execute only owned local steps');
     const fix = flatProse(skillSection(content, '### On FIX NOW'));
     expect(fix).toContain('Refresh `Prepared:` and `Agent evidence:` on the verified build before presenting the retest');
@@ -303,6 +308,7 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(completion).toContain('A FAILED item with a linked parked bug remains unresolved');
     expect(normalized).toContain('Every passed tally and all-passed predicate follows the Legacy sessions rule');
     expect(normalized).toContain('On "Continue testing", create a linked parked bug from the recorded failure without another description question');
+    expect(normalized).toContain('reuse the existing record, reopening it as PARKED on a failed human retest');
     expect(normalized).toContain("after agent verification present a linked item's original action/PASS/FAIL as the human retest");
     expect(normalized).toContain("recompute the group's status even if it is already in `completed_groups`");
   });
