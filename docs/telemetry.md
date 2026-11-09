@@ -1891,6 +1891,10 @@ When the same underlying regular file `(st_dev, st_ino)` is reached more than on
 (for example, a repeated root, a root alias or a hard-linked ledger), it is read
 once. Distinct copied files still count separately.
 
+A missing root contributes no files. `files.unreadable` retains the existing
+per-root accounting for failed directory entries and read attempts, so a failed
+input reached through repeated or aliased roots may be counted more than once.
+
 The report accepts v3 and v4 run modes; versions 5 and above are counted under
 `rows.unsupported`. It prints the skill-by-mode table across `orchestrated`,
 `user-directed`, `unknown`, and `unrecorded` (legacy, v1, and v2 rows), with
@@ -1909,10 +1913,14 @@ text before the first dot is used when it matches `[a-z0-9][a-z0-9-]{0,62}`,
 including `unknown-host`, and an invalid prefix is `(unattributed)`.
 A machine's live and migrated `<host>.legacy.jsonl` files merge under one label;
 sync conflict copies ending in `.jsonl` are also read as separate ledgers.
+Legacy files from all listed roots share `(legacy)` and cannot be separated by
+machine in that aggregate; use the per-host migration above when that historical
+breakdown is needed. `(unattributed)` similarly combines invalid filename prefixes.
 Labels sort alphabetically, with `(legacy)` and `(unattributed)` last.
 When a label appears in more than one listed root after inode deduplication,
 counts are combined and stderr warns with the duplicate-label count only:
-`telemetry report: N host label(s) appeared in more than one state directory; copies of one ledger are counted twice`.
+`telemetry report: N host label(s) appeared in more than one state directory; copied ledgers, if present, are counted twice`.
+A repeated label alone does not establish that two files are copies.
 Without the new flags, text and JSON retain their previous shape.
 It never prints session IDs, branch, repo, work item, or file paths, and prints the
 stage-runs filename stem as a host label only when `--by-host` is passed.

@@ -1824,7 +1824,7 @@ def run_report(args):
     if dup_labels:
         print(
             f"telemetry report: {dup_labels} host label(s) appeared in more than one state directory; "
-            "copies of one ledger are counted twice",
+            "copied ledgers, if present, are counted twice",
             file=sys.stderr,
         )
     extra_skills = sorted(s for s in stage_cells if s not in installed_set)
