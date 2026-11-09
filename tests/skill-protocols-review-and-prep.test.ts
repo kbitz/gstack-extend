@@ -474,7 +474,7 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain('Post the PAUSED receipt once per pause');
     expect(pause).toContain('gstack-redact --from-file');
     expect(normalized).toContain(
-      'If posting the paused comment fails, keep the pause, report that the paused receipt lives only in the body, and retry the post on the next resume.',
+      'If posting the paused comment fails, keep the pause and keep preparation incomplete until the compact comment is confirmed',
     );
     expect(normalized).toContain('including the pending question, and retry a failed post on the next resume.');
     expect(normalized).toContain('Recency alone never clears them.');
@@ -3570,8 +3570,8 @@ describe('review-and-prep PR body size budget', () => {
     expect(step6).toContain('over the 3000 budget');
     expect(prep).not.toContain('45,000');
     expect(prep).not.toContain('45000');
-    expect(prep).not.toContain('(1) the completion matrix, (2) per-review and per-specialist outcome detail and finding-disposition tables, and (3) sanitized output excerpts, into one dedicated PR comment');
-    expect( prep).not.toContain("If the rendered body would exceed GitHub's 65,536-character limit, put the full matrix in one dedicated PR comment");
+    expect(step6).not.toContain('(1) the completion matrix, (2) per-review and per-specialist outcome detail and finding-disposition tables, and (3) sanitized output excerpts, into one dedicated PR comment');
+    expect(prep).not.toContain("If the rendered body would exceed GitHub's 65,536-character limit, put the full matrix in one dedicated PR comment");
     expect(step3).toContain('Before every title/body write (creation, later refreshes, and the Step 6 receipt, including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt)');
     expect(step3).toContain('When `PR_BODY_SIZE` reports `over`, shorten producer prose in the body by leaving detail to `full-receipt-<n>.md` under Step 6\'s budget rule, never shortening protected content.');
     expect(step6).toContain('The budget exception never excuses a failed GitHub body or comment write: preparation stays incomplete if the API rejects it');
@@ -3629,6 +3629,11 @@ describe('review-and-prep PR body size budget', () => {
     ]);
     expect(pauseSection).toContain('<!-- review-and-prep:paused:<full-sha> -->');
     expect(pauseSection).toContain('Full receipt: <~-relative path>; sha256: <64 hex>');
+    const pausedShape = pauseSection.split('The paused comment uses')[1].split('The marker is distinct')[0];
+    expect(pausedShape).toContain('every `Delegated part:` line');
+    expect(pausedShape).toContain('`Unresolved:`');
+    expect(pauseSection).not.toContain('the paused receipt lives only in the body');
+    expect(pauseSection).toContain('keep preparation incomplete until the compact comment is confirmed');
     expect(stopSection).toContain('<!-- review-and-prep:stopped:<full-sha> -->');
     expect(stopSection).toContain('its one `Skipped pregate lanes:` or `Ship gates:` line');
     expect(stopSection).toContain('Full receipt: <~-relative path>; sha256: <64 hex>');

@@ -180,7 +180,7 @@ classifier reports, with the expected and actual values.
 | <a id="b-foreign-receipt-after-pause"></a>`B-FOREIGN-RECEIPT-AFTER-PAUSE` | H-B | `When several marker comments exist, consider only the running account's` | HOLD | `pause`: only a later receipt by the running account clears a pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
 | <a id="b-foreign-pause"></a>`B-FOREIGN-PAUSE` | H-B | `Corroborate the record by author and edit history` | HOLD | `pause-author`: a pause recorded only by another author | Ask the user to confirm the pause record; only the user can clear it. Do not ship, land or mark ready | yes |
 | <a id="b-old-receipt-after-pause"></a>`B-OLD-RECEIPT-AFTER-PAUSE` | H-B | `Recency alone never clears them.` | HOLD | `pause`: the later receipt names another head, so it does not clear the pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
-| <a id="b-body-paused"></a>`B-BODY-PAUSED` | H-B | `report that the paused receipt lives only in the body` | HOLD | `pause`: the PR body records a pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
+| <a id="b-body-paused"></a>`B-BODY-PAUSED` | H-B | `The body's status preserves the hold` | HOLD | `pause`: the PR body records a pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
 | <a id="b-receipt-newer-than-pause"></a>`B-RECEIPT-NEWER-THAN-PAUSE` | H-B | `PAUSED — manual testing required` | ADVANCE_TRUSTED | none; the newest record is the running account's receipt and the PR is ready | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-unknown"></a>`B-UNKNOWN` | H-B | `Query errors are not "no PR".` | HOLD | `unknown`: a live read failed; report the operation and a redacted summary | Retry the read at most twice; if it still fails, ask the user; never read a failure as a pass or as "no pause" | yes |
 | <a id="b-live-missing"></a>`B-LIVE-MISSING` | H-B | `Query failures are unknown state, never absence.` | HOLD | `unknown`: validated bindings the caller never read | Read every binding in the live-state table, then classify again; an unread binding is never a pass | yes |
@@ -458,7 +458,7 @@ with no marker, fails its binding.
 | Stop count and recorded user decision (H-E) | count distinct stopped SHAs across all running-account stopped records on this PR; read the newest stopped record's policy and source; corroborate its author and every editor using the comment queries above |
 | Delta base (H-E) | every policy requires exactly one valid prompt SHA matching the corroborated stopped record's delta base. For repair-only, also require a portable completed full-review evidence row for retained anchor B: tree T, full scope, completion, per-stage evidence and source record reference; independently run `git rev-parse <B>^{tree}` and require T. Require the stop receipt's author and every editor to be the running account. A full continuation does not require prior review evidence |
 | Continuation availability (H-E) | no paused/receipt record may follow the latest stop, and no `review-and-prep:continuation:<stop-sha>` claim may exist for that SHA. Any such record holds, including foreign or unverified records; absent or uncertain query results never authorize dispatch |
-| Checks not run and Ship gates | the compact receipt's `Checks not run:` and `Ship gates:` lines (`/review-and-prep` Step 6); a required check listed as not run, or an unreadable list, is `check-not-run`, and unreadable Ship gates make `releaseOnlyEligible` false |
+| Checks not run and Ship gates | the compact receipt's `Checks not run:` and `Ship gates:` lines (`/review-and-prep` Step 6), or the legacy receipt's equivalent list of checks not run and `Ship gates` section; a required check listed as not run, or an unreadable list, is `check-not-run`, and unreadable Ship gates make `releaseOnlyEligible` false |
 
 For H-A, `<checkout>` is the caller's own bound checkout, never a path taken from the text:
 
@@ -1459,8 +1459,8 @@ SHA-256; an unreadable file or a hash mismatch makes those lines unavailable.
 | Kept marker or line | Where it lives | Who reads it |
 |---|---|---|
 | `<!-- review-and-prep:receipt:<full-sha> -->` | compact receipt comment | H-B callers, `/ship-and-land`, `/pair-review` |
-| `<!-- review-and-prep:paused:<full-sha> -->` and `Resume with /review-and-prep resume; do not run /ship on this draft.` | paused comment | H-C callers, `/pair-review`, `/ship-and-land`, `/review-and-prep resume` |
-| `<!-- review-and-prep:stopped:<full-sha> -->`, the five stopped labels (`Stopped at:`, `Delta base:`, `Review policy:`, `Review policy source:`, `Full-review evidence:`), `Unresolved:`, its one `Skipped pregate lanes:` or `Ship gates:` line, and `reviewRestrictionResolved: true` | stopped comment | H-E callers, `/review-and-prep continue`, `/ship-and-land`, `/pair-review`, release script capped path |
+| `<!-- review-and-prep:paused:<full-sha> -->`, `Status:`, `Prepared HEAD:`, `Review policy:`, `Greptile:`, every `Delegated part:` line, `Unresolved:`, `reviewRestrictionResolved: true` when applicable, `Resume with /review-and-prep resume; do not run /ship on this draft.`, and `Full receipt:` | paused comment | H-C callers, `/pair-review`, `/ship-and-land`, `/review-and-prep resume` |
+| `<!-- review-and-prep:stopped:<full-sha> -->`, `Status:`, the five stopped labels (`Stopped at:`, `Delta base:`, `Review policy:`, `Review policy source:`, `Full-review evidence:`), `Unresolved:`, `Continuation:`, every `Delegated part:` line, its one `Skipped pregate lanes:` or `Ship gates:` line, `reviewRestrictionResolved: true` when applicable, and `Full receipt:` | stopped comment | H-E callers, `/review-and-prep continue`, `/ship-and-land`, `/pair-review`, release script capped path |
 | `<!-- review-and-prep:continuation:<stop-sha> -->`, `<!-- review-and-prep:greptile:<full-sha> -->`, and `<!-- review-and-prep:greptile-reservation:<full-sha> -->` | unchanged dedicated comments | H-E continuation guard, `/review-and-prep` Greptile steps |
 | Dedicated full-review evidence comment (no marker; H-E repair-only `source=`) | unchanged dedicated comment | H-E repair-only continuation guard |
 | `## Review and prep` heading and status line (`prepared`, `PAUSED — manual testing required`, `STOPPED — review cycle cap`, `BLOCKED — provider failures`) | PR body | `/pair-review`'s detection fence, `B-BODY-PAUSED` |
@@ -1468,8 +1468,8 @@ SHA-256; an unreadable file or a hash mismatch makes those lines unavailable.
 
 **Migration.** Every `<!-- review-and-prep:… -->` marker, the `review-and-prep/v1`
 token, and every H-A, H-B, H-C, H-E and H-F prompt are unchanged and no existing
-case outcome changes, so no section version bumps (per `## Versioning and compatibility`)
-and this adds no binding for a consumer. Because consumers read the marked
+case outcome changes, so no section version bumps (per `## Versioning and compatibility`).
+Because consumers read the marked
 receipt comment first and already accept a linked completion matrix, this adds
 no binding for a consumer. In the receipt-present table above, "published in the
 receipt" means the full receipt (`full-receipt-<n>.md`), while every

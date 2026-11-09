@@ -848,12 +848,10 @@ describe('ship-and-land compact PR body receipt and full receipt file', () => {
       'A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.',
       'If its durable file is absent, reconstruct it from authenticated receipt text only when the resulting bytes match that hash; otherwise its evidence is unavailable. Authenticated receipt text is the hash-verified full receipt, or a legacy receipt comment; an unavailable full receipt makes that evidence unavailable and selects the `FULL` path.',
       'A line in a full receipt file (`full-receipt-<n>.md`) inherits the naming comment\'s provenance only when that comment passes this author and `userContentEdits` check and the file\'s bytes match its `Full receipt:` SHA-256.',
+      'Use a unique branch/invocation subdirectory; create each full receipt exclusively, never overwrite it',
+      'Measure the section as a JavaScript string before each body write',
     ]) {
       expect(shipN, clause).toContain(clause);
     }
   });
 });
-
-
-
-

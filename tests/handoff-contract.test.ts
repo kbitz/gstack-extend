@@ -1529,6 +1529,16 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(ship).toContain('A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.');
     const trusted = run('B-TRUSTED');
     const compact = run('B-COMPACT-RECEIPT');
+    // The model receives corroborated live facts, not a receipt-byte parser.
+    // Independently pin this fixture's actual compact bindings before parity.
+    const compactBody = withVars(FIX.cases['B-COMPACT-RECEIPT'].live!.receiptBody as string);
+    expect(compactBody).toContain(`Prepared HEAD: ${VARS.HEAD}; tree: ${VARS.TREE}; base: ${VARS.BASE};`);
+    expect(compactBody).toContain(`Ship gates: head=${VARS.HEAD}; tree=${VARS.TREE}; base=${VARS.BASE}`);
+    for (const label of ['Status: prepared', 'Checks not run: none', '- pregate:', '- coverage:', '- documentation:', 'Full receipt:']) {
+      expect(compactBody).toContain(label);
+    }
+    expect(keptSection).toContain('every `Delegated part:` line, `Unresolved:`');
+    expect(doc).toContain("or the legacy receipt's equivalent list of checks not run");
     expect(compact.outcome).toBe(trusted.outcome);
     expect(compact.mismatches).toEqual(trusted.mismatches);
     expect(compact.parsed).toEqual(trusted.parsed);

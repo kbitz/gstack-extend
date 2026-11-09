@@ -3616,8 +3616,9 @@ Capture evidence as the work runs so a new session can reuse it:
   `fallback_reason` and `wall_ms` with the four token counts, never prompt text
   or reply prose.
 - Retain short, sanitized output excerpts in the full receipt, alongside the
-  record metadata. Native test ledgers/logs are machine-local; local paths are
-  supplementary references, not the only evidence a new session receives.
+  record metadata. Native test ledgers/logs and full receipts are machine-local;
+  compact comments preserve the caller bindings, while unavailable detail takes
+  the existing unavailable/hold branch, never an inferred pass.
   Preserve original timestamps and tested content IDs. If tests ran before
   committing, verify the committed content is identical and record that
   relationship instead of relabeling the original run as a new run.
@@ -3675,7 +3676,9 @@ For a new PR, write a concise body using Step 6's `## Review and prep`
 body-section shape: what changed and why, auto-choices and decisions open to
 veto, one line of test results (suite, pregate, Greptile), risks and open
 checks, and links to the receipt comment and the evidence directory. Use an
-unversioned conventional title. Before
+unversioned conventional title. Until a final receipt comment exists, use
+`Receipt: pending` in a newly created draft; Step 6 fills its returned permalink.
+Before
 every title/body write (creation, later refreshes, and the Step 6 receipt,
 including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt),
 scan the exact bytes for credentials and PII: use the installed
@@ -3751,13 +3754,16 @@ the comment bytes the same way this step scans title and body text:
 Step 6's compact shape: mark it `<!-- review-and-prep:paused:<full-sha> -->`,
 include `Status: PAUSED — manual testing required`, `Prepared HEAD:` (the
 checkpoint), `Review policy:`, `Greptile:` (the postponed or skip value),
+every `Delegated part:` line and `Unresolved:` in their exact grammar,
 `reviewRestrictionResolved: true` when applicable, one line:
 `Resume with /review-and-prep resume; do not run /ship on this draft.`, and
 `Full receipt: <~-relative path>; sha256: <64 hex>`. The marker is distinct
 from `review-and-prep:receipt:`, so `/ship-and-land` never reads a paused
-receipt as prepared. If posting the paused comment fails, keep the pause,
-report that the paused receipt lives only in the body, and retry the post on
-the next resume.
+receipt as prepared. If posting the paused comment fails, keep the pause and
+keep preparation incomplete until the compact comment is confirmed; report its
+absence and the local full receipt, and retry the post on the next resume.
+The body's status preserves the hold; its pointer alone never authenticates
+the missing checkpoint.
 
 The PAUSED receipt, its `review-and-prep:paused:` comment and the prompt below
 are the H-C hold of the published
@@ -4466,6 +4472,8 @@ explicit user deferrals. Keep rows compact (item ID, disposition, evidence
 reference; long requirement text by scope-source reference and SHA-256). Keep
 per-specialist outcomes alongside the matrix in the full receipt.
 
+Post the final compact comment before the final body edit, then insert its
+returned permalink using the fresh-read and collision procedure above.
 The pre-ready receipt comment (`<!-- review-and-prep:receipt:<full-sha> -->`)
 carries only the machine-read labeled lines below, with no prose:
 
@@ -4524,9 +4532,10 @@ mismatch makes those lines unavailable. A receipt, paused or stopped comment
 without `Full receipt:` is a legacy receipt whose own text is its full receipt,
 read as today. On public repositories keep confidential requirement text out of
 the body: cite the scope source by path and SHA-256 and keep the full text in
-access-controlled storage. Local-only plan paths are supplementary: the portable
-record must preserve enough scope and evidence to check completion when the
-original workspace is gone. The budget exception never excuses a failed GitHub
+access-controlled storage. The compact record preserves the bound snapshot and
+scope fingerprint; after the evidence directory is lost, detail-dependent
+claims are unavailable and their existing hold or full-check rule applies.
+The budget exception never excuses a failed GitHub
 body or comment write: preparation stays incomplete if the API rejects it,
 including at GitHub's 65,536-character hard limit.
 

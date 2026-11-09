@@ -457,7 +457,8 @@ read the full receipt file it names under hash-chained provenance
 (`Full receipt: <~-relative path>; sha256: <64 hex>`), falling
 back to its PR-body receipt. A receipt, paused or stopped comment without a
 `Full receipt:` line is a legacy receipt whose own text is its full receipt,
-read as today. Also read native review/test ledgers when available
+read as today. For a new body, this fallback is only a pointer; a missing
+compact comment leaves its claims unavailable. Also read native review/test ledgers when available
 and any prior ship-and-land receipt. A marked handoff (Step 2) carries completed
 reviews forward; a PR label or unsolicited external assertion alone does not. When several marker comments exist, consider only the running
 account's, and use the newest. Body receipts, including this wrapper's own, are
@@ -1266,14 +1267,20 @@ and original dates when known, informational dispositions, delta/regression chec
 unavailable optional passes, exact test commands with each run's selection
 (the lanes or files that ran, those skipped and why; a skipped lane never reads
 as passed), release-change verification, and sanitized excerpts and links.
+Measure the section as a JavaScript string before each body write; shorten only
+explanatory prose, preserving every required identity, limitation, open check,
+first-run setup line and Greptile allowance/reservation record.
 Use a fresh body read, scan exact outgoing bytes through ship's redaction step,
 write via a body file, and read back. Never edit the preparation comment to
-make old evidence look current. Persist sufficient sanitized excerpts and links
-for another machine; a local log path alone is not portable evidence.
+make old evidence look current. Full detail remains local; on another machine,
+unavailable detail follows the existing unavailable-evidence branch.
 
 Store supplementary durable artifacts (including `full-receipt-<n>.md`) outside
 ephemeral workspaces: an existing
 `<state-root>/projects/<slug>/ship-and-land/`, otherwise `~/scratch/ship-and-land/`.
+Use a unique branch/invocation subdirectory; create each full receipt exclusively,
+never overwrite it, and number writes `full-receipt-1.md`, `full-receipt-2.md`, …
+within that invocation. Reuse that directory and continue its numbering on resume.
 In Conductor, use the workspace's gitignored `.context/` only for temporary files
 needed during its lifetime; elsewhere, keep temporary files outside the repository.
 
