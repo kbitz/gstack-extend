@@ -341,6 +341,17 @@
 - **Revisit when:** The next change to `sandboxArgs` or the probe.
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 663dcd3 (2026-11-09).
 
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: repo-mode run-time setup branches
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Three run-time branches of repo-mode setup have no end-to-end test: an `expose` entry that is a symlink or a special file failing the part as `failed` before launch, an `expose` entry under `/run` forcing `XDG_RUNTIME_DIR` and `/run/user/<uid>` hidden, and a resolver configuration under `/run` or `/var` bound back read-only (only the pure `sandboxArgs` side is tested). A failed write of the seccomp program at launch is also untested; a test would need a seam no production caller uses.
+- **Hypothesis (untested):** Extend the real-bubblewrap suite with a symlink and a FIFO `expose` entry, an `expose` entry under `/run` with `XDG_RUNTIME_DIR` set, and a resolver symlinked under `/run`, each probe-gated. Re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts` (`prepareRepoCopy`, `spawnProvider`).
+- **Evidence:** Continuation-3 coverage audit (audit-only; 80% value-weighted, 33 of 41 paths); no failure reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at c380a4a (2026-11-09).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
