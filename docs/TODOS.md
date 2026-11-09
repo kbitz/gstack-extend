@@ -370,6 +370,41 @@
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 at 21a70d1 (2026-11-09).
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=src/review-delegate/cli.ts|src/review-delegate/delegate.ts] Repo mode: close the EACCES and nested-user-namespace gap
+
+- **What:** A repository or worktree path whose check fails with `EACCES` gets no tmpfs, on the reasoning that the sandbox cannot reach it either. That is false: sandboxed code can `unshare -r` into a nested user namespace and regain access to the account's own files under an owner-unsearchable directory (verified on bwrap 0.13.1). Count only `ENOENT`/`ENOTDIR` as absent, or add `--unshare-user --disable-userns` to the launch and the probe. The rule also assumes exec of bwrap enters no broader LSM domain.
+- **Why deferred:** Not a regression (every error read as absent before), it needs the account to have removed its own search permission on an ancestor, and the owner's convergence rule for continuation 4 ("Tools track - option 1", 2026-11-09) files non-blocking findings. The code comment and docs now state the real limit.
+- **Revisit when:** The next change to repository-path hiding, or before repo mode is offered on a host where the reviewed account may hold owner-unsearchable directories.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
+
+### [review:files=src/review-delegate/cli.ts|skills/review-and-prep.md|docs/delegated-review.md] Repo mode: small runner corrections deferred at the review cap
+
+- **What:** Non-blocking items from continuation 3's cycle 3, each failing closed or affecting no credited result: (1) an `XDG_RUNTIME_DIR` or `/run/user/<uid>` that resolves to `/` is refused as `config-malformed` instead of `sandbox-unavailable`; (2) `repoTop` falls back to the written subdirectory when `git rev-parse --show-toplevel` fails or times out, instead of refusing (a calls directory inside the checkout still trips `worktree-changed`); (3) the skill's runner-timing sentence omits the up-to-10 s top-level lookup, and the HOME refusal detail still says "other than /" for a HOME symlinked to `/`; (4) the CLI output writer ignores write errors, so `ENOSPC` or `EPIPE` still exits 0 or 4 (the caller cannot parse, so it credits nothing; saved results replay next run).
+- **Why deferred:** The owner's convergence rule for continuation 4 ("Tools track - option 1", 2026-11-09): fix only blocking findings; file the rest with a revisit trigger.
+- **Revisit when:** The next change to `prepare()`, `repoTop`, the CLI entry or the skill's delegation section.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
+
+### [review:files=src/review-delegate/cli.ts] Repo mode: runner tidy-ups from the continuation-4 review
+
+- **What:** Non-blocking maintainability items: `hideRepoPath` reports every failure as step `worktree-list`, including the top level, git dir, common dir and calls directory (use a `repo-path` step or pass the step in); the absolute-only `PATH` filter is written twice (`setupGitEnv` and the spawn's repo branch); `const forms = pathForms` is a needless alias in `prepare()` and `prepareRepoCopy`; `prepare()` mixes HOME, passwd, runtime-dir and expose validation in one long function; and `const access = provider.access ?? 'diff'` shadows the `access` import from `node:fs/promises`.
+- **Why deferred:** Filed under the owner's convergence rule for continuation 4 ("Tools track - option 1", 2026-11-09): non-blocking findings are not fixed in this PR.
+- **Revisit when:** The next change to `prepare()`, `prepareRepoCopy` or the part runner.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
+
+### [review:files=src/review-delegate/cli.ts|src/review-delegate/delegate.ts] Repo mode: refuse a private directory that is not a directory, and resolve spellings strictly
+
+- **What:** Two fail-closed gaps from the continuation-4 adversarial pass. A HOME, passwd home, `TMPDIR` or runtime dir that exists but is not a directory (for example `HOME=/dev/null`) passes `check`, then every repo-mode call fails at launch (`bwrap: Destination is not a directory`) and replays; require `isDirectory()` and refuse `sandbox-unavailable` so `check` and `run` agree. `realpathBelow` walks up to the parent on every `realpathSync` error, so a transient `EIO`/`ESTALE` can drop a resolved spelling the guards rely on (hidden roots, the expose "at or above" guard, the `/run/user/<uid>` gate); walk up only on `ENOENT`/`ENOTDIR` and refuse on anything else.
+- **Why deferred:** Both fail closed or need a fault that hits `realpath` but clears before `stat` plus a misconfigured expose entry; filed under the owner's convergence rule for continuation 4 ("Tools track - option 1", 2026-11-09).
+- **Revisit when:** The next change to `prepare()`, `pathForms`/`realpathBelow` or the runtime-dir gate.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
+
+### [review:files=src/review-delegate/cli.ts|docs/delegated-review.md] Repo mode: keep sandbox-writable directories off the provider's PATH
+
+- **What:** The child `PATH` filter drops only empty and relative entries. Absolute entries under directories the sandbox replaces with a writable tmpfs or overlay (HOME, the passwd home, `/tmp`, `/var/tmp`, the runner's temporary directory, expose paths) stay ahead of `/usr/bin`, so code from the reviewed head can plant `git`, `node` and the like that a provider's later lookups run with the shared network. Drop or demote such entries, or document that a provider should use absolute paths outside its tool sandbox.
+- **Why deferred:** The mechanism reproduced but the escalation depends on each provider; it belongs with the network-isolation backlog item. Filed under the owner's convergence rule for continuation 4.
+- **Revisit when:** The network-isolation item is picked up, or a provider is seen resolving tools from a writable PATH entry.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
