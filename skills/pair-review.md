@@ -270,6 +270,8 @@ H-C `Results:` line; never write that status or either line.
 Every passed tally and all-passed predicate follows the Legacy sessions rule,
 including group completion, the dashboard and REPORT; later shorthand never
 excludes recorded legacy passes.
+After every result or retest, recompute `session.yaml` summary counts from each
+item's latest status; never increment a new status without removing the old one.
 
 **session.yaml** fields:
 ```yaml
@@ -645,9 +647,11 @@ not the rendered `Prepared:` line. On resume, recover that handle only after
 verifying its ownership and target; if uncertain, leave it untouched and ask
 the user to stop it. Build outputs and fixture state must be owned; never alter
 the user's pre-existing untracked or ignored files.
-`source_build` binds HEAD plus content fingerprints of tracked and owned
-untracked build inputs. Compare those inputs before every reuse, including on
-resume; HEAD alone never proves unchanged source. A mismatch requires a rebuild.
+`source_build` binds HEAD plus content fingerprints of all build inputs,
+including user-owned untracked source files; fingerprinting never authorizes
+changing them. Compare those inputs before every reuse, including on resume;
+HEAD alone never proves unchanged source. A mismatch or uncertain freshness
+requires a rebuild, never reading credentials to establish reuse.
 Reach the screen, command or state the action needs, using fixtures the agent
 owns. Capture what you observed (a screenshot or command output) in
 `<SESSION_DIR>/evidence/`, then write `Prepared:` and `Agent evidence:` to the
@@ -687,6 +691,19 @@ the next item before presenting it; the lookahead line still shows only its
 action.
 
 ### Present the next item
+
+Before selecting an UNTESTED item, recover interrupted fixes and pending human
+retests from all group files, including `completed_groups`. Resume the recorded
+On FIX NOW or parked-bug step before continuing the list, without duplicating a
+failed attempt or resetting the three-attempt escalation. Revalidate `build_run`
+and `source_build`, then refresh prepared state and evidence. A verified fix can
+return to its original retest only while its verification inputs still match;
+otherwise repeat Verify before any retest. Missing reproduction evidence must
+be recovered on the failed build, or the item stays FAILED with a linked parked
+bug. A legacy `Fix:` alone is unverified. A FAILED item with no pending fix or
+retest and no unresolved parked bug returns to the On FAIL choice without
+recording the same failure again. Recompute group completion from item state,
+moving any nonterminal group back to `active_groups` before continuing.
 
 Read the current group file from disk (not from context). Find the first UNTESTED
 item (item N). Also find the second UNTESTED item (item N+1) — the lookahead.
@@ -729,7 +746,7 @@ Wait for the user's response.
 1. Edit the group file: mark item N as `Status: PASSED`, `Build: <HEAD>`,
    `Tested: <now>`, and append `PASSED at <HEAD> (<now>)` to `Attempts:`. While
    the file is open, identify item N+2 (new lookahead).
-2. Edit session.yaml summary counts (increment `passed`).
+2. Recompute session.yaml summary counts from the latest item statuses.
 3. Write both edits in **parallel** (two Edit tool calls in the same turn).
 4. Prepare item N+1, then present item N+1 from the cached lookahead via
    AskUserQuestion with item N+2 as the new lookahead preview. Receipt: "Item N passed."
@@ -794,6 +811,10 @@ FAILED`, link the item and parked bug in both directions, record the blocked
 observation in `Attempts:`, and continue to the next UNTESTED item when no
 observing check exists. Unavailable observation is not non-reproduction; the
 human's failed result remains unchanged.
+If an observing check runs but the failure does not reproduce, append
+`agent did not reproduce at <build>: <observation>; <evidence path>` to
+`Attempts:`. Keep the item FAILED, link a parked bug with that reason, and do
+not implement a fix or claim verification; continue to the next UNTESTED item.
 
 **Implement the fix:**
 
@@ -862,7 +883,8 @@ same observable criteria; what changed underneath is not their input.
 
 If the retest passes, record `PASSED at <build> (<time>)` in `Attempts:` and
 update `Status: PASSED`. If it fails again, append the new failure to `Attempts:`
-and repeat the fix cycle.
+and repeat the fix cycle. Recompute `session.yaml` summary counts after either
+result; a retested pass replaces the latest failed tally, not its history.
 
 ### On SKIP
 
@@ -1216,7 +1238,7 @@ Read session.yaml and all group files. Display:
 TEST SESSION: <project>
 Branch: <branch> | Build: <commit> | Started: <date>
 
-<GROUP1> (active):     3/7 passed, 1 failed (fixed), 0 skipped, 3 untested
+<GROUP1> (active):     3/7 passed, 1 failed (awaiting retest), 0 skipped, 3 untested
 <GROUP2> (active):     0/4 tested
 <GROUP3>:              not started (5 items)
 
@@ -1237,7 +1259,8 @@ If this was `/pair-review resume`, present via AskUserQuestion:
 - Question: "[Dashboard from Step 2 above]\n\nContinue where you left off, or start fresh?"
 - Options: ["Continue testing", "Start fresh"]
 
-If continue, enter Phase 2 at the next untested item.
+If continue, enter Phase 2 through Present the next item's interrupted-fix and
+pending-retest recovery before selecting the next untested item.
 If "Start fresh", run the **Archive block** under the Active Session Guard's
 stop-and-relay and `ARCHIVED=` receipt rules before Init.
 

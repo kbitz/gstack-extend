@@ -212,7 +212,6 @@ describe('pair-review Track 74A: human-judgment items and prepared state', () =>
 describe('pair-review Track 74A: fix reproduction and verification before retest', () => {
   const file = join(ROOT, 'skills', 'pair-review.md');
   const content = readFileSync(file, 'utf8');
-  const normalized = content.replace(/\s+/g, ' ');
 
   test('On FIX NOW orders reproduce, fix commit, verify, and retest prompt', () => {
     const fixNow = skillSection(content, '### On FIX NOW');
@@ -234,6 +233,9 @@ describe('pair-review Track 74A: fix reproduction and verification before retest
     expect(fixNow).toContain(
       'If no check observes it, park the bug with that reason in the On PARK format instead of asking for a retest.',
     );
+    expect(fixNow).toContain('If an observing check runs but the failure does not reproduce');
+    expect(fixNow).toContain('agent did not reproduce at <build>: <observation>; <evidence path>');
+    expect(fixNow).toContain('do not implement a fix or claim verification');
   });
 
   test('parked-bug Fix now flows reproduce before fixing and verify before asking the user', () => {
@@ -292,7 +294,8 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(prep).toContain("Reuse only this session's own build while its source is unchanged");
     expect(content).toContain('build_run: null');
     expect(prep).toContain('On resume, recover that handle only after verifying its ownership and target');
-    expect(prep).toContain('`source_build` binds HEAD plus content fingerprints of tracked and owned untracked build inputs');
+    expect(prep).toContain('`source_build` binds HEAD plus content fingerprints of all build inputs, including user-owned untracked source files');
+    expect(prep).toContain('A mismatch or uncertain freshness requires a rebuild, never reading credentials to establish reuse');
     expect(prep).toContain('HEAD alone never proves unchanged source');
     expect(prep).toContain('Inspect the recipe destinations before running it; execute only owned local steps');
     const fix = flatProse(skillSection(content, '### On FIX NOW'));
@@ -311,6 +314,19 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(normalized).toContain('reuse the existing record, reopening it as PARKED on a failed human retest');
     expect(normalized).toContain("after agent verification present a linked item's original action/PASS/FAIL as the human retest");
     expect(normalized).toContain("recompute the group's status even if it is already in `completed_groups`");
+  });
+
+  test('resume recovers interrupted fixes and pending human retests before untested items', () => {
+    const present = flatProse(skillSection(content, '### Present the next item'));
+    const resume = flatProse(skillSection(content, '### Step 3: Continue or status-only'));
+    expect(present).toContain('Before selecting an UNTESTED item, recover interrupted fixes and pending human retests from all group files, including `completed_groups`');
+    expect(present).toContain('without duplicating a failed attempt or resetting the three-attempt escalation');
+    expect(present).toContain('otherwise repeat Verify before any retest');
+    expect(present).toContain('Missing reproduction evidence must be recovered on the failed build, or the item stays FAILED with a linked parked bug');
+    expect(present).toContain('moving any nonterminal group back to `active_groups`');
+    expect(resume).toContain("Present the next item's interrupted-fix and pending-retest recovery before selecting the next untested item");
+    expect(normalized).toContain('After every result or retest, recompute `session.yaml` summary counts from each item\'s latest status');
+    expect(content).toContain('1 failed (awaiting retest)');
   });
 
   test('batch individual results append history and batching offers require shared state', () => {
