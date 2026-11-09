@@ -12,6 +12,9 @@
     ".gstack/pregate.json": [
       "tests/touchfiles.test.ts"
     ],
+    ".gstack/secret-dispositions.json": [
+      "tests/secret-dispositions.test.ts"
+    ],
     "CHANGELOG.md": [
       "tests/release-manifest.test.ts"
     ],

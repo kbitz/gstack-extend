@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+<a id="delegate-tools-dt19"></a>
+
+### [review:files=tests/secret-dispositions.test.ts] Delegate tools: Requalify the opt-in installed-scanner fixture count
+
+- **Classification:** Non-blocking and filed under the owner's “Approve both” convergence decision; the existing assertion is retained.
+- **Description:** The opt-in installed-pregate example fixture expects three disposition matches but the current installed scanner supplies two. The wrapper returned success with no evaluator errors before that count assertion; subsequent assertions in that test were not reached. No tools-mode safety or required default-path regression was demonstrated. Reproduce the scanner classification difference before deciding whether the fixture or supported-version claim needs changing.
+- **Evidence:** PR [#229](https://github.com/kbitz/gstack-extend/pull/229), finding `CONT-INSTALLED-SCANNER-1`; targeted run with `GSTACK_SECRET_DISPOSITIONS_INTEGRATION_ROOT` set: 121 pass, 1 fail across three files. The failing test, scanner adapter and its imported fixture helpers are byte-identical to `origin/main`; this optional failure is preserved in the review receipt, not presented as a passing check.
+- **Revisit when:** The installed upstream scanner is upgraded, the opt-in fixture is next maintained, or scanner compatibility is made a release requirement.
+- **Effort:** ? (owner triages in `/roadmap`)
+
+
 <a id="delegate-tools-dt01"></a>
 
 ### [review:files=src/review-delegate/cli.ts docs/acceptance/delegate-tools-mode.md] Delegate tools: Interruption and real CLI process-group qualification
