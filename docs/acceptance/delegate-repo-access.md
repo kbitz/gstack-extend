@@ -73,16 +73,19 @@ for the complete contract:
   `/proc/keys` and `/proc/key-users` (each only when the host has it), throwaway overlays or staged copies for
   `expose` paths (no read-write host mount at all), `--tmpfs` over
   the real repository's work tree, git directory, common git directory, every
-  worktree `git worktree list` names, the `--calls` directory and
-  `XDG_RUNTIME_DIR`, and a read-write bind of a disposable copy: an empty
+  worktree `git worktree list` names, the `--calls` directory,
+  `XDG_RUNTIME_DIR` and `/run/user/<uid>` (each where the `/run` tmpfs does not
+  already cover it), and a read-write bind of a disposable copy: an empty
   repository that fetches only `--candidate` and `--base` (frozen snapshot
   commits no ref reaches included) and checks it out detached, with hooks, LFS filters and the
   host's global and system git configuration off. `expose` entries at or above a
   hidden root, inside a runtime dir or the reviewed repository, or behind a
   symlink that would vanish with a hidden root, a provider that still names
   `keep`, and an `argv[0]` with a hidden link hop no entry covers, refuse as
-  `config-malformed`; uid 0, architectures without a keyring seccomp table and
-  an account home the passwd database cannot give refuse as
+  `config-malformed`; uid 0, architectures without a keyring seccomp table, an
+  unusable `HOME`, an account home the passwd database cannot give, and a home
+  or temporary directory whose existence check fails with anything but
+  `ENOENT` refuse as
   `sandbox-unavailable`, after the configuration's own checks. The before-and-after
   `worktreeState` check on the real repository still holds and discards every
   dispatched part on any change (`worktree-changed`).
@@ -93,7 +96,9 @@ for the complete contract:
   candidate's project settings (such as `.claude/settings.json` hooks). Code from
   the reviewed head can run when the model runs commands. Abstract-namespace Unix sockets and path
   sockets outside the hidden paths, reads of non-hidden world-readable host paths
-  (`/etc`, `/sys`), reads of `expose` paths, discarded login refreshes,
+  (`/etc`, `/sys`), reads of `expose` paths, an unsearchable (`EACCES`)
+  repository path that gets no mount, a provider tool sandbox that cannot mount
+  a fresh `/proc` under the key masks, discarded login refreshes,
   unsized temporary mounts, prompt injection inside the sandbox, and findings
   carrying tool-read text into the receipt are documented limits.
 
