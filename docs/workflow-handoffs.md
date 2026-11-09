@@ -772,6 +772,9 @@ Repository (`repo`), PR (`pr`) and branch (`branch`) must equal the bound PR, an
 `on <owner/repo>` clause must be the URL's repository or, for a fork, the bound head
 repository; any difference is `REFUSE`. Resume continues only on a draft: a ready PR is
 `pr-ready` (`HOLD`), and the user converts it to draft or defers the remaining checks.
+`Results` keeps its form; `(<C> by coverage)` counts coverage passes an older
+`/pair-review` session recorded, and a session started since `/pair-review`
+stopped writing them reports `(0 by coverage)`.
 Fixed text a producer keeps: `Session started at build <build_commit>; current HEAD <full git rev-parse HEAD>.`
 and `Do not run /ship on this PR.` A closed PR or a paused record not by the running
 account is `HOLD`. A pair-review `DONE` with this prompt is `FULL_CHECK_REQUIRED`;
