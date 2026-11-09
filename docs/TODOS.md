@@ -405,6 +405,13 @@
 - **Revisit when:** The network-isolation item is picked up, or a provider is seen resolving tools from a writable PATH entry.
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
 
+### [review:files=docs/delegated-review.md|docs/acceptance/delegate-repo-access.md] Repo mode: documentation accuracy left after the continuation-4 review
+
+- **What:** Three documentation items from the continuation-4 adversarial passes. (1) The new tool-sandbox bullet recommends reusing the existing `/proc`, but does not say that tool commands then see the provider's processes and their command lines (including the bwrap monitor's argument list naming hidden paths), so secrets should stay out of `argv`. (2) Its closing sentence, that a provider whose tool commands all fail "usually falls back to the host model (`uncredited`)", is a guess: `decide()` credits on the exit status and the classifier, so such a reply may still be credited without any command having run. (3) The safety-model summary in `docs/acceptance/delegate-repo-access.md` omits `/run/user/<uid>` hiding and its resolve-outside-`/run` condition, the unusable-HOME and existence-check `sandbox-unavailable` refusals, and the `/proc`-mount and `EACCES` limits (it defers to the contract and states nothing false).
+- **Why deferred:** All three are Low and non-blocking; the owner's convergence rule for continuation 4 ("Tools track - option 1", 2026-11-09) files them instead of fixing, and the documentation audit left them.
+- **Revisit when:** The next edit to `docs/delegated-review.md` "## Repository access" or the acceptance record, or before RR1 is run.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/224 (continuation 4, 2026-11-09).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

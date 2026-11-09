@@ -128,7 +128,9 @@ A delegated part is one bounded call:
   learnings, stack notes, repository files, skill text or plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
   TZ`, and only those that are set (in repo mode `TMPDIR` is set to `/tmp`). No
-  key or credential is passed; a command keeps its own login under `HOME`.
+  key or credential is passed; a command keeps its own login under `HOME` (in
+  repo mode the sandbox hides `HOME`, so a command uses a dedicated login listed
+  in `expose`; see [Repository access](#repository-access)).
 - **Where it runs.** In diff mode (the default), a fresh, empty, private
   temporary directory as its working directory, removed afterwards, in its own
   process group. In repo mode (`"access": "repo"`), a bubblewrap sandbox whose
