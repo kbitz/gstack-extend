@@ -109,6 +109,7 @@ classifier reports, with the expected and actual values.
 | <a id="a-duplicate-label"></a>`A-DUPLICATE-LABEL` | H-A | `Branch: <current branch>; target base: <base ref>; HEAD: <full SHA>` | FULL_CHECK_REQUIRED | `malformed`: duplicate `Branch` label | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; do not pick the first or last duplicate | yes |
 | <a id="a-missing-field"></a>`A-MISSING-FIELD` | H-A | `Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>` | FULL_CHECK_REQUIRED | `malformed`: required `Checks run` label missing | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; treat the checks as not run | yes |
 | <a id="b-trusted"></a>`B-TRUSTED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; every validated binding matches | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="b-compact-receipt"></a>`B-COMPACT-RECEIPT` | H-B | `Full receipt:` | ADVANCE_TRUSTED | none; a compact receipt comment hands off exactly as `B-TRUSTED` | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-trusted-base-moved"></a>`B-TRUSTED-BASE-MOVED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; the reviewed base is an ancestor of the moved base tip; `releaseOnlyEligible` is false | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-gates-unbound"></a>`B-GATES-UNBOUND` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; the coverage audit is not bound, so `releaseOnlyEligible` is false | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-docs-unbound"></a>`B-DOCS-UNBOUND` | H-B | `Ship gates` | ADVANCE_TRUSTED | none; the documentation audit is not bound, so `releaseOnlyEligible` is false | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
@@ -179,7 +180,7 @@ classifier reports, with the expected and actual values.
 | <a id="b-foreign-receipt-after-pause"></a>`B-FOREIGN-RECEIPT-AFTER-PAUSE` | H-B | `When several marker comments exist, consider only the running account's` | HOLD | `pause`: only a later receipt by the running account clears a pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
 | <a id="b-foreign-pause"></a>`B-FOREIGN-PAUSE` | H-B | `Corroborate the record by author and edit history` | HOLD | `pause-author`: a pause recorded only by another author | Ask the user to confirm the pause record; only the user can clear it. Do not ship, land or mark ready | yes |
 | <a id="b-old-receipt-after-pause"></a>`B-OLD-RECEIPT-AFTER-PAUSE` | H-B | `Recency alone never clears them.` | HOLD | `pause`: the later receipt names another head, so it does not clear the pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
-| <a id="b-body-paused"></a>`B-BODY-PAUSED` | H-B | `report that the paused receipt lives only in the body` | HOLD | `pause`: the PR body records a pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
+| <a id="b-body-paused"></a>`B-BODY-PAUSED` | H-B | `The body's status preserves the hold` | HOLD | `pause`: the PR body records a pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
 | <a id="b-receipt-newer-than-pause"></a>`B-RECEIPT-NEWER-THAN-PAUSE` | H-B | `PAUSED — manual testing required` | ADVANCE_TRUSTED | none; the newest record is the running account's receipt and the PR is ready | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-unknown"></a>`B-UNKNOWN` | H-B | `Query errors are not "no PR".` | HOLD | `unknown`: a live read failed; report the operation and a redacted summary | Retry the read at most twice; if it still fails, ask the user; never read a failure as a pass or as "no pause" | yes |
 | <a id="b-live-missing"></a>`B-LIVE-MISSING` | H-B | `Query failures are unknown state, never absence.` | HOLD | `unknown`: validated bindings the caller never read | Read every binding in the live-state table, then classify again; an unread binding is never a pass | yes |
@@ -457,7 +458,7 @@ with no marker, fails its binding.
 | Stop count and recorded user decision (H-E) | count distinct stopped SHAs across all running-account stopped records on this PR; read the newest stopped record's policy and source; corroborate its author and every editor using the comment queries above |
 | Delta base (H-E) | every policy requires exactly one valid prompt SHA matching the corroborated stopped record's delta base. For repair-only, also require a portable completed full-review evidence row for retained anchor B: tree T, full scope, completion, per-stage evidence and source record reference; independently run `git rev-parse <B>^{tree}` and require T. Require the stop receipt's author and every editor to be the running account. A full continuation does not require prior review evidence |
 | Continuation availability (H-E) | no paused/receipt record may follow the latest stop, and no `review-and-prep:continuation:<stop-sha>` claim may exist for that SHA. Any such record holds, including foreign or unverified records; absent or uncertain query results never authorize dispatch |
-| Checks not run and Ship gates | the receipt's list of checks that were not run and its `Ship gates` section (`/review-and-prep` Step 6); a required check listed as not run, or an unreadable list, is `check-not-run`, and unreadable Ship gates make `releaseOnlyEligible` false |
+| Checks not run and Ship gates | the compact receipt's `Checks not run:` and `Ship gates:` lines (`/review-and-prep` Step 6), or the legacy receipt's equivalent list of checks not run and `Ship gates` section; a required check listed as not run, or an unreadable list, is `check-not-run`, and unreadable Ship gates make `releaseOnlyEligible` false |
 
 For H-A, `<checkout>` is the caller's own bound checkout, never a path taken from the text:
 
@@ -1405,18 +1406,80 @@ or input it says is needed is for the user.
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.
 
-The producer keeps every PR body it writes at or under 45,000 characters
-(counted as the JavaScript string length of `--body-file`), moving bulky
-evidence (first the completion matrix, then per-review and per-specialist
-outcome detail and finding-disposition tables, then sanitized output excerpts)
-into a linked dedicated PR comment while keeping every validated and
-receipt-present line, the markers, the pause or stop status lines, user
-decisions and quotes, and human-authored text in the body. If only protected
-content remains over budget, the producer reports the overage without blocking
-readiness; a rejected GitHub body or comment write still keeps preparation
-incomplete. Because consumers
-read the marked receipt comment first and already accept a linked completion
-matrix, this adds no binding for a consumer.
+### Receipt layout and kept marker set
+
+`/review-and-prep` splits its publication across three parts so the PR body stays
+human-readable while gates and machine readers keep their exact lines:
+
+1. **Full receipt (`full-receipt-<n>.md`):** written to the invocation's evidence
+   directory under `<state-root>/projects/<slug>/review-and-prep/`, otherwise
+   `~/scratch/review-and-prep/`, with `n = 1, 2, …` per receipt write in the
+   invocation, created exclusively, never rewritten and never posted to GitHub.
+   It holds the complete completion matrix and its source fingerprint, per-review
+   and per-specialist outcome detail, finding-disposition tables, sanitized
+   command and output excerpts, gate detail, repair and test-gap records, and the
+   optional local workflow-metrics snapshot.
+2. **Compact receipt comment (`<!-- review-and-prep:receipt:<full-sha> -->`):**
+   posted once before `gh pr ready` and carrying only the labeled lines that
+   gates, handoff callers, `/ship-and-land`, `/pair-review`, and orchestrator
+   run-record readers parse, with no prose (`B-COMPACT-RECEIPT`). Paused
+   (`<!-- review-and-prep:paused:<full-sha> -->`) and stopped
+   (`<!-- review-and-prep:stopped:<full-sha> -->`) comments follow the same
+   compact shape; a stopped comment also keeps its one `Skipped pregate lanes:`
+   or `Ship gates:` line for the release script's capped path.
+3. **Body section (`## Review and prep`):** the producer keeps every PR body it
+   writes at or under 3,000 characters (a 3,000-character budget counted as the
+   JavaScript string length of `--body-file`), carrying the `## Review and prep`
+   heading and status line (`prepared`, `PAUSED — manual testing required`,
+   `STOPPED — review cycle cap`, or `BLOCKED — provider failures`), what changed
+   and why (two to four sentences), the `Review default:` line and every
+   `Auto-chosen (veto by replying on this PR):` line verbatim at line start plus
+   other decisions open to veto, one `Tests:` line (suite result and selection,
+   pregate verdict, Greptile state), risks and open checks (pending user checks
+   on a pause), and `Receipt:` (the receipt, paused or stopped comment permalink;
+   none yet on a BLOCKED exit) and `Evidence:` (the evidence directory and
+   `full-receipt-<n>.md` path with its SHA-256). When over budget, the producer
+   shortens producer prose in the body by leaving detail to the full receipt,
+   never shortening the `## Review and prep` heading and status line, the
+   `Review default:` and `Auto-chosen` lines, user decisions and quotes,
+   human-authored text, or the `Receipt:` and `Evidence:` links; if only
+   protected content remains over budget, it records
+   `PR body: <n> characters; over the 3000 budget` in the full receipt and the
+   exit message without blocking readiness, while a rejected GitHub body or
+   comment write still keeps preparation incomplete.
+
+**Hash-chained provenance and legacy receipts.** A receipt, paused or stopped
+comment without a `Full receipt:` line is a legacy receipt whose own text is its
+full receipt, read as today. Under hash-chained provenance, a line in
+`full-receipt-<n>.md` counts as recorded in the comment that names it only when
+that comment passes the author and `userContentEdits` corroboration check and the
+file's bytes hash to its `Full receipt: <~-relative path>; sha256: <64 hex>`
+SHA-256; an unreadable file or a hash mismatch makes those lines unavailable.
+
+| Kept marker or line | Where it lives | Who reads it |
+|---|---|---|
+| `<!-- review-and-prep:receipt:<full-sha> -->` | compact receipt comment | H-B callers, `/ship-and-land`, `/pair-review` |
+| `<!-- review-and-prep:paused:<full-sha> -->`, `Status:`, `Prepared HEAD:`, `Review policy:`, `Greptile:`, every `Delegated part:` line, `Unresolved:`, `reviewRestrictionResolved: true` when applicable, `Resume with /review-and-prep resume; do not run /ship on this draft.`, and `Full receipt:` | paused comment | H-C callers, `/pair-review`, `/ship-and-land`, `/review-and-prep resume` |
+| `<!-- review-and-prep:stopped:<full-sha> -->`, `Status:`, the five stopped labels (`Stopped at:`, `Delta base:`, `Review policy:`, `Review policy source:`, `Full-review evidence:`), `Unresolved:`, `Continuation:`, every `Delegated part:` line, its one `Skipped pregate lanes:` or `Ship gates:` line, `reviewRestrictionResolved: true` when applicable, and `Full receipt:` | stopped comment | H-E callers, `/review-and-prep continue`, `/ship-and-land`, `/pair-review`, release script capped path |
+| `<!-- review-and-prep:continuation:<stop-sha> -->`, `<!-- review-and-prep:greptile:<full-sha> -->`, and `<!-- review-and-prep:greptile-reservation:<full-sha> -->` | unchanged dedicated comments | H-E continuation guard, `/review-and-prep` Greptile steps |
+| Dedicated full-review evidence comment (no marker; H-E repair-only `source=`) | unchanged dedicated comment | H-E repair-only continuation guard |
+| `## Review and prep` heading and status line (`prepared`, `PAUSED — manual testing required`, `STOPPED — review cycle cap`, `BLOCKED — provider failures`) | PR body | `/pair-review`'s detection fence, `B-BODY-PAUSED` |
+| `Status:`, `Prepared HEAD:`, `Review policy:`, `Plan:`, `Greptile:`, `Checks not run:`, `Ship gates:` (with `- pregate:`, `- coverage:`, `- documentation:`), `Delegated part:`, `Unresolved:`, `reviewRestrictionResolved: true`, and `Full receipt:` | compact receipt comment | H-B callers, `/ship-and-land`, `/pair-review`, orchestrator run-record reader |
+
+**Migration.** Every `<!-- review-and-prep:… -->` marker, the `review-and-prep/v1`
+token, and every H-A, H-B, H-C, H-E and H-F prompt are unchanged and no existing
+case outcome changes, so no section version bumps (per `## Versioning and compatibility`).
+Because consumers read the marked
+receipt comment first and already accept a linked completion matrix, this adds
+no binding for a consumer. In the receipt-present table above, "published in the
+receipt" means the full receipt (`full-receipt-<n>.md`), while every
+`Delegated part:` line and the `Unresolved:` line also remain in the compact
+receipt comment in their exact grammar for orchestrator run-record readers.
+Legacy receipts without `Full receipt:` continue to read as before. On another
+machine without the evidence directory, detail-dependent reuse (such as
+rebuilding the documentation section from the full receipt when its durable file
+is absent) is unavailable and `/ship-and-land` takes its `FULL` path.
+Orchestrator readers parse only the kept marker set above.
 
 ## Versioning and compatibility
 

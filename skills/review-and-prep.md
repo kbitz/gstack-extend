@@ -384,7 +384,8 @@ library and both call forms are in
 - Receipts: immediately before writing each receipt this workflow already
   produces (the PAUSED receipt, the STOPPED receipt, a blocked-exit receipt,
   the Step 6 body receipt and its pre-ready receipt comment), run `metrics read --session-id <id>` and
-  include that snapshot's `receipt_text` (at most 2 KiB), or, when the read is
+  include that snapshot's `receipt_text` (at most 2 KiB) in the full receipt
+  (`full-receipt-<n>.md`), or, when the read is
   unavailable, the literal line
   `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
   with the actual status. An open run reads as in progress; that is expected.
@@ -2511,6 +2512,15 @@ shapes the prompt below, so the continuation starts in a fresh session.
    retry, look up that exact marker and reuse a corroborated existing comment;
    post only if absent. Conflicting or unverifiable duplicates hold for repair.
    Step 1's corroboration and restriction rules treat it like a pause.
+   The stopped comment uses Step 6's compact shape: the
+   `<!-- review-and-prep:stopped:<full-sha> -->` marker,
+   `Status: STOPPED — review cycle cap`, the five stopped labels below,
+   `Unresolved:`, `Continuation: <k> of <n>`, its one `Skipped pregate lanes:`
+   or `Ship gates:` line, every `Delegated part:` line,
+   `reviewRestrictionResolved: true` when applicable, and
+   `Full receipt: <~-relative path>; sha256: <64 hex>`; the other listed lines
+   live in `full-receipt-<n>.md`, and the dedicated full-review evidence comment
+   procedure below is unchanged.
    For H-E, retain the newest corroborated full-review base across repair-only continuations;
    review the cumulative delta from that base, including earlier continuation repairs.
    Do not replace it with a delta-reviewed invocation start or call partial coverage full.
@@ -3580,11 +3590,13 @@ Capture evidence as the work runs so a new session can reuse it:
   host command runner if the helper is unavailable; lack of a ledger is not a
   test failure.
 - Keep long evidence in files, not chat. Write the completion matrix,
-  per-review evidence, gate records and receipt drafts to the evidence
+  per-review evidence, gate records and the full receipt (`full-receipt-<n>.md`,
+  with `n = 1, 2, …` per receipt write in the invocation, created exclusively
+  and never rewritten) to the evidence
   directory (a unique branch/invocation subdirectory under an existing
   `<state-root>/projects/<slug>/review-and-prep/`, otherwise
   `~/scratch/review-and-prep/`) as they are produced, assemble the
-  receipt from them, and read them back by targeted excerpt. Chat carries
+  full receipt from them, and read them back by targeted excerpt. Chat carries
   short status lines; output a nested skill requires is unchanged.
   The receipt names each evidence file's path and SHA-256, including the
   completion matrix and per-review results; never overwrite another invocation.
@@ -3603,9 +3615,10 @@ Capture evidence as the work runs so a new session can reuse it:
   `model`, `replay`, `dispatched`, `parse`, `verdict`, `outcome`,
   `fallback_reason` and `wall_ms` with the four token counts, never prompt text
   or reply prose.
-- Retain short, sanitized output excerpts in the PR receipt, alongside the
-  record metadata. Native test ledgers/logs are machine-local; local paths are
-  supplementary references, not the only evidence a new session receives.
+- Retain short, sanitized output excerpts in the full receipt, alongside the
+  record metadata. Native test ledgers/logs and full receipts are machine-local;
+  compact comments preserve the caller bindings, while unavailable detail takes
+  the existing unavailable/hold branch, never an inferred pass.
   Preserve original timestamps and tested content IDs. If tests ran before
   committing, verify the committed content is identical and record that
   relationship instead of relabeling the original run as a new run.
@@ -3659,8 +3672,13 @@ after reconciliation, re-read the branch/PR state, and refresh review/test
 evidence for any changed content or base. Do not push unknown commits
 introduced by another actor without reviewing and verifying them.
 
-For a new PR, write a concise body with the problem, resulting behavior, scope,
-and actual local verification. Use an unversioned conventional title. Before
+For a new PR, write a concise body using Step 6's `## Review and prep`
+body-section shape: what changed and why, auto-choices and decisions open to
+veto, one line of test results (suite, pregate, Greptile), risks and open
+checks, and links to the receipt comment and the evidence directory. Use an
+unversioned conventional title. Until a final receipt comment exists, use
+`Receipt: pending` in a newly created draft; Step 6 fills its returned permalink.
+Before
 every title/body write (creation, later refreshes, and the Step 6 receipt,
 including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt),
 scan the exact bytes for credentials and PII: use the installed
@@ -3670,31 +3688,27 @@ only when the scan flags their values; record benign prefixes such as
 `TOUCHFILES_BASE=<ref>` verbatim. A command whose recorded spelling had to be
 redacted is rerun rather than reused through the ledger. After that scan and
 before every PR-body write, measure the exact file passed to `--body-file`
-against the 45,000-character budget (counted as the JavaScript string length of
-the file, leaving 20,536 characters under GitHub's 65,536-character limit for a
-later stage's receipt, such as `/ship-and-land`'s `## Ship and land` receipt or
-a release step that rewrites the body):
+against the 3,000-character budget (counted as the JavaScript string length of
+the file):
 
 ```bash
 bun --no-env-file --config=/dev/null --no-install -e '
 const fs = require("node:fs");
 const file = process.argv[1];
 if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-  console.log("PR_BODY_SIZE: missing; budget 45000; error");
+  console.log("PR_BODY_SIZE: missing; budget 3000; error");
   process.exit(2);
 }
 const n = fs.readFileSync(file, "utf8").length;
-const within = n <= 45000;
-console.log("PR_BODY_SIZE: " + n + " characters; budget 45000; " + (within ? "within" : "over"));
+const within = n <= 3000;
+console.log("PR_BODY_SIZE: " + n + " characters; budget 3000; " + (within ? "within" : "over"));
 process.exit(within ? 0 : 1);
 ' "<body-file>"
 ```
 
-When `PR_BODY_SIZE` reports `over`, move bulky evidence out of the body into a
-linked dedicated PR comment under Step 6's budget order before writing the body.
-For draft creation, prepare a concise body within the budget without moving
-evidence; after the PR exists, post any needed evidence comment before refreshing
-the body with its permalink.
+When `PR_BODY_SIZE` reports `over`, shorten producer prose in the body by
+leaving detail to `full-receipt-<n>.md` under Step 6's budget rule, never
+shortening protected content.
 Use a temporary body file and the explicit base/head, for example:
 
 ```bash
@@ -3732,15 +3746,24 @@ already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
 Greptile wait timer, mark ready, or emit the `/ship-and-land` handoff.
 
-Post the PAUSED receipt once per pause as a PR comment. Before posting, scan
+The PAUSED body uses Step 6's `## Review and prep` body-section shape, listing
+pending user checks under open checks, and every line this section says to
+record goes to the full receipt (`full-receipt-<n>.md`). Post the PAUSED receipt once per pause as a PR comment. Before posting, scan
 the comment bytes the same way this step scans title and body text:
-`gstack-redact --from-file`, or a manual inspection. Include the receipt and
-one line: `Resume with /review-and-prep resume; do not run /ship on this draft.`
-Mark it `<!-- review-and-prep:paused:<full-sha> -->`. The marker is distinct
+`gstack-redact --from-file`, or a manual inspection. The paused comment uses
+Step 6's compact shape: mark it `<!-- review-and-prep:paused:<full-sha> -->`,
+include `Status: PAUSED — manual testing required`, `Prepared HEAD:` (the
+checkpoint), `Review policy:`, `Greptile:` (the postponed or skip value),
+every `Delegated part:` line and `Unresolved:` in their exact grammar,
+`reviewRestrictionResolved: true` when applicable, one line:
+`Resume with /review-and-prep resume; do not run /ship on this draft.`, and
+`Full receipt: <~-relative path>; sha256: <64 hex>`. The marker is distinct
 from `review-and-prep:receipt:`, so `/ship-and-land` never reads a paused
-receipt as prepared. If posting the paused comment fails, keep the pause,
-report that the paused receipt lives only in the body, and retry the post on
-the next resume.
+receipt as prepared. If posting the paused comment fails, keep the pause and
+keep preparation incomplete until the compact comment is confirmed; report its
+absence and the local full receipt, and retry the post on the next resume.
+The body's status preserves the hold; its pointer alone never authenticates
+the missing checkpoint.
 
 The PAUSED receipt, its `review-and-prep:paused:` comment and the prompt below
 are the H-C hold of the published
@@ -4293,6 +4316,9 @@ the relevant base/head refs. Require all of the following:
   records it and the authorizing policy line, never from the resume prompt.
   Acceptance also requires the section's reconciliation of all final-gate
   history; missing or unverifiable history cannot be cleared by that receipt.
+  Lines recorded in a full receipt file (`full-receipt-<n>.md`) count as
+  recorded in the corroborated pause comment or receipt that names it under the
+  hash-chained provenance rule below.
 - Step 2's `/ship` gates are current for the final content: pregate passed
   or the **Reviewed secret findings** evaluator satisfies the wrapper gate,
   the coverage audit completed or was waived with a recorded reason, and the
@@ -4343,7 +4369,9 @@ the relevant base/head refs. Require all of the following:
   relabel its original base/SHA as current.
 - Version assignment and release work remain for `/ship`.
 
-Write/update one `## Review and prep` receipt in the PR body, preserving the
+Write the full receipt (`full-receipt-<n>.md` in the invocation's evidence
+directory, created exclusively, never rewritten and never posted to GitHub) and
+write/update one `## Review and prep` receipt in the PR body, preserving the
 rest of the description. Record the body's last-edited time and editor,
 re-read the body immediately before each edit, apply the receipt to that fresh
 text, and re-read after writing; if another actor edited in that window,
@@ -4438,46 +4466,78 @@ The [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/do
 only reads (the `wtree` fingerprint, the matrix location and its fingerprint).
 Keep each present and distinctly labeled.
 
-Include the complete completion matrix and its source fingerprint in this
+Include the complete completion matrix and its source fingerprint in the full
 receipt, with requirement/acceptance text, evidence links or excerpts, and
 explicit user deferrals. Keep rows compact (item ID, disposition, evidence
 reference; long requirement text by scope-source reference and SHA-256). Keep
-every PR body at or under the 45,000-character budget measured by Step 3's
-`PR_BODY_SIZE` check (20,536 characters of headroom under GitHub's
-65,536-character limit for a later stage's receipt, such as `/ship-and-land`'s
-`## Ship and land` receipt or a release step that rewrites the body). When the
-body exceeds 45,000 characters, move, in this order and only until the body
-fits, (1) the completion matrix, (2) per-review and per-specialist outcome
-detail and finding-disposition tables, and (3) sanitized output excerpts, into
-one dedicated PR comment, leaving in the receipt each moved item's location and
-the SHA-256 the receipt already names. Post that comment before the body edit,
-scan it through Step 6's credential and PII scan, corroborate its author and
-every editor as for the full-review evidence comment, and link it by permalink.
-Save any moved detail or excerpt without an existing evidence hash to an evidence
-file and record its SHA-256 before the move. Post a new comment when its content
-changed; never edit an earlier one. Split
-it into numbered parts if one comment would exceed GitHub's limit. Never move:
-the `## Review and prep` heading and status line (including
-`PAUSED — manual testing required`, which `/pair-review` and `B-BODY-PAUSED`
-read from the body, `STOPPED — review cycle cap` and
-`BLOCKED — provider failures`), markers, the five stopped labels,
-`reviewRestrictionResolved: true`, every `Auto-chosen` line, every labeled line
-the stage-handoff contract lists as validated or receipt-present (including
-`Ship gates` with the documentation section's exact text, which
-`/ship-and-land` may rebuild from receipt text), user decisions and quotes, and
-human-authored text. When the body still exceeds the budget after every movable
-item moved, keep it and record
-`PR body: <n> characters; over the 45000 budget after moving evidence` in the
-receipt and the exit message; do not block readiness. The marked receipt,
-paused and stopped comments carry the same receipt as the body. On public
-repositories keep confidential requirement text out of the body: cite the
-scope source by path and SHA-256 and keep the full text in access-controlled
-storage. Local-only plan paths are supplementary: the portable
-record must preserve enough scope and evidence to check completion when the
-original workspace is gone. Keep per-specialist outcomes alongside the matrix
-unless the budget's ordered move leaves them in the body. The budget exception
-never excuses a failed GitHub body or comment write: preparation stays incomplete
-if the API rejects it, including at GitHub's 65,536-character hard limit.
+per-specialist outcomes alongside the matrix in the full receipt.
+
+Post the final compact comment before the final body edit, then insert its
+returned permalink using the fresh-read and collision procedure above.
+The pre-ready receipt comment (`<!-- review-and-prep:receipt:<full-sha> -->`)
+carries only the machine-read labeled lines below, with no prose:
+
+```text
+<!-- review-and-prep:receipt:<full-sha> -->
+Status: prepared
+Prepared HEAD: <40 hex>; tree: <40 hex>; base: <40 hex>; wtree: <fingerprint|unknown>
+Review policy: <verbatim policy value or none supplied>
+Plan: <path, link or "agreed task in the receipt">; SHA-256: <64 hex>
+Greptile: <the H-B Greptile value>; run: <link|none>
+Checks not run: <none|comma-separated checks>
+Ship gates: head=<40 hex>; tree=<40 hex>; base=<40 hex>
+- pregate: <raw verdict>; wrapper: <verdict>; policy: <base|head>; record: <path>; sha256: <64 hex>
+- coverage: <status or waiver>; pct: <value|n/a>; threshold: <decision>
+- documentation: <status or named-risk decision>; audit: <id>; section: <path>; sha256: <64 hex>
+Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>
+Unresolved: <finding IDs and severities, or "none recorded">
+reviewRestrictionResolved: true
+Full receipt: <~-relative path>; sha256: <64 hex>
+```
+
+`Delegated part:` appears once per delegated part when `delegate=<part>` is
+active, and `Unresolved:` records unresolved findings or `none recorded`; keep
+both in the compact receipt comment as machine-read lines in their exact
+grammar rather than moving them only to `full-receipt-<n>.md`.
+`reviewRestrictionResolved: true` appears only when the rule above requires it.
+Write paths under `$HOME` as `~/…`.
+
+The PR body's `## Review and prep` section carries only: the status line
+(`prepared`, `PAUSED — manual testing required`, `STOPPED — review cycle cap`,
+or `BLOCKED — provider failures`); what changed and why (two to four sentences);
+the `Review default:` line and every
+`Auto-chosen (veto by replying on this PR):` line verbatim at line start, plus
+other decisions open to veto; one `Tests:` line (suite result and selection,
+pregate verdict, Greptile state); risks and open checks (pending user checks on
+a pause); and `Receipt:` the receipt, paused or stopped comment permalink (none
+yet on a BLOCKED exit) and `Evidence:` the evidence directory and
+`full-receipt-<n>.md` path with its SHA-256. Keep every PR body at or under the
+3,000-character budget measured by Step 3's `PR_BODY_SIZE` check. When the body
+exceeds 3,000 characters, shorten producer text by leaving detail to
+`full-receipt-<n>.md`. Never shorten: the `## Review and prep` heading and
+status line (including `PAUSED — manual testing required`, which `/pair-review`
+and `B-BODY-PAUSED` read from the body, `STOPPED — review cycle cap` and
+`BLOCKED — provider failures`), the `Review default:` line and every
+`Auto-chosen` line, user decisions and quotes, human-authored text, or the
+`Receipt:` and `Evidence:` links. When the body still exceeds the budget after
+shortening producer text, keep it and record
+`PR body: <n> characters; over the 3000 budget` in the full receipt and the
+exit message; do not block readiness.
+
+Under hash-chained provenance, a line in `full-receipt-<n>.md` counts as
+recorded in the receipt, paused or stopped comment that names it only when that
+comment passes Step 1's author and `userContentEdits` corroboration and the
+file's bytes hash to its `Full receipt:` SHA-256; an unreadable file or a hash
+mismatch makes those lines unavailable. A receipt, paused or stopped comment
+without `Full receipt:` is a legacy receipt whose own text is its full receipt,
+read as today. On public repositories keep confidential requirement text out of
+the body: cite the scope source by path and SHA-256 and keep the full text in
+access-controlled storage. The compact record preserves the bound snapshot and
+scope fingerprint; after the evidence directory is lost, detail-dependent
+claims are unavailable and their existing hold or full-check rule applies.
+The budget exception never excuses a failed GitHub
+body or comment write: preparation stays incomplete if the API rejects it,
+including at GitHub's 65,536-character hard limit.
 
 Recheck the final head/base/draft state and new feedback after the receipt
 update. Only when the gate still passes, perform the final mutation:
