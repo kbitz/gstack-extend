@@ -321,8 +321,8 @@ pool and freshness/backoff is rechecked after acquisition. Cursor exchanges have
 a separate cross-process 60-second budget per hashed key, with tokens kept only
 in process memory. Retry-After is respected; unspecified 429 backoff is 300 seconds.
 
-Source discovery records explicit roots: Claude projects, Codex sessions and
-Cursor projects. Flags `--claude-config-dir`, `--codex-home`,
+Source discovery records explicit roots: Claude projects, Codex sessions, Cursor
+projects and Grok sessions. Flags `--claude-config-dir`, `--codex-home`,
 `--cursor-projects-dir`, `--cwd`, `--repo-root` capture context
 for later reads. Locators take this context instead of using the query's cwd.
 Each file has device/inode/size, offset, parser state and coverage. Rotation resets
