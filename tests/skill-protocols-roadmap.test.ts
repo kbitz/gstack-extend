@@ -384,6 +384,25 @@ describe('collision-driven grouping prose and shared_docs marker', () => {
       '`bin/roadmap-pack` lists under `FOLDER_ONLY` each pair that collides only through a folder entry — narrow those entries where the code allows, then re-pack.',
     );
   });
+
+  // Value: protects=Collision-driven grouping keeps the rule that CLAUDE.md is never shared and only one Track per Group may declare it; fails_when=the sentence is removed, CLAUDE.md enters the default shared-docs list, or the section permits sharing CLAUDE.md; why_new=Track 76A criterion 5 locks the CLAUDE.md never-shared sentence with negative cases; seam=none
+  test('Collision-driven grouping locks the CLAUDE.md never-shared sentence and rejects sharing it', () => {
+    const neverShared = '`CLAUDE.md` is never shared: only one Track per Group may declare it.';
+    const checkNeverShared = (text: string): boolean => {
+      const normalized = text.replace(/\s+/g, ' ');
+      const sharedDocsMatch = /Shared docs \(([^)]+)\) are not collisions\./.exec(normalized);
+      if (!sharedDocsMatch || sharedDocsMatch[1]!.includes('CLAUDE.md')) return false;
+      if (/`CLAUDE\.md` (?:is|may be|can be) (?:a )?shared/.test(normalized)) return false;
+      return normalized.includes(neverShared);
+    };
+
+    expect(checkNeverShared(section)).toBe(true);
+    const sharedList = /Shared docs \(([^)]+)\) are not collisions\./.exec(flat)?.[1] ?? '';
+    expect(sharedList).not.toBe('');
+    expect(sharedList).not.toContain('CLAUDE.md');
+    expect(flat).not.toMatch(/`CLAUDE\.md` (?:is|may be|can be) (?:a )?shared/);
+    expect(checkNeverShared(section.replace(neverShared, ''))).toBe(false);
+  });
 });
 
 describe('roadmap stage line', () => {

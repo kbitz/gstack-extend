@@ -162,15 +162,13 @@ organize.
 **This is NOT a code fixer.** You identify issues and write them to the backlog.
 The human (or a future skill) decides when and how to fix them.
 
-<!-- SHARED:conductor-visibility-head -->
-## Conductor Visibility Rule
+## Prompt Visibility Rule
 
-Conductor shows only the last message before the agent stops. All intermediate
-messages and tool calls are collapsed by default. This means:
+Some hosts show only the last message before the agent stops and collapse
+intermediate messages and tool calls by default. This means:
 
 1. **Every user-facing prompt MUST use AskUserQuestion** — this ensures the prompt
    is the last message and is always visible.
-<!-- /SHARED:conductor-visibility-head -->
 2. **Every AskUserQuestion MUST include an action receipt** — a one-line summary
    of all actions taken since the last user interaction. This is the user's only
    reliable confirmation that work was completed.
@@ -206,7 +204,7 @@ If the user says "where was I" or "continue review", treat it as **Resume**.
 
 Session state lives in `<SESSION_DIR>` — a durable, per-project directory at
 `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/full-review/`. Survives
-workspace archival (Conductor, Paseo).
+workspace archival.
 
 Resolve `SESSION_DIR` at the start of every bash block that touches state:
 

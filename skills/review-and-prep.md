@@ -477,7 +477,7 @@ reversible fix-scope choice, under **Take recommended fix-scope options without
 asking** below. Creating or discussing this skill is not invoking it.
 
 This skill carries the shared upgrade-flow and telemetry blocks but excludes
-the shared protocol and Conductor blocks used by the review and planning
+the shared protocol blocks used by the review and planning
 skills. It orchestrates installed skills and stores its evidence in the PR;
 protocol tests keep these memberships separate.
 
@@ -491,9 +491,14 @@ protocol tests keep these memberships separate.
   installed sections so `/ship-and-land` can reuse them; that is not a `/ship` run.
 - Stay on the current feature branch. Never commit/push to the base branch,
   force-push, merge the PR, or enable auto-merge. In a host-managed workspace
-  (a Conductor workspace, or a Paseo worktree: `PASEO_AGENT_ID` is set and the
-  checkout is under Paseo's worktree root, default `~/.paseo/worktrees/`),
-  leave branch and worktree creation, renaming, and cleanup to the host.
+  (one its host or orchestrator marks as its own with the orchestration
+  contract's worktree-ownership signal: `GSTACK_EXTEND_WORKSPACE_OWNER` is
+  non-empty in this agent's environment, whatever its value, as
+  `[ -n "${GSTACK_EXTEND_WORKSPACE_OWNER:-}" ]` tests without printing it; or a
+  Paseo worktree, the contract's one documented provider: `PASEO_AGENT_ID` is
+  set and the checkout is under Paseo's worktree root, default
+  `~/.paseo/worktrees/`), leave branch and worktree creation, renaming, and
+  cleanup to the host.
 - Use the installed `/review` skill as the source of review behavior. Step 1
   owns Greptile applicability. When applicable, require completion of the PR's
   single review, Step 4's no-response fallback, or a recorded Step 4 exit
@@ -1202,7 +1207,7 @@ Commit intended pending work before merging if needed to preserve it; do not
 overwrite or stage unrelated user changes. Resolve conflicts within the agreed
 scope, inspect the merge result, and run the review and required checks on the
 integrated tree. Record the fetched base tip and resulting HEAD. Stay on the
-existing feature branch; a workspace host (Conductor, Paseo) still owns
+existing feature branch; in a host-managed workspace the host still owns
 branch/worktree creation and cleanup. This base merge is separate from the divergent published feature
 history that blocks push recovery in Step 3.
 

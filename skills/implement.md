@@ -489,7 +489,11 @@ than the one reviewed.
 Inspect the current branch, target base, HEAD, and committed, staged, unstaged,
 and untracked changes. Record existing work so you can build on it and preserve
 unrelated edits. Follow the host's branch/worktree rules. In a host-managed
-workspace (a Conductor workspace, or a Paseo worktree: `PASEO_AGENT_ID` is set
+workspace (one its host or orchestrator marks as its own with the orchestration
+contract's worktree-ownership signal: `GSTACK_EXTEND_WORKSPACE_OWNER` is
+non-empty in this agent's environment, whatever its value, as
+`[ -n "${GSTACK_EXTEND_WORKSPACE_OWNER:-}" ]` tests without printing it; or a
+Paseo worktree, the contract's one documented provider: `PASEO_AGENT_ID` is set
 and the checkout is under Paseo's worktree root, default `~/.paseo/worktrees/`),
 use the current workspace and branch and leave their lifecycle to the host. If
 the current branch is the target base or the repository default branch, stop:
@@ -626,7 +630,7 @@ Finish with a concise outcome and one copyable fenced prompt that starts by
 instructing the next agent to run `/review-and-prep`. Do not invoke it now.
 The next session should use the **same workspace and branch**, because this
 stage normally leaves uncommitted work there. Name both explicitly. A new
-Conductor workspace or worktree will not have that uncommitted work; do not
+workspace or worktree will not have that uncommitted work; do not
 start one, and do not commit merely to make the handoff portable.
 
 This prompt is the H-A handoff of the published
@@ -667,13 +671,10 @@ when it belongs in the repo. Otherwise, use the first location that applies:
 1. `<state-root>/projects/<slug>/implement/` when `<state-root>/projects/<slug>/`
    already exists, with `<slug>` from gstack's `gstack-slug` or the repository
    directory name.
-2. In Conductor, the workspace's gitignored `.context/implement/`. The next
-   session runs in this same workspace, and the handoff is moot once the
-   workspace and its uncommitted work are archived.
-3. `~/scratch/gstack-implement/` as the fallback.
+2. `~/scratch/gstack-implement/` as the fallback.
 
 Name the file with the branch and a timestamp. Never leave the only copy of a
-needed plan in `.context`, `/tmp`, or host session memory: later stages outlive
+needed plan in a workspace-local ignored directory, `/tmp`, or host session memory: later stages outlive
 the workspace, so copy a transient plan to `<state-root>/projects/<slug>/` when
 that directory exists, otherwise `~/scratch/gstack-implement/`, with its source
 recorded. Local paths support another session on this machine; a

@@ -61,19 +61,15 @@ import {
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
-import { resolverSkillText } from './helpers/skill-protocols.ts';
+import { resolverSkillText, skillSection } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
 // Orthogonal memberships: SHARED protocol, upgrade preamble, and telemetry.
 // Do not derive protocol membership from setup's install list — the seven
 // utility/workflow skills carry the upgrade-flow and telemetry SHARED blocks
-// without the legacy SHARED protocol or Conductor blocks. PREAMBLE_SKILLS
-// covers all 11 setup skills.
-// 16A–D: do not touch <!-- SHARED:… --> blocks. Item 2/3 of the Conductor
-// rule stay per-skill. Keep "Action receipt format".
-// 17A: SHARED:conductor-visibility-head is a Conductor host workaround,
-// not tmpl-universal — do not inherit it blindly.
+// without the legacy SHARED protocol blocks. PREAMBLE_SKILLS covers all 11
+// setup skills.
 const PROTOCOL_SKILLS = [
   'pair-review',
   'roadmap',
@@ -102,11 +98,6 @@ const UTILITY_SKILLS = [
   'ship-and-land',
   'docs-ship',
   'plan-track',
-] as const;
-
-const CONDUCTOR_SKILLS = [
-  'pair-review',
-  'full-review',
 ] as const;
 
 const TELEMETRY_SKILLS = [...EXPECTED_SETUP_SKILLS];
@@ -807,7 +798,7 @@ describe('session-paths helper drift-lock', () => {
 });
 
 describe('Track 15A skill-file presence', () => {
-  for (const skill of [...new Set([...PROTOCOL_SKILLS, ...PREAMBLE_SKILLS, ...CONDUCTOR_SKILLS])]) {
+  for (const skill of [...new Set([...PROTOCOL_SKILLS, ...PREAMBLE_SKILLS])]) {
     test(`skills/${skill}.md exists`, () => {
       const file = join(ROOT, 'skills', `${skill}.md`);
       if (!existsSync(file)) {
@@ -817,7 +808,7 @@ describe('Track 15A skill-file presence', () => {
   }
 });
 
-describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
+describe('Track 15A setup / protocol / preamble cohorts', () => {
   const setupText = readFileSync(join(ROOT, 'setup'), 'utf8');
   const setupSkills = parseSetupSkills(setupText);
 
@@ -852,32 +843,45 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
     }
   });
 
-  test('CONDUCTOR_SKILLS is the 4 trim-target files, not PROTOCOL', () => {
-    expect([...CONDUCTOR_SKILLS]).toEqual([
-      'pair-review',
-      'full-review',
-    ]);
-    expect(CONDUCTOR_SKILLS).not.toContain('roadmap');
-  });
-
   test('every cohort member has skills/<name>.md', () => {
-    for (const name of [...setupSkills, ...PROTOCOL_SKILLS, ...PREAMBLE_SKILLS, ...CONDUCTOR_SKILLS]) {
+    for (const name of [...setupSkills, ...PROTOCOL_SKILLS, ...PREAMBLE_SKILLS]) {
       expect(existsSync(join(ROOT, 'skills', `${name}.md`))).toBe(true);
     }
   });
 });
 
+const WORKSPACE_GUARD =
+  'In a host-managed workspace (one its host or orchestrator marks as its own with the orchestration contract\'s worktree-ownership signal: `GSTACK_EXTEND_WORKSPACE_OWNER` is non-empty in this agent\'s environment, whatever its value, as `[ -n "${GSTACK_EXTEND_WORKSPACE_OWNER:-}" ]` tests without printing it; or a Paseo worktree, the contract\'s one documented provider: `PASEO_AGENT_ID` is set and the checkout is under Paseo\'s worktree root, default `~/.paseo/worktrees/`),';
+
 describe('host-managed workspace lifecycle', () => {
-  // Conductor and Paseo both own worktree/branch lifecycle; Paseo's archive
-  // teardown removes the worktree, so agents must not clean it up themselves.
-  const PASEO_MARKER =
-    'a Paseo worktree: `PASEO_AGENT_ID` is set and the checkout is under Paseo\'s worktree root, default `~/.paseo/worktrees/`';
-  for (const skill of ['implement', 'review-and-prep', 'ship-and-land']) {
-    test(`${skill} defers branch/worktree lifecycle to Conductor and Paseo`, () => {
-      const normalized = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8').replace(/\s+/g, ' ');
-      expect(normalized).toContain(`In a host-managed workspace (a Conductor workspace, or ${PASEO_MARKER})`);
-      // `.context/` scratch stays Conductor-only: Paseo has no equivalent.
-      expect(normalized).not.toMatch(/\bIn Conductor, (?:use the current|leave|do not)/);
+  const guardSpecs: Array<{ skill: string; section: string; continuation: string }> = [
+    {
+      skill: 'implement',
+      section: '## 1. Establish what to build',
+      continuation: 'use the current workspace and branch and leave their lifecycle to the host.',
+    },
+    {
+      skill: 'review-and-prep',
+      section: '## Boundaries',
+      continuation: 'leave branch and worktree creation, renaming, and cleanup to the host.',
+    },
+    {
+      skill: 'ship-and-land',
+      section: '## 1. Resolve the workflows and target',
+      continuation:
+        "do not create, rename, switch, or remove branches/worktrees; decline land's local branch/worktree cleanup offers and leave cleanup to the host.",
+    },
+  ];
+
+  for (const { skill, section, continuation } of guardSpecs) {
+    // Value: protects=each stage skill carries the shared worktree-ownership signal guard once inside its lifecycle section with its own continuation and drops the legacy Conductor/Paseo phrase; fails_when=the guard wording drifts across skills, moves out of its section, or reintroduces Conductor; why_new=Track 76A T1 replaces the Conductor/Paseo guard with the contract signal and Paseo provider; seam=none
+    test(`${skill} reads GSTACK_EXTEND_WORKSPACE_OWNER and Paseo in ${section}`, () => {
+      const raw = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      const normalized = raw.replace(/\s+/g, ' ');
+      expect(normalized.split(WORKSPACE_GUARD).length - 1).toBe(1);
+      expect(normalized).not.toContain('a Conductor workspace, or a Paseo worktree');
+      const sec = skillSection(raw, section).replace(/\s+/g, ' ');
+      expect(sec).toContain(`${WORKSPACE_GUARD} ${continuation}`);
     });
   }
 
@@ -887,44 +891,89 @@ describe('host-managed workspace lifecycle', () => {
       "decline land's local branch/worktree cleanup offers and leave cleanup to the host.",
     );
   });
+
+  // Value: protects=the guard's shell check treats unset/empty GSTACK_EXTEND_WORKSPACE_OWNER as not host-managed and any non-empty value (including whitespace or newline) as host-managed without printing the value; fails_when=the expression in WORKSPACE_GUARD changes semantics or prints stdout/stderr in any agent shell; why_new=Track 76A criterion 4 requires executing the backticked check across agentShells; seam=none
+  test('the guard shell check classifies unset, empty, whitespace, ordinary and malformed values silently in every agent shell', () => {
+    const exprMatch = /`(\[ -n [^\`]+ \])`/.exec(WORKSPACE_GUARD);
+    expect(exprMatch).not.toBeNull();
+    const expr = exprMatch![1]!;
+    const home = join(extendRootTmp, 'workspace-owner-home');
+    mkdirSync(home, { recursive: true });
+    for (const sh of agentShells()) {
+      const unsetEnv = scopedEnv(home);
+      delete unsetEnv.GSTACK_EXTEND_WORKSPACE_OWNER;
+      const unsetRes = runShell(sh.shell, sh.args, expr, unsetEnv, ROOT);
+      expect(unsetRes.status, `${sh.shell}: unset`).toBe(1);
+      expect(unsetRes.stdout ?? '', `${sh.shell}: unset stdout`).toBe('');
+      expect(unsetRes.stderr ?? '', `${sh.shell}: unset stderr`).toBe('');
+
+      const emptyRes = runShell(
+        sh.shell,
+        sh.args,
+        expr,
+        scopedEnv(home, { GSTACK_EXTEND_WORKSPACE_OWNER: '' }),
+        ROOT,
+      );
+      expect(emptyRes.status, `${sh.shell}: empty`).toBe(1);
+      expect(emptyRes.stdout ?? '', `${sh.shell}: empty stdout`).toBe('');
+      expect(emptyRes.stderr ?? '', `${sh.shell}: empty stderr`).toBe('');
+
+      for (const [label, val] of [
+        ['whitespace', '   '],
+        ['ordinary', 'a-host'],
+        ['malformed', 'bad\nlabel'],
+      ] as const) {
+        const res = runShell(
+          sh.shell,
+          sh.args,
+          expr,
+          scopedEnv(home, { GSTACK_EXTEND_WORKSPACE_OWNER: val }),
+          ROOT,
+        );
+        expect(res.status, `${sh.shell}: ${label}`).toBe(0);
+        expect(res.stdout ?? '', `${sh.shell}: ${label} stdout`).toBe('');
+        expect(res.stderr ?? '', `${sh.shell}: ${label} stderr`).toBe('');
+      }
+    }
+  });
 });
 
-describe('Paseo lifecycle wording beyond the primary workflow guards', () => {
+describe('lifecycle wording beyond the primary workflow guards', () => {
   test('review-and-prep base merge leaves lifecycle to the workspace host', () => {
-    // Value: protects=review-and-prep base merge defers branch and worktree lifecycle to the host; fails_when=the ownership clause is removed; why_new=primary prep guard does not cover the merge step; seam=none
+    // Value: protects=review-and-prep base merge defers branch and worktree lifecycle to the host in a host-managed workspace; fails_when=the ownership clause is removed or names specific hosts; why_new=primary prep guard does not cover the merge step; seam=none
     const normalized = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
     expect(normalized).toContain(
-      'existing feature branch; a workspace host (Conductor, Paseo) still owns branch/worktree creation and cleanup.',
+      'existing feature branch; in a host-managed workspace the host still owns branch/worktree creation and cleanup.',
     );
   });
 
   test('review-and-prep assigns blocked-push reconciliation to the user or host', () => {
-    // Value: protects=blocked-push reconciliation is owned by the user or workspace host; fails_when=the owner sentence is dropped or narrowed to Conductor; why_new=primary prep guard does not cover blocked-push recovery; seam=none
+    // Value: protects=blocked-push reconciliation is owned by the user or workspace host; fails_when=the owner sentence is dropped or narrowed to a named host; why_new=primary prep guard does not cover blocked-push recovery; seam=none
     const normalized = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
     expect(normalized).toContain(
       'The user or the workspace host owns reconciliation outside this workflow.',
     );
   });
 
-  test('pair-review keeps branch-keyed sessions independent across Paseo workspaces', () => {
-    // Value: protects=pair-review identifies Paseo workspaces as independent homes for branch-keyed sessions; fails_when=Paseo is removed from the scope; why_new=existing lifecycle assertions cover only implement prep and land; seam=none
+  test('pair-review keeps branch-keyed sessions independent across workspaces or worktrees', () => {
+    // Value: protects=pair-review identifies workspaces and worktrees as independent homes for branch-keyed sessions without naming specific hosts; fails_when=the host-neutral workspace/worktree scope is removed; why_new=existing lifecycle assertions cover only implement prep and land; seam=none
     const normalized = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8').replace(/\s+/g, ' ');
     expect(normalized).toContain(
-      'multiple branches (in different Conductor or Paseo workspaces, or on different machines) can each have their own active session',
+      'multiple branches (in different workspaces or worktrees, or on different machines) can each have their own active session',
     );
   });
 
-  test('full-review session state survives Paseo workspace archival', () => {
-    // Value: protects=full-review documents durable session state across Paseo archival; fails_when=Paseo is removed from the archival guarantee; why_new=existing tests do not pin durable-state wording; seam=none
+  test('full-review session state survives workspace archival', () => {
+    // Value: protects=full-review documents durable session state across workspace archival without naming specific hosts; fails_when=the archival guarantee is removed or names specific hosts; why_new=existing tests do not pin durable-state wording; seam=none
     const normalized = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8').replace(/\s+/g, ' ');
-    expect(normalized).toContain('Survives workspace archival (Conductor, Paseo).');
+    expect(normalized).toContain('Survives workspace archival.');
   });
 
-  test('roadmap proposals survive Paseo workspace archival', () => {
-    // Value: protects=roadmap proposal artifacts are durable across Paseo archival; fails_when=Paseo is removed from the durability guarantee; why_new=existing tests do not pin durable-state wording; seam=none
+  test('roadmap proposals survive workspace archival', () => {
+    // Value: protects=roadmap proposal artifacts are durable across workspace archival without naming specific hosts; fails_when=the durability guarantee is removed or names specific hosts; why_new=existing tests do not pin durable-state wording; seam=none
     const normalized = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8').replace(/\s+/g, ' ');
     expect(normalized).toContain(
-      'durable, survives workspace archival (Conductor, Paseo).',
+      'durable, survives workspace archival.',
     );
   });
 });
@@ -940,7 +989,7 @@ describe('utility/workflow skills carry only upgrade-flow and telemetry SHARED b
   });
 
   for (const skill of outside) {
-    test(`${skill} has only upgrade-flow and telemetry markers and no protocol/Conductor blocks`, () => {
+    test(`${skill} has only upgrade-flow and telemetry markers and no protocol blocks`, () => {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
       const markers = [...content.matchAll(/<!-- (\/?SHARED:[^ ]+) -->/g)].map(match => match[1]);
       expect(markers).toEqual([
@@ -995,56 +1044,70 @@ describe('Track 15A parseSetupSkills grammar (synthetic)', () => {
   });
 });
 
-describe('Track 15A SHARED:conductor-visibility-head', () => {
-  // Conductor-only host workaround. 17A must not treat this as tmpl-universal.
-  const CONDUCTOR_RE =
-    /<!-- SHARED:conductor-visibility-head -->[\s\S]*?<!-- \/SHARED:conductor-visibility-head -->/;
-  const fullReview = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
-  const match = CONDUCTOR_RE.exec(fullReview);
-  const canonical = match ? match[0] : '';
+describe('Track 76A Conductor removal and host-neutral prompt visibility', () => {
+  const VISIBILITY_LEAD =
+    '## Prompt Visibility Rule Some hosts show only the last message before the agent stops and collapse intermediate messages and tool calls by default. This means:';
+  const ITEM_1 = '1. **Every user-facing prompt MUST use AskUserQuestion**';
+  const ITEM_2 = '2. **Every AskUserQuestion MUST include an action receipt**';
 
-  test('canonical block extracted from skills/full-review.md', () => {
-    expect(canonical).not.toBe('');
-    expect(canonical).toContain('<!-- SHARED:conductor-visibility-head -->');
-    expect(canonical).toContain('<!-- /SHARED:conductor-visibility-head -->');
-    expect(canonical).toContain('## Conductor Visibility Rule');
-    expect(canonical).toContain('AskUserQuestion');
-    expect(canonical).toContain('last message before the agent stops');
-  });
-
-  test('canonical block is exactly one marker pair', () => {
-    expect(canonical.split('<!-- SHARED:conductor-visibility-head -->').length - 1).toBe(1);
-    expect(canonical.split('<!-- /SHARED:conductor-visibility-head -->').length - 1).toBe(1);
-  });
-
-  test('canonical block excludes per-skill item 2 and Action receipt format', () => {
-    expect(canonical).not.toContain('2. **Every AskUserQuestion MUST include an action receipt**');
-    expect(canonical).not.toContain('Action receipt format');
-  });
-
-  for (const skill of CONDUCTOR_SKILLS) {
-    const file = join(ROOT, 'skills', `${skill}.md`);
-    const content = readFileSync(file, 'utf8');
-
-    test(`${skill} embeds the canonical SHARED:conductor-visibility-head block`, () => {
-      if (!content.includes(canonical)) {
-        throw new Error(
-          `${skill} drift in SHARED:conductor-visibility-head — propagate canonical text from skills/full-review.md`,
-        );
+  function findRemovedHostViolations(skillsByFile: Record<string, string>): string[] {
+    const violations: string[] = [];
+    for (const [file, content] of Object.entries(skillsByFile)) {
+      if (content.includes('SHARED:conductor-visibility-head')) {
+        violations.push(`${file}: SHARED:conductor-visibility-head`);
       }
-    });
-
-    test(`${skill} has exactly one Conductor marker pair`, () => {
-      expect(content.split('<!-- SHARED:conductor-visibility-head -->').length - 1).toBe(1);
-      expect(content.split('<!-- /SHARED:conductor-visibility-head -->').length - 1).toBe(1);
-    });
-
-    test(`${skill} still has Action receipt format and item 2 outside the wrap`, () => {
-      const after = content.slice(content.indexOf('<!-- /SHARED:conductor-visibility-head -->'));
-      expect(after).toContain('Action receipt format');
-      expect(after).toContain('2. **Every AskUserQuestion MUST include an action receipt**');
-    });
+      if (/conductor/i.test(content)) {
+        violations.push(`${file}: /conductor/i`);
+      }
+      if (content.includes('.context/')) {
+        violations.push(`${file}: .context/`);
+      }
+      const withoutGuards = content.replace(/\s+/g, ' ').split(WORKSPACE_GUARD).join('');
+      if (/paseo/i.test(withoutGuards)) {
+        violations.push(`${file}: /paseo/i outside WORKSPACE_GUARD`);
+      }
+    }
+    return violations;
   }
+
+  const liveSkills: Record<string, string> = {};
+  for (const entry of readdirSync(join(ROOT, 'skills')).filter((f) => f.endsWith('.md')).sort()) {
+    liveSkills[entry] = readFileSync(join(ROOT, 'skills', entry), 'utf8');
+  }
+
+  // Value: protects=no file under skills/ names Conductor, a .context/ path, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD (any later skill that mentions Conductor or a .context/ path will fail this check by intent); fails_when=any skill reintroduces Conductor, .context/, the removed SHARED marker, or an unguarded Paseo reference; why_new=Track 76A criterion 3 locks the cross-skill removal and negative detection; seam=none
+  test('no skills/*.md names Conductor, .context/, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD, and synthetic splices fail', () => {
+    expect(Object.keys(liveSkills).length).toBeGreaterThan(0);
+    expect(findRemovedHostViolations(liveSkills)).toEqual([]);
+
+    const withConductor = {
+      ...liveSkills,
+      'implement.md': `${liveSkills['implement.md']}\nIn a Conductor workspace.\n`,
+    };
+    expect(findRemovedHostViolations(withConductor)).toEqual(['implement.md: /conductor/i']);
+
+    const withContext = {
+      ...liveSkills,
+      'implement.md': `${liveSkills['implement.md']}\nSave under .context/implement/.\n`,
+    };
+    expect(findRemovedHostViolations(withContext)).toEqual(['implement.md: .context/']);
+  });
+
+  // Value: protects=pair-review and full-review carry the host-neutral Prompt Visibility Rule heading and lead once before item 1, item 2 and Action receipt format; fails_when=either skill drops the lead text, duplicates it, or scrambles the item/receipt order; why_new=Track 76A T2 replaces SHARED:conductor-visibility-head with host-neutral text; seam=none
+  test('pair-review and full-review carry the host-neutral Prompt Visibility Rule lead before items 1, 2 and Action receipt format', () => {
+    for (const skill of ['pair-review', 'full-review'] as const) {
+      const normalized = liveSkills[`${skill}.md`]!.replace(/\s+/g, ' ');
+      expect(normalized.split(VISIBILITY_LEAD).length - 1, `${skill}: lead count`).toBe(1);
+      const leadAt = normalized.indexOf(VISIBILITY_LEAD);
+      const item1At = normalized.indexOf(ITEM_1);
+      const item2At = normalized.indexOf(ITEM_2);
+      const receiptAt = normalized.indexOf('Action receipt format:');
+      expect(leadAt, `${skill}: lead`).toBeGreaterThan(-1);
+      expect(item1At, `${skill}: item 1 after lead`).toBeGreaterThan(leadAt);
+      expect(item2At, `${skill}: item 2 after item 1`).toBeGreaterThan(item1At);
+      expect(receiptAt, `${skill}: Action receipt format after item 2`).toBeGreaterThan(item2At);
+    }
+  });
 });
 
 describe('Track 16D extend-root resolver locks', () => {

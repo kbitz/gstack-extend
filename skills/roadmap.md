@@ -1026,7 +1026,7 @@ PROPOSAL_DIR=$(session_dir roadmap-proposals)
 mkdir -p "$PROPOSAL_DIR"
 ```
 
-This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival (Conductor, Paseo).
+This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival.
 
 Format:
 
