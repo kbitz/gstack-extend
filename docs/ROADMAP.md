@@ -97,7 +97,7 @@ distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-Track 76A is in flight (branch `mmm/91aed49b`), started ahead of the Group order with the owner's approval ("yes re 76a", 2026-11-10) because its technical blockers (Tracks 71C, 70A and 75A) had shipped. It keeps its ID; its Group keeps label 76 and takes the other Tracks the packer put in its batch, all idle. Tracks 75A (v0.83.0) and 75B (documentation, no version) shipped since the last regeneration and are recorded in shipped history. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
+Track 76A is in flight, started ahead of the Group order with the owner's approval ("yes re 76a", 2026-11-10) because its technical blockers (Tracks 71C, 70A and 75A) had shipped. It keeps its ID; its Group keeps label 76 and takes the other Tracks the packer put in its batch, all idle. Tracks 75A (v0.83.0) and 75B (documentation, no version) shipped since the last regeneration and are recorded in shipped history. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
 
 ### Group 76: Workspace signal ∥ run-state design ∥ owner-run qualification records
 
