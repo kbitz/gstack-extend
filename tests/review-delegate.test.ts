@@ -3,7 +3,7 @@
  * Every case uses a fake delegate (a Bun script) and a fake upstream root in each installed layout; no model is called.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -11,14 +11,18 @@ import { spawnSync } from './helpers/child-stdio';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
-  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SPECIALIST_PARTS,
-  buildPrompt, callId, decide, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
+  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CLAUDE_CODE_DISALLOWED_FLAGS, CLAUDE_CODE_PREFIX_FLAGS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, POLICY_FORMAT, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SPECIALIST_PARTS, TOOLS_POLICY,
+  buildPrompt, callId, decide, effectiveArgv, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
 } from '../src/review-delegate/delegate';
+import { main as runMain, withinDeadline } from '../src/review-delegate/cli';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'review-delegate');
 const scratch = mkdtempSync(join(tmpdir(), 'extend-review-delegate-'));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+afterAll(() => {
+  spawnSync('chmod', ['-R', 'u+rwx', scratch]);
+  rmSync(scratch, { recursive: true, force: true });
+});
 let counter = 0;
 const fresh = (label: string) => { const dir = join(scratch, `${label}-${counter++}`); mkdirSync(dir, { recursive: true }); return dir; };
 const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
@@ -148,7 +152,7 @@ function setup(layout: 'nested' | 'sibling', providers: Record<string, Provider>
 const spawns = (s: Setup) => existsSync(join(s.state, 'spawns.log')) ? readFileSync(join(s.state, 'spawns.log'), 'utf8').split('\n').filter(Boolean) : [];
 
 const PRELOAD = join(fresh('preload'), 'preload.ts');
-put(PRELOAD, `import { closeSync, writeSync, WriteStream } from 'node:fs';
+put(PRELOAD, `import { writeSync, WriteStream } from 'node:fs';
 const origEnd = WriteStream.prototype.end;
 WriteStream.prototype.end = function (this: any, chunk?: any, enc?: any, cb?: any) {
   for (const s of Object.getOwnPropertySymbols(this)) {
@@ -172,7 +176,7 @@ WriteStream.prototype.end = function (this: any, chunk?: any, enc?: any, cb?: an
         } catch (e) {
           this.emit('error', e);
         }
-        try { closeSync(fd); } catch {}
+        try { this[s].close(); } catch {}
         this[s] = { end: () => 0, close: () => 0, flush: () => 0, write: () => 0, ref: () => {}, unref: () => {}, _getFd: () => -1 };
         if (typeof chunk === 'function') chunk();
         else if (typeof enc === 'function') enc();
@@ -781,6 +785,621 @@ describe('documentation', () => {
     expect(record).toContain('297f50c7e1d46aab1404f5f2e8a9584af76ad6b2');
     expect(record).toContain('red-team=ensure');
     expect(record).toContain('delegate=adversarial,red-team');
+  });
+
+  test('the tools-mode quickstart example validates and the flag list and acceptance record stay locked to code constants', () => {
+    const docs = readFileSync(join(REPO, 'docs', 'delegated-review.md'), 'utf8');
+    const jsonBlocks = [...docs.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]!);
+    expect(jsonBlocks.length).toBeGreaterThanOrEqual(2);
+    const quickstart = validateConfig(jsonBlocks[1]!);
+    expect(quickstart.ok).toBe(true);
+    if (quickstart.ok) {
+      expect(quickstart.config.providers['claude-tools']).toMatchObject({
+        access: 'tools',
+        cli: 'claude-code',
+        model: 'sonnet',
+        commands: ['bun install --frozen-lockfile', 'bun test *'],
+      });
+    }
+    const expectedFlags = [...CLAUDE_CODE_PREFIX_FLAGS, '<one Bash(<entry>) per commands entry>', ...CLAUDE_CODE_DISALLOWED_FLAGS].join(' ');
+    expect(docs).toContain(expectedFlags);
+    const record = readFileSync(join(REPO, 'docs', 'acceptance', 'delegate-tools-mode.md'), 'utf8');
+    expect(record).toContain(expectedFlags);
+    expect(record).toContain('No installed-agent run backs\nit yet: a static prose test is not installed-agent acceptance');
+    expect(record).toContain('| `PM1` | pending |');
+  });
+});
+
+const DEFAULT_TOOLS_STATE = fresh('default-tools-state');
+const TOOLS_WRAPPER = join(fresh('tools-wrapper'), 'fake-claude');
+put(TOOLS_WRAPPER, `#!/usr/bin/env bash
+exec "${process.execPath}" "${join(fresh('tools-script'), 'tools-delegate.ts')}" "$@"
+`);
+chmodSync(TOOLS_WRAPPER, 0o755);
+const TOOLS_SCRIPT = /"([^"]+tools-delegate\.ts)"/.exec(readFileSync(TOOLS_WRAPPER, 'utf8'))![1]!;
+put(TOOLS_SCRIPT, `import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, writeSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+
+const writeAll = (fd: number, text: string) => {
+  const buf = Buffer.from(text, 'utf8');
+  let off = 0;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  while (off < buf.length) {
+    try {
+      off += writeSync(fd, buf, off, Math.min(65536, buf.length - off));
+    } catch (e: any) {
+      if (e && (e.code === 'EAGAIN' || e.code === 'EWOULDBLOCK')) { Atomics.wait(wait, 0, 0, 5); continue; }
+      throw e;
+    }
+  }
+};
+
+const args = process.argv.slice(2);
+const prompt = await Bun.stdin.text();
+const state = process.env.TMPDIR || ${JSON.stringify(DEFAULT_TOOLS_STATE)};
+appendFileSync(join(state, 'tools-spawns.log'), JSON.stringify({ argv: process.argv, cwd: process.cwd(), env: process.env, prompt }) + '\\n');
+const mode = existsSync(join(state, 'mode.txt')) ? readFileSync(join(state, 'mode.txt'), 'utf8').trim() : 'clean';
+
+if (mode === 'old-cli') {
+  writeAll(2, "error: unknown option '--restricted'\\n");
+  process.exit(1);
+}
+if (mode === 'inspect-copy') {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const status = spawnSync('git', ['status', '--porcelain=v1'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(join('changed.txt'), 'mutated-in-copy\\n');
+  mkdirSync('readonly-dir', { mode: 0o700 });
+  writeFileSync(join('readonly-dir', 'artifact.txt'), 'locked\\n');
+  chmodSync('readonly-dir', 0o500);
+  const bg = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  bg.unref();
+  writeFileSync(join(state, 'bg-pid.txt'), String(bg.pid));
+  writeFileSync(join(state, 'copy-info.json'), JSON.stringify({
+    cwd: process.cwd(),
+    head,
+    status,
+    hasGitDir: existsSync('.git'),
+    entries: readdirSync('.').sort(),
+    outsideText: readFileSync('outside.txt', 'utf8'),
+    changedText: readFileSync('changed.txt', 'utf8'),
+    args,
+    envKeys: Object.keys(process.env).sort(),
+    pathValue: process.env.PATH,
+    disableAutoupdater: process.env.DISABLE_AUTOUPDATER,
+    hasAnthropicKey: 'ANTHROPIC_API_KEY' in process.env,
+  }));
+}
+if (mode === 'write-real-tracked') {
+  const realRepo = readFileSync(join(state, 'real-repo.txt'), 'utf8').trim();
+  writeFileSync(join(realRepo, 'changed.txt'), 'tampered\\n');
+}
+if (mode === 'write-real-ignored') {
+  const realRepo = readFileSync(join(state, 'real-repo.txt'), 'utf8').trim();
+  writeFileSync(join(realRepo, 'ignored.log'), 'ignored-tamper\\n');
+}
+const reply = 'NO_FINDINGS: none\\nRecommendation: merge because tools check passed.';
+writeAll(1, JSON.stringify({ result: reply, usage: { input_tokens: 15, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }) + '\\n');
+process.exit(0);
+`);
+
+describe('tools mode', () => {
+  const validToolsProvider = (overrides: Record<string, unknown> = {}) => ({
+    access: 'tools',
+    cli: 'claude-code',
+    argv: [TOOLS_WRAPPER, '--effort', 'high', '--max-budget-usd', '0.25'],
+    timeout_s: 30,
+    model: 'sonnet',
+    commands: ['bun install --frozen-lockfile', 'bun test *'],
+    ...overrides,
+  });
+  const wrapConfig = (provider: Record<string, unknown>, extraProviders: Record<string, unknown> = {}, parts: Record<string, string> = { testing: 'alpha' }) =>
+    JSON.stringify({ schema: CONFIG_SCHEMA, providers: { alpha: provider, ...extraProviders }, parts });
+
+  test('validateConfig accepts valid tools-mode and explicit diff-mode providers and enforces closed keys and precedence', () => {
+    const okTools = validateConfig(wrapConfig(validToolsProvider()));
+    expect(okTools.ok).toBe(true);
+    if (okTools.ok) {
+      expect(okTools.config.providers.alpha).toEqual({
+        access: 'tools',
+        cli: 'claude-code',
+        argv: [TOOLS_WRAPPER, '--effort', 'high', '--max-budget-usd', '0.25'],
+        timeout_s: 30,
+        model: 'sonnet',
+        commands: ['bun install --frozen-lockfile', 'bun test *'],
+      });
+    }
+
+    const okDiff = validateConfig(wrapConfig({ access: 'diff', argv: ['/bin/echo'], timeout_s: 30, model: 'model-a' }));
+    expect(okDiff.ok).toBe(true);
+    if (okDiff.ok) expect(okDiff.config.providers.alpha.access).toBe('diff');
+
+    // Diff mode forbids cli and commands
+    for (const extra of [{ cli: 'claude-code' }, { commands: ['bun test *'] }, { access: 'diff', cli: 'claude-code' }, { access: 'diff', commands: ['bun test *'] }]) {
+      expect(validateConfig(wrapConfig({ argv: ['/bin/echo'], timeout_s: 30, model: 'model-a', ...extra }))).toMatchObject({ ok: false, reason: 'config-malformed' });
+    }
+
+    // Invalid access value
+    expect(validateConfig(wrapConfig(validToolsProvider({ access: 'sandbox' })))).toMatchObject({
+      ok: false,
+      reason: 'config-malformed',
+      detail: 'provider alpha access must be "diff" or "tools"',
+    });
+
+    // tools-unsupported only after structural validation succeeds
+    expect(validateConfig(wrapConfig(validToolsProvider({ cli: 'codex' })))).toEqual({
+      ok: false,
+      reason: 'tools-unsupported',
+      detail: 'provider alpha cli is not supported in tools mode',
+      fix: 'remove `access`, `cli` and `commands` from provider `alpha` to run it diff-only, or set `cli` to `claude-code`; see docs/delegated-review.md#tools-mode',
+    });
+    expect(validateConfig(wrapConfig(validToolsProvider({ cli: 'codex', commands: [] })))).toMatchObject({ ok: false, reason: 'config-malformed' });
+    expect(validateConfig(wrapConfig(validToolsProvider({ cli: 'codex', argv: ['relative/claude'] })))).toMatchObject({ ok: false, reason: 'config-malformed' });
+    expect(validateConfig(wrapConfig(validToolsProvider({ cli: 'codex', model: 'bad model!' })))).toMatchObject({ ok: false, reason: 'config-malformed' });
+    expect(validateConfig(wrapConfig(validToolsProvider({ cli: 'codex', timeout_s: 0 })))).toMatchObject({ ok: false, reason: 'config-malformed' });
+    expect(validateConfig(wrapConfig(validToolsProvider({ cli: 'Bad_Name' })))).toMatchObject({
+      ok: false,
+      reason: 'config-malformed',
+      detail: 'provider alpha cli must match ^[a-z][a-z0-9-]{0,31}$',
+    });
+  });
+
+  test('validateConfig restricts tools-mode argv to argv[0], --effort <val>, and --max-budget-usd <val>', () => {
+    const rejectedFlags: [string[], string][] = [
+      [[TOOLS_WRAPPER, '--add-dir', '/tmp'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--settings', '/tmp/s.json'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--mcp-config', '/tmp/m.json'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--permission-prompt-tool', 'mcp__x'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--tools', 'Bash'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--model', 'sonnet'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--effort=high'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--dangerously-skip-permissions'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--allowedTools', 'Bash(*)'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, 'bare-word'], 'provider alpha argv[1] is not an allowed tools-mode flag'],
+      [[TOOLS_WRAPPER, '--effort', 'high', '--effort', 'low'], 'provider alpha argv[3] repeats an allowed flag'],
+      [[TOOLS_WRAPPER, '--effort', '-bad'], 'provider alpha argv[2] must be a non-empty value not starting with -'],
+      [[TOOLS_WRAPPER, '--max-budget-usd'], 'provider alpha argv[1] must be a non-empty value not starting with -'],
+    ];
+    for (const [argv, detail] of rejectedFlags) {
+      const res = validateConfig(wrapConfig(validToolsProvider({ argv })));
+      expect(res).toMatchObject({ ok: false, reason: 'config-malformed', detail });
+      if (!res.ok) expect(res.detail).not.toContain(TOOLS_WRAPPER);
+    }
+  });
+
+  test('validateConfig enforces the commands grammar and gives a dedicated FIX for deprecated :* syntax', () => {
+    const badCommands: [unknown, string, string?][] = [
+      [[], 'provider alpha commands must be a non-empty array'],
+      ['bun test *', 'provider alpha commands must be a non-empty array'],
+      [[''], 'provider alpha commands[0] must be a non-empty string'],
+      [['bun test *', 'bun test *'], 'provider alpha commands[1] is a duplicate entry'],
+      [[' bun test *'], 'provider alpha commands[0] contains an invalid character or wildcard placement'],
+      [['bun test * '], 'provider alpha commands[0] contains an invalid character or wildcard placement'],
+      [['bun  test *'], 'provider alpha commands[0] contains an invalid character or wildcard placement'],
+      [['bun test a,b'], 'provider alpha commands[0] contains an invalid character or wildcard placement'],
+      [['bun test && id'], 'provider alpha commands[0] contains an invalid character or wildcard placement'],
+      [['bun * test'], 'provider alpha commands[0] contains an invalid character or wildcard placement'],
+      [['bun test:*'], 'provider alpha commands[0] uses a trailing colon or legacy :* wildcard', 'write the space form, for example `bun test *`; see docs/delegated-review.md#tools-mode'],
+      [['bun: *'], 'provider alpha commands[0] uses a trailing colon or legacy :* wildcard'],
+    ];
+    for (const [commands, detail, fix] of badCommands) {
+      const res = validateConfig(wrapConfig(validToolsProvider({ commands })));
+      expect(res).toMatchObject({ ok: false, reason: 'config-malformed', detail, ...(fix ? { fix } : {}) });
+    }
+    // Single-word command without * and multi-word with allowed punctuation (including mid-word colon) succeed
+    expect(validateConfig(wrapConfig(validToolsProvider({ commands: ['pytest', 'bun:test *', 'cargo test --package a_b.1/2:=@+- *'] }))).ok).toBe(true);
+  });
+
+  test('effectiveArgv, callId, and buildPrompt preserve diff-mode byte identity and bind tools-mode flags and policy', () => {
+    expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
+    const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
+    // Independent bytes from origin/main@5b54ffe, not the current policy constants.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    expect(diffPrompt).toContain(DELEGATE_POLICY);
+    expect(diffPrompt).not.toContain('disposable copy of the repository');
+
+    const toolsPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body', undefined, ['bun install --frozen-lockfile', 'bun test *']);
+    expect(toolsPrompt).toContain(TOOLS_POLICY);
+    expect(toolsPrompt).toContain('Allowed shell commands: bun install --frozen-lockfile; bun test *');
+    expect(toolsPrompt).toContain(POLICY_FORMAT);
+    expect(toolsPrompt).not.toContain('Do not simulate repository access, run commands, start agents or write files.');
+
+    const parsed = validateConfig(wrapConfig(validToolsProvider()));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const toolsProv = parsed.config.providers.alpha!;
+    expect(effectiveArgv(toolsProv)).toEqual([
+      TOOLS_WRAPPER, '--effort', 'high', '--max-budget-usd', '0.25',
+      '--model', 'sonnet',
+      ...CLAUDE_CODE_PREFIX_FLAGS,
+      'Bash(bun install --frozen-lockfile)',
+      'Bash(bun test *)',
+      ...CLAUDE_CODE_DISALLOWED_FLAGS,
+    ]);
+
+    const parsed2 = validateConfig(wrapConfig(validToolsProvider({ commands: ['bun test *'] })));
+    expect(parsed2.ok).toBe(true);
+    if (!parsed2.ok) return;
+    expect(callId(toolsPrompt, toolsProv, 'alpha')).not.toBe(callId(toolsPrompt, parsed2.config.providers.alpha!, 'alpha'));
+
+    const diffParsed = validateConfig(wrapConfig({ argv: ['/bin/echo', 'hi'], timeout_s: 30, model: 'model-a' }));
+    expect(diffParsed.ok).toBe(true);
+    if (!diffParsed.ok) return;
+    const diffProv = diffParsed.config.providers.alpha!;
+    expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe(
+      createHash('sha256').update(JSON.stringify([diffPrompt, ['/bin/echo', 'hi'], 'model-a', 'alpha'])).digest('hex'),
+    );
+  });
+
+  // Value: protects=tools-mode accepts a repository subdirectory like diff mode; fails_when=fetch receives the subdirectory rather than repository top; why_new=existing copy tests always pass the top; seam=none
+  test.each(['repo', 'repo '])('tools-mode resolves a subdirectory --repo to the repository top for copy setup (%j)', (name) => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const state = fresh('subdirectory-copy');
+    const repo = join(fresh('root-spelling'), name);
+    expect(spawnSync('git', ['clone', '--quiet', s.repo, repo], { encoding: 'utf8' }).status).toBe(0);
+    const subdirectory = join(repo, 'nested');
+    mkdirSync(subdirectory);
+    put(s.config, wrapConfig(validToolsProvider()));
+    const r = cli(runArgs({ ...s, repo: subdirectory }, 'testing'), { TMPDIR: state });
+    expect(r.status).toBe(0);
+    expect(row(r.json, 'testing').outcome).toBe('credited');
+    const launched = JSON.parse(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim());
+    expect(launched.cwd).not.toBe(subdirectory);
+    expect(existsSync(launched.cwd)).toBe(false);
+    expect(git(repo, 'rev-parse', 'HEAD').stdout.trim()).toBe(s.candidate);
+    // External review artifacts must also be outside the resolved root.
+    const insideCalls = join(repo, 'calls');
+    const rejected = cli(runArgs({ ...s, repo: subdirectory, calls: insideCalls }, 'testing'), { TMPDIR: state });
+    expect([rejected.status, rejected.stdout]).toEqual([2, '']);
+    expect(rejected.stderr).toContain('--calls is inside --repo');
+    expect(existsSync(insideCalls)).toBe(false);
+    expect(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  test('check reports access:"tools" on tools-mode parts only, refusal stderr omits config values, and --help documents tools mode', () => {
+    const helpRes = cli(['--help']);
+    expect(helpRes.status).toBe(0);
+    expect(helpRes.stdout).toContain('"access": "tools"');
+    expect(helpRes.stdout).toContain('tools-unsupported');
+
+    const s = setup('nested', { beta: { mode: 'clean', model: 'model-b' } }, { testing: 'alpha', performance: 'beta' });
+    put(s.config, wrapConfig(
+      validToolsProvider(),
+      { beta: { argv: [process.execPath, FAKE, 'clean', s.state], timeout_s: 30, model: 'model-b' } },
+      { testing: 'alpha', performance: 'beta' },
+    ));
+    const checkRes = cli(checkArgs(s, 'testing,performance'));
+    expect([checkRes.status, checkRes.stderr]).toEqual([0, '']);
+    expect(checkRes.json.parts).toEqual([
+      { part: 'testing', provider: 'alpha', model: 'sonnet', access: 'tools' },
+      { part: 'performance', provider: 'beta', model: 'model-b' },
+    ]);
+
+    // Malformed tools config writes ERROR and FIX on stderr without leaking secret config value
+    const secretValue = 'SECRET-TOKEN-VALUE-999';
+    put(s.config, wrapConfig(validToolsProvider({ argv: [TOOLS_WRAPPER, '--settings', secretValue] })));
+    const badRes = cli(checkArgs(s, 'testing'));
+    expect(badRes.status).toBe(1);
+    expect(badRes.json).toEqual({ v: 1, status: 'refused', reason: 'config-malformed' });
+    expect(badRes.stderr).toContain('ERROR config-malformed: provider alpha argv[1] is not an allowed tools-mode flag');
+    expect(badRes.stderr).toContain('FIX: pass only --effort <value> and --max-budget-usd <value> pairs after argv[0] in tools mode');
+    expect(badRes.stderr).not.toContain(secretValue);
+  });
+
+  test('spawnProvider prepares a detached shallow copy at candidate (including an unreachable snapshot commit), filters env/PATH, kills background processes, and cleans up 0500 directories', async () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    // Create an unreachable snapshot commit via commit-tree (as review-and-prep snapshot procedure does)
+    const tree = git(s.repo, 'rev-parse', `${s.candidate}^{tree}`).stdout.trim();
+    const unreachable = git(s.repo, 'commit-tree', tree, '-p', s.base, '-m', 'unreachable snapshot').stdout.trim();
+    s.candidate = unreachable;
+
+    const tmpState = fresh('tools-tmp');
+    writeFileSync(join(tmpState, 'mode.txt'), 'inspect-copy');
+    put(s.config, wrapConfig(validToolsProvider()));
+
+    const r = cli(runArgs(s, 'testing'), {
+      TMPDIR: tmpState,
+      PATH: `relative/bin:${process.env.PATH ?? ''}:./another-rel`,
+      ANTHROPIC_API_KEY: 'should-not-leak',
+    });
+    expect([r.status, r.stderr]).toEqual([0, '']);
+    const part = row(r.json, 'testing');
+    expect(part.outcome).toBe('credited');
+
+    const info = JSON.parse(readFileSync(join(tmpState, 'copy-info.json'), 'utf8'));
+    expect(info.head).toBe(unreachable);
+    expect(info.status).toBe('');
+    expect(info.hasGitDir).toBe(true);
+    expect(info.cwd).not.toBe(s.repo);
+    expect(info.outsideText).toBe('REPO-ONLY-MARKER\n');
+    expect(info.changedText).toBe('mutated-in-copy\n');
+    expect(info.disableAutoupdater).toBe('1');
+    expect(info.hasAnthropicKey).toBe(false);
+    expect(info.pathValue.split(':').every((p: string) => p.startsWith('/'))).toBe(true);
+    expect(info.args).toEqual([
+      '--effort', 'high', '--max-budget-usd', '0.25',
+      '--model', 'sonnet',
+      ...CLAUDE_CODE_PREFIX_FLAGS,
+      'Bash(bun install --frozen-lockfile)',
+      'Bash(bun test *)',
+      ...CLAUDE_CODE_DISALLOWED_FLAGS,
+    ]);
+
+    // Real repo was untouched by the copy edit
+    expect(readFileSync(join(s.repo, 'changed.txt'), 'utf8')).toBe('one\nDIFF-MARKER\n');
+    // Copy directory (including 0500 readonly-dir) was cleaned up
+    expect(existsSync(info.cwd)).toBe(false);
+    expect(readdirSync(tmpState).filter((name) => name.startsWith('extend-delegate-'))).toEqual([]);
+
+    // Background child in the same process group was killed on exit
+    const bgPid = Number(readFileSync(join(tmpState, 'bg-pid.txt'), 'utf8').trim());
+    const running = () => {
+      try {
+        process.kill(bgPid, 0);
+        // An owned Linux child can be terminated but not yet reaped by init.
+        if (process.platform === 'linux') {
+          const stat = readFileSync(`/proc/${bgPid}/stat`, 'utf8');
+          if (stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')) return false;
+        }
+        return true;
+      } catch { return false; }
+    };
+    const reapDeadline = Date.now() + 5000;
+    // gstack-timing-ok: poll owned child termination with a deadline, allowing delayed OS reaping.
+    while (running() && Date.now() < reapDeadline) await Bun.sleep(20);
+    expect(running()).toBe(false);
+
+    // Saved result has setup timing in stderr, and replay creates no temp dir and spawns no process
+    const saved = JSON.parse(readFileSync(join(s.calls, `${part.call_id}.json`), 'utf8'));
+    expect(saved.spawned.stderr).toMatch(/^review-delegate: tools-mode setup took \d+ ms\n/);
+    const spawnLinesBefore = readFileSync(join(tmpState, 'tools-spawns.log'), 'utf8').trim().split('\n').length;
+    const replayRes = cli(runArgs(s, 'testing'), { TMPDIR: tmpState });
+    expect(replayRes.status).toBe(0);
+    expect(row(replayRes.json, 'testing')).toMatchObject({ outcome: 'credited', replay: true, dispatched: false });
+    expect(readFileSync(join(tmpState, 'tools-spawns.log'), 'utf8').trim().split('\n').length).toBe(spawnLinesBefore);
+  });
+
+  test('writes to the real repo trigger worktree-changed, ignored real-repo writes do not, and old CLI flag rejection falls back cleanly with stderr notice', () => {
+    // 1. Write to tracked file in real repo -> worktree-changed (exit 1)
+    const s1 = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const tmp1 = fresh('tools-tmp1');
+    writeFileSync(join(tmp1, 'mode.txt'), 'write-real-tracked');
+    writeFileSync(join(tmp1, 'real-repo.txt'), s1.repo);
+    put(s1.config, wrapConfig(validToolsProvider()));
+    const r1 = cli(runArgs(s1, 'testing'), { TMPDIR: tmp1 });
+    expect(r1.status).toBe(1);
+    expect(row(r1.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [] });
+    expect(r1.stderr).toContain('review-delegate: testing fell back (worktree-changed); saved result:');
+
+    // 2. Write to gitignored file in real repo -> not in worktreeState (documented limit)
+    const s2 = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    put(join(s2.repo, '.gitignore'), '*.log\n');
+    git(s2.repo, 'add', '.gitignore');
+    git(s2.repo, 'commit', '-q', '-m', 'ignore logs');
+    s2.candidate = git(s2.repo, 'rev-parse', 'HEAD').stdout.trim();
+    const tmp2 = fresh('tools-tmp2');
+    writeFileSync(join(tmp2, 'mode.txt'), 'write-real-ignored');
+    writeFileSync(join(tmp2, 'real-repo.txt'), s2.repo);
+    put(s2.config, wrapConfig(validToolsProvider()));
+    const r2 = cli(runArgs(s2, 'testing'), { TMPDIR: tmp2 });
+    expect(r2.status).toBe(0);
+    expect(row(r2.json, 'testing').outcome).toBe('credited');
+
+    // 3. Old CLI rejecting --restricted -> fallback_reason: "failed" (exit 4) + stderr pointer
+    const s3 = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const tmp3 = fresh('tools-tmp3');
+    writeFileSync(join(tmp3, 'mode.txt'), 'old-cli');
+    put(s3.config, wrapConfig(validToolsProvider()));
+    const r3 = cli(runArgs(s3, 'testing'), { TMPDIR: tmp3 });
+    expect(r3.status).toBe(4);
+    const part3 = row(r3.json, 'testing');
+    expect(part3).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed' });
+    expect(r3.stderr).toBe(`review-delegate: testing fell back (failed); saved result: ${join(s3.calls, `${part3.call_id}.json`)}\n`);
+    const saved3 = JSON.parse(readFileSync(join(s3.calls, `${part3.call_id}.json`), 'utf8'));
+    expect(saved3.spawned.stderr).toContain("error: unknown option '--restricted'");
+    // An interrupted synthetic call has a claim and no saved result to inspect.
+    rmSync(join(s3.calls, `${part3.call_id}.json`));
+    const unresolved = cli(runArgs(s3, 'testing'), { TMPDIR: tmp3 });
+    expect(row(unresolved.json, 'testing').fallback_reason).toBe('unresolved-claim');
+    expect(unresolved.stderr).toContain(`result not saved; call: ${part3.call_id}`);
+    expect(unresolved.stderr).not.toContain('saved result:');
+  });
+
+  // Value: protects=approved Git setup controls; fails_when=template, hook or filter suppression is removed; why_new=copy contents tests miss setup flags; seam=none
+  test('copy setup disables templates, hooks and LFS and runs in the owned temporary directory', () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const state = fresh('setup-controls');
+    const fakeBin = fresh('setup-controls-bin');
+    const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+    const script = join(fakeBin, 'record.ts');
+    put(script, `import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args.some(a => ['init', 'fetch', 'checkout'].includes(a))) {
+  appendFileSync(${JSON.stringify(join(state, 'setup.jsonl'))}, JSON.stringify({ args, cwd: process.cwd() }) + '\\n');
+}
+const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+    put(join(fakeBin, 'git'), `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
+    chmodSync(join(fakeBin, 'git'), 0o755);
+    put(s.config, wrapConfig(validToolsProvider()));
+    const r = cli(runArgs(s, 'testing'), { TMPDIR: state, PATH: `${fakeBin}:${process.env.PATH ?? ''}` });
+    expect(r.status).toBe(0);
+    const steps = readFileSync(join(state, 'setup.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    expect(steps).toHaveLength(3);
+    expect(steps[0].args).toContain('--template=');
+    expect(steps[1].args).toContain('core.hooksPath=/dev/null');
+    expect(steps[1].args).toContain('--no-tags');
+    expect(steps[1].args).toContain('--no-recurse-submodules');
+    for (const setting of ['core.hooksPath=/dev/null', 'filter.lfs.process=', 'filter.lfs.smudge=', 'filter.lfs.required=false']) {
+      expect(steps[2].args).toContain(setting);
+    }
+    const spawned = JSON.parse(readFileSync(join(state, 'tools-spawns.log'), 'utf8').trim());
+    for (const step of steps) expect(step.cwd).toBe(join(spawned.cwd, '..'));
+  });
+
+  // Value: protects=cleanup cannot execute a PATH-provided chmod; fails_when=cleanup resolves chmod through PATH; why_new=normal removal never enters repair; seam=existing rmDir injection
+  test('cleanup retries removal with system chmod instead of a PATH-provided executable', async () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    put(s.config, wrapConfig(validToolsProvider()));
+    const fakeBin = fresh('cleanup-bin');
+    const marker = join(fakeBin, 'unexpected-chmod');
+    put(join(fakeBin, 'chmod'), `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(join(fakeBin, 'chmod'), 0o755);
+    const previousPath = process.env.PATH;
+    let attempts = 0;
+    let output = '';
+    try {
+      process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+      const code = await runMain(runArgs(s, 'testing'), { stdout: t => { output += t; }, stderr: () => {} }, {
+        rmDir: async target => {
+          if (++attempts === 1) throw new Error('synthetic first-removal failure');
+          rmSync(target, { recursive: true, force: true });
+        },
+      });
+      expect(code).toBe(0);
+      expect(row(JSON.parse(output), 'testing').outcome).toBe('credited');
+      expect(attempts).toBe(2);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  });
+
+  test('prepareCopy records step names on init/fetch/checkout failures, bounds setup timeout, isolates concurrent copies, and bounds stalled cleanup', async () => {
+    const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+    const fakeGitDir = fresh('fake-git-bin');
+    const fakeGit = join(fakeGitDir, 'git');
+    put(fakeGit, `#!/usr/bin/env bash
+step_fail="\${FAKE_GIT_FAIL:-}"
+for arg in "$@"; do
+  if [[ "$arg" == "init" && "$step_fail" == "init" ]]; then exit 1; fi
+  if [[ "$arg" == "fetch" && "$step_fail" == "fetch" ]]; then exit 1; fi
+  if [[ "$arg" == "checkout" && "$step_fail" == "checkout" ]]; then exit 1; fi
+  if [[ "$arg" == "fetch" && "$step_fail" == "hang" ]]; then sleep 30; exit 0; fi
+done
+exec "${realGit}" "$@"
+`);
+    chmodSync(fakeGit, 0o755);
+
+    for (const step of ['init', 'fetch', 'checkout'] as const) {
+      const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+      const tmp = fresh(`tools-git-${step}`);
+      put(s.config, wrapConfig(validToolsProvider()));
+      const r = cli(runArgs(s, 'testing'), {
+        TMPDIR: tmp,
+        PATH: `${fakeGitDir}:${process.env.PATH ?? ''}`,
+        FAKE_GIT_FAIL: step,
+      });
+      expect(r.status).toBe(4);
+      const part = row(r.json, 'testing');
+      expect(part).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed' });
+      const saved = JSON.parse(readFileSync(join(s.calls, `${part.call_id}.json`), 'utf8'));
+      expect(saved.spawned.stderr).toMatch(new RegExp(`^review-delegate: tools-mode setup failed \\(${step}\\)\\nreview-delegate: tools-mode setup took \\d+ ms\\n$`));
+      expect(readdirSync(tmp).filter((name) => name.startsWith('extend-delegate-'))).toEqual([]);
+
+      // Replay of saved setup failure returns failed without creating a copy
+      const replay = cli(runArgs(s, 'testing'), { TMPDIR: tmp });
+      expect(replay.status).toBe(4);
+      expect(row(replay.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed', replay: true });
+    }
+
+    // Setup exceeding deadline returns fallback_reason: "timeout"
+    const sTimeout = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha' });
+    const tmpTimeout = fresh('tools-git-timeout');
+    put(sTimeout.config, wrapConfig(validToolsProvider({ timeout_s: 1 })));
+    const rTimeout = cli(runArgs(sTimeout, 'testing'), {
+      TMPDIR: tmpTimeout,
+      PATH: `${fakeGitDir}:${process.env.PATH ?? ''}`,
+      FAKE_GIT_FAIL: 'hang',
+    });
+    expect(rTimeout.status).toBe(4);
+    const partTimeout = row(rTimeout.json, 'testing');
+    expect(partTimeout).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
+    const savedTimeout = JSON.parse(readFileSync(join(sTimeout.calls, `${partTimeout.call_id}.json`), 'utf8'));
+    expect(savedTimeout.spawned.stderr).toContain('review-delegate: tools-mode setup failed (fetch: timeout)');
+
+    // Two concurrent tools-mode parts get distinct copy directories and both are removed
+    const sConc = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha', performance: 'alpha' });
+    const tmpConc = fresh('tools-conc');
+    put(sConc.config, wrapConfig(validToolsProvider(), {}, { testing: 'alpha', performance: 'alpha' }));
+    const rConc = cli(runArgs(sConc, 'testing,performance'), { TMPDIR: tmpConc });
+    expect(rConc.status).toBe(0);
+    const spawnsConc = readFileSync(join(tmpConc, 'tools-spawns.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(spawnsConc).toHaveLength(2);
+    expect(spawnsConc[0].cwd).not.toBe(spawnsConc[1].cwd);
+    expect(existsSync(spawnsConc[0].cwd)).toBe(false);
+    expect(existsSync(spawnsConc[1].cwd)).toBe(false);
+
+    // Stalled cleanup on one part does not delay a sibling part's timeout (via Deps injection)
+    const sStall = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha', performance: 'beta' });
+    const slowWrapper = join(fresh('slow-wrapper'), 'slow-claude');
+    put(slowWrapper, `#!/usr/bin/env bash\nsleep 10\n`);
+    chmodSync(slowWrapper, 0o755);
+    put(sStall.config, wrapConfig(
+      validToolsProvider({ timeout_s: 5 }),
+      { beta: validToolsProvider({ argv: [slowWrapper], timeout_s: 1 }) },
+      { testing: 'alpha', performance: 'beta' },
+    ));
+    let outBuf = '', errBuf = '';
+    const stalledTargets: string[] = [];
+    const code = await runMain(
+      runArgs(sStall, 'testing,performance'),
+      { stdout: (t) => { outBuf += t; }, stderr: (t) => { errBuf += t; } },
+      { rmDir: (target) => { stalledTargets.push(target); return new Promise(() => { /* never resolves */ }); }, cleanupLimitMs: 1500 },
+    );
+    for (const target of stalledTargets) rmSync(target, { recursive: true, force: true });
+    expect(code).toBe(4);
+    expect(stalledTargets).toHaveLength(2);
+    const parsedOut = JSON.parse(outBuf);
+    expect(row(parsedOut, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed' });
+    expect(row(parsedOut, 'performance')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
+    expect(errBuf).toContain('testing fell back (failed); saved result:');
+    expect(errBuf).toContain('performance fell back (timeout); saved result:');
+    expect(await withinDeadline(Promise.resolve('ok'), 0)).toEqual({ ok: false });
+  });
+
+  // Value: protects=a sibling deadline fires while another part awaits cleanup; fails_when=parts or cleanup serialize the sibling deadline; why_new=final fallback outcomes do not prove event ordering; seam=existing rmDir injection
+  test('a sibling reaches timeout before the first cleanup is released', async () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha', performance: 'beta' });
+    const slowWrapper = join(fresh('overlap-wrapper'), 'slow-claude');
+    put(slowWrapper, '#!/bin/sh\nsleep 10\n');
+    chmodSync(slowWrapper, 0o755);
+    put(s.config, wrapConfig(validToolsProvider({ timeout_s: 5 }), {
+      beta: validToolsProvider({ argv: [slowWrapper], timeout_s: 1 }),
+    }, { testing: 'alpha', performance: 'beta' }));
+    let releaseFirst!: () => void;
+    let siblingEntered!: () => void;
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const siblingGate = new Promise<void>(resolve => { siblingEntered = resolve; });
+    let cleanupCalls = 0;
+    let output = '';
+    const run = runMain(runArgs(s, 'testing,performance'), { stdout: t => { output += t; }, stderr: () => {} }, {
+      rmDir: async target => {
+        if (++cleanupCalls === 1) await firstGate;
+        else siblingEntered();
+        rmSync(target, { recursive: true, force: true });
+      },
+      cleanupLimitMs: 15_000,
+    });
+    let observed: Awaited<ReturnType<typeof withinDeadline>>;
+    let code: number;
+    try {
+      // gstack-timing-ok: hang guard while first cleanup is explicitly held; no elapsed-time performance assertion.
+      observed = await withinDeadline(siblingGate, 5000);
+    } finally {
+      releaseFirst();
+      code = await run;
+    }
+    expect(observed!.ok).toBe(true);
+    expect(code!).toBe(4);
+    expect(cleanupCalls).toBe(2);
+    expect(row(JSON.parse(output), 'testing').outcome).toBe('credited');
+    expect(row(JSON.parse(output), 'performance')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
   });
 });
 
