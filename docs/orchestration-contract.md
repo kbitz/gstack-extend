@@ -40,7 +40,7 @@ For telemetry's `host-managed-workspace` run-mode reason, only a non-empty `GSTA
 - Allow at most one in-flight stage per PR, and classify again after a stage starts or the head moves ([Outcomes](workflow-handoffs.md#outcomes)).
 - Treat a rerun of `/ship-and-land` as a new invocation that rebuilds progress from live PR, merge and deploy state (`skills/ship-and-land.md`, the paragraph beginning `A rerun is a new invocation`). Treat a rerun of `/implement` as reconciling its run directory first ([Signals H-D](workflow-handoffs.md#signals-h-d)).
 
-In `bin/lib/telemetry.py` `RESUMABLE`, each resume starts its own telemetry segment. Real-run evidence is pending Track 76B, and this document claims none.
+In `bin/lib/telemetry.py` `RESUMABLE`, each resume starts its own telemetry segment. Real-run evidence is pending Track 80A, and this document claims none.
 
 **Approval semantics.** At gates that reserve approval for a live human, especially merging, approval is the human's own answer in the stage's session through the harness's question tool. The host or orchestrator delivers that question or lets the stage stop; it never supplies that answer. Other actions may have documented standing authorization: invoking `/review-and-prep` authorizes its feature-branch commits/pushes, draft PR updates, base integration, single applicable Greptile request and ready transition, and its policy line may pre-approve review choices (`skills/review-and-prep.md`, the invocation-authorization paragraph and `Read an optional review policy`). Those permissions do not authorize a merge:
 
@@ -79,7 +79,7 @@ Every stage that runs Telemetry finish may also write a stage-runs provenance ro
 
 - No workspace host or orchestrator is required. One that provides the signals above is supported through this contract.
 - Support claims are bound to exercised combinations recorded in [PROGRESS Acceptance](PROGRESS.md#acceptance). This document records none.
-- Track 76B's two-driver record is pending.
+- Track 80A's two-driver record is pending.
 - "Any orchestrator works" is not claimable ([SPEC Audience and target](SPEC.md#audience-and-target)). No personal tool is named or required.
 
 ## Limits

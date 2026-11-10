@@ -45,7 +45,7 @@ No local record binds the reported `211`-minute (`12,660 s`) figure to a `/docs-
 - **Human waits:** `unknown` (deferred by owner, 2026-11-08)
 - **Unattributed remainder:** `unknown` (deferred by owner, 2026-11-08)
 
-**Evidence needed if revisited:** either the owner's synced telemetry and session records from other machines used between `2026-10-22` and `2026-10-25` ([`docs/SPEC.md`](../SPEC.md#o6-bounded-measured-stage-effort) O6.1), or the originating private research notes identifying which PR and clock boundaries produced the `211`-minute and `34.5`-minute numbers. AC4 is **deferred by the owner, not verified**. Track 76B remains the next measurement, as described below.
+**Evidence needed if revisited:** either the owner's synced telemetry and session records from other machines used between `2026-10-22` and `2026-10-25` ([`docs/SPEC.md`](../SPEC.md#o6-bounded-measured-stage-effort) O6.1), or the originating private research notes identifying which PR and clock boundaries produced the `211`-minute and `34.5`-minute numbers. AC4 is **deferred by the owner, not verified**. Track 80A remains the next measurement, as described below.
 
 ## Local Baseline (`2026-11-06` to `2026-11-08`, `n = 6` Stage-Run Rows)
 
@@ -77,4 +77,4 @@ In the longest recorded local run (`712 s` on `2026-11-07`, PR #214), `457.8 s` 
 
 ## Next Measurement
 
-Track 76B ("Include installed `/docs-ship` acceptance", [`docs/ROADMAP.md`](../ROADMAP.md) Group 76) applies this method to subsequent installed `/docs-ship` runs and records `docs-ship tests --pregate`'s `COMPARED: pregate <n>; legacy scan <m>; legacy only <k>` line alongside the interval breakdown.
+Track 80A ("Include installed `/docs-ship` acceptance", [`docs/ROADMAP.md`](../ROADMAP.md) Group 80) applies this method to subsequent installed `/docs-ship` runs and records `docs-ship tests --pregate`'s `COMPARED: pregate <n>; legacy scan <m>; legacy only <k>` line alongside the interval breakdown.
