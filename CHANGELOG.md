@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.0] - 2026-11-09
+
+### Added
+
+- `/plan-track` plans can carry release-note and upgrade-risk lines, and `/review-and-prep` can print user-facing-change lines after its ship handoff, under a grammar documented in `docs/workflow-handoffs.md`.
+- Plans and prepared review handoffs can carry release disclosures, and delegated reviews use percentage confidence scores.
+
 ## [0.81.0] - 2026-11-09
 
 ### Added
