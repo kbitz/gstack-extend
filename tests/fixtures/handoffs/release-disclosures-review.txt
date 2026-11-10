@@ -1,0 +1,2 @@
+User-facing change: `bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.
+User-facing change: `--help` lists the new `--format` option.

@@ -114,7 +114,7 @@ A delegated part is one bounded call:
   line after it (without its closing `"`), followed by the extension-owned
   `ADVERSARIAL_SCHEMA` (the JSON-line schema
   `{"severity":"CRITICAL|INFORMATIONAL","confidence":N,"path":"file","line":N,"category":"adversarial","summary":"...","fix":"..."}`,
-  the rule that `confidence` is an integer from 1 to 10, the rule that
+  the rule that `confidence` is an integer from 0 to 100, the rule that
   `severity` is `CRITICAL` when `FIXABLE` or blocking and `INFORMATIONAL`
   otherwise, that the JSON severity replaces the criteria's FIXABLE or
   INVESTIGATE label and Severity and Blocks suffix, and "write nothing after the
@@ -158,7 +158,7 @@ The delegate returns, in this form:
 
 - one line per finding, `[P0|P1|P2|P3] <one JSON object in the checklist's
   schema>`: P0 and P1 for `severity` `CRITICAL`, P2 and P3 for `INFORMATIONAL`.
-  Required fields are `confidence` (an integer from 1 to 10), `path`,
+  Required fields are `confidence` (an integer from 0 to 100), `path`,
   `category` and `summary`; `line`, `fix`, `fingerprint`, `evidence`, `test_stub`,
   `advisory`, `evidence_paths`, `helper_target` (`path` and `symbol`), `cause`
   (`path` and positive `line`) and `lines_removable` are optional. These retain
@@ -340,7 +340,14 @@ effect together. A `Review delegates:` line beside a policy that carries only
 - Findings enter the review as that part's findings and keep its `found_by`
   attribution (`specialist:<part>` for the four specialists, `red-team` for
   `red-team`, and `native-adversarial` for `adversarial`); the provider and
-  model are recorded on the part, not inside a finding. A credited specialist
+  model are recorded on the part, not inside a finding. The runner normalizes
+  `confidence` once at parse so every emitted finding carries upstream
+  `/review`'s 1 to 10 scale with `Math.max(1, Math.round(c / 10))`. The
+  extension-owned response-format instructions explicitly require 0 to 100
+  for every part, overriding any upstream checklist confidence scale. Values
+  from 0 to 10 remain low percentages, never guessed to mean a 1 to 10 score.
+  This prompt change gives every part a new call id: saved replies from the
+  old scale are not replayed for the new prompt. A credited specialist
   part is recorded as dispatched in the review's `specialists` object, as is a
   credited `red-team` part in both layouts; a credited `adversarial` part adds
   no `specialists` entry.
@@ -501,7 +508,8 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
   ```
   `callId` hashes `[prompt, effectiveArgv(provider), provider.model, label]`, so
   any change to `commands` or runner-owned flags produces a distinct call id.
-  Diff-mode prompt, argv and call-id bytes remain unchanged.
+  Diff-mode argv is unchanged; the shared confidence-format update changes
+  prompt and call-id bytes in both modes.
 - **Prompt (`TOOLS_POLICY`):** Replaces the diff-only no-tools lines while
   keeping the response format (`POLICY_FORMAT`) identical. The prompt names each
   allowed command rule in a semicolon-separated list and asks for the command, observed result and

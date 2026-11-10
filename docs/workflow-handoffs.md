@@ -22,6 +22,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
 | H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
 | Stage line | the last line of the final message of `/plan-track`, `/implement`, `/review-and-prep`, `/pair-review`, `/ship-and-land`, `/full-review`, `/roadmap` and `/project-spec`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
+| Release disclosures | optional lines in a `/plan-track` plan file and before the stage line of a `/review-and-prep` `next: ship-and-land` exit | 1 | none; additive-only | `Release note:` / `Release notes:`, `Upgrade risk:` / `Upgrade risks:`, `User-facing change:` / `User-facing changes:` |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -1372,6 +1373,75 @@ words say. An `/implement` turn that ends with a run still pending prints its la
 or holds when it carries a full SHA, and the caller continues or reruns `/implement` in the
 same workspace, which reconciles the run directory first. A BLOCKED `/implement` report is H-D: it carries no handoff prompt, and the next action
 or input it says is needed is for the user.
+
+### Release disclosures
+
+1. **Purpose and producers.** A release step reads disclosure data from an
+   approved `/plan-track` plan and `/review-and-prep`'s final message. They are
+   not a handoff, never authorize a stage or merge and add no binding.
+   `/plan-track` writes optional `Release note:` and `Upgrade risk:` lines in
+   the plan header only when a change needs a disclosure. `/review-and-prep`
+   prints optional `User-facing change:` lines on a `next: ship-and-land` exit,
+   after the H-B fence and before the stage line. Producers write one disclosure
+   per line, label first, singular and inline; never write a label with `none`.
+2. **Consumer grammar.** The labels are `Release note`, `Upgrade risk` and
+   `User-facing change`, with an optional `s` before the colon, case as written.
+   A label line has up to three leading spaces, an optional list marker (`-`,
+   `*` or `+` and a space), and the label, optionally bold (`**Label**:` or
+   `**Label:**`), then optional spaces and the colon. Text after the colon is
+   one disclosure (inline). With nothing after the colon, the following
+   `-`/`*`/`+` bullet lines are one disclosure each (block). The block ends at
+   the first line that is not such a bullet, or that is another label line.
+   A label in the middle of a line is not read. A consumer does not ignore
+   `none`, `n/a` or template placeholders: producers omit inapplicable lines.
+3. **Outside code fences.** Only lines outside code fences are read. Fences
+   are `` ``` `` or `~~~` with up to three spaces of indent, and the fence
+   lines count as inside. A consumer treats a fence that never closes as
+   unreadable text, never as "no disclosures".
+4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels,
+   so the H-B grammar table does not change. Under field grammar rule 3 and
+   "Confidentiality and data handling", an upper-case status word or a
+   token-shaped value in them still caps the outcome. Producers therefore
+   write plain sentences with no upper-case status word. Plan `## Risks`
+   bullets remain implementation and verification risks: never copy them into
+   disclosures or begin one with a disclosure label in any accepted form.
+5. **Compatibility.** The H-B fence, the
+   `Run /ship-and-land for this prepared PR.` line, the stage line, the compact
+   receipt comment, the PR body section and the kept marker set do not carry
+   these lines. Older producers print none, and that is normal. Existing
+   consumers and case outcomes are unchanged for safe disclosure text.
+6. **Versioning.** Additive-only, no in-band token. Removing a label or form
+   needs a contract revision and a 0.x MINOR release under the release policy.
+7. **Confidentiality.** The lines become public release text, so they hold
+   no local path, credential or confidential requirement text.
+
+```text fixture=release-disclosures-plan.txt
+# Plan: Add --format json to bin/roadmap-audit
+Tier: routine
+Verify command: bun test tests/audit-cli-contract.test.ts
+Release note: `bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.
+Upgrade risk: Scripts matching `--help` output will see the new `--format` line.
+## Risks
+- A parser bug could drop valid lines.
+```
+
+```text fixture=release-disclosures-review.txt
+User-facing change: `bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.
+User-facing change: `--help` lists the new `--format` option.
+```
+
+```text fixture=release-disclosures-forms.txt
+Release notes:
+- The command accepts a JSON output format.
++ Exit code 2 still means invalid arguments.
+**Upgrade risk**: Callers parsing help text see one new flag line.
+  * User-facing change: Help lists the JSON option.
+This mid-line Release note: is not a disclosure.
+Release note without a colon
+~~~text
+Release note: This fenced copy is not a disclosure.
+~~~
+```
 
 ## Validated and receipt-present bindings
 

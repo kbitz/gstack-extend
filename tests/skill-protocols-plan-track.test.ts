@@ -178,6 +178,32 @@ describe('plan-track uses one verify-command label', () => {
     expect(skillN).toContain('`/implement` reads it as intent and never runs it.');
     expect(norm(handoffs)).toContain('`/implement` reads its plan\'s `Verify command:` line as intent and never runs it');
   });
+
+  // Value: protects=the exact _release: header line, its single-occurrence rule, and the Post-merge row syntax; fails_when=the template drops _release:, allows duplicate _release: lines or prose on _release:, or drops the - <ID>: <text> rule; why_new=Track 73B locks the release-level line and Post-merge row shape in plan-track; seam=none; no_claim=a live planner writes a valid plan
+  test('the plan template carries the single _release: line after Verify command: and states the Post-merge - <ID>: <text> row rule', () => {
+    const template = fences(skill).find(f => f.lang === 'markdown')!;
+    const lines = template.body.split('\n');
+    const verifyIdx = lines.indexOf('Verify command: <command, or none — how the plan is verified>');
+    expect(verifyIdx).toBeGreaterThan(-1);
+    expect(lines[verifyIdx + 1]).toBe('_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_');
+    expect(template.body.match(/^_release:/gm)).toHaveLength(1);
+    expect(skillN).toContain('write it once in the entire plan file: never repeat `_release:` in `## Acceptance criteria`, `## Tasks`, `## Risks` or `## Review record`, and never append user-facing disclosure prose to it.');
+    expect(skillN).toContain('Put user-facing changes and upgrade notes on the separate `Release note:` and `Upgrade risk:` lines instead.');
+    expect(skillN).toContain('A `## Post-merge` row is written `- <ID>: <text>`, with a colon right after its ID and none inside it; with no such check the section is the single line `none`.');
+  });
+
+  // Value: protects=optional Release note: and Upgrade risk: disclosures stay separate from ## Risks; fails_when=the template drops either label, allows none/n/a placeholders or permits reusing ## Risks bullets; why_new=Track 73B separates user-facing disclosures from implementation risks; seam=none; no_claim=a consumer parses the disclosures here (covered in handoff-contract.test.ts)
+  test('the plan template carries Release note: and Upgrade risk: lines and forbids reusing ## Risks bullets', () => {
+    const template = fences(skill).find(f => f.lang === 'markdown')!;
+    const lines = template.body.split('\n');
+    const releaseIdx = lines.indexOf('_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_');
+    expect(lines[releaseIdx + 1]).toBe('Release note: <what a user of the project sees or does differently>');
+    expect(lines[releaseIdx + 2]).toBe('Upgrade risk: <what an upgrading user must do or watch for>');
+    expect(skillN).toContain('`Release note:` and `Upgrade risk:` are optional header lines');
+    expect(skillN).toContain('Omit either label, or both, when nothing applies; never write `none` or `n/a`.');
+    expect(skillN).toContain('never copies, re-labels or summarizes `## Risks` bullets');
+    expect(skill).toContain('https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures');
+  });
 });
 
 describe('plan-track is registered everywhere a skill is', () => {
@@ -206,5 +232,18 @@ describe('plan-track documents the manual link', () => {
     expect(installation).toContain('ln -s ~/.claude/skills/plan-track <host-skills-dir>/plan-track');
     expect(installation).toContain('ln -s <checkout>/skills/plan-track.md <host-skills-dir>/plan-track/SKILL.md');
     expect(norm(installation)).toContain('`setup` and its uninstall never see these links, so remove them by hand');
+  });
+});
+
+// Value: protects=requested-only release metadata; fails_when=plans infer release levels or accept free prose; why_new=review found scope drift; seam=none; no_claim=live planner output
+describe('plan-track requested release level', () => {
+  test('requires an explicit request and a valid single-line form', () => {
+    expect(skillN).toContain('only when the card, `NOTES` or the project\'s instructions ask the plan to name a release level');
+    expect(skillN).toContain('at the start of a line and outside any code fence');
+    const template = fences(skill).find(f => f.lang === 'markdown')!.body;
+    const placeholder = template.split('\n').find(l => l.startsWith('_release:'))!;
+    const pattern = new RegExp('^' + placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace('<patch\\|minor\\|major\\|1\\.0\\.0>', '(?:patch|minor|major|1\\.0\\.0)').replace('<SPEC mapping>', '[^\\n]+') + '$');
+    expect('_release: minor (SPEC release policy: compatible additions use MINOR)_').toMatch(pattern);
+    expect('_release: minor — a paragraph').not.toMatch(pattern);
   });
 });

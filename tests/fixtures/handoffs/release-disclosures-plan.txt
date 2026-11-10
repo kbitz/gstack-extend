@@ -1,0 +1,7 @@
+# Plan: Add --format json to bin/roadmap-audit
+Tier: routine
+Verify command: bun test tests/audit-cli-contract.test.ts
+Release note: `bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.
+Upgrade risk: Scripts matching `--help` output will see the new `--format` line.
+## Risks
+- A parser bug could drop valid lines.

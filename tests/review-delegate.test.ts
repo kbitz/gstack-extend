@@ -112,7 +112,7 @@ const writeAll = (fd, text) => {
 };
 const out = (line) => writeAll(1, line + '\\n');
 const err = (line) => writeAll(2, line + '\\n');
-const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 8, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
+const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 80, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
 const rec = 'Recommendation: fix because a gap remains.';
 const envelope = (result, usage) => JSON.stringify({ result, usage });
 if (mode === 'findings') out(envelope(finding('CRITICAL', '[P1]') + '\\n' + finding('INFORMATIONAL', '[P3]') + '\\n' + rec, { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 7, cache_creation_input_tokens: 0 }));
@@ -665,7 +665,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     }
   }, 60_000);
 
-  test('specialist prompt bytes and callId are byte-identical to pre-72B so saved specialist results replay', () => {
+  test('specialist prompt layout and callId ignore irrelevant caught text', () => {
     const base = 'a'.repeat(40);
     const candidate = 'b'.repeat(40);
     const prompt = buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body');
@@ -700,22 +700,82 @@ describe('reply parsing and the receipt contract', () => {
   });
 
   test('parseFindings rejects unparsed content and requires every label line to parse', () => {
-    const line = (label: string, severity: string) => `${label} ${JSON.stringify({ severity, confidence: 5, path: 'a.ts', category: 'testing', summary: 's' })}`;
+    const line = (label: string, severity: string, confidence = 5) => `${label} ${JSON.stringify({ severity, confidence, path: 'a.ts', category: 'testing', summary: 's' })}`;
     const complete = (body: string) => `${body}\nRecommendation: fix because findings remain.`;
     expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n\`\`\`\n[P1] not json\n\`\`\`\nprose [P1] inside a sentence`, 'testing')).toEqual({ ok: false });
-    expect(parseFindings(complete(`${line('[P0]', 'CRITICAL')}\n${line('[P3]', 'INFORMATIONAL')}`), 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing' }, { severity: 'INFORMATIONAL' }] });
-    for (const bad of [line('[P1]', 'INFORMATIONAL'), line('[P3]', 'CRITICAL'), '[P1]', '[P1] []', '[P1] {"severity":"CRITICAL","confidence":11,"path":"a","category":"c","summary":"s"}',
+    expect(parseFindings(complete(`${line('[P0]', 'CRITICAL', 0)}\n${line('[P3]', 'INFORMATIONAL', 100)}`), 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing', confidence: 1 }, { severity: 'INFORMATIONAL', confidence: 10 }] });
+    for (const bad of [line('[P1]', 'INFORMATIONAL'), line('[P3]', 'CRITICAL'), '[P1]', '[P1] []', '[P1] {"severity":"CRITICAL","confidence":101,"path":"a","category":"c","summary":"s"}',
+      '[P1] {"severity":"CRITICAL","confidence":-1,"path":"a","category":"c","summary":"s"}',
+      '[P1] {"severity":"CRITICAL","confidence":8.5,"path":"a","category":"c","summary":"s"}',
+      '[P1] {"severity":"CRITICAL","confidence":"8","path":"a","category":"c","summary":"s"}',
       '[P1] {"severity":"CRITICAL","confidence":5,"path":"","category":"c","summary":"s"}', `${line('[P1]', 'CRITICAL').slice(0, -1)},"line":0}`, `${line('[P1]', 'CRITICAL').slice(0, -1)},"fix":3}`]) {
       expect(parseFindings(complete(`${line('[P2]', 'INFORMATIONAL')}\n${bad}`), 'testing')).toEqual({ ok: false });
     }
   });
 
+  // Value: protects=0-100 confidence scale in delegate prompt rule and 1-10 normalization at parse; fails_when=a 0-100 confidence reply (such as 95) is rejected by parseFindings, not credited by decide, or emitted off the 1-10 scale; why_new=owner-approved 0-100 confidence regression; seam=parseFindings and decide
+  test('regression: real maintainability reply with confidence 95 parses, is credited, and normalizes to 10 alongside adversarial and specialist scales', () => {
+    expect(ADVERSARIAL_SCHEMA).toContain('Rule: confidence is an integer from 0 to 100.');
+    const realReply = [
+      '[P3] {"severity":"INFORMATIONAL","confidence":95,"path":"tests/test_karl_wait.py","line":12,"category":"maintainability","summary":"...","fix":"...","fingerprint":"tests/test_karl_wait.py:12:maintainability","specialist":"maintainability"}',
+      'Recommendation: fix because the wait helper test can be simplified.',
+    ].join('\n');
+    const parsed = parseFindings(realReply, 'maintainability');
+    expect(parsed).toEqual({
+      ok: true,
+      findings: [{
+        severity: 'INFORMATIONAL',
+        confidence: 10,
+        path: 'tests/test_karl_wait.py',
+        line: 12,
+        category: 'maintainability',
+        summary: '...',
+        fix: '...',
+        fingerprint: 'tests/test_karl_wait.py:12:maintainability',
+        specialist: 'maintainability',
+      }],
+    });
+    const classify = () => ({ execution: { state: 'ran' }, findings: { highest: 'P3' }, verdict: 'findings' as const });
+    const result = decide('maintainability', {
+      exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false,
+      stdout: realReply, stderr: '', wall_ms: 10,
+    }, classify as any);
+    expect(result).toMatchObject({
+      outcome: 'credited',
+      fallback_reason: null,
+      findings: parsed.ok ? parsed.findings : [],
+    });
+
+    const single = (confidence: unknown) =>
+      `[P2] ${JSON.stringify({ severity: 'INFORMATIONAL', confidence, path: 'a.ts', category: 'c', summary: 's' })}\nRecommendation: fix because a finding remains.`;
+    expect(parseFindings(single(8), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'adversarial' }] });
+    expect(parseFindings(single(70), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 7, specialist: 'adversarial' }] });
+    expect(parseFindings(single(0), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'adversarial' }] });
+    expect(parseFindings(single(8), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'maintainability' }] });
+    expect(parseFindings(single(8), 'red-team')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'red-team' }] });
+    expect(parseFindings(single(0), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'maintainability' }] });
+    for (const part of PARTS) {
+      const advisory = part === 'simplification' ? { advisory: true } : {};
+      const reply = (scores: number[]) => scores.map(confidence =>
+        `[P2] ${JSON.stringify({ severity: 'INFORMATIONAL', confidence, path: 'a.ts', category: 'c', summary: 's', ...advisory })}`,
+      ).join('\n') + '\nRecommendation: fix because findings remain.';
+      expect(buildPrompt(part, 'a'.repeat(40), 'b'.repeat(40), 'diff', 'checklist')).toContain('confidence is an integer from 0 to 100 for every part');
+      expect(parseFindings(reply([95, 8, 10, 11, 70]), part)).toMatchObject({ ok: true, findings: [
+        { confidence: 10 }, { confidence: 1 }, { confidence: 1 }, { confidence: 1 }, { confidence: 7 },
+      ] });
+    }
+    for (const invalid of [101, -1, 9.5, '95']) {
+      expect(parseFindings(single(invalid), 'maintainability')).toEqual({ ok: false });
+      expect(parseFindings(single(invalid), 'adversarial')).toEqual({ ok: false });
+    }
+  });
+
   // Value: protects=upstream decision metadata survives transport without severity downgrades; fails_when=advice becomes an automatic defect fix or cause/evidence identity is lost; why_new=review F3; seam=upstream finding schema
   test('review regression: finding metadata is preserved and malformed metadata is refused', () => {
-    const value = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.ts', category: 'shrink', summary: 's', advisory: true,
+    const value = { severity: 'INFORMATIONAL', confidence: 80, path: 'a.ts', category: 'shrink', summary: 's', advisory: true,
       lines_removable: 12, evidence_paths: ['a.ts', 'b.ts'], helper_target: { path: 'shared.ts', symbol: 'helper' }, cause: { path: 'c.ts', line: 3 } };
     const parse = (v: any, part: 'testing' | 'simplification' = 'simplification', label = '[P2]') => parseFindings(`${label} ${JSON.stringify(v)}\nRecommendation: fix because findings remain.`, part);
-    expect(parse(value)).toEqual({ ok: true, findings: [{ ...value, specialist: 'simplification' }] });
+    expect(parse(value)).toEqual({ ok: true, findings: [{ ...value, confidence: 8, specialist: 'simplification' }] });
     expect(parse({ ...value, severity: 'CRITICAL' }, 'testing', '[P1]')).toMatchObject({ ok: true, findings: [{ severity: 'CRITICAL', advisory: true }] });
     expect(parse({ ...value, severity: 'CRITICAL' }, 'simplification', '[P1]')).toEqual({ ok: false });
     for (const patch of [{ advisory: 'true' }, { advisory: false }, { lines_removable: 1.5 }, { evidence_paths: [2] },
@@ -727,7 +787,7 @@ describe('reply parsing and the receipt contract', () => {
     const finding = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.test.ts', category: 'testing', summary: 'duplicate coverage' };
     const evidence = { detects: 'same failure', non_test_callers: [{ path: 'a.ts', count: 2 }], search_command: ['git', 'grep'], stronger_proof: null };
     const parse = (value: unknown) => parseFindings(`[P2] ${JSON.stringify({ ...finding, evidence: value })}\nRecommendation: fix because coverage is duplicated.`, 'testing');
-    expect(parse(evidence)).toEqual({ ok: true, findings: [{ ...finding, evidence, specialist: 'testing' }] });
+    expect(parse(evidence)).toEqual({ ok: true, findings: [{ ...finding, confidence: 1, evidence, specialist: 'testing' }] });
     expect(parse('a textual proof')).toMatchObject({ ok: true, findings: [{ evidence: 'a textual proof' }] });
     for (const invalid of [[], null, 3, { detects: 'incomplete' }, { ...evidence, invented: 'outside the schema' }]) expect(parse(invalid)).toEqual({ ok: false });
   });
@@ -990,11 +1050,15 @@ describe('tools mode', () => {
     expect(validateConfig(wrapConfig(validToolsProvider({ commands: ['pytest', 'bun:test *', 'cargo test --package a_b.1/2:=@+- *'] }))).ok).toBe(true);
   });
 
-  test('effectiveArgv, callId, and buildPrompt preserve diff-mode byte identity and bind tools-mode flags and policy', () => {
+  test('effectiveArgv, callId, and buildPrompt bind the new confidence policy and tools-mode flags', () => {
     expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
     const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
-    // Independent bytes from origin/main@5b54ffe, not the current policy constants.
-    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    // The explicit percent-scale rule intentionally invalidates old cached calls.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('30c8742c56b27287889188b65fe8594ff63d85a8c4b20d434c9e9cedb0f4f7ae');
+    const legacyPrompt = diffPrompt.replace('Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.\n', '');
+    // Independent legacy bytes from origin/main@5b54ffe.
+    expect(createHash('sha256').update(legacyPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(legacyPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(diffPrompt).toContain(DELEGATE_POLICY);
     expect(diffPrompt).not.toContain('disposable copy of the repository');
 
@@ -1027,7 +1091,8 @@ describe('tools mode', () => {
     if (!diffParsed.ok) return;
     const diffProv = diffParsed.config.providers.alpha!;
     expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
-    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b8d806cb3ad984da1ab076a59e6fb333fc2f43f48b829fc7d3a7559fc042d2f9');
+    expect(callId(legacyPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
     expect(callId(diffPrompt, diffProv, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([diffPrompt, ['/bin/echo', 'hi'], 'model-a', 'alpha'])).digest('hex'),
     );

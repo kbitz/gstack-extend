@@ -4628,6 +4628,30 @@ HEAD and `plan-sha256` the prompt's `SHA-256`. A blocked or needs-context exit
 prints `next: none` and that status after its resume summary, with no fence.
 `plan-sha256` is `none` when the exit names no plan hash.
 
+When the prepared diff changes user-visible behavior, CLI flags, configuration,
+skill inputs or outputs, or upgrade requirements, print one
+`User-facing change: <one plain sentence>` line for each change in the final
+message on a `next: ship-and-land` exit,
+outside the H-B `Run /ship-and-land` fence: place them after the fence's
+closing line and before the `Stage handoff: stage-handoff/v1;` line, which
+stays the last line of the message; see
+[release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures)
+(`docs/workflow-handoffs.md`). Never put `User-facing change:` on the
+`Run /ship-and-land for this prepared PR.` line, inside the H-B fence, or on
+the `Stage handoff: stage-handoff/v1;` line. Omit `User-facing change:`
+entirely when the diff has no user-facing change (never write `none` or
+`n/a`), and never copy internal review findings, test counts or `## Risks`
+items into it. Write one disclosure per line, label first, singular and inline.
+Use plain sentences with no upper-case status word, local path, credential or
+confidential requirement text: these lines count as text outside the handoff
+and become public release notes. Commands, files and labels go in backticks
+exactly as written. The lines are not added to the compact receipt comment,
+the PR body's `## Review and prep` section or the kept marker set. No manual
+testing pause, cycle stop, blocked result or external-gate exit prints them.
+A plan's `Release note:` and `Upgrade risk:` lines stay in the plan, which a
+release step also reads; restate one only when the reviewed head changed what
+it says.
+
 Read back live readiness before producing this prompt on an already-complete
 rerun too. Do not publish new PR comments or push code after the ready transition
 just to store the handoff; the pre-ready receipt and copyable final response

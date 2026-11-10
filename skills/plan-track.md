@@ -253,6 +253,9 @@ Write `PLAN_FILE` with these parts, in this order:
 # Plan: <card title>
 Tier: <routine|standard|novel>
 Verify command: <command, or none — how the plan is verified>
+_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_
+Release note: <what a user of the project sees or does differently>
+Upgrade risk: <what an upgrading user must do or watch for>
 ## Acceptance criteria
 1. <criterion, verbatim from the card>
 ## Tasks
@@ -277,6 +280,37 @@ Fill `Verify command:` from `VERIFY_COMMAND`, else the card's own,
 else the project's documented test command (record that choice as an
 auto-decision), else write `Verify command: none — <how the plan is verified>`.
 `/implement` reads it as intent and never runs it.
+
+Write the release-level line only when the card, `NOTES` or the project's
+instructions ask the plan to name a release level, taking the level from the
+project's release policy. Use exactly
+`_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_`, at the start of a line
+and outside any code fence; the parenthesis names the release-policy rule
+that gives the level. Keep it to that single line,
+and write it once in the entire plan file: never repeat `_release:` in
+`## Acceptance criteria`, `## Tasks`, `## Risks` or `## Review record`, and
+never append user-facing disclosure prose to it. Put user-facing changes and
+upgrade notes on the separate `Release note:` and `Upgrade risk:` lines
+instead. A `## Post-merge` row is written `- <ID>: <text>`, with a colon right
+after its ID and none inside it; with no such check the section is the single
+line `none`.
+
+`Release note:` and `Upgrade risk:` are optional header lines written only
+when the planned change has a
+user-visible behavioral, CLI, config, skill-interface or upgrade impact worth
+calling out to a user of the project; see
+[release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures)
+(`docs/workflow-handoffs.md`). Omit either label, or both, when nothing
+applies; never write `none` or `n/a`. Write one disclosure per line, label
+first, singular and inline, outside any code fence. Each entry is one plain
+sentence in user terms; commands, files and labels go in backticks exactly as
+written. It never copies, re-labels or summarizes `## Risks` bullets, which
+record implementation and verification failure modes rather than release
+disclosures. No other line in the plan (including Risks, Auto-decisions and
+Review record) starts with `Release note`, `Upgrade risk` or `User-facing
+change` followed by a colon, in any form the contract reads. Disclosures become
+public release text: include no upper-case status word, local path, credential
+or confidential requirement text.
 
 ## Final message
 

@@ -1,0 +1,10 @@
+Release notes:
+- The command accepts a JSON output format.
++ Exit code 2 still means invalid arguments.
+**Upgrade risk**: Callers parsing help text see one new flag line.
+  * User-facing change: Help lists the JSON option.
+This mid-line Release note: is not a disclosure.
+Release note without a colon
+~~~text
+Release note: This fenced copy is not a disclosure.
+~~~

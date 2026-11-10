@@ -899,7 +899,7 @@ describe('(A) the doc is the oracle', () => {
 
   test('embedded fixtures are byte-locked to the fixture files', () => {
     const embedded = [...DOC.matchAll(/^```text fixture=(\S+)\n([\s\S]*?)\n```$/gm)];
-    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'stage-line.txt', 'stage-lines.txt']);
+    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'release-disclosures-forms.txt', 'release-disclosures-plan.txt', 'release-disclosures-review.txt', 'stage-line.txt', 'stage-lines.txt']);
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
@@ -2664,5 +2664,167 @@ describe('(K) first-cycle=overlap', () => {
       expect(has(doc, phrase), phrase).toBe(true);
     }
     expect(POLICY_VALUES['first-cycle']!.test('overlap')).toBe(true);
+  });
+});
+
+// ─── (L) Release disclosures ────────────────────────────────────────────
+
+interface Disclosures {
+  releaseNotes: string[];
+  upgradeRisks: string[];
+  userFacingChanges: string[];
+}
+
+function readDisclosures(text: string): Disclosures | null {
+  const out: Disclosures = { releaseNotes: [], upgradeRisks: [], userFacingChanges: [] };
+  const label = '(Release notes?|Upgrade risks?|User-facing changes?)';
+  const labelRe = new RegExp('^ {0,3}(?:[-*+] )?(?:\\*\\*' + label + '\\*\\* *:|\\*\\*' + label + ' *:\\*\\*|' + label + ' *:) *(.*)$');
+  const families: Record<string, keyof Disclosures> = {
+    'Release note': 'releaseNotes', 'Release notes': 'releaseNotes',
+    'Upgrade risk': 'upgradeRisks', 'Upgrade risks': 'upgradeRisks',
+    'User-facing change': 'userFacingChanges', 'User-facing changes': 'userFacingChanges',
+  };
+  let fenceChar: '`' | '~' | null = null;
+  let fenceLen = 0;
+  let activeList: keyof Disclosures | null = null;
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (fenceChar !== null) {
+      if (new RegExp('^ {0,3}' + fenceChar + '{' + fenceLen + ',}[ \\t]*$').test(line)) {
+        fenceChar = null;
+      }
+      continue;
+    }
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      fenceChar = fence[1]![0] as '`' | '~';
+      fenceLen = fence[1]!.length;
+      activeList = null;
+      continue;
+    }
+    const match = labelRe.exec(line);
+    if (match) {
+      const family = families[match[1] ?? match[2] ?? match[3]!]!;
+      const value = match[4]!.trim();
+      activeList = value ? null : family;
+      if (value) out[family].push(value);
+      continue;
+    }
+    const bullet = /^\s*[-*+]\s+(.+)$/.exec(line);
+    if (activeList && bullet) out[activeList].push(bullet[1]!.trim());
+    else activeList = null;
+  }
+  return fenceChar === null ? out : null;
+}
+
+describe('(L) release disclosures', () => {
+  const fixture = (name: string) => readFileSync(join(FIXTURES, `release-disclosures-${name}.txt`), 'utf8');
+
+  // Value: protects=plan disclosure labels and Risks separation; fails_when=a header label is lost or ordinary risks become disclosures; why_new=Track 73B; seam=none; no_claim=live model output
+  test('reads the plan header without treating ordinary Risks bullets as disclosures', () => {
+    expect(readDisclosures(fixture('plan'))).toEqual({
+      releaseNotes: ['`bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.'],
+      upgradeRisks: ['Scripts matching `--help` output will see the new `--format` line.'], userFacingChanges: [],
+    });
+  });
+
+  // Value: protects=the real fenced H-B layout; fails_when=a fenced label leaks or outside disclosures are dropped; why_new=Track 73B; seam=none; no_claim=live GitHub state
+  test('reads only the two review lines following the H-B fence', () => {
+    const disclosures = fixture('review');
+    const suffix = '\n' + disclosures + 'Stage handoff: stage-handoff/v1; stage: review; next: ship-and-land; status: done; head: $HEAD; plan-sha256: $PLAN\n';
+    const v = run('B-TRUSTED', { wrap: 'fence', suffix });
+    expect(v.outcome).toBe(TRUSTED);
+    expect(v.mismatches).toEqual([]);
+    expect(v.releaseOnlyEligible).toBe(true);
+    expect(readDisclosures('```text\nRelease note: Hidden.\n```\n' + disclosures)).toEqual({
+      releaseNotes: [], upgradeRisks: [], userFacingChanges: [
+        '`bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.',
+        '`--help` lists the new `--format` option.',
+      ],
+    });
+  });
+
+  // Value: protects=accepted grammar and negative forms; fails_when=plural/bold/list labels or plus bullets drift; why_new=Track 73B; seam=none; no_claim=external reader execution
+  test('reads plural, bold and bulleted forms and ignores mid-line, colonless and fenced copies', () => {
+    expect(readDisclosures(fixture('forms'))).toEqual({
+      releaseNotes: ['The command accepts a JSON output format.', 'Exit code 2 still means invalid arguments.'],
+      upgradeRisks: ['Callers parsing help text see one new flag line.'],
+      userFacingChanges: ['Help lists the JSON option.'],
+    });
+    expect(readDisclosures('**Release note:** Another change.')).toEqual({ releaseNotes: ['Another change.'], upgradeRisks: [], userFacingChanges: [] });
+    expect(readDisclosures('Release note: none')).toEqual({ releaseNotes: ['none'], upgradeRisks: [], userFacingChanges: [] });
+  });
+});
+
+// Value: protects=the approved external disclosure grammar and H-B status caps; fails_when=labels or fences drift; why_new=review reproduced grammar drift; seam=none; no_claim=external consumer execution
+describe('(L2) approved disclosure boundaries', () => {
+  test('accepts indented list labels and plus bullets, keeps label case, and rejects unclosed fences', () => {
+    expect(readDisclosures('  - Release note: A public change.\nUpgrade risks:\n+ Upgrade first.')).toEqual({ releaseNotes: ['A public change.'], upgradeRisks: ['Upgrade first.'], userFacingChanges: [] });
+    expect(readDisclosures('Release NOTE: Wrong case.\nFour spaces: Release note: Mid-line.\nRelease note without a colon')).toEqual({ releaseNotes: [], upgradeRisks: [], userFacingChanges: [] });
+    expect(readDisclosures('  ```text\nRelease note: Hidden.\n   ```\nUser-facing change: Visible.')).toEqual({ releaseNotes: [], upgradeRisks: [], userFacingChanges: ['Visible.'] });
+    expect(readDisclosures('~~~text\nRelease note: Hidden.')).toBeNull();
+  });
+
+  test('composes disclosure lines outside the real H-B fence without changing safe outcomes', () => {
+    const disclosures = 'User-facing change: One public change.\nUser-facing change: Another public change.';
+    const suffix = '\n' + disclosures + '\nStage handoff: stage-handoff/v1; stage: review; next: ship-and-land; status: done; head: $HEAD; plan-sha256: $PLAN\n';
+    const composed = run('B-TRUSTED', { wrap: 'fence', suffix });
+    expect(composed.outcome).toBe(run('B-STAGE-LINE').outcome);
+    expect(composed.outcome).toBe(TRUSTED);
+    expect(composed.mismatches).toEqual([]);
+    expect(composed.releaseOnlyEligible).toBe(true);
+    expect(readDisclosures('```text\nRelease note: Hidden.\n```\n' + disclosures)).toEqual({ releaseNotes: [], upgradeRisks: [], userFacingChanges: ['One public change.', 'Another public change.'] });
+    expect(run('B-TRUSTED', { wrap: 'fence', suffix: suffix.replace('One public change.', 'BLOCKED by a new check.') }).outcome).toBe(REFUSE);
+  });
+
+  // Value: protects=all seven disclosure rules and their versioned release boundary; fails_when=producer, grammar, compatibility, versioning or confidentiality clauses disappear; why_new=T3 requires all seven rules, beyond the existing selected phrase checks; seam=none; no_claim=live producer or external consumer execution
+  test('doc and producer label sets agree and all seven disclosure rules retain their release boundary', () => {
+    const plan = read('skills/plan-track.md');
+    const prep = read('skills/review-and-prep.md');
+    const labels = ['Release note', 'Upgrade risk', 'User-facing change'];
+    const template = /```markdown\n([\s\S]*?)\n```/.exec(plan)![1]!;
+    const producerLabels = [...template.matchAll(/^(Release note|Upgrade risk):/gm)].map(m => m[1]);
+    expect([...producerLabels, ...new Set([...prep.slice(prep.indexOf('## 7. Emit')).matchAll(/`(User-facing change):/g)].map(m => m[1]))].sort()).toEqual(labels.sort());
+    const contract = section('### Release disclosures');
+    expect([...new Set([...contract.matchAll(/`(Release note|Upgrade risk|User-facing change)`/g)].map(m => m[1]))].sort()).toEqual(labels.sort());
+    const kept = tableRows(section('### Receipt layout and kept marker set')).flat().join(' ');
+    for (const label of labels) expect(kept).not.toContain(label);
+    for (const phrase of ['case as written', 'up to three leading spaces', 'unreadable text', 'still caps the outcome', 'no local path, credential or confidential requirement text']) expect(squash(contract)).toContain(phrase);
+    const rules = squash(contract);
+    for (const phrase of [
+      '1. **Purpose and producers.** A release step reads disclosure data from an approved `/plan-track` plan and `/review-and-prep`\'s final message.',
+      'not a handoff, never authorize a stage or merge and add no binding.',
+      '`/plan-track` writes optional `Release note:` and `Upgrade risk:` lines in the plan header only when a change needs a disclosure.',
+      '`/review-and-prep` prints optional `User-facing change:` lines on a `next: ship-and-land` exit, after the H-B fence and before the stage line.',
+      'Producers write one disclosure per line, label first, singular and inline; never write a label with `none`.',
+      '2. **Consumer grammar.** The labels are `Release note`, `Upgrade risk` and `User-facing change`, with an optional `s` before the colon, case as written.',
+      'an optional list marker (`-`, `*` or `+` and a space)',
+      'optionally bold (`**Label**:` or `**Label:**`), then optional spaces and the colon.',
+      'Text after the colon is one disclosure (inline).',
+      'With nothing after the colon, the following `-`/`*`/`+` bullet lines are one disclosure each (block).',
+      'The block ends at the first line that is not such a bullet, or that is another label line.',
+      'A label in the middle of a line is not read.',
+      'A consumer does not ignore `none`, `n/a` or template placeholders: producers omit inapplicable lines.',
+      '3. **Outside code fences.** Only lines outside code fences are read.',
+      'Fences are `` ``` `` or `~~~` with up to three spaces of indent, and the fence lines count as inside.',
+      'A consumer treats a fence that never closes as unreadable text, never as "no disclosures".',
+      '4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels, so the H-B grammar table does not change.',
+      'Under field grammar rule 3 and "Confidentiality and data handling", an upper-case status word or a token-shaped value in them still caps the outcome.',
+      'Producers therefore write plain sentences with no upper-case status word.',
+      'Plan `## Risks` bullets remain implementation and verification risks: never copy them into disclosures or begin one with a disclosure label in any accepted form.',
+      '5. **Compatibility.** The H-B fence, the `Run /ship-and-land for this prepared PR.` line, the stage line, the compact receipt comment, the PR body section and the kept marker set do not carry these lines.',
+      'Older producers print none, and that is normal.',
+      'Existing consumers and case outcomes are unchanged for safe disclosure text.',
+      '6. **Versioning.** Additive-only, no in-band token.',
+      'Removing a label or form needs a contract revision and a 0.x MINOR release under the release policy.',
+      '7. **Confidentiality.** The lines become public release text, so they hold no local path, credential or confidential requirement text.',
+    ]) expect(rules).toContain(phrase);
+    const versionRows = tableRows(section('## Versions')).filter(row => row[0] === 'Release disclosures');
+    expect(versionRows).toEqual([[
+      'Release disclosures',
+      'optional lines in a `/plan-track` plan file and before the stage line of a `/review-and-prep` `next: ship-and-land` exit',
+      '1',
+      'none; additive-only',
+      '`Release note:` / `Release notes:`, `Upgrade risk:` / `Upgrade risks:`, `User-facing change:` / `User-facing changes:`',
+    ]]);
   });
 });
