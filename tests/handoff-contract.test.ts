@@ -649,7 +649,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/, 'first-cycle': /^overlap$/,
   'documentation-audit': /^final$/, 'documentation-scope': /^contracts$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
-  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, specialists: /^fold$/, 'red-team': /^ensure$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, blocking: /^shown$/, 'post-audit': /^classify$/, specialists: /^fold$/, 'red-team': /^ensure$/,
   // The six delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
   delegate: /^(?!.*\b(testing|maintainability|performance|simplification|adversarial|red-team)\b.*\b\1\b)(?:testing|maintainability|performance|simplification|adversarial|red-team)(?:,(?:testing|maintainability|performance|simplification|adversarial|red-team))*$/,
   'max-continuations': /^[0-9]$/,
@@ -1392,7 +1392,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -2012,7 +2012,7 @@ describe('(G) test-gaps', () => {
       'It is independent of `repair-review` and `repair-cycles`, may be sent alone or with either, and is never set by the light review default.',
       'a reproduced defect keeps its regression test',
       'It waives no gate and never authorizes a continuation.',
-      '`repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
+      '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
     expect(POLICY_VALUES['test-gaps']!.source).toBe('^record$');
     expect('test-gaps=record').not.toMatch(/routine|standard|novel/);
     expect(has(prep, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
@@ -2806,6 +2806,7 @@ describe('(L2) approved disclosure boundaries', () => {
       'A consumer does not ignore `none`, `n/a` or template placeholders: producers omit inapplicable lines.',
       '3. **Outside code fences.** Only lines outside code fences are read.',
       'Fences are `` ``` `` or `~~~` with up to three spaces of indent, and the fence lines count as inside.',
+      'A fence closes only at a line of its opening character, at least as long as the opener, with up to three spaces of indent and nothing after it.',
       'A consumer treats a fence that never closes as unreadable text, never as "no disclosures".',
       '4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels, so the H-B grammar table does not change.',
       'Under field grammar rule 3 and "Confidentiality and data handling", an upper-case status word or a token-shaped value in them still caps the outcome.',
@@ -2826,5 +2827,192 @@ describe('(L2) approved disclosure boundaries', () => {
       'none; additive-only',
       '`Release note:` / `Release notes:`, `Upgrade risk:` / `Upgrade risks:`, `User-facing change:` / `User-facing changes:`',
     ]]);
+  });
+
+  // Value: protects=PR #231 disclosure grammar boundaries: block termination, 4-space vs 3-space label indent, and fence closer character/length/indent/trailing-text rules; fails_when=a plain line or blank line fails to terminate a block, a 4-space label is read, or a mismatched/short/indented/annotated fence closer closes a fence; why_new=Track 75A T5; seam=none; no_claim=external consumer execution
+  test('enforces block termination, four-space label rejection and fence closer boundaries', () => {
+    // Block termination: plain line, blank line, following inline label, and fence.
+    expect(readDisclosures('Release notes:\n- First.\nPlain line.\n- Not read.')).toEqual({
+      releaseNotes: ['First.'], upgradeRisks: [], userFacingChanges: [],
+    });
+    expect(readDisclosures('Release notes:\n- First.\n\n- Not read.')).toEqual({
+      releaseNotes: ['First.'], upgradeRisks: [], userFacingChanges: [],
+    });
+    expect(readDisclosures('Release notes:\n- First.\nUpgrade risk: Second.\n- Not read.')).toEqual({
+      releaseNotes: ['First.'], upgradeRisks: ['Second.'], userFacingChanges: [],
+    });
+    expect(readDisclosures('Release notes:\n- First.\n```text\n- Inside fence.\n```\n- After fence.')).toEqual({
+      releaseNotes: ['First.'], upgradeRisks: [], userFacingChanges: [],
+    });
+    // Four-space vs three-space label indent.
+    expect(readDisclosures('    Release note: Four spaces not read.\n   Release note: Three spaces read.')).toEqual({
+      releaseNotes: ['Three spaces read.'], upgradeRisks: [], userFacingChanges: [],
+    });
+    // Fence closers: mismatched character, shorter closer, longer closer, 4-space indent, and trailing text.
+    expect(readDisclosures('```text\nRelease note: Hidden.\n~~~')).toBeNull();
+    expect(readDisclosures('~~~text\nRelease note: Hidden.\n```')).toBeNull();
+    expect(readDisclosures('````text\nRelease note: Hidden.\n```')).toBeNull();
+    expect(readDisclosures('```text\nRelease note: Hidden.\n`````\nRelease note: After longer closer.')).toEqual({
+      releaseNotes: ['After longer closer.'], upgradeRisks: [], userFacingChanges: [],
+    });
+    expect(readDisclosures('```text\nRelease note: Hidden.\n    ```')).toBeNull();
+    expect(readDisclosures('```text\nRelease note: Hidden.\n``` trailing')).toBeNull();
+  });
+});
+
+// Track 75A: `blocking=shown` and `post-audit=classify`.
+describe('(M) blocking=shown and post-audit=classify', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+  const without = (...keys: string[]) => {
+    const copy = { ...POLICY_VALUES };
+    for (const k of keys) delete copy[k];
+    return copy;
+  };
+
+  // Value: protects=both values parse alone and together, refuse near misses and repeats, and an older map without either key voids the whole line; fails_when=a regex loosens, a repeat parses or an older install would not drop the line; why_new=Track 75A T1; seam=none; no_claim=installed-agent execution
+  test('the parser accepts blocking=shown and post-audit=classify, refuses near misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('blocking=shown'))?.get('blocking')).toBe('shown');
+    expect(parsePolicy(line('post-audit=classify'))?.get('post-audit')).toBe('classify');
+    const all = parsePolicy(line('in-cap=delta; documentation-audit=final; documentation-scope=contracts; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; full-suite=external'));
+    expect(all?.get('blocking')).toBe('shown');
+    expect(all?.get('post-audit')).toBe('classify');
+    expect(all?.get('test-gaps')).toBe('record');
+    expect(all?.get('full-suite')).toBe('external');
+    for (const bad of [
+      'blocking=Shown', 'blocking=SHOWN', 'blocking=shown,all', 'blocking=all', 'blocking=reproduced',
+      'blocking=', 'blocking', 'block=shown', 'blocking=shown; blocking=shown',
+      'post-audit=classified', 'post-audit=Classify', 'post-audit=CLASSIFY', 'post-audit=delta',
+      'post-audit=fast', 'post-audit=classify,delta', 'post-audit=', 'post-audit', 'post_audit=classify',
+      'post-audit=classify; post-audit=classify',
+    ]) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    expect(parsePolicy(line('in-cap=delta; blocking=shown'), without('blocking'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; post-audit=classify'), without('post-audit'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; test-gaps=record'), without('blocking', 'post-audit'))?.get('test-gaps')).toBe('record');
+  });
+
+  // Value: protects=an H-E prompt carrying either or both values continues, while a bad value or repeat holds as policy-malformed; fails_when=either new value breaks H-E continuation; why_new=Track 75A T1; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries either value still continues and a bad value holds as policy-malformed', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of [
+      'blocking=shown',
+      'post-audit=classify',
+      'test-gaps=record; blocking=shown; post-audit=classify',
+    ]) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['blocking=Shown', 'blocking=shown; blocking=shown', 'post-audit=classified', 'post-audit=classify; post-audit=classify']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=grep -F capability checks against the real skill, rollout and receipt-present rows in the doc, and unchanged B-TRUSTED outcome; fails_when=either check fails on the skill, a near miss matches, or the doc drops the rollout/receipt-present text; why_new=Track 75A T1, T2, T3; seam=none; no_claim=installed-agent execution
+  test('grep -F finds both values in the skill and the doc publishes the checks, rollout, receipt-present rows and H-B note', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'blocking=shown', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'blocking=all', skillPath]).status).toBe(1);
+    expect(spawnSync('grep', ['-F', 'post-audit=classify', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'post-audit=classified', skillPath]).status).toBe(1);
+    for (const value of ['blocking=shown', 'post-audit=classify']) {
+      const check = `grep -F '${value}' "<installed skill dir>/SKILL.md"`;
+      expect(has(prep, check), `skill: ${check}`).toBe(true);
+      expect(has(doc, check), `doc: ${check}`).toBe(true);
+    }
+    for (const phrase of [
+      '`blocking=shown` follows the same rollout order and the same check',
+      '`post-audit=classify` follows the same rollout order and the same check',
+      'The rule is opt-in and today\'s owner stop stays the default',
+      'A prepared receipt with non-blocking findings still emits `review: COMPLETE` in its H-B handoff',
+      '| `blocking:` status and `Finding blocking:` and `Finding not blocking:` lines | receipt-present | published in the full receipt under `blocking=shown`, one line per decided finding with its attribution; a non-blocking finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |',
+      '| `post-audit:` status and `Post-audit change:` lines | receipt-present | published in the full receipt under `post-audit=classify`, one line per post-audit change naming why it did or did not need the owner; the documentation status they accompany stays the accepted audit\'s own and a blocked audit is never upgraded; the lines never authorize a stage or merge |',
+    ]) {
+      expect(has(doc, phrase), phrase).toBe(true);
+    }
+    expect(run('B-TRUSTED').outcome).toBe(TRUSTED);
+  });
+
+  // Value: protects=the Track 75A acceptance record states the before aggregates, unknown after fields, both exact checks, the MINOR release level and the limits; fails_when=a heading, check, unknown field or limit is dropped, or forbidden words/identifiers appear; why_new=Track 75A T6; seam=none; no_claim=installed-agent execution
+  test('the acceptance record states the before sample, unknown after fields, both checks, MINOR level and limits', () => {
+    const raw = read('docs/acceptance/review-fix-policy.md');
+    const at = raw.indexOf('## Review stop rules (Track 75A)');
+    expect(at).toBeGreaterThan(-1);
+    const sectionText = raw.slice(at);
+    const record = squash(sectionText);
+    for (const heading of ['### The values', '### Before: what recorded runs show', '### After: to be measured', '### Release notes', '### Limits']) {
+      expect(sectionText).toContain(heading);
+    }
+    for (const phrase of [
+      '`blocking=shown` (its only value) is opt-in.',
+      '`post-audit=classify` (its only value) is opt-in; today\'s owner stop stays the default.',
+      '50 runs with a metrics summary',
+      '47 `ok`, 3 `partial`',
+      '`data.local_passes`',
+      '`data.fix_cycles`',
+      'Cap stops in metrics summaries | unknown',
+      '4 capped reviews reported in [efficiency program](../designs/workflow-efficiency-program.md) E14',
+      'Documentation owner stops in metrics summaries | unknown',
+      '2 owner stops of about 20 minutes each in one 6.5-hour review',
+      'PR #174\'s count-correction owner exception',
+      'Per-finding blocking cost across cycles | unknown',
+      'nothing links a finding across cycles',
+      'Aggregates only: no session ID or repository name is published.',
+      'Count of `Finding blocking:` and `Finding not blocking:` lines in the receipt | unknown',
+      'Count of `Post-audit change:` lines (`owner=not-needed` and `owner=needed`) in the receipt | unknown',
+      'Cap stops and documentation owner stops avoided | unknown',
+      'the owner decides whether to accept each value on the first opted-in run after a release installs',
+      'a compatible addition, MINOR under the 0.x release policy',
+      `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`,
+      `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"`,
+      'No saving is established',
+      'No installed-agent run backs it',
+      'No checkpoint is awarded',
+    ]) {
+      expect(has(record, phrase), phrase).toBe(true);
+    }
+    const notes = sectionText.split('```text\n')[1]!.split('\n```')[0]!;
+    expect(notes).not.toMatch(/routine|standard|novel/);
+    expect(raw).not.toMatch(/\b(?:routine|novel)\b/);
+    expect(raw).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+  });
+});
+
+// Track 75A T4: capped-review recovery walk inside H-E.
+describe('(O) capped-review recovery', () => {
+  test('H-E documents the six-step recovery path and B-STOPPED-NONE-RECORDED still holds as stopped', () => {
+    const he = section('### Grammar H-E continue');
+    expect(he.split('#### Recovery from a capped review').length - 1).toBe(1);
+    const flat = squash(he);
+    const steps = [
+      '1. **Stopped draft.** `/review-and-prep` exits `STOPPED — review cycle cap` with the H-E prompt',
+      '2. **Authorized exact continuation.** Relay the stop\'s own H-E prompt unchanged plus exactly one `Invocation policy provenance:` line',
+      '3. **Unavailable evidence stays unavailable.** With `Full-review evidence: unavailable` (and its printed reason), repair-only holds as `delta-base` and only an authorized `full` continuation proceeds',
+      '4. **Manual holds stay holds.** A continuation that reaches required user testing pauses (`H-C`) and records `reviewRestrictionResolved: true` only after its review completed.',
+      '5. **Prepared readiness.** The continuation reaches `prepared`, records `reviewRestrictionResolved: true` in the receipt comment and emits `H-B`.',
+      '6. **Ship.** `/ship-and-land` runs only from that `H-B`. A ship invocation never clears a stop or replaces the continuation',
+    ];
+    let prev = -1;
+    for (const step of steps) {
+      const idx = flat.indexOf(step);
+      expect(idx, step).toBeGreaterThan(prev);
+      prev = idx;
+    }
+    for (const phrase of [
+      '`k` counts distinct stop SHAs for the PR\'s lifetime and is never reset',
+      'A stop after a first cycle that reproduced defects has its row only when cycle 2\'s fix review completed (`cycle-1-fix-review` with `fix-reviewed=true`); otherwise it is `unavailable` (`reviewer-incomplete`).',
+      '([`B-STOPPED-NONE-RECORDED`](#b-stopped-none-recorded))',
+      '[efficiency program](designs/workflow-efficiency-program.md) (E11)',
+    ]) {
+      expect(has(flat, phrase), phrase).toBe(true);
+    }
+    const stopped = run('B-STOPPED-NONE-RECORDED');
+    expect(stopped.outcome).toBe(HOLD);
+    expect(stopped.mismatches.map((m) => m.binding)).toEqual(['stopped']);
   });
 });
