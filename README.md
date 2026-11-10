@@ -29,7 +29,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 | [`/plan-track`](skills/plan-track.md) | Turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline. Use upstream `/autoplan` for a card that needs the full review pipeline, or `/plan-track` for a small, well-specified card. | New |
 | [`/implement`](skills/implement.md) | Executes an approved plan, checks completeness, runs targeted tests, and hands off for review. | Stable |
 | [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks and `/ship`'s pre-release gates, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
-| [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
+| [`/pair-review`](skills/pair-review.md) | Guides manual testing of the checks that need your judgment or access, prepares each with the agent's evidence, verifies a fix itself before asking you to retest, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
 | [`/ship-and-land`](skills/ship-and-land.md) | Reuses verified preparation, runs remaining release checks, then merges and verifies deployment through gstack. | New |
 | [`/docs-ship`](skills/docs-ship.md) | Takes a docs-only PR to the merge gate in one session: classifies it, checks scope, claims, rules, links and the tests that read the changed files, writes any bump the release policy asks for, and records a receipt. At `PASS` it asks whether to merge and merges only on your explicit answer; with no way to ask it stops with the merge command. | New |
 | [`/full-review`](skills/full-review.md) | Reviews the codebase with three specialist agents and turns approved findings into backlog items. | Stable |
@@ -173,8 +173,10 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
   remaining vendor capacity; `gstack-extend doctor quota` diagnoses adapters.
   Only explicit quota commands sample vendors. [Quick start and JSON contract](docs/quota-ledger.md).
 - **Telemetry:** `gstack-extend doctor telemetry` checks local skill-run records;
-  `gstack-extend-telemetry report [--json]` summarizes them by
-  [run mode](docs/telemetry.md#run-mode-report) (user-directed or orchestrated).
+  `gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...` summarizes them by
+  [run mode](docs/telemetry.md#run-mode-report) (user-directed or orchestrated),
+  per host with `--by-host`, and reads state directories synced from other
+  machines with repeated `--state-dir` (an absolute path).
   Optional usage telemetry follows gstack's settings; local execution provenance
   is on by default and never uploaded. `/review-and-prep` and `/ship-and-land`
   also keep optional local [workflow metrics](docs/telemetry.md#workflow-metrics)
@@ -202,6 +204,10 @@ bun run test        # Select tests from the committed diff against the base bran
 bun run test:full   # Run all tests, including checks for uncommitted changes
 ```
 
+On a fresh checkout, `scripts/full-suite.sh` runs the install and then every
+test (`EVALS_ALL=1 bun run test`) in one command, exiting with the suite's
+status.
+
 `bun run test` prints which test files it ran and skipped, and why. A run of
 every file prints that reason once. Editing one
 skill runs that skill's tests plus the shared skill rules. A release commit
@@ -220,9 +226,10 @@ records stay intact. Consumer projects retain their own schemes and init default
 See the [release policy](docs/SPEC.md#release-policy),
 [cutover procedure](CLAUDE.md#versioning), and
 [qualification evidence](docs/acceptance/release-compatibility.md).
-[Stage-runs schema v2](docs/telemetry.md#producer-version) is one example of the
+[Stage-runs schema v4](docs/telemetry.md#versions) is one example of the
 versioned provenance schemas in SPEC's [Stable surfaces](docs/SPEC.md#release-policy);
-the full O5.1 catalog remains a required pending obligation in [TODOs](docs/TODOS.md).
+the full O5.1 catalog remains a required pending obligation on the
+[roadmap](docs/ROADMAP.md).
 Release history is in [CHANGELOG.md](CHANGELOG.md); planned work is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
