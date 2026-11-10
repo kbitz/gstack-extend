@@ -942,7 +942,8 @@ command, test or reproduction with its evidence reference, or a documentation li
 the PR's diff made wrong); a base-only finding goes to TODOS (or to
 `test-gaps=record` when it is a recordable gap); an attacker-part finding blocks
 only once the host's rerun shows it; a safety-class finding keeps today's
-handling; and non-blocking findings stay in the receipt with their attribution. It
+handling, overriding the attacker-part, base-only and not-shown rules; and
+non-blocking findings stay in the receipt with their attribution. It
 waives no gate and never authorizes a continuation. While the anchors it relies on
 drift, every finding takes today's handling and the receipt says so.
 
@@ -1471,7 +1472,7 @@ or input it says is needed is for the user.
    are `` ``` `` or `~~~` with up to three spaces of indent, and the fence
    lines count as inside. A fence closes only at a line of its opening
    character, at least as long as the opener, with up to three spaces of indent
-   and nothing after it. A consumer treats a fence that never closes as
+   and nothing but spaces or tabs after it. A consumer treats a fence that never closes as
    unreadable text, never as "no disclosures".
 4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels,
    so the H-B grammar table does not change. Under field grammar rule 3 and

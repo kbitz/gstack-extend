@@ -2806,7 +2806,7 @@ describe('(L2) approved disclosure boundaries', () => {
       'A consumer does not ignore `none`, `n/a` or template placeholders: producers omit inapplicable lines.',
       '3. **Outside code fences.** Only lines outside code fences are read.',
       'Fences are `` ``` `` or `~~~` with up to three spaces of indent, and the fence lines count as inside.',
-      'A fence closes only at a line of its opening character, at least as long as the opener, with up to three spaces of indent and nothing after it.',
+      'A fence closes only at a line of its opening character, at least as long as the opener, with up to three spaces of indent and nothing but spaces or tabs after it.',
       'A consumer treats a fence that never closes as unreadable text, never as "no disclosures".',
       '4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels, so the H-B grammar table does not change.',
       'Under field grammar rule 3 and "Confidentiality and data handling", an upper-case status word or a token-shaped value in them still caps the outcome.',
@@ -2857,6 +2857,12 @@ describe('(L2) approved disclosure boundaries', () => {
     });
     expect(readDisclosures('```text\nRelease note: Hidden.\n    ```')).toBeNull();
     expect(readDisclosures('```text\nRelease note: Hidden.\n``` trailing')).toBeNull();
+    expect(readDisclosures('```text\nRelease note: Hidden.\n``` \t\nRelease note: After whitespace.')).toEqual({
+      releaseNotes: ['After whitespace.'], upgradeRisks: [], userFacingChanges: [],
+    });
+    expect(readDisclosures('~~~text\r\nRelease note: Hidden.\r\n~~~\r\nRelease note: After CRLF.')).toEqual({
+      releaseNotes: ['After CRLF.'], upgradeRisks: [], userFacingChanges: [],
+    });
   });
 });
 
@@ -2985,6 +2991,7 @@ describe('(M) blocking=shown and post-audit=classify', () => {
 
 // Track 75A T4: capped-review recovery walk inside H-E.
 describe('(O) capped-review recovery', () => {
+  // Value: protects=the recovery order preserves stopped and unavailable-evidence holds; fails_when=a step or stopped fixture hold is lost; why_new=Track 75A T4; seam=none; no_claim=installed-agent execution
   test('H-E documents the six-step recovery path and B-STOPPED-NONE-RECORDED still holds as stopped', () => {
     const he = section('### Grammar H-E continue');
     expect(he.split('#### Recovery from a capped review').length - 1).toBe(1);
