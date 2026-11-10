@@ -646,6 +646,39 @@
 - **Revisit when:** The next Track touches either tagged path or the adversarial extraction rule.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=tests/handoff-contract.test.ts|docs/workflow-handoffs.md] Test gap: Release disclosure grammar boundaries
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Block termination, four-space labels, and wrong-character or short fence closers lack dedicated cases.
+- **Hypothesis (untested):** Extend the existing grammar table with one-rule-at-a-time boundary cases.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** tests/handoff-contract.test.ts:2758
+- **Evidence:** Coverage audit G2–G4; source and tests inspected, no failure reproduced for this behavior.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/1cb2a68f` at `05ace49` (2026-11-09).
+- **Revisit when:** The next Track touches the tagged files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/plan-track.md|skills/review-and-prep.md] Test gap: Live release disclosure producer behavior
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Static contracts do not establish that actual planner/reviewer runs omit internal-only disclosures, respect pause exits, and avoid copying Risks.
+- **Hypothesis (untested):** Run bounded installed-skill examples with public/internal-only changes and paused review exits.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/plan-track.md:299
+- **Evidence:** Coverage audit G2–G4; source and tests inspected, no failure reproduced for this behavior.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/1cb2a68f` at `05ace49` (2026-11-09).
+- **Revisit when:** The next Track touches the tagged files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/delegate.ts|tests/review-delegate.test.ts] Test gap: Live delegated percentage-scale adherence
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Fake providers and parser tests do not establish model adherence to the uniform percentage instruction when an upstream checklist uses another scale.
+- **Hypothesis (untested):** Exercise real specialist and attacker replies with the explicit percent-scale prompt and inspect raw versus normalized scores.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-delegate/delegate.ts:180
+- **Evidence:** Coverage audit G2–G4; source and tests inspected, no failure reproduced for this behavior.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/1cb2a68f` at `05ace49` (2026-11-09).
+- **Revisit when:** The next Track touches the tagged files.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

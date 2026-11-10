@@ -508,7 +508,8 @@ and stored sign-in through the environment allowlist below, without an OS sandbo
   ```
   `callId` hashes `[prompt, effectiveArgv(provider), provider.model, label]`, so
   any change to `commands` or runner-owned flags produces a distinct call id.
-  Diff-mode prompt, argv and call-id bytes remain unchanged.
+  Diff-mode argv is unchanged; the shared confidence-format update changes
+  prompt and call-id bytes in both modes.
 - **Prompt (`TOOLS_POLICY`):** Replaces the diff-only no-tools lines while
   keeping the response format (`POLICY_FORMAT`) identical. The prompt names each
   allowed command rule in a semicolon-separated list and asks for the command, observed result and

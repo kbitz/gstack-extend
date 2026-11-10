@@ -2776,7 +2776,8 @@ describe('(L2) approved disclosure boundaries', () => {
     expect(run('B-TRUSTED', { wrap: 'fence', suffix: suffix.replace('One public change.', 'BLOCKED by a new check.') }).outcome).toBe(REFUSE);
   });
 
-  test('doc and producer label sets agree and kept markers contain no disclosure label', () => {
+  // Value: protects=all seven disclosure rules and their versioned release boundary; fails_when=producer, grammar, compatibility, versioning or confidentiality clauses disappear; why_new=T3 requires all seven rules, beyond the existing selected phrase checks; seam=none; no_claim=live producer or external consumer execution
+  test('doc and producer label sets agree and all seven disclosure rules retain their release boundary', () => {
     const plan = read('skills/plan-track.md');
     const prep = read('skills/review-and-prep.md');
     const labels = ['Release note', 'Upgrade risk', 'User-facing change'];
@@ -2788,5 +2789,42 @@ describe('(L2) approved disclosure boundaries', () => {
     const kept = tableRows(section('### Receipt layout and kept marker set')).flat().join(' ');
     for (const label of labels) expect(kept).not.toContain(label);
     for (const phrase of ['case as written', 'up to three leading spaces', 'unreadable text', 'still caps the outcome', 'no local path, credential or confidential requirement text']) expect(squash(contract)).toContain(phrase);
+    const rules = squash(contract);
+    for (const phrase of [
+      '1. **Purpose and producers.** A release step reads disclosure data from an approved `/plan-track` plan and `/review-and-prep`\'s final message.',
+      'not a handoff, never authorize a stage or merge and add no binding.',
+      '`/plan-track` writes optional `Release note:` and `Upgrade risk:` lines in the plan header only when a change needs a disclosure.',
+      '`/review-and-prep` prints optional `User-facing change:` lines on a `next: ship-and-land` exit, after the H-B fence and before the stage line.',
+      'Producers write one disclosure per line, label first, singular and inline; never write a label with `none`.',
+      '2. **Consumer grammar.** The labels are `Release note`, `Upgrade risk` and `User-facing change`, with an optional `s` before the colon, case as written.',
+      'an optional list marker (`-`, `*` or `+` and a space)',
+      'optionally bold (`**Label**:` or `**Label:**`), then optional spaces and the colon.',
+      'Text after the colon is one disclosure (inline).',
+      'With nothing after the colon, the following `-`/`*`/`+` bullet lines are one disclosure each (block).',
+      'The block ends at the first line that is not such a bullet, or that is another label line.',
+      'A label in the middle of a line is not read.',
+      'A consumer does not ignore `none`, `n/a` or template placeholders: producers omit inapplicable lines.',
+      '3. **Outside code fences.** Only lines outside code fences are read.',
+      'Fences are `` ``` `` or `~~~` with up to three spaces of indent, and the fence lines count as inside.',
+      'A consumer treats a fence that never closes as unreadable text, never as "no disclosures".',
+      '4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels, so the H-B grammar table does not change.',
+      'Under field grammar rule 3 and "Confidentiality and data handling", an upper-case status word or a token-shaped value in them still caps the outcome.',
+      'Producers therefore write plain sentences with no upper-case status word.',
+      'Plan `## Risks` bullets remain implementation and verification risks: never copy them into disclosures or begin one with a disclosure label in any accepted form.',
+      '5. **Compatibility.** The H-B fence, the `Run /ship-and-land for this prepared PR.` line, the stage line, the compact receipt comment, the PR body section and the kept marker set do not carry these lines.',
+      'Older producers print none, and that is normal.',
+      'Existing consumers and case outcomes are unchanged for safe disclosure text.',
+      '6. **Versioning.** Additive-only, no in-band token.',
+      'Removing a label or form needs a contract revision and a 0.x MINOR release under the release policy.',
+      '7. **Confidentiality.** The lines become public release text, so they hold no local path, credential or confidential requirement text.',
+    ]) expect(rules).toContain(phrase);
+    const versionRows = tableRows(section('## Versions')).filter(row => row[0] === 'Release disclosures');
+    expect(versionRows).toEqual([[
+      'Release disclosures',
+      'optional lines in a `/plan-track` plan file and before the stage line of a `/review-and-prep` `next: ship-and-land` exit',
+      '1',
+      'none; additive-only',
+      '`Release note:` / `Release notes:`, `Upgrade risk:` / `Upgrade risks:`, `User-facing change:` / `User-facing changes:`',
+    ]]);
   });
 });
