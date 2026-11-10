@@ -1101,7 +1101,7 @@ describe('pair-review stage line', () => {
       {
         id: 'pause-head',
         heading: '## Stage line',
-        text: '`head` from `git rev-parse HEAD` at the exit',
+        text: 'PAUSE: `next: pair-review`, `status: paused`, `head` from `git rev-parse HEAD` at the exit',
       },
       {
         id: 'blocked-or-needs-context-head',
@@ -1122,5 +1122,13 @@ describe('pair-review stage line', () => {
 
     const withoutBlocked = pairSkill.replace('When the session rollup is BLOCKED', '');
     expect(missingClauses(withoutBlocked, clauses)).toContain('paused-route-blocked-precedence');
+
+    const pauseRoute = '- **PAUSE:** `next: pair-review`, `status: paused`, `head` from `git rev-parse HEAD` at the exit';
+    const withoutPauseHead = pairSkill.replace(
+      pauseRoute,
+      pauseRoute.replace('`head` from `git rev-parse HEAD` at the exit', '`head` from a saved checkpoint'),
+    );
+    expect(withoutPauseHead).not.toBe(pairSkill);
+    expect(missingClauses(withoutPauseHead, clauses)).toContain('pause-head');
   });
 });
