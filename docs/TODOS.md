@@ -2,16 +2,6 @@
 
 ## Unprocessed
 
-### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Isolate neighboring review-policy bullet assertions
-- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
-- **Description:** The existing test-gaps and documentation-scope bullet slices now include the newly inserted neighboring policy bullet. Shared phrases in the neighbor can satisfy an older bullet's assertion after that phrase is removed from its own bullet.
-- **Hypothesis (untested):** Bound each existing slice at its next policy bullet, then use a mutation to verify that removing a required phrase from its owning bullet fails the owning test. Re-verify the slices before changing them.
-- **Upstream severity:** INFORMATIONAL
-- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:2404` and `:3115`
-- **Evidence:** Static reads in the adversarial, outside and coverage audits; no product failure was reproduced. The current targeted contracts pass.
-- **Context:** Filed by `/review-and-prep` on 2026-11-10 against `9c32fc1`; draft PR creation follows verification.
-- **Effort:** ? (user triages in /roadmap)
-
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
