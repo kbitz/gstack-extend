@@ -181,3 +181,110 @@ agent judges "no demonstrated defect" as the text asks is unproven. No saving is
 established: the "before" sample is unpaired and the "after" side is unknown.
 No checkpoint is awarded. Revisit when an opted-in run has recorded the fields
 above and a similar run without the value can be set beside it.
+
+## Review stop rules (Track 75A)
+
+Track 75A, recorded against source revision `bcf1f80` plus this Track's
+implementation. This record covers prose, fixtures and tests of two optional
+`Review policy:` values, `blocking=shown` and `post-audit=classify` (see
+[the policy grammar](../workflow-handoffs.md#grammar-h-e-continue)), plus the
+capped-review recovery walk in the stage handoff contract. No installed-agent
+run backs it: a static prose test is not installed-agent acceptance
+([SPEC](../SPEC.md)). It establishes no saving and awards no checkpoint
+([SPEC](../SPEC.md) selected target acceptance and P1).
+
+### The values
+
+- `blocking=shown` (its only value) is opt-in. Under it, a review finding blocks
+  readiness only when evidence the host ran at the reviewed head shows it (a
+  failing command, test or reproduction with its evidence reference, or a
+  documentation line the PR's diff made wrong). A shown finding that also fails
+  at the merge base goes to TODOS with the `review` source tag (or to
+  `test-gaps=record` when it is a recordable gap). An attacker-part finding,
+  delegated or on the host, blocks only once the host's rerun shows it.
+  Safety-class findings (data loss, trust-boundary bypass, uncapped spend,
+  credential exposure) keep today's handling. Non-blocking findings stay in the
+  receipt with their `found_by` attribution. Upstream `/review`'s Fix-First,
+  adversarial and red-team handling is wrapped, not edited. On anchor drift, the
+  review runs as today and the receipt says `blocking: inactive`.
+- `post-audit=classify` (its only value) is opt-in; today's owner stop stays the
+  default. After the documentation audit's attempts are spent, each post-audit
+  change gets one bounded parent-side re-audit of its delta before the owner is
+  asked. A change touching no documented behavior (`rename`, `tests-only`,
+  `todos-only`, `mechanical-correction` or `already-documented`) proceeds with
+  its `Post-audit change:` line recorded (`owner=not-needed`), while a
+  `documented-behavior` change keeps today's owner stop (`owner=needed`). A
+  blocked audit is never upgraded, and upstream's attempt bound is unchanged.
+  When a precondition fails, blocked recovery runs as today and the receipt
+  records `post-audit: not applied — <reason>`.
+
+Omitted, every default is unchanged. Neither value waives a gate or authorizes a
+continuation.
+
+### Before: what recorded runs show
+
+Read on 2026-11-10 with `bin/gstack-extend-telemetry metrics read --session-id
+<id>` for every `review-and-prep` session in the stage-run records under
+`~/.gstack-extend/analytics/` (`stage-runs/<host>.jsonl` and the historical
+`stage-runs.jsonl`: 122 unique sessions; 72 had no metrics file). Aggregates
+only: no session ID or repository name is published.
+
+| Field | Value |
+|---|---|
+| Sample size | 50 runs with a metrics summary |
+| Status | 47 `ok`, 3 `partial` |
+| `data.local_passes` | 0 to 3, median 0 (39 of 50 runs report it) |
+| `data.fix_cycles` | 0 to 3, median 0 (50 of 50 runs report it) |
+| Cap stops in metrics summaries | unknown (metrics records carry no cycle-cap stop flag; 4 capped reviews reported in [efficiency program](../designs/workflow-efficiency-program.md) E14) |
+| Documentation owner stops in metrics summaries | unknown (metrics records carry no post-audit owner-stop counter; 2 owner stops of about 20 minutes each in one 6.5-hour review reported in the owner-approved fold-in card, 2026-11-08, plus PR #174's count-correction owner exception, 2026-10-26, Future entry) |
+| Per-finding blocking cost across cycles | unknown (nothing links a finding across cycles, Future entry on cross-cycle finding identity, facts checked 2026-11-08; consumer orchestrator findings-across-cycles records are outside this store and unread here) |
+
+The sample is unpaired: the runs differ in size, host and policy, none ran with
+either value, and no run was repeated with and without them.
+
+### After: to be measured
+
+Every field below reads `unknown` until a real run with the value on its policy
+line records it.
+
+| Field | Value |
+|---|---|
+| Sample size, status, `local_passes`, `fix_cycles` | unknown |
+| `/review` log row `cycles` for the run | unknown |
+| Count of `Finding blocking:` and `Finding not blocking:` lines in the receipt | unknown |
+| Count of `Post-audit change:` lines (`owner=not-needed` and `owner=needed`) in the receipt | unknown |
+| Cap stops and documentation owner stops avoided | unknown |
+
+To fill them: after a release that carries the values is installed, run a review
+with `blocking=shown` or `post-audit=classify` on its policy line; read its
+metrics with the command above; read the `/review` log row's `cycles`; count the
+receipt's `Finding blocking:`, `Finding not blocking:` and `Post-audit change:`
+lines and any owner stops avoided; compare against a run of similar size without
+the values, and record that pairing here. Until then the criterion's "after"
+side is not measured, and the owner decides whether to accept each value on the
+first opted-in run after a release installs.
+
+### Release notes
+
+For `/ship` to copy verbatim into the CHANGELOG entry of the version that adds
+the values. A test cannot pin text `/ship` has not written, so the
+`/ship-and-land` review checks the entry against this block.
+
+```text
+`/review-and-prep` accepts two more optional `Review policy:` values in `review-and-prep-policy/v1` (a compatible addition, MINOR under the 0.x release policy), and the stage handoff contract documents recovery from a review stopped at its cycle cap.
+
+- `blocking=shown`: a review finding blocks readiness only when evidence the host ran at the reviewed head shows it (a failing command, test or reproduction with its evidence reference, or a documentation line the pull request's diff made wrong). A problem the merge base already has is filed in TODOS (or under `test-gaps=record` when it is a recordable gap); an attacker-part finding blocks only once the host's rerun shows it; safety-class findings keep today's handling; and non-blocking findings stay in the full receipt with their `found_by` attribution. It applies only while the referenced upstream `/review` anchors match; otherwise today's handling runs and the receipt records `blocking: inactive`. Before sending it, check the loaded copy: `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+- `post-audit=classify`: opt-in (today's owner stop stays the default). After the documentation audit's last attempt, each post-audit change gets one bounded parent-side re-audit of its delta before the owner is asked. A change touching no documented behavior (`rename`, `tests-only`, `todos-only`, `mechanical-correction` or `already-documented`) proceeds with its `Post-audit change:` line recorded, while a change touching documented behavior keeps today's owner stop. Upstream's attempt bound is unchanged and a blocked audit is never upgraded. Before sending it, check the loaded copy: `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+- Capped-review recovery: `docs/workflow-handoffs.md` walks a stopped draft through an authorized exact `repair-only` (or `full`) continuation to prepared readiness and shipping, preserving unavailable full-review evidence (`reviewer-incomplete` when cycle 2's fix review did not complete) and PR-lifetime continuation counts, and restates that `/ship-and-land` still refuses a stopped draft, including one whose receipt says `Unresolved: none recorded` (`B-STOPPED-NONE-RECORDED`).
+
+Older installations: an installation without a value reads the whole policy line as `none supplied`, and an older handoff parser holds a returned policy that carries it as `policy-malformed`. A caller omits a value when its check fails and keeps its other keys. Omitted, every default is unchanged. Neither value waives a gate or authorizes a continuation.
+```
+
+### Limits
+
+Prose, fixtures and tests only. No installed-agent run backs it, so whether an
+agent judges shown evidence or post-audit change classes as the text asks is
+unproven. No saving is established: the "before" sample is unpaired and the
+"after" side is unknown. No checkpoint is awarded. Revisit when an opted-in run
+has recorded the fields above and a similar run without the values can be set
+beside it.

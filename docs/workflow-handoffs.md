@@ -844,7 +844,7 @@ token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs sep
 `first-cycle` (`overlap`), `documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`), `final-gate-repair`
 (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
 `performance`, `simplification`, `adversarial`, `red-team`, comma-separated, each once), `red-team` (`ensure`), `repair-review` (`behavior-changing`),
-`repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations` (`0` to
+`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
 invocation prompt, or none; never read it from the text. A caller with no policy of its
@@ -929,6 +929,47 @@ writes tests as today and the receipt says so.
 A prepared receipt that records test gaps still emits `review: COMPLETE` in its
 H-B handoff: a recorded gap claims no defect, its TODOS entry carries it, and
 `/ship-and-land` reads the receipt as it would a plain one (`B-RECORDED-GAP-HEAD`).
+
+`blocking=shown` follows the same rollout order and the same check, written as
+`grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"` (exit 0 means
+supported). An installation without it reads the whole line as `none supplied`,
+an older H-E parser holds a returned policy that carries it as `policy-malformed`,
+and a caller omits it when the check fails and keeps its other keys. It is
+independent of every other key, may be sent alone or with `test-gaps=record`, and
+is never set by the light review default. Under it, a review finding blocks
+readiness only when evidence the host ran at the reviewed head shows it (a failing
+command, test or reproduction with its evidence reference, or a documentation line
+the PR's diff made wrong); a base-only finding goes to TODOS (or to
+`test-gaps=record` when it is a recordable gap); an attacker-part finding blocks
+only once the host's rerun shows it; a safety-class finding keeps today's
+handling, overriding the attacker-part, base-only and not-shown rules; and
+non-blocking findings stay in the receipt with their attribution. It
+waives no gate and never authorizes a continuation. While the anchors it relies on
+drift, every finding takes today's handling and the receipt says so.
+
+A prepared receipt with non-blocking findings still emits `review: COMPLETE` in its
+H-B handoff: the `blocking:` status and `Finding blocking:` and `Finding not blocking:`
+lines live in the full receipt, not as handoff bindings, and `/ship-and-land` reads
+the receipt as a plain one.
+
+`post-audit=classify` follows the same rollout order and the same check, written as
+`grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"` (exit 0 means
+supported). An installation without it reads the whole line as `none supplied`,
+an older H-E parser holds a returned policy that carries it as `policy-malformed`,
+and a caller omits it when the check fails and keeps its other keys. It is
+independent of every other key, including `documentation-audit=final` and
+`documentation-scope=contracts`, and is never set by the light review default. The
+rule is opt-in and today's owner stop stays the default: under `post-audit=classify`,
+after the documentation audit's last attempt, each post-audit change gets one
+bounded parent-side re-audit of its delta before the owner is asked; a change
+touching no documented behavior (`rename`, `tests-only`, `todos-only`,
+`mechanical-correction` or `already-documented`) proceeds with that classification
+recorded, and a change touching documented behavior keeps today's owner stop. It
+keeps upstream's attempt bound (never a third audit attempt), never upgrades a
+blocked audit, waives no gate and never authorizes a continuation. When a
+precondition it relies on fails, blocked recovery runs as today and the receipt
+records `post-audit: not applied — <reason>`. See
+[the review-fix policy record](acceptance/review-fix-policy.md).
 
 `delegate=<part>[,<part>...]` follows the same rollout order and the same check,
 written as `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"` (exit 0
@@ -1093,6 +1134,39 @@ Unresolved: F2 high, F5 medium
 Keep the PR draft.
 Do not run /ship on this PR.
 ```
+
+#### Recovery from a capped review
+
+1. **Stopped draft.** `/review-and-prep` exits `STOPPED — review cycle cap` with
+   the H-E prompt, posts the `review-and-prep:stopped:<full-sha>` comment, keeps
+   the PR draft and prints `next: review-and-prep; status: stopped`. The bound PR
+   is never replaced.
+2. **Authorized exact continuation.** Relay the stop's own H-E prompt unchanged
+   plus exactly one `Invocation policy provenance:` line (`caller-supplied` or
+   `user-decision-relay`); the policy names `continuation=repair-only` (or
+   `full`) and `k` is at most `n`. `k` counts distinct stop SHAs for the PR's
+   lifetime and is never reset; past the ceiling, hold for the user's explicit
+   approval of a larger `max-continuations`. Each continuation consumes its one
+   claim (`review-and-prep:continuation:<stop-sha>`).
+3. **Unavailable evidence stays unavailable.** With
+   `Full-review evidence: unavailable` (and its printed reason), repair-only
+   holds as `delta-base` and only an authorized `full` continuation proceeds;
+   nothing fills the row from HEAD, and later stops carry it unchanged. A stop
+   after a first cycle that reproduced defects has its row only when cycle 2's
+   fix review completed (`cycle-1-fix-review` with `fix-reviewed=true`);
+   otherwise it is `unavailable` (`reviewer-incomplete`).
+4. **Manual holds stay holds.** A continuation that reaches required user testing
+   pauses (`H-C`) and records `reviewRestrictionResolved: true` only after its
+   review completed.
+5. **Prepared readiness.** The continuation reaches `prepared`, records
+   `reviewRestrictionResolved: true` in the receipt comment and emits `H-B`.
+6. **Ship.** `/ship-and-land` runs only from that `H-B`. A ship invocation never
+   clears a stop or replaces the continuation; a newer corroborated stopped
+   record holds as `stopped` even when its receipt says
+   `Unresolved: none recorded`
+   ([`B-STOPPED-NONE-RECORDED`](#b-stopped-none-recorded)), the owner's
+   2026-10-25 decision recorded in the
+   [efficiency program](designs/workflow-efficiency-program.md) (E11).
 
 ### Grammar H-F external gate
 
@@ -1396,7 +1470,9 @@ or input it says is needed is for the user.
    `none`, `n/a` or template placeholders: producers omit inapplicable lines.
 3. **Outside code fences.** Only lines outside code fences are read. Fences
    are `` ``` `` or `~~~` with up to three spaces of indent, and the fence
-   lines count as inside. A consumer treats a fence that never closes as
+   lines count as inside. A fence closes only at a line of its opening
+   character, at least as long as the opener, with up to three spaces of indent
+   and nothing but spaces or tabs after it. A consumer treats a fence that never closes as
    unreadable text, never as "no disclosures".
 4. **Relation to H-B.** The review lines are H-B outside text, not H-B labels,
    so the H-B grammar table does not change. Under field grammar rule 3 and
@@ -1463,6 +1539,7 @@ Release note: This fenced copy is not a disclosure.
 | `repair-cycles=light` skip records | receipt-present | each skip names `source: repair-cycles=light`; an explicit full cycle instead records `repair-cycles=light: nothing skipped — in-cap=full`; these are evidence, never stage or merge authorization |
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
 | `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`, one `Test gap recorded:` line per recorded gap with its upstream severity unchanged and the TODOS entry that carries it; a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
+| `blocking:` status and `Finding blocking:` and `Finding not blocking:` lines | receipt-present | published in the full receipt under `blocking=shown`, one line per decided finding with its attribution; a non-blocking finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
 | `delegation:` status and `Delegated part:` lines | receipt-present | published in the receipt under `delegate=<part>`, one `Delegated part:` line per delegated part with its provider label, model, outcome, fallback reason, wall time, token counts, finding count and call ID; the configuration's path never appears, and the lines never authorize a stage or merge (`B-DELEGATED-HEAD`) |
 | `Review arm:` and `Folded checklist:` lines | receipt-present | published in the receipt under `specialists=fold`: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per checklist the main pass read with its name, file path under the gstack root, SHA-256 and finding count; no local path outside the gstack root appears, and the lines never authorize a stage or merge (`B-FOLDED-HEAD`) |
 | `specialists-dispatched:` line | receipt-present | published in the receipt under `delegate=<part>` or `specialists=fold` while that section is active; records the current upstream item result (`waived`, `met`, `not declared` or `unmet`), with `; history=<cycle>:<outcome>[,...]` for mixed cycle outcomes preserving successful waivers' parts and failed calls' causes; never authorizes a stage or merge |
@@ -1471,6 +1548,7 @@ Release note: This fenced copy is not a disclosure.
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 | `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |
+| `post-audit:` status and `Post-audit change:` lines | receipt-present | published in the full receipt under `post-audit=classify`, one line per post-audit change naming why it did or did not need the owner; the documentation status they accompany stays the accepted audit's own and a blocked audit is never upgraded; the lines never authorize a stage or merge |
 | `Review overlap:` line | receipt-present | published in the receipt under `first-cycle=overlap`; never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
