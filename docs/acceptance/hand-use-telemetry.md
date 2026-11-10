@@ -24,6 +24,27 @@ entrypoint must set `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
 `GSTACK_SESSION_KIND=spawned|unattended`), or its workers are counted as hand
 use (`user-directed`).
 
+## Orchestrator cutover
+
+Reported by the orchestrator's manager on 2026-11-10 and not independently
+verified here; the orchestrator's own repository records the change. Its Track
+94A merged as commit `b833096` (orchestrator release 0.5.65), and its transport
+moved at about 2026-11-09 15:58Z. From then on:
+
+- every transport stage and every hand-worker launch carries
+  `GSTACK_EXTEND_RUN_MODE=orchestrated`;
+- item stages also carry `GSTACK_EXTEND_WORK_ITEM`;
+- hand launches, except `--docs project-spec`, also carry
+  `GSTACK_SESSION_KIND=spawned`;
+- manager launches carry none of these signals;
+- `GSTACK_EXTEND_WORKSPACE_OWNER` is not set yet.
+
+Rows that orchestrator wrote before the cutover may be recorded `user-directed`
+although an orchestrator launched them, so read them as unattributed rather
+than as hand use. Its manager sessions still classify by entrypoint. Rows from
+later launches are candidates for the orchestrated run above; this cutover note
+is not that run.
+
 ## Readback procedure
 
 After running the stages above, inspect the aggregate and per-host counts with:
