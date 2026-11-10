@@ -54,18 +54,23 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - stage-runs rows are now schema_version 4 with 29 fields.
+- Host attribution comes from the orchestration contract's `GSTACK_EXTEND_WORKSPACE_OWNER` signal; telemetry no longer reads `PASEO_AGENT_ID` or `CONDUCTOR_SESSION_ID`.
+- A Claude session with no orchestration or workspace-owner signal counts as hand use (`user-directed`) when its entrypoint is Paseo's (`run_mode_source` `paseo-entrypoint`), as well as `cli`.
+- The Conductor Cursor-store reader and the `conductor` usage route are removed.
+- `gstack-extend-telemetry report` gains `--by-host` and a repeatable `--state-dir DIR` (an absolute path), so it can read state directories synced from other machines.
 
 ### Upgrade notes
 
 - A reader or schema copy pinned to v3 reports new rows as unsupported until it upgrades. Old rows, including `conductor` and `paseo` values, stay valid.
-- Hosts must set `GSTACK_EXTEND_WORKSPACE_OWNER`, and orchestrators `GSTACK_EXTEND_RUN_MODE=orchestrated` on every stage, to be attributed. Without the run-mode signal, an interactive `cli` launch outside a host-managed workspace still counts as hand use.
+- Hosts must set `GSTACK_EXTEND_WORKSPACE_OWNER`, and orchestrators `GSTACK_EXTEND_RUN_MODE=orchestrated` on every stage, to be attributed. Without the run-mode signal, an interactive `cli` or Paseo-entrypoint launch outside a host-managed workspace still counts as hand use.
 - Rollback: reinstall the previous release. Its reader reports v4 rows as unsupported and keeps them; never rewrite rows. Recovery guidance: `docs/installation.md#version-numbers` and docs/telemetry.md "Reader-first migration and rollback".
 
 ## [0.76.1] - 2026-11-08
 
 ### Fixed
 
-- `upstream-check` writes probe output synchronously, so the result is on disk before the probe continues or exits.
+- `upstream-check`'s probe writes its output stream in chunks through `fs.writeSync`, retrying briefly on `EAGAIN`, so its output is complete before the probe continues or exits.
+- `setup` writes its self-registration log under `${TMPDIR:-/tmp}` instead of `/tmp`.
 
 ## [0.76.0] - 2026-11-08
 
