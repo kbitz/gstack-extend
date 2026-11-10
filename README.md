@@ -15,7 +15,9 @@ Conductor is no longer supported. A public release is the planned next stage.
 Quota-driven routing and unattended shipping remain later work. The
 [roadmap](docs/ROADMAP.md) lists the required work;
 [acceptance records](docs/PROGRESS.md#acceptance) distinguish pending proof from
-shipped code. Workspace hosts and agent harnesses are separate support axes.
+shipped code. The [compatibility catalog](docs/compatibility.md) lists stable
+interfaces, experimental exclusions, support conditions and recovery links.
+Workspace hosts and agent harnesses are separate support axes.
 
 ## Skills
 

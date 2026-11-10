@@ -93,7 +93,10 @@ tier and outcome joins. See the [provenance contract](telemetry.md#execution-pro
 All commands support `--json` and help with an example. Filters accept a pool kind
 or full pool ID in `--pool`; `--since` accepts ISO-8601 or durations such as `7d`
 and `12h`; `--days N` is an alias. Runs and summary also accept stage, agent,
-model, effort and route filters. Summary grouping supports these fields and pool.
+model, effort and route filters. `--route` accepts `cli`, `sdk` and `unknown`;
+`conductor` was removed and is rejected as invalid usage (exit 2), while runs
+recorded with it are still returned by unfiltered `runs` and grouped by
+`summary --by route`. Summary grouping supports these fields and pool.
 Filtering never reallocates shared Cursor cost.
 For lifecycle sampling, `--pool` restricts capacity reads while consumption still
 covers all locally observed pools. Settlement fetches only the current Cursor
@@ -148,8 +151,8 @@ Token classes are disjoint: uncached `input`, `cache_read`, `cache_write`, and
 Unreported classes are null. Claude maps input/cache-read/cache-creation/output
 directly and takes thinking tokens from output details. Codex subtracts cached
 reads and reported cache writes from inclusive input. Cursor event input is
-uncached; its output includes reasoning if reported. Local SDK input includes
-cached reads and is reduced accordingly. Consumption is grouped by billed model.
+uncached; its output includes reasoning if reported. Consumption is grouped by
+billed model.
 
 Claude response identity is message ID; streaming copies retain the entry with
 the largest output and take all classes from that entry. Copied messages in a
@@ -175,9 +178,12 @@ Claude subagent transcripts belong to the explicitly attached stage session.
 Cursor subagent IDs are used only when billing events actually join them; the T0
 trial found no matching child billing IDs and this remains a coverage limitation.
 A Cursor account event alone is never child evidence. Local transcript directories
-provide cwd/creation evidence. Native SDK matching joins agents' cwd to runs on
-agentId, requires one overlapping candidate, and is unknown with zero or several.
-Private SDK stores are best-effort. Route is provenance; billed model, not route,
+provide cwd/creation evidence. Conductor's Cursor SDK store is no longer read,
+because Conductor support was dropped on 2026-11-06 ([SPEC Audience and target](SPEC.md#audience-and-target)).
+Native SDK sources it indexed earlier stay in the store, and an unattached Cursor
+run still matches one of them only when it is the single overlapping candidate in
+the run's cwd (unknown with zero or several), so recorded runs read back
+unchanged. Route is provenance; billed model, not route,
 is the price-bearing fact.
 Text-format Cursor transcripts establish local conversation identity and creation
 evidence, but have no structured usage. Their coverage is `not_reported`, never a
@@ -279,7 +285,7 @@ Vendor binaries resolve through one resolver; in fixture mode only its fixture
 bin directory is searched. Tests reduce the environment to an allowlist and
 assert no real Cursor key or vendor binary is reachable. Production vendor
 children receive HOME, PATH, USER, TMPDIR, LANG and the relevant config root only.
-Harness and Conductor markers never reach those children. Values and process
+Harness and workspace-host markers never reach those children. Values and process
 arguments are never printed. Ancestry uses argv[0] in memory, then command name;
 process-list output contains only PID, PPID and command name, never arguments.
 
@@ -315,9 +321,9 @@ pool and freshness/backoff is rechecked after acquisition. Cursor exchanges have
 a separate cross-process 60-second budget per hashed key, with tokens kept only
 in process memory. Retry-After is respected; unspecified 429 backoff is 300 seconds.
 
-Source discovery records explicit roots: Claude projects, Codex sessions, Cursor
-projects and native SDK stores. Flags `--claude-config-dir`, `--codex-home`,
-`--cursor-projects-dir`, `--conductor-store`, `--cwd`, `--repo-root` capture context
+Source discovery records explicit roots: Claude projects, Codex sessions and
+Cursor projects. Flags `--claude-config-dir`, `--codex-home`,
+`--cursor-projects-dir`, `--cwd`, `--repo-root` capture context
 for later reads. Locators take this context instead of using the query's cwd.
 Each file has device/inode/size, offset, parser state and coverage. Rotation resets
 its checkpoint. Partial final lines are retried after append; malformed records
@@ -350,8 +356,8 @@ remains as a source. Auth comes from `--auth subscription|api|unknown`, default
 unknown; caller flags win. Explicit API mode never charges a subscription pool.
 Linked children in the same harness inherit that API mode; unrelated or
 cross-harness children do not. An unattached run leaves consumption unknown
-until a harness session is attached, except for the documented unique native
-Cursor match. Network permission always comes from the current invocation,
+until a harness session is attached, except when it matches a single overlapping
+native Cursor SDK source already in the store. Network permission always comes from the current invocation,
 including when attaching or finishing a run started in a different sandbox.
 Inside-stage detection recognizes API keys and alternative provider markers.
 Claude account JSON is capped at 16 MiB; larger files leave identity pending.
@@ -386,14 +392,14 @@ credential's hashed owningUser cache or one event page. Missing identity is show
 as pending and never assigned a different account's cached sample.
 An existing Cursor CLI login is not read by this adapter. The quota process must
 inherit the API key; a shell startup script that unsets it produces
-`no_credentials` even when Conductor originally supplied it.
+`no_credentials` even when the launching host originally supplied it.
 
-| Adapter | macOS / Linux | Inside / outside Conductor | Credential | Trial |
-|---|---|---|---|---|
-| Claude | Native CLI required on either OS | Both | Vendor-managed subscription sign-in | experimental; 24-hour trial pending |
-| Codex | Native CLI or readable rollout on either OS | Both | Read-only account metadata; fresh token for app-server | experimental; 24-hour trial pending |
-| Cursor | HTTP and local logs on either OS | Both | CURSOR_API_KEY; set it yourself outside Conductor | experimental; 24-hour trial pending |
-| Grok | Local usage only | Both | None read by quota | No capacity adapter |
+| Adapter | macOS / Linux | Credential | Trial |
+|---|---|---|---|
+| Claude | Native CLI required on either OS | Vendor-managed subscription sign-in | experimental; 24-hour trial pending |
+| Codex | Native CLI or readable rollout on either OS | Read-only account metadata; fresh token for app-server | experimental; 24-hour trial pending |
+| Cursor | HTTP and local logs on either OS | CURSOR_API_KEY in the quota process environment | experimental; 24-hour trial pending |
+| Grok | Local usage only | None read by quota | No capacity adapter |
 
 For reset/retention, stop quota commands, back up the private quota directory,
 then remove the database together with its WAL/SHM files. This discards samples,

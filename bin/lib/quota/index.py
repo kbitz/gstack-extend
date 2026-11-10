@@ -16,7 +16,7 @@ FILE_CAP=512 << 20
 def roots(context):
     return [('claude',str(Path(context['claude_config_dir'])/'projects')),
             ('codex',str(Path(context['codex_home'])/'sessions')),
-            ('cursor',context['cursor_projects_dir']),('cursor-sdk',context['conductor_store']),
+            ('cursor',context['cursor_projects_dir']),
             ('grok',str(Path(context['grok_home'])/'sessions'))]
 
 
@@ -51,7 +51,7 @@ def discover(store,context):
                             continue
                         if entry.is_dir(follow_symlinks=False):
                             pending.append(entry.path)
-                        elif entry.is_file(follow_symlinks=False) and (entry.name.endswith('.jsonl') or entry.name=='runs.ndjson' or
+                        elif entry.is_file(follow_symlinks=False) and (entry.name.endswith('.jsonl') or
                                 (agent=='cursor' and entry.name.endswith('.txt') and 'agent-transcripts' in Path(entry.path).parts)):
                             filekey=store.digest(entry.path,'file')
                             previous=store.get('file',filekey,{})
@@ -131,28 +131,8 @@ def _scan(store,context):
             if file.get('identity')!=generation or info.st_size<file.get('offset',0):
                 file.update(offset=0,line=0,parser={},identity=generation,malformed=0,skip_line=False)
             state=source_state(store,file,context)
-            identity_kind='cursor' if file['agent']=='cursor-sdk' else file['agent']
-            if identity_kind in ('claude','codex','cursor'):
-                state['identity_evidence']=identity(store,identity_kind,context)
-            sdk_agents={}
-            if file['agent']=='cursor-sdk':
-                agents=path.with_name('agents.ndjson')
-                try:
-                    afd=os.open(agents, os.O_RDONLY|os.O_NOFOLLOW)
-                    try:
-                        ainfo=os.fstat(afd)
-                        if stat.S_ISREG(ainfo.st_mode) and ainfo.st_nlink==1 and ainfo.st_size<=1 << 20:
-                            for raw in os.read(afd, ainfo.st_size).splitlines():
-                                try:
-                                    record=json.loads(raw)
-                                    if record.get('agentId') and record.get('cwd'):
-                                        sdk_agents[store.digest(record['agentId'],'session')]=record['cwd']
-                                except (ValueError,AttributeError):
-                                    continue
-                    finally:
-                        os.close(afd)
-                except OSError:
-                    pass
+            if file['agent'] in ('claude','codex','cursor'):
+                state['identity_evidence']=identity(store,file['agent'],context)
             if not state.get('first') and file['agent']=='cursor':
                 state['first']=getattr(info,'st_birthtime',info.st_mtime)
             offset,line=file.get('offset',0),file.get('line',0)
@@ -224,18 +204,8 @@ def _scan(store,context):
                         continue
                     line+=1
                     if fact:
-                        if file['agent']=='cursor-sdk':
-                            state['cwd']=sdk_agents.get(fact['session'])
-                            start_at=fact.get('start') or fact['ts']
-                            end_at=fact.get('end') or fact['ts']
-                            bounds=state.setdefault('bounds',{})
-                            slot=bounds.setdefault(fact['session'],{})
-                            slot['first']=start_at if slot.get('first') is None else min(slot['first'],start_at)
-                            slot['last']=end_at if slot.get('last') is None else max(slot['last'],end_at)
-                            state['first'],state['last']=slot['first'],slot['last']
-                        kind='cursor' if file['agent']=='cursor-sdk' else file['agent']
-                        fact['pool']=paying_pool(histories.get(kind,{}),fact['ts'])
-                        sourcekey=file['key']+(':'+str(fact['session']) if file['agent']=='cursor-sdk' else '')
+                        fact['pool']=paying_pool(histories.get(file['agent'],{}),fact['ts'])
+                        sourcekey=file['key']
                         old=facts[fact['id']][0] if fact['id'] in facts else store.get('usage',fact['id'])
                         fact['source_keys']=sorted(set((old or {}).get('source_keys',[])+[sourcekey]))
                         selected=prefer(old,fact)
@@ -243,8 +213,7 @@ def _scan(store,context):
                         selected['first_seen_at']=(old or {}).get('first_seen_at',now())
                         changed=not old or old.get('tokens')!=selected.get('tokens')
                         selected['revised_at']=now() if changed else old.get('revised_at',now())
-                        snapshot={k:v for k,v in state.items() if k!='bounds'}
-                        facts[fact['id']]=(selected,sourcekey,snapshot)
+                        facts[fact['id']]=(selected,sourcekey,dict(state))
             file.update(offset=offset,line=line,parser=state,size=info.st_size,checked_at=now(),
                         complete=offset>=info.st_size and info.st_size<=FILE_CAP and not file.get('malformed') and not state.get('partial'))
             reason='log_too_large' if info.st_size>FILE_CAP else 'malformed_record' if file.get('malformed') else 'scan_budget' if offset<info.st_size else state.get('partial')
@@ -255,18 +224,10 @@ def _scan(store,context):
             with store.transaction():
                 for fact,sourcekey,metadata in facts.values():
                     store.put('usage',fact['id'],fact)
-                    source=dict(metadata,key=sourcekey,agent='cursor' if file['agent']=='cursor-sdk' else file['agent'],
-                                root=file['root'],complete=file['complete'],reason=reason,native_sdk=file['agent']=='cursor-sdk')
+                    source=dict(metadata,key=sourcekey,agent=file['agent'],
+                                root=file['root'],complete=file['complete'],reason=reason)
                     store.put('source',sourcekey,source)
-                if file['agent']!='cursor-sdk':
-                    store.put('source',file['key'],dict(state,key=file['key'],agent=file['agent'],root=file['root'],complete=file['complete'],reason=reason))
-                else:
-                    prefix=file['key']+':'
-                    for existing in store.all('source'):
-                        if str(existing.get('key','')).startswith(prefix):
-                            existing['complete']=file['complete']
-                            existing['reason']=reason
-                            store.put('source',existing['key'],existing)
+                store.put('source',file['key'],dict(state,key=file['key'],agent=file['agent'],root=file['root'],complete=file['complete'],reason=reason))
                 store.put('file',file['key'],file)
         except OSError:
             file.update(complete=False,reason='source_unreadable',checked_at=now())

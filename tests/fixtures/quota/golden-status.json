@@ -25,12 +25,6 @@
         "why": []
       },
       {
-        "agent": "cursor-sdk",
-        "complete": true,
-        "root": "$HOME/Library/Application Support/com.conductor.app/cursor-sdk-store",
-        "why": []
-      },
-      {
         "agent": "grok",
         "complete": true,
         "root": "$HOME/.grok/sessions",
@@ -124,12 +118,6 @@
             "why": []
           },
           {
-            "agent": "cursor-sdk",
-            "complete": true,
-            "root": "$HOME/Library/Application Support/com.conductor.app/cursor-sdk-store",
-            "why": []
-          },
-          {
             "agent": "grok",
             "complete": true,
             "root": "$HOME/.grok/sessions",
@@ -203,12 +191,6 @@
             "agent": "cursor",
             "complete": true,
             "root": "$HOME/.cursor/projects",
-            "why": []
-          },
-          {
-            "agent": "cursor-sdk",
-            "complete": true,
-            "root": "$HOME/Library/Application Support/com.conductor.app/cursor-sdk-store",
             "why": []
           },
           {
@@ -319,12 +301,6 @@
             "agent": "cursor",
             "complete": true,
             "root": "$HOME/.cursor/projects",
-            "why": []
-          },
-          {
-            "agent": "cursor-sdk",
-            "complete": true,
-            "root": "$HOME/Library/Application Support/com.conductor.app/cursor-sdk-store",
             "why": []
           },
           {
