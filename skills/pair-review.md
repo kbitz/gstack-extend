@@ -164,15 +164,13 @@ search beyond what an item or a fix needs. You manage the session: generate test
 plans, track progress, checkpoint before fixes, implement fixes, rebuild, and
 help the human resume where they left off.
 
-<!-- SHARED:conductor-visibility-head -->
-## Conductor Visibility Rule
+## Prompt Visibility Rule
 
-Conductor shows only the last message before the agent stops. All intermediate
-messages and tool calls are collapsed by default. This means:
+Some hosts show only the last message before the agent stops and collapse
+intermediate messages and tool calls by default. This means:
 
 1. **Every user-facing prompt MUST use AskUserQuestion** — this ensures the prompt
    is the last message and is always visible.
-<!-- /SHARED:conductor-visibility-head -->
 2. **Every AskUserQuestion MUST include an action receipt** — a one-line summary
    of all actions taken since the last user interaction. This is the user's only
    reliable confirmation that work was completed.
@@ -217,8 +215,8 @@ reliability mechanism: if context compacts, the skill re-reads from disk.
 ### Paths
 
 State lives in two scopes — a project-wide dir and a per-branch dir under it.
-Sessions are keyed by branch, so multiple branches (in different Conductor or Paseo
-workspaces, or on different machines) can each have their own active session
+Sessions are keyed by branch, so multiple branches (in different workspaces or
+worktrees, or on different machines) can each have their own active session
 without trampling each other.
 
 - `<PROJECT_DIR>` = `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/pair-review/`
@@ -382,7 +380,6 @@ Glob patterns (check each):
   Makefile
   package.json
   docker-compose.{yml,yaml}
-  conductor-run.sh
   *.xcodeproj
   *.xcworkspace
 ```
@@ -1758,7 +1755,7 @@ Verdict-to-status mapping:
 - Group could not proceed (deploy broken, app unreachable, missing credentials) → "BLOCKED — <reason>".
 - Session state malformed or `<SESSION_DIR>` lost on resume → "NEEDS_CONTEXT — <what is missing>".
 
-The mini-table runs at each group boundary so the Conductor action-receipt pattern still shows a clean summary in the collapsed view. The rollup runs once at session-done.
+The mini-table runs at each group boundary so the action-receipt pattern still shows a clean summary where a host collapses intermediate output. The rollup runs once at session-done.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish

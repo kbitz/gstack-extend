@@ -10,8 +10,7 @@
  *     (whitespace is not a splitter).
  *
  * Used by audit-compliance (install inventory) and skill-protocols
- * (cohort algebra). Protocol / preamble / conductor membership is NOT
- * derived from this list — those are explicit arrays in the tests.
+ * (cohort algebra). Protocol / preamble membership is NOT derived from this list — those are explicit arrays in the tests.
  */
 
 export function parseSetupSkills(setupText: string): string[] {

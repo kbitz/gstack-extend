@@ -1079,4 +1079,56 @@ describe('pair-review stage line', () => {
     );
     expect(text).toContain('`/pair-review status` prints no stage line.');
   });
+
+  // Value: protects=pair-review ## Stage line binds status to the session rollup, gives a BLOCKED rollup precedence, and binds head to git rev-parse HEAD across every exit and same-invocation reply; fails_when=any producer value-binding clause in ## Stage line or the BLOCKED rollup definition drifts or is removed; why_new=Track 76A criterion 6 locks the stage-line value bindings and negative case; seam=none
+  test('pair-review ## Stage line locks session-rollup status, BLOCKED precedence and current HEAD bindings', () => {
+    const clauses: Clause[] = [
+      {
+        id: 'paused-route-rollup-and-head',
+        heading: '## Stage line',
+        text: "`status: done` or `done-with-concerns` from the session rollup, `head` the prompt's `current HEAD` (`git rev-parse HEAD`)",
+      },
+      {
+        id: 'paused-route-blocked-precedence',
+        heading: '## Stage line',
+        text: 'When the session rollup is BLOCKED, print `next: none; status: blocked`.',
+      },
+      {
+        id: 'other-routes-rollup-and-head',
+        heading: '## Stage line',
+        text: '`status: done` or `done-with-concerns` from the session rollup (`blocked` with `next: none` when the session rollup is BLOCKED), `head` from `git rev-parse HEAD` at the exit',
+      },
+      {
+        id: 'pause-head',
+        heading: '## Stage line',
+        text: 'PAUSE: `next: pair-review`, `status: paused`, `head` from `git rev-parse HEAD` at the exit',
+      },
+      {
+        id: 'blocked-or-needs-context-head',
+        heading: '## Stage line',
+        text: '`head` from `git rev-parse HEAD` (or `none` without one)',
+      },
+      {
+        id: 'same-invocation-reply-head',
+        heading: '## Stage line',
+        text: 'ends that output with the stage line again, `head` read afresh',
+      },
+    ];
+
+    expect(missingClauses(pairSkill, clauses)).toEqual([]);
+    expect(flatProse(pairSkill)).toContain(
+      '`<SESSION_STATUS>` is the rollup across all groups: DONE if all groups DONE, DONE_WITH_CONCERNS if any group had skips/parks/deferred fixes, BLOCKED if any group was blocked.',
+    );
+
+    const withoutBlocked = pairSkill.replace('When the session rollup is BLOCKED', '');
+    expect(missingClauses(withoutBlocked, clauses)).toContain('paused-route-blocked-precedence');
+
+    const pauseRoute = '- **PAUSE:** `next: pair-review`, `status: paused`, `head` from `git rev-parse HEAD` at the exit';
+    const withoutPauseHead = pairSkill.replace(
+      pauseRoute,
+      pauseRoute.replace('`head` from `git rev-parse HEAD` at the exit', '`head` from a saved checkpoint'),
+    );
+    expect(withoutPauseHead).not.toBe(pairSkill);
+    expect(missingClauses(withoutPauseHead, clauses)).toContain('pause-head');
+  });
 });

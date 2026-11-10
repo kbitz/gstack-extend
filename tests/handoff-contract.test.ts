@@ -2291,6 +2291,32 @@ describe('(F) the stage line', () => {
     expect(promises).not.toContain('Track 72A');
   });
 
+  // Value: protects=docs/orchestration-contract.md marks the Worktree-ownership signal honored, names the three skill sections as its provider, removes the stale Track 75B and .context/ legacy text, and shares GSTACK_EXTEND_WORKSPACE_OWNER with all three stage skills; fails_when=the row reverts from honored, drops a skill section, reintroduces Track 75B or .context/, or drifts on the variable name; why_new=Track 76A criterion 7 locks the honored worktree-ownership row and skill agreement; seam=none
+  test('orchestration-contract marks Worktree-ownership signal honored, names the three skill sections, and agrees with the skills on GSTACK_EXTEND_WORKSPACE_OWNER', () => {
+    const contract = read('docs/orchestration-contract.md');
+    const provides = contract.slice(
+      contract.indexOf('\n## What a host or orchestrator provides\n'),
+      contract.indexOf('\n## What each stage promises\n'),
+    );
+    const rows = new Map(tableRows(provides).map((r) => [r[0], r] as const));
+    const row = rows.get('Worktree-ownership signal');
+    expect(row).toBeDefined();
+    expect(row![3]).toBe('`honored`');
+    for (const provider of [
+      '`skills/implement.md` (`## 1. Establish what to build`)',
+      '`skills/review-and-prep.md` (`## Boundaries`)',
+      '`skills/ship-and-land.md` (`## 1. Resolve the workflows and target`)',
+    ]) {
+      expect(row![2]).toContain(provider);
+    }
+    expect(contract).not.toContain('not yet honored — Track 75B');
+    expect(contract).not.toContain('.context/');
+    expect(contract).toContain('GSTACK_EXTEND_WORKSPACE_OWNER');
+    for (const skill of ['implement', 'review-and-prep', 'ship-and-land'] as const) {
+      expect(SKILLS[skill], skill).toContain('GSTACK_EXTEND_WORKSPACE_OWNER');
+    }
+  });
+
   test('/review-and-prep keeps the H-F pause line last and prints no stage line after it', () => {
     const rp = squash(SKILLS['review-and-prep']);
     expect(has(rp, 'This pause prints no stage line: the contract freezes the `External gate:` line as the last line of the turn')).toBe(true);

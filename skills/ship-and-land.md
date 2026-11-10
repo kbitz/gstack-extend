@@ -434,9 +434,13 @@ Before any release mutation, require the current branch to be the bound PR's
 head branch and local HEAD to equal or descend from its head; otherwise stop.
 Local commits beyond the PR head that this workflow did not create need the
 user's confirmation that they are in scope.
-In a host-managed workspace (a Conductor workspace, or a Paseo worktree:
-`PASEO_AGENT_ID` is set and the checkout is under Paseo's worktree root,
-default `~/.paseo/worktrees/`), do not create, rename, switch, or remove
+In a host-managed workspace (one its host or orchestrator marks as its own with
+the orchestration contract's worktree-ownership signal:
+`GSTACK_EXTEND_WORKSPACE_OWNER` is non-empty in this agent's environment,
+whatever its value, as `[ -n "${GSTACK_EXTEND_WORKSPACE_OWNER:-}" ]` tests
+without printing it; or a Paseo worktree, the contract's one documented
+provider: `PASEO_AGENT_ID` is set and the checkout is under Paseo's worktree
+root, default `~/.paseo/worktrees/`), do not create, rename, switch, or remove
 branches/worktrees; decline land's local branch/worktree cleanup offers and
 leave cleanup to the host. Never force-push or merge old published history into rewritten
 history to recover a rejected push. Diagnose divergence and stop with the
@@ -1281,8 +1285,7 @@ ephemeral workspaces: an existing
 Use a unique branch/invocation subdirectory; create each full receipt exclusively,
 never overwrite it, and number writes `full-receipt-1.md`, `full-receipt-2.md`, …
 within that invocation. Reuse that directory and continue its numbering on resume.
-In Conductor, use the workspace's gitignored `.context/` only for temporary files
-needed during its lifetime; elsewhere, keep temporary files outside the repository.
+Keep temporary files outside the repository.
 
 ## 4. Land and verify
 

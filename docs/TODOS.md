@@ -2,6 +2,36 @@
 
 ## Unprocessed
 
+### [review:files=tests/skill-protocols.test.ts] Test gap: Exercise the remaining removed-host detector branches
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The removal lock has synthetic Conductor and `.context/` cases, while an unguarded Paseo mention and the removed marker lack dedicated negative inputs.
+- **Hypothesis (untested):** Add cases to the existing detector test that splice each remaining forbidden form into a skill and verify its reported violation. Re-verify the matcher first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols.test.ts:1047`
+- **Evidence:** Outside challenge and coverage audit source reads; the current tests pass and no detector defect was reproduced.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `107b814`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/handoff-contract.test.ts] Test gap: Lock the contract's optional Paseo provider paragraph
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The contract test locks the honored ownership row and its three skill sections; it does not separately pin the paragraph retaining Paseo as an optional provider.
+- **Hypothesis (untested):** Extend the existing contract test with a provider-paragraph assertion and a deletion case. Re-verify the documented provider contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/handoff-contract.test.ts:2295`
+- **Evidence:** Outside challenge and coverage audit source reads; the paragraph is present, the contract suite passes, and no product failure was reproduced.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `107b814`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/skill-protocols-roadmap.test.ts] Test gap: Exercise contradictory shared-document inputs
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The never-shared test rejects deletion of the required sentence, but does not separately mutate the default shared-docs list or insert a contradictory sharing sentence.
+- **Hypothesis (untested):** Add those synthetic inputs to the existing never-shared matcher test, checking each rejection independently. Re-verify the grouping rule first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-roadmap.test.ts:388`
+- **Evidence:** Outside challenge and coverage audit source reads; the current rule and its deletion case pass, and no grouping defect was reproduced.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `107b814`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

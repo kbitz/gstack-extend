@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.84.0] - 2026-11-10
+
+### Changed
+
+- `/implement`, `/review-and-prep` and `/ship-and-land` now treat a checkout as host-managed when the agent's environment sets a non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, and they still recognize Paseo worktrees as the one documented provider.
+- Workflow guards honor a nonempty `GSTACK_EXTEND_WORKSPACE_OWNER` and retain Paseo as a documented provider.
+- `/full-review` and `/pair-review` replace their Conductor visibility rule with a host-neutral rule and still ask every user-facing question through the question tool.
+- `/full-review` and `/pair-review` use host-neutral visibility rules while retaining prompt and receipt ordering.
+
+### Removed
+
+- Conductor workspaces are no longer recognized, and `/implement` and `/ship-and-land` no longer keep handoff or temporary files in Conductor's `.context/` directory.
+- Conductor-specific detection and `.context/` storage fallbacks are removed.
+
+### Upgrade notes
+
+- A host or orchestrator other than Paseo must set `GSTACK_EXTEND_WORKSPACE_OWNER` in every agent it starts in a checkout it owns, or `/ship-and-land` will no longer decline land's branch and worktree cleanup offers there.
+- Setting `GSTACK_EXTEND_WORKSPACE_OWNER` on a session you run by hand also makes telemetry record that run's mode as unknown rather than user-directed, as `docs/telemetry.md` documents.
+
 ## [0.83.0] - 2026-11-10
 
 ### Added
