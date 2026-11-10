@@ -177,6 +177,7 @@ export function validateConfig(text: string): ConfigResult {
 
 export const POLICY_FORMAT = `Report each finding on its own line as [P0], [P1], [P2] or [P3] followed by one JSON object in the checklist's output schema: use P0 or P1 for severity CRITICAL and P2 or P3 for severity INFORMATIONAL.
 These response-format instructions override the checklist's output-format instructions; preserve its finding schema and review criteria.
+Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.
 If you have no findings, write the line "NO_FINDINGS: none" immediately before the Recommendation line, with nothing between them, and give your reason in the Recommendation's because-clause.
 End with Recommendation: <action> because <specific reason>.
 If essential context is missing, return NEEDS_CONTEXT: <specific callers, contracts or tests>.
@@ -291,7 +292,7 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
     if (value.lines_removable !== undefined && !Number.isInteger(value.lines_removable)) return { ok: false };
     if (part === 'simplification' && (severity !== 'INFORMATIONAL' || value.advisory !== true)) return { ok: false };
     const c = confidence as number;
-    const normalizedConfidence = part === 'adversarial' || c > 10 ? Math.max(1, Math.round(c / 10)) : Math.max(1, c);
+    const normalizedConfidence = Math.max(1, Math.round(c / 10));
     const finding: Finding = { severity, confidence: normalizedConfidence, path: path as string, category: category as string, summary: summary as string, specialist: part };
     if (at !== undefined) finding.line = at as number;
     for (const key of OPTIONAL_TEXT) if (value[key] !== undefined) finding[key] = value[key] as string;

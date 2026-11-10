@@ -3696,9 +3696,12 @@ describe('review-and-prep Step 7 user-facing change disclosure', () => {
     expect(receiptFence).toBeDefined();
     expect(receiptFence!).not.toContain('User-facing change');
 
-    expect(step7).toContain('print one or more `User-facing change: <one plain sentence>` lines (or a bullet block under `User-facing change:` / `User-facing changes:`, optionally bolded) in the final message on a `next: ship-and-land` exit, outside the H-B `Run /ship-and-land` fence: place them after the fence\'s closing line and before the `Stage handoff: stage-handoff/v1;` line');
+    expect(step7).toContain('`User-facing change: <one plain sentence>` line for each change in the final message on a `next: ship-and-land` exit, outside the H-B `Run /ship-and-land` fence: place them after the fence\'s closing line and before the `Stage handoff: stage-handoff/v1;` line');
     expect(step7).toContain('Never put `User-facing change:` on the `Run /ship-and-land for this prepared PR.` line, inside the H-B fence, or on the `Stage handoff: stage-handoff/v1;` line.');
     expect(step7).toContain('Omit `User-facing change:` entirely when the diff has no user-facing change (never write `none` or `n/a`), and never copy internal review findings, test counts or `## Risks` items into it.');
+    expect(step7Raw.indexOf('When the prepared diff')).toBeGreaterThan(step7Raw.indexOf('\n```', step7Raw.indexOf('```text') + 7));
+    expect(step7).toContain('no upper-case status word, local path, credential or confidential requirement text');
+    expect(step7).toContain('the PR body\'s `## Review and prep` section or the kept marker set');
     expect(step7Raw).toContain('https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures');
   });
 });

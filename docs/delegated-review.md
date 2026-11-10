@@ -342,11 +342,12 @@ effect together. A `Review delegates:` line beside a policy that carries only
   `red-team`, and `native-adversarial` for `adversarial`); the provider and
   model are recorded on the part, not inside a finding. The runner normalizes
   `confidence` once at parse so every emitted finding carries upstream
-  `/review`'s 1 to 10 scale: for `adversarial` (prompted 0 to 100), always
-  `Math.max(1, Math.round(c / 10))`; for the four specialists and `red-team`
-  (prompted 1 to 10 by upstream), 1 to 10 stays as is, 11 to 100 is treated as
-  a percentage with the same `Math.max(1, Math.round(c / 10))` formula, and 0
-  maps to 1. A credited specialist
+  `/review`'s 1 to 10 scale with `Math.max(1, Math.round(c / 10))`. The
+  extension-owned response-format instructions explicitly require 0 to 100
+  for every part, overriding any upstream checklist confidence scale. Values
+  from 0 to 10 remain low percentages, never guessed to mean a 1 to 10 score.
+  This prompt change gives every part a new call id: saved replies from the
+  old scale are not replayed for the new prompt. A credited specialist
   part is recorded as dispatched in the review's `specialists` object, as is a
   credited `red-team` part in both layouts; a credited `adversarial` part adds
   no `specialists` entry.

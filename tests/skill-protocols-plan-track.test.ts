@@ -234,3 +234,16 @@ describe('plan-track documents the manual link', () => {
     expect(norm(installation)).toContain('`setup` and its uninstall never see these links, so remove them by hand');
   });
 });
+
+// Value: protects=requested-only release metadata; fails_when=plans infer release levels or accept free prose; why_new=review found scope drift; seam=none; no_claim=live planner output
+describe('plan-track requested release level', () => {
+  test('requires an explicit request and a valid single-line form', () => {
+    expect(skillN).toContain('only when the card, `NOTES` or the project\'s instructions ask the plan to name a release level');
+    expect(skillN).toContain('at the start of a line and outside any code fence');
+    const template = fences(skill).find(f => f.lang === 'markdown')!.body;
+    const placeholder = template.split('\n').find(l => l.startsWith('_release:'))!;
+    const pattern = new RegExp('^' + placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace('<patch\\|minor\\|major\\|1\\.0\\.0>', '(?:patch|minor|major|1\\.0\\.0)').replace('<SPEC mapping>', '[^\\n]+') + '$');
+    expect('_release: minor (SPEC release policy: compatible additions use MINOR)_').toMatch(pattern);
+    expect('_release: minor — a paragraph').not.toMatch(pattern);
+  });
+});

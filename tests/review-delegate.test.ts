@@ -112,7 +112,7 @@ const writeAll = (fd, text) => {
 };
 const out = (line) => writeAll(1, line + '\\n');
 const err = (line) => writeAll(2, line + '\\n');
-const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 8, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
+const finding = (severity, label) => label + ' ' + JSON.stringify({ severity, confidence: 80, path: 'changed.txt', line: 2, category: 'testing', summary: 'a gap', fix: 'add a test', specialist: 'someone-else', extra: 'dropped' });
 const rec = 'Recommendation: fix because a gap remains.';
 const envelope = (result, usage) => JSON.stringify({ result, usage });
 if (mode === 'findings') out(envelope(finding('CRITICAL', '[P1]') + '\\n' + finding('INFORMATIONAL', '[P3]') + '\\n' + rec, { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 7, cache_creation_input_tokens: 0 }));
@@ -665,7 +665,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     }
   }, 60_000);
 
-  test('specialist prompt bytes and callId are byte-identical to pre-72B so saved specialist results replay', () => {
+  test('specialist prompt layout and callId ignore irrelevant caught text', () => {
     const base = 'a'.repeat(40);
     const candidate = 'b'.repeat(40);
     const prompt = buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body');
@@ -751,9 +751,19 @@ describe('reply parsing and the receipt contract', () => {
     expect(parseFindings(single(8), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'adversarial' }] });
     expect(parseFindings(single(70), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 7, specialist: 'adversarial' }] });
     expect(parseFindings(single(0), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'adversarial' }] });
-    expect(parseFindings(single(8), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 8, specialist: 'maintainability' }] });
-    expect(parseFindings(single(8), 'red-team')).toMatchObject({ ok: true, findings: [{ confidence: 8, specialist: 'red-team' }] });
+    expect(parseFindings(single(8), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'maintainability' }] });
+    expect(parseFindings(single(8), 'red-team')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'red-team' }] });
     expect(parseFindings(single(0), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'maintainability' }] });
+    for (const part of PARTS) {
+      const advisory = part === 'simplification' ? { advisory: true } : {};
+      const reply = (scores: number[]) => scores.map(confidence =>
+        `[P2] ${JSON.stringify({ severity: 'INFORMATIONAL', confidence, path: 'a.ts', category: 'c', summary: 's', ...advisory })}`,
+      ).join('\n') + '\nRecommendation: fix because findings remain.';
+      expect(buildPrompt(part, 'a'.repeat(40), 'b'.repeat(40), 'diff', 'checklist')).toContain('confidence is an integer from 0 to 100 for every part');
+      expect(parseFindings(reply([95, 8, 10, 11, 70]), part)).toMatchObject({ ok: true, findings: [
+        { confidence: 10 }, { confidence: 1 }, { confidence: 1 }, { confidence: 1 }, { confidence: 7 },
+      ] });
+    }
     for (const invalid of [101, -1, 9.5, '95']) {
       expect(parseFindings(single(invalid), 'maintainability')).toEqual({ ok: false });
       expect(parseFindings(single(invalid), 'adversarial')).toEqual({ ok: false });
@@ -762,10 +772,10 @@ describe('reply parsing and the receipt contract', () => {
 
   // Value: protects=upstream decision metadata survives transport without severity downgrades; fails_when=advice becomes an automatic defect fix or cause/evidence identity is lost; why_new=review F3; seam=upstream finding schema
   test('review regression: finding metadata is preserved and malformed metadata is refused', () => {
-    const value = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.ts', category: 'shrink', summary: 's', advisory: true,
+    const value = { severity: 'INFORMATIONAL', confidence: 80, path: 'a.ts', category: 'shrink', summary: 's', advisory: true,
       lines_removable: 12, evidence_paths: ['a.ts', 'b.ts'], helper_target: { path: 'shared.ts', symbol: 'helper' }, cause: { path: 'c.ts', line: 3 } };
     const parse = (v: any, part: 'testing' | 'simplification' = 'simplification', label = '[P2]') => parseFindings(`${label} ${JSON.stringify(v)}\nRecommendation: fix because findings remain.`, part);
-    expect(parse(value)).toEqual({ ok: true, findings: [{ ...value, specialist: 'simplification' }] });
+    expect(parse(value)).toEqual({ ok: true, findings: [{ ...value, confidence: 8, specialist: 'simplification' }] });
     expect(parse({ ...value, severity: 'CRITICAL' }, 'testing', '[P1]')).toMatchObject({ ok: true, findings: [{ severity: 'CRITICAL', advisory: true }] });
     expect(parse({ ...value, severity: 'CRITICAL' }, 'simplification', '[P1]')).toEqual({ ok: false });
     for (const patch of [{ advisory: 'true' }, { advisory: false }, { lines_removable: 1.5 }, { evidence_paths: [2] },
@@ -777,7 +787,7 @@ describe('reply parsing and the receipt contract', () => {
     const finding = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.test.ts', category: 'testing', summary: 'duplicate coverage' };
     const evidence = { detects: 'same failure', non_test_callers: [{ path: 'a.ts', count: 2 }], search_command: ['git', 'grep'], stronger_proof: null };
     const parse = (value: unknown) => parseFindings(`[P2] ${JSON.stringify({ ...finding, evidence: value })}\nRecommendation: fix because coverage is duplicated.`, 'testing');
-    expect(parse(evidence)).toEqual({ ok: true, findings: [{ ...finding, evidence, specialist: 'testing' }] });
+    expect(parse(evidence)).toEqual({ ok: true, findings: [{ ...finding, confidence: 1, evidence, specialist: 'testing' }] });
     expect(parse('a textual proof')).toMatchObject({ ok: true, findings: [{ evidence: 'a textual proof' }] });
     for (const invalid of [[], null, 3, { detects: 'incomplete' }, { ...evidence, invented: 'outside the schema' }]) expect(parse(invalid)).toEqual({ ok: false });
   });
@@ -1040,11 +1050,15 @@ describe('tools mode', () => {
     expect(validateConfig(wrapConfig(validToolsProvider({ commands: ['pytest', 'bun:test *', 'cargo test --package a_b.1/2:=@+- *'] }))).ok).toBe(true);
   });
 
-  test('effectiveArgv, callId, and buildPrompt preserve diff-mode byte identity and bind tools-mode flags and policy', () => {
+  test('effectiveArgv, callId, and buildPrompt bind the new confidence policy and tools-mode flags', () => {
     expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
     const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
-    // Independent bytes from origin/main@5b54ffe, not the current policy constants.
-    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    // The explicit percent-scale rule intentionally invalidates old cached calls.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('30c8742c56b27287889188b65fe8594ff63d85a8c4b20d434c9e9cedb0f4f7ae');
+    const legacyPrompt = diffPrompt.replace('Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.\n', '');
+    // Independent legacy bytes from origin/main@5b54ffe.
+    expect(createHash('sha256').update(legacyPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(legacyPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(diffPrompt).toContain(DELEGATE_POLICY);
     expect(diffPrompt).not.toContain('disposable copy of the repository');
 
@@ -1077,7 +1091,8 @@ describe('tools mode', () => {
     if (!diffParsed.ok) return;
     const diffProv = diffParsed.config.providers.alpha!;
     expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
-    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b8d806cb3ad984da1ab076a59e6fb333fc2f43f48b829fc7d3a7559fc042d2f9');
+    expect(callId(legacyPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
     expect(callId(diffPrompt, diffProv, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([diffPrompt, ['/bin/echo', 'hi'], 'model-a', 'alpha'])).digest('hex'),
     );
