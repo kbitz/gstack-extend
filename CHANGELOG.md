@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.0] - 2026-11-10
+
+### Added
+
+- `/review-and-prep` accepts an optional `blocking=shown` value on its `Review policy:` line: a finding outside the safety classes blocks readiness only when a failing command, test or reproduction, or a documentation line the pull request made wrong, shows it at the reviewed head.
+- `/review-and-prep` accepts an optional `post-audit=classify` value: a change made after the documentation audit's last attempt stops for the owner only when it touches documented behavior, and the receipt names each such change and why.
+- Callers check installed support before sending either new policy value.
+
+### Changed
+
+- The handoff contract documents capped-review recovery while preserving stopped-draft restrictions. A review stopped at its cycle cap reaches shipping through its repair-only continuation, and `/ship-and-land` still refuses a stopped draft.
+
+### Upgrade notes
+
+- Before sending either value, check the loaded skill with `grep -F` for that value in the installed `SKILL.md`; an older install reads the policy line as `none supplied`.
+
 ## [0.82.0] - 2026-11-09
 
 ### Added
