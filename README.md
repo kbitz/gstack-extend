@@ -42,7 +42,7 @@ Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
 agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
 `--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
 `/roadmap` audit tools, `gstack-extend init`, the merge gate,
-`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps` and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
+`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps`, `bin/review-delegate`, `bin/upstream-check` and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
 version. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
