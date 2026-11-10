@@ -700,13 +700,63 @@ describe('reply parsing and the receipt contract', () => {
   });
 
   test('parseFindings rejects unparsed content and requires every label line to parse', () => {
-    const line = (label: string, severity: string) => `${label} ${JSON.stringify({ severity, confidence: 5, path: 'a.ts', category: 'testing', summary: 's' })}`;
+    const line = (label: string, severity: string, confidence = 5) => `${label} ${JSON.stringify({ severity, confidence, path: 'a.ts', category: 'testing', summary: 's' })}`;
     const complete = (body: string) => `${body}\nRecommendation: fix because findings remain.`;
     expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n\`\`\`\n[P1] not json\n\`\`\`\nprose [P1] inside a sentence`, 'testing')).toEqual({ ok: false });
-    expect(parseFindings(complete(`${line('[P0]', 'CRITICAL')}\n${line('[P3]', 'INFORMATIONAL')}`), 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing' }, { severity: 'INFORMATIONAL' }] });
-    for (const bad of [line('[P1]', 'INFORMATIONAL'), line('[P3]', 'CRITICAL'), '[P1]', '[P1] []', '[P1] {"severity":"CRITICAL","confidence":11,"path":"a","category":"c","summary":"s"}',
+    expect(parseFindings(complete(`${line('[P0]', 'CRITICAL', 0)}\n${line('[P3]', 'INFORMATIONAL', 100)}`), 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing', confidence: 1 }, { severity: 'INFORMATIONAL', confidence: 10 }] });
+    for (const bad of [line('[P1]', 'INFORMATIONAL'), line('[P3]', 'CRITICAL'), '[P1]', '[P1] []', '[P1] {"severity":"CRITICAL","confidence":101,"path":"a","category":"c","summary":"s"}',
+      '[P1] {"severity":"CRITICAL","confidence":-1,"path":"a","category":"c","summary":"s"}',
+      '[P1] {"severity":"CRITICAL","confidence":8.5,"path":"a","category":"c","summary":"s"}',
+      '[P1] {"severity":"CRITICAL","confidence":"8","path":"a","category":"c","summary":"s"}',
       '[P1] {"severity":"CRITICAL","confidence":5,"path":"","category":"c","summary":"s"}', `${line('[P1]', 'CRITICAL').slice(0, -1)},"line":0}`, `${line('[P1]', 'CRITICAL').slice(0, -1)},"fix":3}`]) {
       expect(parseFindings(complete(`${line('[P2]', 'INFORMATIONAL')}\n${bad}`), 'testing')).toEqual({ ok: false });
+    }
+  });
+
+  // Value: protects=0-100 confidence scale in delegate prompt rule and 1-10 normalization at parse; fails_when=a 0-100 confidence reply (such as 95) is rejected by parseFindings, not credited by decide, or emitted off the 1-10 scale; why_new=owner-approved 0-100 confidence regression; seam=parseFindings and decide
+  test('regression: real maintainability reply with confidence 95 parses, is credited, and normalizes to 10 alongside adversarial and specialist scales', () => {
+    expect(ADVERSARIAL_SCHEMA).toContain('Rule: confidence is an integer from 0 to 100.');
+    const realReply = [
+      '[P3] {"severity":"INFORMATIONAL","confidence":95,"path":"tests/test_karl_wait.py","line":12,"category":"maintainability","summary":"...","fix":"...","fingerprint":"tests/test_karl_wait.py:12:maintainability","specialist":"maintainability"}',
+      'Recommendation: fix because the wait helper test can be simplified.',
+    ].join('\n');
+    const parsed = parseFindings(realReply, 'maintainability');
+    expect(parsed).toEqual({
+      ok: true,
+      findings: [{
+        severity: 'INFORMATIONAL',
+        confidence: 10,
+        path: 'tests/test_karl_wait.py',
+        line: 12,
+        category: 'maintainability',
+        summary: '...',
+        fix: '...',
+        fingerprint: 'tests/test_karl_wait.py:12:maintainability',
+        specialist: 'maintainability',
+      }],
+    });
+    const classify = () => ({ execution: { state: 'ran' }, findings: { highest: 'P3' }, verdict: 'findings' as const });
+    const result = decide('maintainability', {
+      exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false,
+      stdout: realReply, stderr: '', wall_ms: 10,
+    }, classify as any);
+    expect(result).toMatchObject({
+      outcome: 'credited',
+      fallback_reason: null,
+      findings: parsed.ok ? parsed.findings : [],
+    });
+
+    const single = (confidence: unknown) =>
+      `[P2] ${JSON.stringify({ severity: 'INFORMATIONAL', confidence, path: 'a.ts', category: 'c', summary: 's' })}\nRecommendation: fix because a finding remains.`;
+    expect(parseFindings(single(8), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'adversarial' }] });
+    expect(parseFindings(single(70), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 7, specialist: 'adversarial' }] });
+    expect(parseFindings(single(0), 'adversarial')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'adversarial' }] });
+    expect(parseFindings(single(8), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 8, specialist: 'maintainability' }] });
+    expect(parseFindings(single(8), 'red-team')).toMatchObject({ ok: true, findings: [{ confidence: 8, specialist: 'red-team' }] });
+    expect(parseFindings(single(0), 'maintainability')).toMatchObject({ ok: true, findings: [{ confidence: 1, specialist: 'maintainability' }] });
+    for (const invalid of [101, -1, 9.5, '95']) {
+      expect(parseFindings(single(invalid), 'maintainability')).toEqual({ ok: false });
+      expect(parseFindings(single(invalid), 'adversarial')).toEqual({ ok: false });
     }
   });
 

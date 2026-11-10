@@ -4628,6 +4628,23 @@ HEAD and `plan-sha256` the prompt's `SHA-256`. A blocked or needs-context exit
 prints `next: none` and that status after its resume summary, with no fence.
 `plan-sha256` is `none` when the exit names no plan hash.
 
+When the prepared diff changes user-visible behavior, CLI flags, configuration,
+skill inputs or outputs, or upgrade requirements — or when the plan carried a
+`Release note:` or `Upgrade risk:` disclosure that still applies to the
+prepared diff — print one or more `User-facing change: <one plain sentence>`
+lines (or a bullet block under `User-facing change:` / `User-facing changes:`,
+optionally bolded) in the final message on a `next: ship-and-land` exit,
+outside the H-B `Run /ship-and-land` fence: place them after the fence's
+closing line and before the `Stage handoff: stage-handoff/v1;` line, which
+stays the last line of the message; see
+[release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures)
+(`docs/workflow-handoffs.md`). Never put `User-facing change:` on the
+`Run /ship-and-land for this prepared PR.` line, inside the H-B fence, or on
+the `Stage handoff: stage-handoff/v1;` line. Omit `User-facing change:`
+entirely when the diff has no user-facing change (never write `none` or
+`n/a`), and never copy internal review findings, test counts or `## Risks`
+items into it.
+
 Read back live readiness before producing this prompt on an already-complete
 rerun too. Do not publish new PR comments or push code after the ready transition
 just to store the handoff; the pre-ready receipt and copyable final response

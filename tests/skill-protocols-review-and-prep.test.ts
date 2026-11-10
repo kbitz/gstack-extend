@@ -3675,3 +3675,30 @@ describe('review-and-prep PR body size budget', () => {
     });
   }
 });
+
+describe('review-and-prep Step 7 user-facing change disclosure', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const step7Raw = skillSection(prep, '## 7. Emit the copyable prompt for a new session');
+  const step7 = step7Raw.replace(/\s+/g, ' ');
+  const step6Raw = skillSection(prep, '## 6. Final readiness gate and handoff');
+
+  // Value: protects=AC2 and AC7, User-facing change: lines sit outside the H-B fence and before the stage line while leaving the H-B fence and compact receipt unchanged; fails_when=User-facing change: moves into the H-B fence, the Run /ship-and-land line, the stage line or the compact receipt; why_new=Track 73B adds the Step 7 User-facing change: rule; seam=none; no_claim=a consumer parses the disclosure here (covered in handoff-contract.test.ts)
+  test('Step 7 places User-facing change: outside the H-B fence and before the stage line, leaving H-B and the compact receipt unchanged', () => {
+    const hbFences = Array.from(step7Raw.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '');
+    expect(hbFences).toHaveLength(1);
+    const hbBody = hbFences[0]!;
+    expect(hbBody.startsWith('Run /ship-and-land for this prepared PR.\n')).toBe(true);
+    expect(hbBody).not.toContain('User-facing change');
+
+    const receiptFence = Array.from(step6Raw.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '').find((b) =>
+      b.startsWith('<!-- review-and-prep:receipt:<full-sha> -->'),
+    );
+    expect(receiptFence).toBeDefined();
+    expect(receiptFence!).not.toContain('User-facing change');
+
+    expect(step7).toContain('print one or more `User-facing change: <one plain sentence>` lines (or a bullet block under `User-facing change:` / `User-facing changes:`, optionally bolded) in the final message on a `next: ship-and-land` exit, outside the H-B `Run /ship-and-land` fence: place them after the fence\'s closing line and before the `Stage handoff: stage-handoff/v1;` line');
+    expect(step7).toContain('Never put `User-facing change:` on the `Run /ship-and-land for this prepared PR.` line, inside the H-B fence, or on the `Stage handoff: stage-handoff/v1;` line.');
+    expect(step7).toContain('Omit `User-facing change:` entirely when the diff has no user-facing change (never write `none` or `n/a`), and never copy internal review findings, test counts or `## Risks` items into it.');
+    expect(step7Raw).toContain('https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures');
+  });
+});

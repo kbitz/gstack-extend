@@ -253,6 +253,9 @@ Write `PLAN_FILE` with these parts, in this order:
 # Plan: <card title>
 Tier: <routine|standard|novel>
 Verify command: <command, or none — how the plan is verified>
+_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_
+Release note: <what a user of the project sees or does differently>
+Upgrade risk: <what an upgrading user must do or watch for>
 ## Acceptance criteria
 1. <criterion, verbatim from the card>
 ## Tasks
@@ -277,6 +280,30 @@ Fill `Verify command:` from `VERIFY_COMMAND`, else the card's own,
 else the project's documented test command (record that choice as an
 auto-decision), else write `Verify command: none — <how the plan is verified>`.
 `/implement` reads it as intent and never runs it.
+
+Copy the card's `_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_` line
+verbatim into the header, or derive one from `docs/SPEC.md`'s release policy
+when the card has none (record that choice under `## Auto-decisions` as
+`[fork]`), and omit the line only when the project has no release policy. Keep
+it to that single `_release: <patch|minor|major|1.0.0> (<SPEC mapping>)_` line,
+and write it once in the entire plan file: never repeat `_release:` in
+`## Acceptance criteria`, `## Tasks`, `## Risks` or `## Review record`, and
+never append user-facing disclosure prose to it. Put user-facing changes and
+upgrade notes on the separate `Release note:` and `Upgrade risk:` lines
+instead. A `## Post-merge` row is written `- <ID>: <text>`, with a colon right
+after its ID and none inside it; with no such check the section is the single
+line `none`.
+
+`Release note:` and `Upgrade risk:` are optional header lines (or a bullet
+block under `Release note:` / `Release notes:` or `Upgrade risk:` /
+`Upgrade risks:`, optionally bolded) written only when the planned change has a
+user-visible behavioral, CLI, config, skill-interface or upgrade impact worth
+calling out to a user of the project; see
+[release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures)
+(`docs/workflow-handoffs.md`). Omit either label, or both, when nothing
+applies; never write `none` or `n/a`. Each entry is one plain sentence in user
+terms and never copies, re-labels or summarizes `## Risks` bullets, which record
+implementation and verification failure modes rather than release disclosures.
 
 ## Final message
 
