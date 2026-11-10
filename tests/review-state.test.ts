@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
-import { REASON_TABLE, serializeState, type ReviewRunState } from '../src/review-state/state.ts';
+import { applyCommand, REASON_TABLE, serializeState, type ReviewRunState } from '../src/review-state/state.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -92,6 +92,200 @@ afterAll(() => {
 });
 
 describe('bin/review-state', () => {
+  test('replay preserves each pass timestamp and JSON numeric zero', () => {
+    const gitInfo = { repo: '/fixture/.git', toplevel: '/fixture', branch: 'topic', head: headSha, tree: treeSha };
+    const env = { commitExists: () => true, commitTree: () => treeSha, isAncestor: () => true, checkEvidence: () => null };
+    const times = ['2026-11-10T18:00:00Z', '2026-11-10T18:01:00Z'];
+    const start = mkStart(1, { continuation: { prior_stops: 0, max: -0 } });
+    const opened = applyCommand(null, 'start', start, gitInfo, env, times[0]!);
+    if (opened.reason !== 'recorded') throw Error('start failed');
+    expect(applyCommand(JSON.parse(serializeState(opened.state)), 'start', start, gitInfo, env, times[1]!).reason).toBe('replayed');
+    const input = mkPassStarted();
+    const pass = applyCommand(opened.state, 'record pass', input, gitInfo, env, times[0]!);
+    if (pass.reason !== 'recorded') throw Error('pass failed');
+    const done = { pass_id: input.pass_id, state: 'completed', completed_at: times[1] };
+    const completed = applyCommand(pass.state, 'record pass', done, gitInfo, env, times[1]!);
+    if (completed.reason !== 'recorded') throw Error('complete failed');
+    expect(applyCommand(completed.state, 'record pass', input, gitInfo, env, times[1]!).detail.recorded_at).toBe(times[0]);
+    expect(applyCommand(completed.state, 'record pass', done, gitInfo, env, times[0]!).detail.recorded_at).toBe(times[1]);
+  });
+
+  test('rejects nested corrupt state without rewriting or consulting removed external evidence', () => {
+    const d = newDir();
+    callCmd(d, 'start', mkStart());
+    callCmd(d, 'record pass', mkPassStarted());
+    const finding = { finding_id: 'F', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] };
+    const delegate = { provider: 'p', model: 'm', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 1, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('call') };
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(20), outcome: 'completed', delegate, findings: [finding] });
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(20) });
+    callCmd(d, 'record correction', { correction_id: uid(30), target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F' }, resolution: 'fixed' });
+    writeFileSync(join(d, 'proof'), 'proof');
+    const evidence = [{ path: 'proof', sha256: sha256('proof') }];
+    callCmd(d, 'record gate', { gate_id: uid(40), name: 'pregate', result: 'passed', candidate: { commit: headSha }, details: { raw_verdict: 'PASS', wrapper_verdict: 'PASS', policy: 'head', record_path: 'proof', record_sha256: sha256('proof'), skipped_lanes: [] }, evidence });
+    callCmd(d, 'record audit', { audit_id: uid(50), name: 'documentation', result: 'current', details: { report_id: 'd', section_path: 'proof', section_sha256: sha256('proof') }, candidate: { commit: headSha }, evidence });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop', evidence });
+    callCmd(d, 'finish', { outcome: 'blocked', stop_reason: 'test', base: baseSha, full_review_evidence: { status: 'available', commit: headSha, tree: treeSha, source: 'ev://baseline' }, evidence });
+    const statePath = join(d, 'review-run-state.json');
+    const valid = JSON.parse(readFileSync(statePath, 'utf8'));
+    const { head: correctionHead, tree: correctionTree, recorded_at, ...correctionInput } = valid.corrections[0];
+    const changedGit = { repo: valid.run.repo, toplevel: repo, branch: 'main', head: baseSha, tree: treeSha };
+    const noExternalReads = { commitExists: () => { throw Error('replay consulted Git'); }, commitTree: () => { throw Error('replay consulted Git'); }, isAncestor: () => { throw Error('replay consulted Git'); }, checkEvidence: () => { throw Error('replay consulted evidence'); } };
+    expect(applyCommand(valid, 'record correction', correctionInput, changedGit, noExternalReads, '2026-11-10T19:00:00Z')).toMatchObject({ reason: 'replayed', detail: { head: correctionHead ?? headSha, tree: correctionTree ?? treeSha, recorded_at } });
+    unlinkSync(join(d, 'proof'));
+    expect(callCmd(d, 'start', mkStart()).json.reason).toBe('replayed');
+    const paths = ['run.pr', 'policy.delegation', 'passes.0', 'passes.0.candidate', 'passes.0.voices.0', 'passes.0.voices.0.attempts.0', 'passes.0.voices.0.attempts.0.delegate', 'passes.0.voices.0.attempts.0.findings.0', 'corrections.0', 'corrections.0.target', 'gates.0', 'gates.0.details', 'gates.0.evidence.0', 'audits.0', 'audits.0.details', 'checkpoints.0', 'finish', 'finish.full_review_evidence'];
+    for (const path of paths) {
+      for (const mutation of ['unknown', 'missing', 'type']) {
+        const state = structuredClone(valid);
+        let obj = state;
+        for (const key of path.split('.')) obj = obj[key];
+        if (mutation === 'unknown') obj.unknown_field = true;
+        else if (mutation === 'missing') delete obj[Object.keys(obj)[0]!];
+        else obj[Object.keys(obj)[0]!] = [];
+        const bytes = JSON.stringify(state);
+        writeFileSync(statePath, bytes);
+        expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'stop' }).json.reason, `${path}:${mutation}`).toBe('corrupt');
+        expect(readFileSync(statePath, 'utf8')).toBe(bytes);
+      }
+    }
+    for (const mutate of [
+      (s: any) => { s.corrections[0].target.finding_id = 'missing'; },
+      (s: any) => { s.corrections[0].supersedes = uid(999); },
+      (s: any) => { s.passes[0].voices[0].attempts[0].predecessor_attempt_id = uid(999); },
+      (s: any) => { s.passes[0].voices[0].selected_attempt_id = uid(999); },
+      (s: any) => { s.passes.push(structuredClone(s.passes[0])); },
+    ]) {
+      const state = structuredClone(valid); mutate(state);
+      const bytes = JSON.stringify(state); writeFileSync(statePath, bytes);
+      expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'stop' }).json.reason).toBe('corrupt');
+      expect(readFileSync(statePath, 'utf8')).toBe(bytes);
+    }
+  });
+
+  test('all command and pass request shapes reject unknown, missing, mistyped and enum fields', () => {
+    const shapes = [
+      ['start', () => mkStart(), 'run_id', 'policy.source'],
+      ['record pass', () => mkPassStarted(), 'pass_id', 'scope'],
+      ['record pass', () => ({ pass_id: uid(10), state: 'attempt', voice_id: 'core', attempt_id: uid(20), outcome: 'failed' }), 'attempt_id', 'outcome'],
+      ['record pass', () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'core', not_applicable: 'not-applicable' }), 'voice_id', 'not_applicable'],
+      ['record pass', () => ({ pass_id: uid(10), state: 'completed', completed_at: '2026-11-10T18:00:00Z' }), 'completed_at', 'state'],
+      ['record correction', () => ({ correction_id: uid(30), target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F' }, resolution: 'fixed' }), 'correction_id', 'resolution'],
+      ['record gate', () => ({ gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } }), 'gate_id', 'result'],
+      ['record audit', () => ({ audit_id: uid(50), name: 'coverage', result: 'passed', candidate: { commit: headSha }, details: { pct: 100, threshold: 80 } }), 'audit_id', 'name'],
+      ['checkpoint', () => ({ checkpoint_id: uid(60), kind: 'stop' }), 'checkpoint_id', 'kind'],
+      ['finish', () => ({ outcome: 'prepared', base: baseSha }), 'base', 'outcome'],
+    ] as const;
+    for (const [cmd, build, field, enumPath] of shapes) {
+      for (const mode of ['unknown', 'hyphenated', 'camelCase', 'missing', 'type', 'enum']) {
+        const payload: any = build();
+        if (mode === 'unknown') payload.extra = true;
+        else if (mode === 'hyphenated' || mode === 'camelCase') payload[mode === 'hyphenated' ? 'record-id' : 'recordId'] = uid(999);
+        else if (mode === 'missing') delete payload[field];
+        else if (mode === 'type') payload[field] = [];
+        else {
+          const parts = enumPath.split('.'); let obj = payload;
+          for (const key of parts.slice(0, -1)) obj = obj[key];
+          obj[parts.at(-1)!] = 'not-an-enum';
+        }
+        const d = newDir();
+        if (cmd !== 'start') callCmd(d, 'start', mkStart());
+        const before = existsSync(join(d, 'review-run-state.json')) ? readFileSync(join(d, 'review-run-state.json'), 'utf8') : null;
+        expect(callCmd(d, cmd, payload).json.reason, `${cmd}:${mode}`).toBe('invalid-input');
+        expect(existsSync(join(d, 'review-run-state.json')) ? readFileSync(join(d, 'review-run-state.json'), 'utf8') : null).toBe(before);
+      }
+    }
+  });
+
+  test('voice retries retain per-attempt parts and a closed voice refuses new attempts', () => {
+    const d = newDir(); callCmd(d, 'start', mkStart()); callCmd(d, 'record pass', mkPassStarted());
+    const local = { pass_id: uid(10), state: 'attempt', voice_id: 'core', attempt_id: uid(20), outcome: 'failed' };
+    expect(callCmd(d, 'record pass', local).json.reason).toBe('recorded');
+    const delegated = { ...local, attempt_id: uid(21), part: 'core', delegate: { provider: 'p', model: 'm', outcome: 'fell-back', fallback_reason: 'failed', replay: false, wall_ms: 1, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('delegate') } };
+    expect(callCmd(d, 'record pass', delegated).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', { ...local, attempt_id: uid(22), outcome: 'completed', findings: [] }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', local).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', delegated).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(22) }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', { ...local, attempt_id: uid(23) }).json.reason).toBe('invalid-input');
+    expect(callCmd(d, 'record pass', local).json.reason).toBe('replayed');
+    expect(JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')).passes[0].voices[0].part).toBe('core');
+  });
+
+  test('a completed voice refuses newly appended findings while an identical attempt still replays', () => {
+    const d = newDir(); callCmd(d, 'start', mkStart()); callCmd(d, 'record pass', mkPassStarted());
+    const attempt = { pass_id: uid(10), state: 'attempt', voice_id: 'core', attempt_id: uid(20), outcome: 'completed', findings: [] };
+    expect(callCmd(d, 'record pass', attempt).json.reason).toBe('recorded');
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(20) });
+    expect(callCmd(d, 'record pass', { ...attempt, attempt_id: uid(21) }).json.reason).toBe('invalid-input');
+    expect(callCmd(d, 'record pass', attempt).json.reason).toBe('replayed');
+  });
+
+  test.each(['pregate', 'documentation'])('validates pinned %s detail evidence without a duplicated evidence-array item', (name) => {
+    const d = newDir(); callCmd(d, 'start', mkStart());
+    const details = name === 'pregate'
+      ? { raw_verdict: 'PASS', wrapper_verdict: 'PASS', policy: 'head', record_path: 'proof', record_sha256: sha256('proof'), skipped_lanes: [] }
+      : { report_id: 'doc', section_path: 'proof', section_sha256: sha256('proof') };
+    const cmd = name === 'pregate' ? 'record gate' : 'record audit';
+    const payload = { [name === 'pregate' ? 'gate_id' : 'audit_id']: uid(40), name, result: 'passed', candidate: { commit: headSha }, details };
+    expect(callCmd(d, cmd, payload).json.reason).toBe('invalid-input');
+    writeFileSync(join(d, 'proof'), 'wrong');
+    expect(callCmd(d, cmd, payload).json.reason).toBe('invalid-input');
+    writeFileSync(join(d, 'proof'), 'proof');
+    expect(callCmd(d, cmd, payload).json.reason).toBe('recorded');
+    unlinkSync(join(d, 'proof'));
+    expect(callCmd(d, cmd, payload).json.reason).toBe('replayed');
+  });
+
+  test('final-component directory symlinks stay refused with trailing slash and pinned detail evidence is verified', () => {
+    const d = newDir(), link = join(baseTmp, 'trailing-link'); symlinkSync(d, link);
+    const input = writeJson(d, 'input.json', mkStart());
+    expect(runCli(['start', '--dir', `${link}/`, '--input', input]).json).toMatchObject({ reason: 'bad-dir', detail: { condition: 'symlink' } });
+    callCmd(d, 'start', mkStart());
+    for (const [cmd, payload] of [
+      ['record gate', { gate_id: uid(40), name: 'pregate', result: 'passed', candidate: { commit: headSha }, details: { raw_verdict: 'PASS', wrapper_verdict: 'PASS', policy: 'head', record_path: 'absent', record_sha256: sha256('absent'), skipped_lanes: [] } }],
+      ['record audit', { audit_id: uid(50), name: 'documentation', result: 'current', candidate: { commit: headSha }, details: { report_id: 'doc', section_path: 'absent', section_sha256: sha256('absent') } }],
+    ] as const) expect(callCmd(d, cmd, payload).json.reason).toBe('invalid-input');
+  });
+
+  test('lock initialization failure cleans its exclusive lock before identical retry', () => {
+    const d = newDir(), input = writeJson(d, 'input.json', mkStart());
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')}; let fail = true;
+      mock.module('node:fs', () => ({...fs, fsyncSync(fd) { if (fail) { fail=false; throw Object.assign(new Error('injected'), {code:'ENOSPC',syscall:'fsync'}); } return fs.fsyncSync(fd); }}));
+      const {executeCommand}=await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      const first=executeCommand('start',${JSON.stringify(d)},${JSON.stringify(input)},${JSON.stringify(repo)});
+      const lock=fs.existsSync(${JSON.stringify(join(d, 'review-run-state.json.lock'))});
+      const second=executeCommand('start',${JSON.stringify(d)},${JSON.stringify(input)},${JSON.stringify(repo)},{...process.env,GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS:'0'});
+      console.log(JSON.stringify({first:first.reason,lock,second:second.reason}));`;
+    const result = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ first: 'unwritable', lock: false, second: 'recorded' });
+  });
+
+  test.each([false, true])('Git binding pins its tree and refreshes after a forced lock wait: %s', (changeDuringWait) => {
+    const ownRepo = makeEmptyRepo(baseTmp);
+      const d = newDir(), input = writeJson(d, 'input.json', { ...mkStart(), base: git(ownRepo, ['rev-parse', 'HEAD']) });
+      const lock = join(d, 'review-run-state.json.lock');
+      if (changeDuringWait) writeFileSync(lock, 'held');
+      const before = git(ownRepo, ['rev-parse', 'HEAD']);
+      // The injected Git read simulates HEAD changing between the two discovery calls.
+      // The injected EEXIST path forces one actual wait-loop visit before releasing the lock.
+      const script = `import {mock} from 'bun:test'; const fs={...await import('node:fs')}, cp={...await import('node:child_process')};
+        const cwd=${JSON.stringify(ownRepo)}, lock=${JSON.stringify(lock)}; const gitEnv={...Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_'))),GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1'};
+        function advance() {fs.writeFileSync(cwd+'/new-file','new'); for(const args of [['add','new-file'],['commit','-m','advance']]) { const r=cp.spawnSync('git',['-C',cwd,...args],{env:gitEnv}); if(r.status!==0)throw Error('fixture commit'); }}
+        let once=true;
+        mock.module('node:child_process',()=>({...cp,spawnSync(file,args,options){const r=cp.spawnSync(file,args,options); if(!${changeDuringWait} && once && args.at(-2)==='rev-parse' && args.at(-1)==='HEAD'){once=false;advance();} return r;}}));
+        mock.module('node:fs',()=>({...fs,openSync(path,...args){try{return fs.openSync(path,...args);}catch(e){if(${changeDuringWait} && once && path===lock && e.code==='EEXIST'){once=false;advance();fs.unlinkSync(lock);}throw e;}}}));
+        const {executeCommand}=await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+        const r=executeCommand('start',${JSON.stringify(d)},${JSON.stringify(input)},cwd);
+        const state=JSON.parse(fs.readFileSync(${JSON.stringify(join(d, 'review-run-state.json'))},'utf8'));
+        console.log(JSON.stringify({reason:r.reason,binding:state.binding}));`;
+      const result = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      const { reason, binding } = JSON.parse(result.stdout);
+      expect(reason).toBe('recorded');
+      expect(binding.head).toBe(changeDuringWait ? git(ownRepo, ['rev-parse', 'HEAD']) : before);
+      expect(binding.tree).toBe(git(ownRepo, ['rev-parse', `${binding.head}^{tree}`]));
+  });
   test('launcher exec line and --help reason parity with REASON_TABLE and design anchors', () => {
     const launcher = readFileSync(BIN_PATH, 'utf8');
     expect(launcher).toContain('exec bun --no-env-file --no-install --config=/dev/null');
@@ -182,17 +376,17 @@ describe('bin/review-state', () => {
   });
 
   test.each([
-    ['unknown/hyphenated/camelCase keys & multiple violations', 'start', { 'run-id': uid(1), runId: uid(1), base: 'bad' }, ['run_id', 'base', 'plan', 'policy', 'continuation', 'run-id', 'runId']],
-    ['out-of-enum policy.source & bad continuation', 'start', mkStart(1, { policy: { value: null, source: 'wrong' }, continuation: { prior_stops: 1, max: 1, continues: null } }), ['policy.source', 'continuation.continues']],
-    ['missingcommit in Git', 'start', mkStart(1, { base: sha256('missing').slice(0, 40) }), ['base']],
-    ['delegated attempt without part or with specialist:red-team', 'record pass', { pass_id: uid(10), state: 'attempt', voice_id: 'core', part: 'specialist:red-team', attempt_id: uid(20), outcome: 'completed', delegate: { provider: 'codex', model: 'm', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 1, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, call_id: sha256('c') }, findings: [] }, ['part']],
-    ['correction setting adjudication duplicate', 'record correction', { correction_id: uid(30), target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' }, adjudication: 'duplicate' }, ['adjudication']],
-    ['external-gate checkpoint without base', 'checkpoint', { checkpoint_id: uid(60), kind: 'external-gate' }, ['base']],
-    ['stopped finish without delta_base/stop_count/stop_reason', 'finish', { outcome: 'stopped', base: baseSha }, ['stop_reason', 'delta_base', 'stop_count']],
+    ['unknown/hyphenated/camelCase keys & multiple violations', 'start', () => ({ 'run-id': uid(1), runId: uid(1), base: 'bad' }), ['run_id', 'base', 'plan', 'policy', 'continuation', 'run-id', 'runId']],
+    ['out-of-enum policy.source & bad continuation', 'start', () => mkStart(1, { policy: { value: null, source: 'wrong' }, continuation: { prior_stops: 1, max: 1, continues: null } }), ['policy.source', 'continuation.continues']],
+    ['missingcommit in Git', 'start', () => mkStart(1, { base: sha256('missing').slice(0, 40) }), ['base']],
+    ['delegated attempt without part or with specialist:red-team', 'record pass', () => ({ pass_id: uid(10), state: 'attempt', voice_id: 'core', part: 'specialist:red-team', attempt_id: uid(20), outcome: 'completed', delegate: { provider: 'codex', model: 'm', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 1, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, call_id: sha256('c') }, findings: [] }), ['part']],
+    ['correction setting adjudication duplicate', 'record correction', () => ({ correction_id: uid(30), target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' }, adjudication: 'duplicate' }), ['adjudication']],
+    ['external-gate checkpoint without base', 'checkpoint', () => ({ checkpoint_id: uid(60), kind: 'external-gate' }), ['base']],
+    ['stopped finish without delta_base/stop_count/stop_reason', 'finish', () => ({ outcome: 'stopped', base: baseSha }), ['stop_reason', 'delta_base', 'stop_count']],
   ])('refuses invalid input: %s', (_label, cmd, payload, expectedPaths) => {
     const d = newDir();
     if (cmd !== 'start') callCmd(d, 'start', mkStart(1));
-    const res = callCmd(d, cmd, payload);
+    const res = callCmd(d, cmd, payload());
     expect(res.code).toBe(1);
     expect(res.json.reason).toBe('invalid-input');
     const paths = (res.json.detail.violations as { path: string }[]).map((v) => v.path);

@@ -43,7 +43,8 @@ function parseLockHolder(lockPath: string): { pid: number | null; host: string |
 }
 
 export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env): StoreResult {
-  const statePath = isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
+  dirArg = dirArg.replace(/\/+$/, '') || '/'; // lstat must inspect the final component itself.
+  let statePath = isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
   const waitRaw = env.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? '5000';
   if (!/^\d+$/.test(waitRaw) || Number(waitRaw) < 0 || Number(waitRaw) > 60000) {
     return makeEnvelope(command, 'usage', { message: truncate80(`invalid GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS "${waitRaw}"; expected integer in 0..60000`) }, statePath, null);
@@ -65,7 +66,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === 'ENOENT' || e.code === 'ENOTDIR') {
-      return makeEnvelope(command, 'bad-dir', { condition: 'missing', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, `Create --dir with mkdir -p ${truncate80(dirArg)} outside the work tree, or continue inline (D1).`);
+      return makeEnvelope(command, 'bad-dir', { condition: 'missing', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Create the directory supplied in --dir with mkdir -p outside the work tree, or continue inline (D1).');
     }
     return makeEnvelope(command, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'lstat', path: truncate80(dirArg) }, statePath, null);
   }
@@ -73,6 +74,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   if (!dirStat.isDirectory()) return makeEnvelope(command, 'bad-dir', { condition: 'not-directory', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass an existing directory path for --dir, or continue inline (D1).');
 
   const realDir = realpathSync(dirArg);
+  statePath = join(realDir, 'review-run-state.json');
   if (realDir === realTop || realDir.startsWith(`${realTop}/`)) {
     return makeEnvelope(command, 'bad-dir', { condition: 'in-worktree', resolved_path: truncate80(realDir), toplevel: truncate80(realTop) }, statePath, null, 'Place --dir outside the Git work tree, or continue inline (D1).');
   }
@@ -103,14 +105,6 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     } catch { evidenceErrors.set(key, 'evidence-missing'); }
   }
 
-  const commonDirRes = runGit(cwd, ['rev-parse', '--git-common-dir'], gitEnv);
-  const symRefRes = runGit(cwd, ['symbolic-ref', '--short', 'HEAD'], gitEnv);
-  const revRefRes = symRefRes.ok ? symRefRes : runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], gitEnv);
-  const headRes = runGit(cwd, ['rev-parse', 'HEAD'], gitEnv);
-  const treeRes = runGit(cwd, ['rev-parse', 'HEAD^{tree}'], gitEnv);
-  if (!commonDirRes.ok || !revRefRes.ok || !headRes.ok || !treeRes.ok) return makeEnvelope(command, 'not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
-  const gitInfo: GitInfo = { toplevel: realTop, repo: realpathSync(resolve(cwd, commonDirRes.stdout)), branch: revRefRes.stdout, head: headRes.stdout, tree: treeRes.stdout };
-
   const envChecker: EnvChecker = {
     commitExists: (sha) => runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`], gitEnv).ok,
     commitTree: (sha) => runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`], gitEnv).ok ? (runGit(cwd, ['rev-parse', `${sha}^{tree}`], gitEnv).stdout || null) : null,
@@ -118,16 +112,19 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     checkEvidence: (p, sha256) => evidenceErrors.get(`${p}:${sha256}`) ?? null,
   };
 
-  const lockPath = join(dirArg, 'review-run-state.json.lock');
+  const lockPath = join(realDir, 'review-run-state.json.lock');
   const startMs = Date.now();
   while (true) {
+    let created = false;
     try {
       const fd = openSync(lockPath, 'wx', 0o600);
+      created = true;
       try { writeAll(fd, Buffer.from(`${JSON.stringify({ pid: process.pid, host: hostname(), started_at: new Date().toISOString() })}\n`, 'utf8')); fsyncSync(fd); } finally { closeSync(fd); }
       break;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code === 'EEXIST') {
+      if (created) unlinkQuiet(lockPath);
+      if (!created && e.code === 'EEXIST') {
         if (Date.now() - startMs >= lockWaitMs) return makeEnvelope(command, 'busy', { holder: parseLockHolder(lockPath) }, statePath, null);
         Bun.sleepSync(Math.min(50, Math.max(1, lockWaitMs - (Date.now() - startMs))));
         continue;
@@ -139,6 +136,14 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   let tmpPath: string | null = null;
   let committed = false;
   try {
+    // Stamp one coherent commit/tree after any lock wait, never two moving HEAD reads.
+    const commonDirRes = runGit(cwd, ['rev-parse', '--git-common-dir'], gitEnv);
+    const symRefRes = runGit(cwd, ['symbolic-ref', '--short', 'HEAD'], gitEnv);
+    const revRefRes = symRefRes.ok ? symRefRes : runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], gitEnv);
+    const headRes = runGit(cwd, ['rev-parse', 'HEAD'], gitEnv);
+    const treeRes = headRes.ok ? runGit(cwd, ['rev-parse', `${headRes.stdout}^{tree}`], gitEnv) : headRes;
+    if (!commonDirRes.ok || !revRefRes.ok || !headRes.ok || !treeRes.ok) return makeEnvelope(command, 'not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
+    const gitInfo: GitInfo = { toplevel: realTop, repo: realpathSync(resolve(cwd, commonDirRes.stdout)), branch: revRefRes.stdout, head: headRes.stdout, tree: treeRes.stdout };
     let storedState: ReviewRunState | null = null;
     try {
       const rawBytes = readFileSync(statePath!, 'utf8');
@@ -160,7 +165,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     if (outcome.reason !== 'recorded') return makeEnvelope(command, outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
 
     const serialized = Buffer.from(serializeState(outcome.state), 'utf8');
-    tmpPath = join(dirArg, `review-run-state.json.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
+    tmpPath = join(realDir, `review-run-state.json.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
     try {
       const fd = openSync(tmpPath, 'wx', 0o600);
       try { writeAll(fd, serialized); fsyncSync(fd); } finally { closeSync(fd); }
