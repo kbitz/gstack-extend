@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.0] - 2026-11-09
+
+### Added
+
+- `bin/review-delegate` accepts an opt-in tools-mode provider (`"access": "tools"` with `"cli": "claude-code"` and `"commands"`) that runs Claude Code with its normal HOME and sign-in in a disposable copy of the repository at the reviewed head, limited by Claude Code's own permission flags; diff-only providers and runs without a `Review delegates:` line are unchanged.
+
+### Upgrade notes
+
+- An older runner refuses a configuration carrying `access`, `cli` or `commands` as `config-malformed`, so delegation turns inactive and every part runs on the host model; a caller first checks that `review-delegate --help` contains `"access": "tools"`.
+
 ## [0.80.0] - 2026-11-09
 
 ### Changed
