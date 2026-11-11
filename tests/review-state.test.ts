@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, sy
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
-import { makeEnvelope, readHelperVersion } from '../src/review-state/store.ts';
+import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -41,14 +41,26 @@ function writeJson(dir: string, name: string, payload: unknown): string {
   return p;
 }
 
-function runCli(args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
+function runCli(args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; versionPath?: string } = {}) {
   let out = '', err = '';
-  const code = main(args, { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: opts.cwd ?? repo, env: { ...process.env, ...opts.env } });
+  const code = main(args, { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: opts.cwd ?? repo, env: { ...process.env, ...opts.env }, versionPath: opts.versionPath });
   const json = out.trim().startsWith('{') ? JSON.parse(out.trim()) : null;
+  if (json) {
+    // Check metadata on the real success/refusal paths, not only the envelope factory.
+    const entry = REASON_TABLE.find((e) => e.reason === json.reason)!;
+    expect(entry).toBeDefined();
+    expect(code, json.reason).toBe(entry.exit);
+    expect(json.status, json.reason).toBe(entry.status);
+    expect(json.side_effects, json.reason).toBe(entry.side_effects);
+    expect(json.retry, json.reason).toBe(entry.retry);
+    expect(json.helper_version, json.reason).toBe(readHelperVersion(opts.versionPath));
+    expect(json.retry_after_ms, json.reason).toBe(json.reason === 'busy'
+      ? Number(opts.env?.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? process.env.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? '5000') : null);
+  }
   return { code, out, err, json };
 }
 
-function callCmd(dir: string, cmd: string, payload: unknown, opts: { cwd?: string; env?: NodeJS.ProcessEnv; file?: string } = {}) {
+function callCmd(dir: string, cmd: string, payload: unknown, opts: { cwd?: string; env?: NodeJS.ProcessEnv; file?: string; versionPath?: string } = {}) {
   const f = writeJson(dir, opts.file ?? `in-${++dirSeq}.json`, payload);
   return runCli([...cmd.split(' '), '--dir', dir, '--input', f], opts);
 }
@@ -618,6 +630,17 @@ describe('bin/review-state', () => {
     expect(wRes).toMatchObject({ code: 0, json: { reason: 'recorded', rev: 5 } });
   });
 
+  test('--version ignores inherited version overrides', () => {
+    const versionFile = join(newDir(), 'VERSION');
+    writeFileSync(versionFile, '9.9.9\n');
+    const expected = readFileSync(join(REPO_ROOT, 'VERSION'), 'utf8').trim();
+    expect(runCli(['--version'], { env: { GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH: versionFile } })).toMatchObject({
+      code: 0,
+      out: `review-state ${expected}\n`,
+      err: '',
+    });
+  });
+
   test('--version flag and helper_version envelope field read VERSION and fall back on missing, symlink, or malformed files', () => {
     const repoVersion = readFileSync(join(REPO_ROOT, 'VERSION'), 'utf8').trim();
     expect(readHelperVersion()).toBe(repoVersion);
@@ -629,7 +652,7 @@ describe('bin/review-state', () => {
 
     // Missing VERSION file falls back to unknown / null
     const missingPath = join(baseTmp, 'no-such-version');
-    expect(runCli(['--version'], { env: { GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH: missingPath } })).toMatchObject({
+    expect(runCli(['--version'], { versionPath: missingPath })).toMatchObject({
       code: 0,
       out: 'review-state unknown\n',
     });
@@ -639,22 +662,22 @@ describe('bin/review-state', () => {
     writeFileSync(realVerFile, '1.2.3.4\n');
     const symVerFile = join(baseTmp, 'ver-sym');
     symlinkSync(realVerFile, symVerFile);
-    expect(readHelperVersion({}, realVerFile)).toBe('1.2.3.4');
-    expect(readHelperVersion({}, symVerFile)).toBeNull();
+    expect(readHelperVersion(realVerFile)).toBe('1.2.3.4');
+    expect(readHelperVersion(symVerFile)).toBeNull();
 
     // Malformed VERSION file falls back to null
     const badVerFile = join(baseTmp, 'ver-bad');
     writeFileSync(badVerFile, 'v0.86.1-beta\n');
-    expect(readHelperVersion({}, badVerFile)).toBeNull();
+    expect(readHelperVersion(badVerFile)).toBeNull();
 
     // Envelopes carry helper_version (both string and null fallback) and stamp writer on writes
     const d = newDir();
-    const startRes = callCmd(d, 'start', mkStart(1), { env: { GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH: realVerFile } });
+    const startRes = callCmd(d, 'start', mkStart(1), { versionPath: realVerFile });
     expect(startRes.json.helper_version).toBe('1.2.3.4');
     const state1 = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
     expect(state1.writer).toBe('1.2.3.4');
 
-    const passRes = callCmd(d, 'record pass', mkPassStarted(10), { env: { GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH: badVerFile } });
+    const passRes = callCmd(d, 'record pass', mkPassStarted(10), { versionPath: badVerFile });
     expect(passRes.json.helper_version).toBeNull();
     const state2 = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
     expect(state2.writer).toBeNull();
@@ -663,17 +686,17 @@ describe('bin/review-state', () => {
   test('cross-version compatibility: newer-schema for v2+ and for v1 with newer writer + unknown key, corrupt for equal/older/null writer', () => {
     const curVerFile = join(baseTmp, 'ver-0861');
     writeFileSync(curVerFile, '0.86.1\n');
-    const env = { GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH: curVerFile };
+    const options = { versionPath: curVerFile };
 
     const d = newDir();
-    callCmd(d, 'start', mkStart(1), { env });
+    callCmd(d, 'start', mkStart(1), options);
     const statePath = join(d, 'review-run-state.json');
     const baseline = JSON.parse(readFileSync(statePath, 'utf8'));
 
     // 1. Schema v2 returns newer-schema (exit 1, status unreadable) without modifying file
     const v2Bytes = JSON.stringify({ ...baseline, schema: 'review-run-state/v2' });
     writeFileSync(statePath, v2Bytes);
-    const v2Res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, { env });
+    const v2Res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
     expect(v2Res.code).toBe(1);
     expect(v2Res.json).toMatchObject({
       status: 'unreadable',
@@ -689,7 +712,7 @@ describe('bin/review-state', () => {
     for (const newerWriter of ['0.86.1.1', '0.86.2', '0.87.0', '1.0.0']) {
       const newerUnknown = JSON.stringify({ ...baseline, writer: newerWriter, future_v1_field: true });
       writeFileSync(statePath, newerUnknown);
-      const res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, { env });
+      const res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
       expect(res.code).toBe(1);
       expect(res.json).toMatchObject({
         status: 'unreadable',
@@ -703,7 +726,7 @@ describe('bin/review-state', () => {
     for (const sameOrOlderWriter of ['0.86.1', '0.86.1.0', '0.86.0', '0.85.9.9', null]) {
       const corruptBytes = JSON.stringify({ ...baseline, writer: sameOrOlderWriter, future_v1_field: true });
       writeFileSync(statePath, corruptBytes);
-      const res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, { env });
+      const res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
       expect(res.code).toBe(1);
       expect(res.json.reason).toBe('corrupt');
       expect(readFileSync(statePath, 'utf8')).toBe(corruptBytes);
@@ -711,7 +734,7 @@ describe('bin/review-state', () => {
 
     // 4. Schema v1 with a newer writer but valid v1 structure reads and writes cleanly, updating writer to current helper_version
     writeFileSync(statePath, JSON.stringify({ ...baseline, writer: '9.9.9' }));
-    const okRes = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, { env });
+    const okRes = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
     expect(okRes.code).toBe(0);
     expect(okRes.json.reason).toBe('recorded');
     expect(JSON.parse(readFileSync(statePath, 'utf8')).writer).toBe('0.86.1');
@@ -769,12 +792,12 @@ describe('bin/review-state', () => {
 
   test('side_effects, retry, and retry_after_ms match REASON_TABLE across all reasons', () => {
     for (const entry of REASON_TABLE) {
-      const env = makeEnvelope('start', entry.reason, {}, '/tmp/review-run-state.json', 1, undefined, '0.86.1', 3456);
-      expect(env.status, entry.reason).toBe(entry.status);
-      expect(env.exitCode, entry.reason).toBe(entry.exit);
-      expect(env.side_effects, entry.reason).toBe(entry.side_effects);
-      expect(env.retry, entry.reason).toBe(entry.retry);
-      expect(env.retry_after_ms, entry.reason).toBe(entry.reason === 'busy' ? 3456 : null);
+      expect(entry.side_effects, entry.reason).toBe(entry.reason === 'recorded' ? 'committed' : 'none');
+      const retry = ['recorded', 'replayed'].includes(entry.reason) ? 'no'
+        : ['busy', 'unwritable'].includes(entry.reason) ? 'same-input'
+        : ['worktree-mismatch', 'finished', 'exists', 'corrupt', 'newer-schema'].includes(entry.reason) ? 'never'
+        : 'after-fix';
+      expect(entry.retry, entry.reason).toBe(retry);
     }
 
     // Verify busy CLI envelope carries lockWaitMs in retry_after_ms while recorded/replayed carry null

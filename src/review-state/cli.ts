@@ -2,7 +2,7 @@ import { isAbsolute, join } from 'node:path';
 import { REASON_TABLE, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
 import { executeCommand, makeEnvelope, readHelperVersion, type StoreResult } from './store.ts';
 
-export type CliIo = { stdout(text: string): void; stderr(text: string): void; cwd: string; env?: NodeJS.ProcessEnv };
+export type CliIo = { stdout(text: string): void; stderr(text: string): void; cwd: string; env?: NodeJS.ProcessEnv; versionPath?: string };
 
 export function renderMainHelp(): string {
   const reasons = REASON_TABLE.map((r) => `  ${r.reason} (status=${r.status}, exit=${r.exit}, side_effects=${r.side_effects}, retry=${r.retry})`).join('\n');
@@ -60,7 +60,7 @@ function emitResult(res: StoreResult, io: CliIo): number {
 export function main(argv: string[], io: CliIo): number {
   const env = io.env ?? process.env;
   if (argv.length === 1 && argv[0] === '--version') {
-    io.stdout(`review-state ${readHelperVersion(env) ?? 'unknown'}\n`);
+    io.stdout(`review-state ${readHelperVersion(io.versionPath) ?? 'unknown'}\n`);
     return 0;
   }
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
@@ -106,13 +106,13 @@ export function main(argv: string[], io: CliIo): number {
   const validCommands: readonly CommandName[] = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'];
   if (!(validCommands as readonly string[]).includes(commandStr)) {
     const label = commandStr || 'unknown';
-    return emitResult(makeEnvelope(truncate80(label), 'usage', { message: truncate80(`unknown command "${label}"`) }, statePath, null, undefined, readHelperVersion(env)), io);
+    return emitResult(makeEnvelope(truncate80(label), 'usage', { message: truncate80(`unknown command "${label}"`) }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
   }
   if (flagErr || dirArg === undefined || inputArg === undefined) {
     const msg = flagErr ?? (dirArg === undefined ? '--dir is required' : '--input is required');
-    return emitResult(makeEnvelope(commandStr, 'usage', { message: msg }, statePath, null, undefined, readHelperVersion(env)), io);
+    return emitResult(makeEnvelope(commandStr, 'usage', { message: msg }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
   }
-  return emitResult(executeCommand(commandStr as CommandName, dirArg, inputArg, io.cwd, env), io);
+  return emitResult(executeCommand(commandStr as CommandName, dirArg, inputArg, io.cwd, env, io.versionPath), io);
 }
 
 if (import.meta.main) {

@@ -7,12 +7,11 @@ import { applyCommand, collectEvidenceItems, isVersion, REASONS, serializeState,
 
 export const DEFAULT_VERSION_PATH = resolve(import.meta.dir, '..', '..', 'VERSION');
 
-export function readHelperVersion(env: NodeJS.ProcessEnv = process.env, versionPath?: string): string | null {
-  const target = versionPath ?? env.GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH ?? DEFAULT_VERSION_PATH;
+export function readHelperVersion(versionPath = DEFAULT_VERSION_PATH): string | null {
   try {
-    const st = lstatSync(target);
+    const st = lstatSync(versionPath);
     if (st.isSymbolicLink() || !st.isFile() || st.size > 128) return null;
-    const raw = readFileSync(target, 'utf8').trim();
+    const raw = readFileSync(versionPath, 'utf8').trim();
     return isVersion(raw) ? raw : null;
   } catch {
     return null;
@@ -93,8 +92,8 @@ function parseLockHolder(lockPath: string): { pid: number | null; host: string |
   return { pid: null, host: null, started_at: null, unknown: true };
 }
 
-export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env): StoreResult {
-  const helperVersion = readHelperVersion(env);
+export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env, versionPath?: string): StoreResult {
+  const helperVersion = readHelperVersion(versionPath);
   const reply = (reason: ReasonCode, detail: Record<string, unknown>, sPath: string | null, rev: number | null, customFix?: string, retryAfterMs: number | null = null) =>
     makeEnvelope(command, reason, detail, sPath, rev, customFix, helperVersion, retryAfterMs);
 
