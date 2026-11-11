@@ -328,7 +328,14 @@ effect together. A `Review delegates:` line beside a policy that carries only
   `Delegated part:` line per part with
   `provider`, `model`, `outcome`, `reason`, `wall_ms`, the four token counts,
   `findings` and `call` (the call id). Unknown values read `unknown`. The PAUSED
-  and STOPPED receipts carry the same lines.
+  and STOPPED receipts carry the same lines. The twelve-segment `Delegated part:`
+  receipt grammar and both documented `delegation: active (…)` forms are stable
+  handoff/receipt surfaces for an orchestrator under
+  [SPEC Release policy](SPEC.md#release-policy)'s orchestration contract and
+  versioned handoff category, governed by that policy and
+  [Stage handoff contract](workflow-handoffs.md#validated-and-receipt-present-bindings)
+  ([Versioning and compatibility](workflow-handoffs.md#versioning-and-compatibility));
+  `bin/review-delegate` itself remains internal.
 - The `specialists-dispatched:` status describes the current upstream item
   result, and its waiver is scoped to credited specialist parts (a credited
   `red-team` or `adversarial` alone waives nothing there); `adversarial-pass:`
