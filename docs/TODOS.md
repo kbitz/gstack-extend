@@ -2,6 +2,66 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/cli.ts|tests/review-state.test.ts] Test gap: CLI flag refusals and error envelopes
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Duplicate and missing-value flags, plus exact one-line JSON, two-line stderr and exit-code agreement.
+- **Hypothesis (untested):** Extend existing CLI rejection cases using otherwise valid input and exact stream/exit assertions. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/cli.ts:57`
+- **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Attempt and finding semantic refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Validly typed but inconsistent predecessor, duplicate finding/attempt, part, delegate outcome and attribution combinations.
+- **Hypothesis (untested):** Add table rows that break one relationship guard while every shape and parent reference remains valid. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/state.ts:407`
+- **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Voice selection semantic refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Both/neither completion selectors and selection of a missing or failed attempt.
+- **Hypothesis (untested):** Extend the existing voice fixture with one invalid selector/reference per row. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/state.ts:485`
+- **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Correction chain semantic refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Missing finding targets, stale supersedes, invalid effective adjudication/resolution and a missing fixed_in commit.
+- **Hypothesis (untested):** Reuse the populated correction fixture and assert caller refusal plus unchanged bytes for each case. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/state.ts:522`
+- **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Finish ancestry and checkpoint field refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Nonancestor finish base, missing delta/full-review commit, resume on an open run and a non-resume checkpoint carrying session_id.
+- **Hypothesis (untested):** Use isolated Git histories and table-driven checkpoint/finish requests, asserting the specific violation. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/state.ts:623`
+- **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: Temporary-state and postcommit failure handling
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Temporary write/fsync/rename failures and lock-removal failure after the rename commit point; existing tests inject lock initialization failure only.
+- **Hypothesis (untested):** Extend isolated subprocess fault injection: precommit failures preserve old bytes and clean owned files; postcommit unlink failure reports recorded with warnings. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/store.ts:150`
+- **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=tests/skill-protocols.test.ts] Test gap: Exercise the remaining removed-host detector branches
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** The removal lock has synthetic Conductor and `.context/` cases, while an unguarded Paseo mention and the removed marker lack dedicated negative inputs.
