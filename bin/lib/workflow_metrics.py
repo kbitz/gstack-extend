@@ -1006,7 +1006,7 @@ def bind_initial(req):
     raise Fail("unavailable", "identity-missing", cause="no-handoff")
 
 
-def mutate(op, req, binder=bind_initial):
+def mutate(op, req, binder=bind_initial, bound_event_ids=None):
     """Append one validated event, or replay/conflict an existing one. Returns (status, data)."""
     paths = run_paths(req["session_id"])
     digest = request_digest(op, req)
@@ -1048,7 +1048,20 @@ def mutate(op, req, binder=bind_initial):
         if bound is not None and bound["request"]["stage"] != req["stage"]:
             raise Fail("unavailable", "identity-mismatch", cause="stage-differs-from-bound-run")
         if bound is not None and initial:
-            raise Fail("conflict", "event-conflict", cause="run-already-bound")
+            # Derive may attach to an existing run boundary, but must not mix
+            # its projection with another producer's pass/terminal records.
+            if bound_event_ids is None or any(
+                r["op"] in ("pass", "correction", "end") and r["event_id"] not in bound_event_ids
+                for r in records
+            ):
+                raise Fail("conflict", "event-conflict", cause="run-already-bound")
+            try:
+                _confirm(paths, read_fd)
+            except OSError:
+                raise Fail("unconfirmed", "io-error", cause="replay-confirm", side_effects="unknown") from None
+            return "replayed", {"captured_at_ms": bound["captured_at_ms"],
+                                "request_digest": bound["request_digest"], "op": op,
+                                "bound_step_id": bound["request"]["step_id"]}
         if ledger_exists and initial and bound is None:
             binder(req)  # file existed without a bound run (e.g. empty): still bind exactly
         if not initial and bound is None:

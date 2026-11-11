@@ -1066,6 +1066,10 @@ Missing data always reads as unknown — never as zero work.
 
 ### Review-state derive
 
+This command and `review-state export` are experimental until Track 79A's default
+decision. No installed skill calls either yet. Run derive from the recording
+checkout after recording state, and rerun it there to recover a missed write.
+
 `gstack-extend-telemetry derive --dir DIR` invokes `bin/review-state export --dir DIR`
 and writes the run's workflow-metrics records (`begin(kind=run)`, `pass` v2/v3 with
 `found_by` attribution and `delegate` metadata, `correction` for `finding`/`retry`/`fallback`,
@@ -1075,12 +1079,15 @@ segments whose `session_id` was `null` (`derived: true`) through the existing
 leaving `review-run-state.json` untouched.
 
 - **Segment binding:** each segment binds when its ledger already has a `begin(kind=run)`
-  record (`already-bound`), when its recorded `session_id` matches an active handoff
+  record (`already-bound`, retaining that run's actual step ID), when its recorded `session_id` matches an active handoff
   (`handoff`) or a completion marker (`completed-marker`) for this checkout and
   `extend:review-and-prep`, or when `derived: true` and its `session_id` equals
   `"extend-" + uuidv5("9aa572eb-215f-452f-99e8-2bfdf0329cf3", "<run_id>:segment:<n>")`
   with `run.repo` matching this checkout's `realpath(git rev-parse --git-common-dir)`
-  (`derived`). Any other session fails with `identity-missing`.
+  (`derived`). Missing identity gives `identity-missing`; a repository mismatch
+  gives `identity-mismatch`, and ambiguous/unreadable handoffs retain their existing
+  refusal. An already-bound run containing another writer's pass, correction or
+  terminal events refuses with `event-conflict` rather than mixing two projections.
 - **Cross-segment corrections:** finding corrections derive into the session of their
   target pass's segment, and `supersedes_event_id` walks the `supersedes` chain to the
   nearest ancestor correction that emitted a metrics record (skipping receipt-only and
@@ -1090,7 +1097,26 @@ leaving `review-run-state.json` untouched.
   schema-version-4 row (`agent`, `model`, and `effort` `null` with `*_source: "unknown"`,
   `started_at` and `duration_s` from the segment bounds, `outcome` and `branch` from the
   export) and write a `telemetry-completed` marker so repeated `derive` or `finish` calls
-  are idempotent.
+  are idempotent within this checkout while its marker exists. Markers share finish's
+  30-day retention; a rerun after pruning can duplicate a row. Export may read the
+  same repository from another worktree, but marker binding/deduplication is
+  checkout-scoped. Derived work item and run mode come from the deriving process's
+  launch signals, never from harness detection. Skill-usage rows are not derived.
+- **Opt-out:** `provenance=false` disables both sinks. The independent
+  `GSTACK_EXTEND_WORKFLOW_METRICS=off` switch disables metrics only; eligible
+  provenance rows can still be written. A metrics failure does not suppress a
+  valid derived provenance row.
+- **Result and recovery:** derive always exits 0 and prints one `v:1` JSON envelope
+  with `status: ok|partial|unavailable|disabled`, `reason`, and `data`. `data.current`
+  carries the latest segment's `segment`, `session_id`, `run_step_id` and `run_begin`
+  (`recorded`, `replayed`, `disabled` or `unavailable`); `data.sessions` reports each
+  segment's binding and recorded/replayed/failed counts. `data.stage_runs` reports
+  written/present/skipped counts and `data.skipped` lists unknown-segment records.
+  Non-`ok` results also print one stderr recovery line with this anchor. Once the
+  telemetry directory is writable, rerun `derive --dir DIR` with the same directory,
+  from this repository. A blocked marker store or failed marker save reports
+  `stage-runs-marker-unwritable` rather than success; a crash or marker-save failure
+  after append can still leave an unmarked row, so inspect that row before retrying.
 
 <a id="workflow-metrics-isolation"></a>
 

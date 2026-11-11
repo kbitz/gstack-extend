@@ -1052,6 +1052,7 @@ describe('bin/review-state', () => {
     expect(expRes.err).toBe('');
     expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
 
+    expect(runCli(['export', '--dir', d]).out).toBe(expRes.out);
     const exp = expRes.json;
     expect(exp.schema).toBe(EXPORT_SCHEMA);
     expect(exp.run.run_id).toBe(runId);
@@ -1161,6 +1162,9 @@ describe('bin/review-state', () => {
     } finally {
       git(repo, ['checkout', '-', '--quiet']);
     }
+    const linkedTree = join(baseTmp, 'export-linked-tree');
+    git(repo, ['worktree', 'add', '--detach', linkedTree, 'HEAD']);
+    expect(runCli(['export', '--dir', d], { cwd: linkedTree }).out).toBe(expRes.out);
     const otherRepo = makeEmptyRepo(baseTmp);
     expect(runCli(['export', '--dir', d], { cwd: otherRepo })).toMatchObject({
       code: 1,

@@ -19,6 +19,8 @@ Usage:
   bin/review-state --version
   bin/review-state --help | -h | <command> --help
 
+export is read-only: no --input, no lock, and no state writes.
+
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)
 
@@ -39,7 +41,7 @@ Docs: docs/designs/review-run-state.md
 
 export function renderCommandHelp(cmd: string): string | null {
   if (cmd === 'export') {
-    return `review-state export — experimental export projection (${EXPORT_SCHEMA})\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n\nDocs: docs/designs/review-run-state.md\n`;
+    return `review-state export — experimental read-only projection (${EXPORT_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n\nDocs: docs/designs/review-run-state.md\n`;
   }
   const matching = Object.entries(REQUEST_SHAPES).filter(([k]) => k === cmd || k.startsWith(`${cmd} (`) || (cmd === 'record' && k.startsWith('record ')));
   if (matching.length === 0) return null;

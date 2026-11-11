@@ -1931,25 +1931,31 @@ def _clean_git_capture(args):
     return os.fsdecode(result.stdout).removesuffix("\n") if result.returncode == 0 else ""
 
 
+DERIVE_EXPORT_TIMEOUT_S = 15
+
+
+def derive_result(status, reason, directory, run_id=None, current=None, sessions=None, stage_runs=None, skipped=None):
+    print(json.dumps({"v": 1, "status": status, "reason": reason, "data": {
+        "run_id": run_id, "current": current, "sessions": sessions or [],
+        "stage_runs": stage_runs or {"written": 0, "present": 0, "skipped": 0}, "skipped": skipped or [],
+    }}, separators=(",", ":")))
+    if status != "ok":
+        # JSON quoting keeps paths containing newlines on this one diagnostic line.
+        print(f"derive {status} ({reason}); rerun derive --dir {json.dumps(directory)} from this repository "
+              "once the telemetry directory is writable; docs/telemetry.md#review-state-derive", file=sys.stderr)
+    return 0
+
+
 def run_derive(args):
     """Derive workflow-metrics records and missing stage-runs rows from review-run-state.json via bin/review-state export."""
     derive_usage = "gstack-extend-telemetry derive --dir DIR"
     if args in (["-h"], ["--help"]):
-        print(f"Usage: {derive_usage}")
+        print(f"Usage: {derive_usage}\nExperimental until Track 79A; no installed skill calls it yet.")
         return 0
 
     def emit_unavailable(reason, detail=None, run_id=None, segments=None, skipped=None, stage_runs=None):
-        payload = {
-            "status": "unavailable",
-            "reason": reason,
-            "detail": detail if isinstance(detail, dict) else {},
-            "run_id": run_id,
-            "segments": segments if segments is not None else [],
-            "skipped": skipped if skipped is not None else [],
-            "stage_runs": stage_runs if stage_runs is not None else {"written": 0, "present": 0},
-        }
-        print(json.dumps(payload, separators=(",", ":")))
-        return 0
+        return derive_result("unavailable", reason, args[1] if len(args) == 2 else None,
+                             run_id=run_id, sessions=segments, skipped=skipped, stage_runs=stage_runs)
 
     if len(args) != 2 or args[0] != "--dir" or not args[1]:
         return emit_unavailable("usage", {"message": f"invalid arguments; use '{derive_usage}'"})
@@ -1961,7 +1967,7 @@ def run_derive(args):
             [str(review_state_bin), "export", "--dir", dir_arg],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=15,
+            timeout=DERIVE_EXPORT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
         return emit_unavailable("io-error", {"message": "review-state export unavailable"})
@@ -1989,7 +1995,7 @@ def run_derive(args):
     skipped_list = parsed_out.get("skipped") if isinstance(parsed_out.get("skipped"), list) else []
     stage_runs_list = parsed_out.get("stage_runs") if isinstance(parsed_out.get("stage_runs"), list) else []
 
-    top_root = capture(["git", "rev-parse", "--show-toplevel"])
+    top_root = _clean_git_capture(["git", "rev-parse", "--show-toplevel"])
     common_dir = _clean_git_capture(["git", "rev-parse", "--git-common-dir"])
     actual_common_repo = os.path.realpath(os.path.join(os.getcwd(), common_dir)) if common_dir else None
 
@@ -2001,6 +2007,9 @@ def run_derive(args):
 
     seg_summaries = []
     bound_derived_sids = set()
+    metrics_off, _ = wm.metrics_disabled()
+    provenance_on = provenance_enabled(extend_state)
+    current = None
 
     for seg in segments_list:
         if not isinstance(seg, dict):
@@ -2009,6 +2018,9 @@ def run_derive(args):
         sid = seg.get("session_id")
         is_derived = bool(seg.get("derived"))
         seg_records = [r for r in records_list if isinstance(r, dict) and r.get("session_id") == sid]
+        projected_events = {r.get("request", {}).get("event_id") for r in seg_records}
+        run_step_id = seg.get("run_step_id")
+        run_begin = "disabled" if metrics_off else "unavailable"
 
         bind_mode = ["already-bound"]
 
@@ -2039,61 +2051,64 @@ def run_derive(args):
             return _binder
 
         binder = make_binder(seg_num, is_derived)
+        # Provenance is independently enabled: metrics failure or opt-out must
+        # not suppress an otherwise valid derived stage-run row.
+        if is_derived:
+            try:
+                binder({"session_id": sid})
+                bound_derived_sids.add(sid)
+            except wm.Fail:
+                pass
+            bind_mode[0] = "already-bound"
         recorded_count = 0
         replayed_count = 0
+        failed_count = 0
         seg_reason = None
         bound_ok = False
 
-        for idx, rec in enumerate(seg_records):
+        for idx, rec in enumerate([] if metrics_off else seg_records):
             op = rec.get("op")
             req = rec.get("request")
             try:
+                if op == "end" and isinstance(req, dict):
+                    req = dict(req, step_id=run_step_id)
                 wm.validate_request(op, req)
-                status, _ = wm.mutate(op, req, binder=binder)
+                status, result = wm.mutate(op, req, binder=binder, bound_event_ids=projected_events)
                 if status == "recorded":
                     recorded_count += 1
                 else:
                     replayed_count += 1
                 if idx == 0:
                     bound_ok = True
+                    run_begin = status
+                    run_step_id = result.get("bound_step_id", run_step_id)
             except wm.Fail as err:
-                if (
-                    idx == 0
-                    and op == "begin"
-                    and isinstance(req, dict)
-                    and req.get("kind") == "run"
-                    and err.reason == "event-conflict"
-                    and err.cause == "run-already-bound"
-                ):
-                    bind_mode[0] = "already-bound"
-                    replayed_count += 1
-                    bound_ok = True
-                    continue
+                failed_count += 1
                 seg_reason = err.reason
                 if idx == 0:
                     bind_mode[0] = "unbound"
                 break
 
-        if bound_ok and is_derived and seg_reason is None:
-            bound_derived_sids.add(sid)
-
         seg_summaries.append({
             "segment": seg_num,
             "session_id": sid,
             "derived": is_derived,
-            "binding": bind_mode[0] if bound_ok else "unbound",
+            "binding": "disabled" if metrics_off else bind_mode[0] if bound_ok else "unbound",
             "recorded": recorded_count,
             "replayed": replayed_count,
+            "failed": failed_count,
             "reason": seg_reason,
         })
+        current = {"segment": seg_num, "session_id": sid, "run_step_id": run_step_id, "run_begin": run_begin}
 
-    stage_runs_summary = {"written": 0, "present": 0}
+    stage_runs_summary = {"written": 0, "present": 0, "skipped": 0}
     stage_runs_error = None
     eligible_stage_runs = [
         sr for sr in stage_runs_list
         if isinstance(sr, dict) and sr.get("session_id") in bound_derived_sids
     ]
-    if eligible_stage_runs and provenance_enabled(extend_state):
+    stage_runs_summary["skipped"] = len(stage_runs_list) - len(eligible_stage_runs) if provenance_on else len(stage_runs_list)
+    if eligible_stage_runs and provenance_on:
         ledger = stage_run_path(extend_state)
         held_lock = -1
         try:
@@ -2106,6 +2121,9 @@ def run_derive(args):
                 marker_file = marker_dir / invocation_name(sid)
                 if read_marker(marker_file, sid, skill, slot_root):
                     stage_runs_summary["present"] += 1
+                    continue
+                if store_shape(marker_dir) == "bad":
+                    stage_runs_error = "stage-runs-marker-unwritable"
                     continue
                 start_ts = parse_ts(sr.get("started_at"))
                 end_ts = parse_ts(sr.get("ended_at"))
@@ -2138,7 +2156,7 @@ def run_derive(args):
                                 ),
                             )
                         except OSError:
-                            pass
+                            stage_runs_error = "stage-runs-marker-unwritable"
                     stage_runs_summary["written"] += 1
                 else:
                     stage_runs_error = "stage-runs-unwritable"
@@ -2155,7 +2173,10 @@ def run_derive(args):
         and len(skipped_list) == 0
         and stage_runs_error is None
     )
-    if all_bound_and_clean:
+    if metrics_off and stage_runs_error is None:
+        status = "disabled"
+        reason = "disabled"
+    elif all_bound_and_clean:
         status = "ok"
         reason = None
     elif any_bound:
@@ -2168,25 +2189,14 @@ def run_derive(args):
         status = "unavailable"
         reason = next((s["reason"] for s in seg_summaries if s["reason"] is not None), "identity-missing")
 
-    payload = {
-        "status": status,
-        "reason": reason,
-        "run_id": run_id,
-        "segments": seg_summaries,
-        "skipped": skipped_list,
-        "stage_runs": stage_runs_summary,
-    }
-    if status == "unavailable":
-        payload["detail"] = {}
-    print(json.dumps(payload, separators=(",", ":")))
-    return 0
+    return derive_result(status, reason, dir_arg, run_id, current, seg_summaries, stage_runs_summary, skipped_list)
 
 
 def _derive_dispatch(args):
     try:
         run_derive(args)
     except Exception:
-        print('{"status":"unavailable","reason":"io-error","detail":{},"run_id":null,"segments":[],"skipped":[],"stage_runs":{"written":0,"present":0}}')
+        derive_result("unavailable", "io-error", args[1] if len(args) == 2 else None)
 
 
 def main(args):

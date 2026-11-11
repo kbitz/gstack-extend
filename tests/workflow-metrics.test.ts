@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import Ajv from 'ajv';
 import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, realStoreSpecs, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
 import { appendFileSync, realpathSync, truncateSync, utimesSync } from 'node:fs';
+import { NAMESPACE } from '../src/review-state/export.ts';
 
 afterAll(cleanupTelemetryFixtures, 60_000);
 const ROOT = join(import.meta.dir, '..');
@@ -3973,7 +3974,126 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
     return JSON.parse(res.stdout.trim());
   }
 
+  function deriveFixture(recorded = false) {
+    const fix = makeTelemetryFixture('community');
+    const { repo, baseSha } = setupGitRepoWithCommits(fix);
+    const dir = join(fix.home, 'derive-run');
+    mkdirSync(dir);
+    const sid = recorded ? start(fix, repo) : null;
+    callReviewState(fix.env, repo, dir, ['start'], {
+      run_id: u(), base: baseSha, session_id: sid,
+      plan: { ref: 'docs/plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: 'hold scope', source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 3 },
+    });
+    const exp = JSON.parse(spawnSync(REVIEW_STATE_BIN, ['export', '--dir', dir], { env: fix.env, cwd: repo, encoding: 'utf8' }).stdout);
+    return { fix, repo, baseSha, dir, sid: exp.segments[0].session_id as string, runStep: exp.segments[0].run_step_id as string };
+  }
+
+  test('derive opt-out honors provenance and independent metrics disablement', () => {
+    const { fix, repo, dir, sid, baseSha } = deriveFixture();
+    callReviewState(fix.env, repo, dir, ['finish'], { outcome: 'prepared', base: baseSha });
+    mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'provenance=false\n');
+    const before = readFileSync(join(dir, 'review-run-state.json'), 'utf8');
+    const off = runRaw(fix.env, ['derive', '--dir', dir], '', repo);
+    expect(existsSync(ledgerFile(fix, sid))).toBe(false);
+    expect(fix.readLedger()).toEqual([]);
+    expect(JSON.parse(off.stdout)).toMatchObject({ v: 1, status: 'disabled', data: { current: { session_id: sid, run_begin: 'disabled' } } });
+    expect(off.stderr).toContain('docs/telemetry.md#review-state-derive');
+    expect(off.stderr.trim().split('\n')).toHaveLength(1);
+    expect(readFileSync(join(dir, 'review-run-state.json'), 'utf8')).toBe(before);
+
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'provenance=true\n');
+    const metricsOff = runRaw({ ...fix.env, GSTACK_EXTEND_WORKFLOW_METRICS: 'off' }, ['derive', '--dir', dir], '', repo);
+    expect(JSON.parse(metricsOff.stdout)).toMatchObject({ status: 'disabled', data: { stage_runs: { written: 1 } } });
+    expect(existsSync(ledgerFile(fix, sid))).toBe(false);
+    expect(fix.readLedger()).toHaveLength(1);
+  });
+
+  test('derive response exposes the active segment binding and non-ok recovery', () => {
+    const { fix, repo, dir, sid, runStep } = deriveFixture();
+    const first = runRaw(fix.env, ['derive', '--dir', dir], '', repo);
+    expect(first.stderr).toBe('');
+    expect(JSON.parse(first.stdout)).toMatchObject({
+      v: 1, status: 'ok', reason: null,
+      data: { current: { segment: 1, session_id: sid, run_step_id: runStep, run_begin: 'recorded' }, sessions: [{ failed: 0 }], stage_runs: { written: 0, present: 0, skipped: 0 } },
+    });
+    const replay = JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout);
+    expect(replay.data.current.run_begin).toBe('replayed');
+    const missing = runRaw(fix.env, ['derive', '--dir', join(dir, 'missing')], '', repo);
+    expect(JSON.parse(missing.stdout)).toMatchObject({ v: 1, status: 'unavailable', data: { current: null, sessions: [] } });
+    expect(missing.stderr).toContain('derive --dir');
+    expect(missing.stderr).toContain('docs/telemetry.md#review-state-derive');
+  });
+
+  test('derive reports a blocked completion-marker store without appending duplicate rows', () => {
+    const { fix, repo, dir, baseSha } = deriveFixture();
+    callReviewState(fix.env, repo, dir, ['finish'], { outcome: 'prepared', base: baseSha });
+    const slot = createHash('sha256').update(JSON.stringify([repo, 'extend:review-and-prep']).replace(',', ', ')).digest('hex');
+    const markerRoot = join(fix.home, '.gstack-extend/telemetry-completed');
+    mkdirSync(markerRoot, { recursive: true });
+    writeFileSync(join(markerRoot, slot), 'blocked');
+    for (let i = 0; i < 2; i++) {
+      const res = runRaw(fix.env, ['derive', '--dir', dir], '', repo);
+      expect(JSON.parse(res.stdout)).toMatchObject({ status: 'partial', reason: 'stage-runs-marker-unwritable' });
+      expect(res.stderr).toContain('stage-runs-marker-unwritable');
+      expect(fix.readLedger()).toEqual([]);
+    }
+    rmSync(join(markerRoot, slot));
+    expect(JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout).data.stage_runs.written).toBe(1);
+  });
+
+  test('derive reuses an existing run step without dangling ends and refuses conflicting streamed pass records', () => {
+    const { fix, repo, dir, sid, baseSha } = deriveFixture(true);
+    const { step } = beginRun(fix, repo, sid);
+    callReviewState(fix.env, repo, dir, ['finish'], { outcome: 'prepared', base: baseSha });
+    const first = JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout);
+    expect(read(fix, sid).envelope.data.unknown_reasons).not.toContain('missing-end');
+    expect(read(fix, sid).envelope.data.unknown_reasons).not.toContain('missing-begin');
+    expect(first.data.current).toMatchObject({ run_step_id: step, run_begin: 'replayed' });
+    const size = ledgerLines(fix, sid).length;
+    expect(JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout).status).toBe('ok');
+    expect(ledgerLines(fix, sid)).toHaveLength(size);
+
+    const other = deriveFixture(true);
+    beginRun(other.fix, other.repo, other.sid);
+    expect(metrics(other.fix.env, 'pass', { ...base(other.sid), state: 'started', pass_id: u(), scope: 'local', required_voice_ids: ['core'] }, other.repo).envelope.status).toBe('recorded');
+    const before = ledgerLines(other.fix, other.sid);
+    expect(JSON.parse(runRaw(other.fix.env, ['derive', '--dir', other.dir], '', other.repo).stdout)).toMatchObject({ status: 'unavailable', reason: 'event-conflict' });
+    expect(ledgerLines(other.fix, other.sid)).toEqual(before);
+  });
+
+  test('derive refuses an exported derived session whose UUID does not match its run', () => {
+    const { fix, repo, dir } = deriveFixture();
+    const exp = JSON.parse(spawnSync(REVIEW_STATE_BIN, ['export', '--dir', dir], { env: fix.env, cwd: repo, encoding: 'utf8' }).stdout);
+    const forged = 'extend-' + u();
+    exp.segments[0].session_id = forged;
+    for (const record of exp.records) {
+      record.session_id = forged;
+      record.request.session_id = forged;
+    }
+    const script = `import importlib.util, json, subprocess, sys
+spec=importlib.util.spec_from_file_location('telemetry', sys.argv[1]); t=importlib.util.module_from_spec(spec); spec.loader.exec_module(t)
+original=t.subprocess.run
+export=json.loads(sys.argv[2])
+def run(args, **kwargs):
+    if args[0].endswith('/review-state'):
+        return subprocess.CompletedProcess(args, 0, json.dumps(export).encode(), b'')
+    return original(args, **kwargs)
+t.subprocess.run=run
+t.main(['derive', '--dir', sys.argv[3]])
+`;
+    const result = spawnSync('python3', ['-c', script, join(ROOT, 'bin/lib/telemetry.py'), JSON.stringify(exp), dir], { env: fix.env, cwd: repo, encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: 'unavailable', reason: 'identity-missing' });
+    expect(existsSync(ledgerFile(fix, forged))).toBe(false);
+  });
+
   test('D14 parity: derived metrics from review-state match direct metrics begin|pass|correction|end across passes, attribution, delegation, and corrections', () => {
+    const namespace = spawnSync('python3', ['-c', `import importlib.util, sys; s=importlib.util.spec_from_file_location('wm', sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.NAMESPACE)`, join(ROOT, 'bin/lib/workflow_metrics.py')], { encoding: 'utf8' });
+    expect(namespace.status).toBe(0);
+    expect(namespace.stdout.trim()).toBe(NAMESPACE);
     const fix = makeTelemetryFixture('community');
     const { repo, baseSha, headSha, treeSha } = setupGitRepoWithCommits(fix, 'repo-parity');
     const dir = join(fix.home, 'ev-parity');
@@ -4169,12 +4289,11 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
     const deriveRes = runRaw(fix.env, ['derive', '--dir', dir], '', repo);
     expect(deriveRes.status).toBe(0);
     const deriveSummary = JSON.parse(deriveRes.stdout);
-    expect(deriveSummary).toMatchObject({
-      status: 'ok',
-      reason: null,
+    expect(deriveSummary.status).toBe('ok');
+    expect(deriveSummary.data).toMatchObject({
       run_id: runId,
       skipped: [],
-      segments: [{ segment: 1, session_id: sidDerived, derived: false, binding: 'handoff', replayed: 0 }],
+      sessions: [{ segment: 1, session_id: sidDerived, derived: false, binding: 'handoff', replayed: 0 }],
     });
 
     // 2. Write the equivalent records directly via metrics begin|pass|correction|end on sidDirect
@@ -4212,6 +4331,8 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
     const directRead = read(fix, sidDirect).envelope.data;
 
     expect(derivedRead.capture).toBe('ok');
+    for (const line of ledgerLines(fix, sidDerived)) expect(validRecord(JSON.parse(line))).toBe(true);
+    expect(derivedRead.malformed_records).toBe(0);
     expect(derivedRead.local_passes).toBe(directRead.local_passes);
     expect(derivedRead.greptile_passes).toBe(directRead.greptile_passes);
     expect(derivedRead.greptile_attempted).toBe(directRead.greptile_attempted);
@@ -4232,6 +4353,12 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
     const corr1Id = u();
     const corr2Id = u();
 
+    const telemetryRoot = join(fix.home, '.gstack-extend');
+    mkdirSync(telemetryRoot, { recursive: true });
+    chmodSync(telemetryRoot, 0o500);
+    try {
+    const unavailableStart = runRaw(fix.env, ['start', '--skill', 'extend:review-and-prep'], '', repo);
+    expect(unavailableStart.stdout).toContain('GE_TELEMETRY: unavailable');
     // Segment 1 starts with session_id: null (no telemetry start could run)
     callReviewState(fix.env, repo, dir, ['start'], {
       run_id: runId,
@@ -4248,7 +4375,7 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
       cycle: 1,
       coverage: 'full',
       candidate: { commit: headSha, base: baseSha },
-      required_voices: ['core'],
+      required_voices: ['core', 'maintainability'],
       started_at: '2026-11-11T18:00:00Z',
     });
     callReviewState(fix.env, repo, dir, ['record', 'pass'], {
@@ -4268,6 +4395,18 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
       selected_attempt_id: att1Id,
     });
     callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: pass1Id, state: 'attempt', voice_id: 'maintainability', part: 'specialist:maintainability',
+      attempt_id: u(), outcome: 'completed', findings: [],
+      delegate: { provider: 'test-provider', model: 'test-model', outcome: 'credited', fallback_reason: null,
+        replay: false, wall_ms: 1, input_tokens: 0, output_tokens: 0,
+        cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: 'e'.repeat(64) },
+    });
+    const stored = JSON.parse(readFileSync(join(dir, 'review-run-state.json'), 'utf8'));
+    const delegatedAttempt = stored.passes[0].voices.find((v: any) => v.voice_id === 'maintainability').attempts[0].attempt_id;
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: pass1Id, state: 'voice-complete', voice_id: 'maintainability', selected_attempt_id: delegatedAttempt,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
       pass_id: pass1Id,
       state: 'completed',
       completed_at: '2026-11-11T18:05:00Z',
@@ -4283,6 +4422,14 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
       kind: 'pause',
       base: baseSha,
     });
+    const beforeBlockedDerive = readFileSync(join(dir, 'review-run-state.json'), 'utf8');
+    const blockedDerive = runRaw(fix.env, ['derive', '--dir', dir], '', repo);
+    expect(JSON.parse(blockedDerive.stdout).status).toBe('unavailable');
+    expect(blockedDerive.stderr).toContain('docs/telemetry.md#review-state-derive');
+    expect(readFileSync(join(dir, 'review-run-state.json'), 'utf8')).toBe(beforeBlockedDerive);
+    } finally {
+      chmodSync(telemetryRoot, 0o700);
+    }
 
     // Segment 2 starts with a real telemetry session, then finishes BEFORE derive runs (testing completed-marker binding!)
     const sid2 = start(fix, repo);
@@ -4311,13 +4458,13 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
 
     const d1 = JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout);
     expect(d1.status).toBe('ok');
-    expect(d1.segments).toHaveLength(2);
-    expect(d1.segments[0]).toMatchObject({ segment: 1, derived: true, binding: 'derived', reason: null });
-    expect(d1.segments[1]).toMatchObject({ segment: 2, session_id: sid2, derived: false, binding: 'completed-marker', reason: null });
-    expect(d1.stage_runs).toEqual({ written: 1, present: 0 });
+    expect(d1.data.sessions).toHaveLength(2);
+    expect(d1.data.sessions[0]).toMatchObject({ segment: 1, derived: true, binding: 'derived', reason: null });
+    expect(d1.data.sessions[1]).toMatchObject({ segment: 2, session_id: sid2, derived: false, binding: 'completed-marker', reason: null });
+    expect(d1.data.stage_runs).toEqual({ written: 1, present: 0, skipped: 0 });
     expect(readFileSync(statePath, 'utf8')).toBe(beforeState);
 
-    const sid1 = d1.segments[0].session_id;
+    const sid1 = d1.data.sessions[0].session_id;
     const read1 = read(fix, sid1).envelope.data;
     expect(read1.capture).toBe('ok');
     expect(read1.local_passes).toBe(1);
@@ -4337,15 +4484,18 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
     const read2 = read(fix, sid2).envelope.data;
     expect(read2.capture).toBe('ok');
     expect(read2.unknown_reasons).not.toContain('missing-reference');
+    expect(fix.readLedger()).toHaveLength(2);
+    expect(fix.readLedger().find(row => row.session_id === sid1)).toMatchObject({ schema_version: 4, agent: null, outcome: 'blocked' });
+    expect(read1.delegated).not.toBeNull();
 
     // Second derive replays every event and stage_runs row without duplicating ledger lines
     const lines1Before = ledgerLines(fix, sid1).length;
     const lines2Before = ledgerLines(fix, sid2).length;
     const d2 = JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout);
     expect(d2.status).toBe('ok');
-    expect(d2.segments[0]).toMatchObject({ segment: 1, binding: 'already-bound', recorded: 0, replayed: lines1Before });
-    expect(d2.segments[1]).toMatchObject({ segment: 2, binding: 'already-bound', recorded: 0, replayed: lines2Before });
-    expect(d2.stage_runs).toEqual({ written: 0, present: 1 });
+    expect(d2.data.sessions[0]).toMatchObject({ segment: 1, binding: 'already-bound', recorded: 0, replayed: lines1Before });
+    expect(d2.data.sessions[1]).toMatchObject({ segment: 2, binding: 'already-bound', recorded: 0, replayed: lines2Before });
+    expect(d2.data.stage_runs).toEqual({ written: 0, present: 1, skipped: 0 });
     expect(ledgerLines(fix, sid1)).toHaveLength(lines1Before);
     expect(ledgerLines(fix, sid2)).toHaveLength(lines2Before);
 
@@ -4362,10 +4512,9 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
       session_id: forgedSid,
     });
     const dForged = JSON.parse(runRaw(fix.env, ['derive', '--dir', dirForged], '', repo).stdout);
-    expect(dForged).toMatchObject({
-      status: 'unavailable',
-      reason: 'identity-missing',
-      segments: [{ segment: 1, session_id: forgedSid, derived: false, binding: 'unbound', recorded: 0, replayed: 0, reason: 'identity-missing' }],
+    expect(dForged).toMatchObject({ status: 'unavailable', reason: 'identity-missing' });
+    expect(dForged.data).toMatchObject({
+      sessions: [{ segment: 1, session_id: forgedSid, derived: false, binding: 'unbound', recorded: 0, replayed: 0, reason: 'identity-missing' }],
     });
     expect(existsSync(ledgerFile(fix, forgedSid))).toBe(false);
   }, 60_000);

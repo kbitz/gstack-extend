@@ -5906,9 +5906,8 @@ describe('Track 77B review-state stage-runs derivation', () => {
     const d1 = spawnSync(HELPER_BIN, ['derive', '--dir', dir], { env: deriveEnv, cwd: repo, encoding: 'utf8', timeout: 15_000 });
     expect([d1.status, d1.stderr]).toEqual([0, '']);
     const d1Json = JSON.parse(d1.stdout);
-    expect(d1Json).toMatchObject({
-      status: 'ok',
-      reason: null,
+    expect(d1Json.status).toBe('ok');
+    expect(d1Json.data).toMatchObject({
       run_id: runId,
       stage_runs: { written: 2, present: 0 },
     });
@@ -5936,13 +5935,13 @@ describe('Track 77B review-state stage-runs derivation', () => {
       });
     }
     expect(rows[0]).toMatchObject({
-      session_id: d1Json.segments[0].session_id,
+      session_id: d1Json.data.sessions[0].session_id,
       outcome: 'blocked',
       started_at: '2026-11-11T18:00:00Z',
       duration_s: 125,
     });
     expect(rows[1]).toMatchObject({
-      session_id: d1Json.segments[1].session_id,
+      session_id: d1Json.data.sessions[1].session_id,
       outcome: 'success',
       started_at: '2026-11-11T18:10:00Z',
       duration_s: 90,
@@ -5950,8 +5949,8 @@ describe('Track 77B review-state stage-runs derivation', () => {
 
     // Second derive or explicit finish --session-id does not duplicate either row
     const d2 = spawnSync(HELPER_BIN, ['derive', '--dir', dir], { env: deriveEnv, cwd: repo, encoding: 'utf8', timeout: 15_000 });
-    expect(JSON.parse(d2.stdout).stage_runs).toEqual({ written: 0, present: 2 });
-    const finRetry = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:review-and-prep', '--session-id', d1Json.segments[0].session_id, '--start', '1794420000', '--outcome', 'blocked'], { env: fix.env, cwd: repo, encoding: 'utf8' });
+    expect(JSON.parse(d2.stdout).data.stage_runs).toEqual({ written: 0, present: 2, skipped: 0 });
+    const finRetry = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:review-and-prep', '--session-id', d1Json.data.sessions[0].session_id, '--start', '1794420000', '--outcome', 'blocked'], { env: fix.env, cwd: repo, encoding: 'utf8' });
     expect(finRetry.status).toBe(0);
     expect(fix.readLedger()).toHaveLength(2);
 
