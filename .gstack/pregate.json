@@ -164,6 +164,9 @@
     "bin/review-delegate": [
       "tests/review-delegate.test.ts"
     ],
+    "bin/review-state": [
+      "tests/review-state.test.ts"
+    ],
     "bin/roadmap-audit": [
       "tests/audit-cli-contract.test.ts",
       "tests/audit-snapshots.test.ts",
@@ -230,6 +233,9 @@
     ],
     "docs/delegated-review.md": [
       "tests/review-delegate.test.ts"
+    ],
+    "docs/designs/review-run-state.md": [
+      "tests/review-state.test.ts"
     ],
     "docs/designs/workflow-efficiency-program.md": [
       "tests/skill-protocols-plan-track.test.ts"

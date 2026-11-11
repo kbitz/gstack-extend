@@ -92,6 +92,7 @@ function skill(name: string): string {
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', '.gstack/secret-dispositions.json', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
   'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
+  'tests/review-state.test.ts': ['bin/review-state', 'docs/designs/review-run-state.md'],
   // The runner reads the skill's delegate anchor paragraph at run time and its docs example is validated.
   'tests/review-delegate.test.ts': [
     'bin/review-delegate',

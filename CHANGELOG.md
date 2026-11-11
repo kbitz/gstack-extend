@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.0] - 2026-11-10
+
+### Added
+
+- Adds bin/review-state, an experimental helper that records one review run's state in its evidence directory; no skill calls it yet, so every review output is unchanged, and its stored state format may change before a skill calls it.
+- Adds experimental `bin/review-state` to record review state without changing existing review output.
+
 ## [0.85.0] - 2026-11-10
 
 ### Added
