@@ -1215,6 +1215,17 @@ describe('skill and contract text', () => {
     const telemetryAt = skill.indexOf('<!-- SHARED:telemetry-finish -->');
     const step11 = skill.slice(finishAt, mergeAt);
     const step12 = skill.slice(mergeAt, telemetryAt);
+    const envEndMarker = 'so no tool call can follow it.';
+    const terminalBranchMarker = 'With no way to ask';
+    const askMarker = '- **Ask.**';
+    const wordMarker = '- **The word**';
+    const envEndAt = step11.indexOf(envEndMarker);
+    const terminalBranchAt = step11.indexOf(terminalBranchMarker);
+    const askAt = step12.indexOf(askMarker);
+    const wordAt = step12.indexOf(wordMarker);
+    const routingAndCommon = step11.slice(envEndAt + envEndMarker.length, terminalBranchAt);
+    const terminalOnly = step11.slice(terminalBranchAt);
+    const step12ThroughAsk = step12.slice(0, wordAt);
     const question = contract.slice(contract.indexOf('## Merge question'), contract.indexOf('## Limits'));
     const v1Line = /^Docs ship: docs-ship\/v1; verdict: .*$/m;
     const outcomeLine = /^Docs ship merge: .*$/m;
@@ -1232,10 +1243,18 @@ describe('skill and contract text', () => {
     test('the result line comes first, then step 12, then telemetry finish', () => {
       const command = 'gh pr merge <n> --<method> --match-head-commit <head>';
       expect(finishAt).toBeGreaterThan(-1);
+      expect(mergeAt).toBeGreaterThan(finishAt);
+      expect(telemetryAt).toBeGreaterThan(mergeAt);
+      expect(envEndAt).toBeGreaterThan(-1);
+      expect(terminalBranchAt).toBeGreaterThan(envEndAt + envEndMarker.length);
+      expect(askAt).toBeGreaterThan(-1);
+      expect(wordAt).toBeGreaterThan(askAt + askMarker.length);
       expect(skill.search(v1Line)).toBeGreaterThan(finishAt);
       expect(skill.search(v1Line)).toBeLessThan(mergeAt);
-      expect(mergeAt).toBeLessThan(telemetryAt);
+      expect(step11.search(v1Line)).toBeGreaterThan(envEndAt + envEndMarker.length);
+      expect(step11.search(v1Line)).toBeLessThan(terminalBranchAt);
       expect(step11).toContain(command);
+      expect(routingAndCommon).toContain(command);
       expect(step11).toContain('say `Merge when ready:` and give the exact command');
       expect(step12).toContain(command);
       expect(contract).toContain('Merge when ready:');
@@ -1300,8 +1319,59 @@ describe('skill and contract text', () => {
         expect([name, /no question tool/i.test(text)]).toEqual([name, true]);
         expect([name, /asked for no questions/i.test(text)]).toEqual([name, true]);
       }
+      expect(envEndAt).toBeGreaterThan(-1);
+      expect(terminalBranchAt).toBeGreaterThan(envEndAt + envEndMarker.length);
+      expect(step11.indexOf('Run Telemetry finish')).toBeLessThan(step11.search(v1Line));
+      expect(step11.indexOf('gh pr merge <n> --<method> --match-head-commit <head>')).toBeLessThan(terminalBranchAt);
+      expect(step11.search(v1Line)).toBeLessThan(terminalBranchAt);
       expect(flat(step11)).toContain('so no tool call can follow it');
-      expect(flat(step11)).toContain('With no way to ask, stop here; otherwise go to step 12.');
+      expect(flat(terminalOnly)).toContain('With no way to ask at `PASS`, or on `CHANGES`, `HANDED-BACK` or any early exit, stop here and end on the result line above.');
+    });
+
+    // Value: protects=PASS with a way to ask continues through the intermediate result presentation to step 12's question before any terminal instruction;
+    // fails_when=an unconditional end-with/stop directive reappears on the common presentation or pre-question path, or the terminal branch precedes interactive routing;
+    // why_new=prior tests checked section order but kept an unconditional end-with directive in the shared Finish paragraph; seam=none;
+    // no_claim=installed-agent behavior or actual GitHub merging (published branch ordering only)
+    test('PASS with a way to ask routes to step 12 in the same invocation before any terminal instruction', () => {
+      expect(finishAt).toBeGreaterThan(-1);
+      expect(mergeAt).toBeGreaterThan(finishAt);
+      expect(telemetryAt).toBeGreaterThan(mergeAt);
+      expect(envEndAt).toBeGreaterThan(-1);
+      expect(terminalBranchAt).toBeGreaterThan(envEndAt + envEndMarker.length);
+      expect(askAt).toBeGreaterThan(-1);
+      expect(wordAt).toBeGreaterThan(askAt + askMarker.length);
+
+      const commonFlat = flat(routingAndCommon);
+      const terminalFlat = flat(terminalOnly);
+      const preAskFlat = flat(step12ThroughAsk);
+      const terminalDirective = /\b(?:end(?:s|ing)? (?:with|on)|stop here)\b/i;
+
+      // Immediately after the no-way-to-ask definition, PASS with a way to ask is routed as an intermediate message in the same invocation.
+      expect(commonFlat).toContain(
+        "When `PASS` has a way to ask (`MERGE_QUESTION: yes`, a question tool is available, and the caller did not ask for no questions), treat this step's output as an intermediate message, not a completed turn: present the summary, `Merge when ready:` command and result block below, then continue directly to step 12's merge question in the same invocation.",
+      );
+      expect(commonFlat).toContain('followed by the result block from § Result line:');
+      expect(commonFlat).toContain('When `PASS` has a way to ask, go to step 12 in the same invocation.');
+      expect(routingAndCommon.search(v1Line)).toBeGreaterThan(routingAndCommon.indexOf('followed by the result block from § Result line:'));
+      expect(routingAndCommon.indexOf('When `PASS` has a way to ask, go to step 12 in the same invocation.')).toBeGreaterThan(
+        routingAndCommon.search(v1Line),
+      );
+
+      // Neither the common presentation nor the step-12 path through Ask has an unconditional end-with/stop instruction.
+      expect(terminalDirective.test(commonFlat)).toBe(false);
+      expect(terminalDirective.test(preAskFlat)).toBe(false);
+
+      // Step 12's Ask explicitly continues from step 11's intermediate message in the same invocation after the result line.
+      expect(preAskFlat).toContain(
+        "- **Ask.** Continue from step 11's intermediate message in the same invocation. After the result line is printed, ask once with the question tool",
+      );
+
+      // Terminal instructions remain allowed in the separate no-ask branch and post-answer branches.
+      expect(terminalDirective.test(terminalFlat)).toBe(true);
+      expect(terminalFlat).toContain(
+        'With no way to ask at `PASS`, or on `CHANGES`, `HANDED-BACK` or any early exit, stop here and end on the result line above.',
+      );
+      expect(terminalDirective.test(flat(step12.slice(wordAt)))).toBe(true);
     });
 
     // Value: protects=approval question binds PR, head, method and CI with neutral choices;
