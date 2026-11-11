@@ -3939,3 +3939,434 @@ describe('Track 69A first-cycle overlap measurement', () => {
     expect(ovl.union_observed_wall_ms).toBeLessThan(sequentialSumMs);
   }, 60_000);
 });
+
+describe('Track 77B review-state derive parity and sandboxed-segment recovery', () => {
+  const REVIEW_STATE_BIN = join(ROOT, 'bin/review-state');
+  const GIT_COMMIT_ENV = {
+    GIT_AUTHOR_NAME: 'Test',
+    GIT_AUTHOR_EMAIL: 'test@example.com',
+    GIT_COMMITTER_NAME: 'Test',
+    GIT_COMMITTER_EMAIL: 'test@example.com',
+  };
+
+  function setupGitRepoWithCommits(fix: TelemetryFixture, name = 'repo') {
+    const repo = gitRepo(fix, name);
+    const gitEnv = { ...fix.env, ...GIT_COMMIT_ENV };
+    writeFileSync(join(repo, 'a.txt'), 'base\n');
+    expect(spawnSync('git', ['-C', repo, 'add', 'a.txt'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'commit', '-m', 'base', '--quiet'], { env: gitEnv }).status).toBe(0);
+    const baseSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+    writeFileSync(join(repo, 'a.txt'), 'head\n');
+    expect(spawnSync('git', ['-C', repo, 'add', 'a.txt'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'commit', '-m', 'head', '--quiet'], { env: gitEnv }).status).toBe(0);
+    const headSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+    const treeSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD^{tree}'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+    return { repo, baseSha, headSha, treeSha };
+  }
+
+  let inputCounter = 0;
+  function callReviewState(env: Env, repo: string, dir: string, cmd: string[], payload: unknown) {
+    const file = join(dir, `in-${++inputCounter}.json`);
+    writeFileSync(file, JSON.stringify(payload));
+    const res = spawnSync(REVIEW_STATE_BIN, [...cmd, '--dir', dir, '--input', file], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
+    expect(res.status, `${cmd.join(' ')}: ${res.stderr}`).toBe(0);
+    return JSON.parse(res.stdout.trim());
+  }
+
+  test('D14 parity: derived metrics from review-state match direct metrics begin|pass|correction|end across passes, attribution, delegation, and corrections', () => {
+    const fix = makeTelemetryFixture('community');
+    const { repo, baseSha, headSha, treeSha } = setupGitRepoWithCommits(fix, 'repo-parity');
+    const dir = join(fix.home, 'ev-parity');
+    mkdirSync(dir, { recursive: true });
+
+    const sidDerived = start(fix, repo);
+    const sidDirect = start(fix, repo);
+
+    const runId = u();
+    const localPassId = u();
+    const grepPassId = u();
+    const coreAttId = u();
+    const secFailAttId = u();
+    const secFallbackAttId = u();
+    const perfAttId = u();
+    const qaFailAttId = u();
+    const qaRetryAttId = u();
+    const grepAttId = u();
+    const corrId = u();
+
+    const coreFindings = [
+      { finding_id: 'F-CORE', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', duplicate_of: null, found_by: ['core', 'red-team'], attribution_reason: null },
+      { finding_id: 'F-DUP', severity_source: 'P2', severity_rubric: 'core', adjudication: 'duplicate', resolution: 'unknown', duplicate_of: 'F-CORE', found_by: ['outside:challenge'], attribution_reason: null },
+      { finding_id: 'F-REJ', severity_source: 'P3', severity_rubric: 'other', adjudication: 'rejected', resolution: 'unknown', duplicate_of: null, found_by: ['outside:structured'], attribution_reason: null },
+    ];
+    const perfFindings = [
+      { finding_id: 'F-PERF', severity_source: 'high', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'fixed', duplicate_of: null, found_by: ['specialist:performance'], attribution_reason: null },
+    ];
+    const qaFindings = [
+      { finding_id: 'F-QA', severity_source: 'medium', severity_rubric: 'other', adjudication: 'deferred', resolution: 'open', duplicate_of: null, found_by: ['qa'], attribution_reason: null },
+    ];
+    const grepFindings = [
+      { finding_id: 'G-1', severity_source: 'P2', severity_rubric: 'greptile', adjudication: 'accepted', resolution: 'fixed', duplicate_of: null, found_by: ['greptile'], attribution_reason: null },
+    ];
+
+    const fellBackDelegate = {
+      provider: 'openai',
+      model: 'gpt-5',
+      outcome: 'fell-back',
+      fallback_reason: 'timeout',
+      replay: false,
+      wall_ms: 5000,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+    };
+    const creditedDelegate = {
+      provider: 'openai',
+      model: 'gpt-5',
+      outcome: 'credited',
+      fallback_reason: null,
+      replay: false,
+      wall_ms: 850,
+      input_tokens: 400,
+      output_tokens: 120,
+      cache_read_input_tokens: 100,
+      cache_creation_input_tokens: 20,
+    };
+
+    // 1. Record run through bin/review-state
+    callReviewState(fix.env, repo, dir, ['start'], {
+      run_id: runId,
+      base: baseSha,
+      plan: { ref: 'docs/plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: 'hold scope', source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 3 },
+      session_id: sidDerived,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['core', 'specialist-sec', 'specialist-perf', 'qa'],
+      started_at: '2026-11-11T18:00:00Z',
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: coreAttId,
+      outcome: 'completed',
+      findings: coreFindings.map((f, i) => ({ ...f, ...(i === 0 ? { receipt_class: 'non-blocking' } : {}) })),
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'attempt',
+      voice_id: 'specialist-sec',
+      part: 'specialist:security',
+      attempt_id: secFailAttId,
+      outcome: 'failed',
+      delegate: { ...fellBackDelegate, call_id: 'b'.repeat(64) },
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'attempt',
+      voice_id: 'specialist-sec',
+      attempt_id: secFallbackAttId,
+      predecessor_attempt_id: secFailAttId,
+      outcome: 'completed',
+      findings: [],
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'attempt',
+      voice_id: 'specialist-perf',
+      part: 'specialist:performance',
+      attempt_id: perfAttId,
+      outcome: 'completed',
+      delegate: { ...creditedDelegate, call_id: 'c'.repeat(64) },
+      findings: perfFindings,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'attempt',
+      voice_id: 'qa',
+      attempt_id: qaFailAttId,
+      outcome: 'failed',
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'attempt',
+      voice_id: 'qa',
+      attempt_id: qaRetryAttId,
+      predecessor_attempt_id: qaFailAttId,
+      outcome: 'completed',
+      findings: qaFindings,
+    });
+    for (const [voiceId, attId] of [
+      ['core', coreAttId],
+      ['specialist-sec', secFallbackAttId],
+      ['specialist-perf', perfAttId],
+      ['qa', qaRetryAttId],
+    ] as const) {
+      callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+        pass_id: localPassId,
+        state: 'voice-complete',
+        voice_id: voiceId,
+        selected_attempt_id: attId,
+      });
+    }
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: localPassId,
+      state: 'completed',
+      completed_at: '2026-11-11T18:05:00Z',
+    });
+
+    // Greptile pass
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: grepPassId,
+      state: 'started',
+      scope: 'greptile',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['greptile'],
+      started_at: '2026-11-11T18:06:00Z',
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: grepPassId,
+      state: 'attempt',
+      voice_id: 'greptile',
+      attempt_id: grepAttId,
+      outcome: 'completed',
+      findings: grepFindings,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: grepPassId,
+      state: 'voice-complete',
+      voice_id: 'greptile',
+      selected_attempt_id: grepAttId,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: grepPassId,
+      state: 'completed',
+      completed_at: '2026-11-11T18:07:00Z',
+    });
+
+    // Finding correction on F-CORE -> resolution: fixed
+    callReviewState(fix.env, repo, dir, ['record', 'correction'], {
+      correction_id: corrId,
+      target: { pass_id: localPassId, voice_id: 'core', attempt_id: coreAttId, finding_id: 'F-CORE' },
+      resolution: 'fixed',
+    });
+    callReviewState(fix.env, repo, dir, ['finish'], {
+      outcome: 'prepared',
+      base: baseSha,
+    });
+
+    const deriveRes = runRaw(fix.env, ['derive', '--dir', dir], '', repo);
+    expect(deriveRes.status).toBe(0);
+    const deriveSummary = JSON.parse(deriveRes.stdout);
+    expect(deriveSummary).toMatchObject({
+      status: 'ok',
+      reason: null,
+      run_id: runId,
+      skipped: [],
+      segments: [{ segment: 1, session_id: sidDerived, derived: false, binding: 'handoff', replayed: 0 }],
+    });
+
+    // 2. Write the equivalent records directly via metrics begin|pass|correction|end on sidDirect
+    const directStep = u();
+    const candCtx = { candidate_head: headSha, candidate_tree: treeSha, candidate_base: baseSha, binding: 'unknown' };
+    expect(metrics(fix.env, 'begin', { ...base(sidDirect), step_id: directStep, parent_step_id: null, kind: 'run', phase: 'run', context: { ...candCtx, skill_sha256: null, parent_session_id: null } }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'started', required_voice_ids: ['core', 'specialist-sec', 'specialist-perf', 'qa'], context: candCtx }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'attempt', voice_id: 'core', attempt_id: coreAttId, predecessor_attempt_id: null, attempt_outcome: 'completed', findings: coreFindings }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 3, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'attempt', voice_id: 'specialist-sec', attempt_id: secFailAttId, predecessor_attempt_id: null, attempt_outcome: 'failed', delegate: fellBackDelegate }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'attempt', voice_id: 'specialist-sec', attempt_id: secFallbackAttId, predecessor_attempt_id: secFailAttId, attempt_outcome: 'completed', findings: [] }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 3, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'attempt', voice_id: 'specialist-perf', attempt_id: perfAttId, predecessor_attempt_id: null, attempt_outcome: 'completed', delegate: creditedDelegate, findings: perfFindings }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'attempt', voice_id: 'qa', attempt_id: qaFailAttId, predecessor_attempt_id: null, attempt_outcome: 'failed' }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'attempt', voice_id: 'qa', attempt_id: qaRetryAttId, predecessor_attempt_id: qaFailAttId, attempt_outcome: 'completed', findings: qaFindings }, repo).envelope.status).toBe('recorded');
+    for (const [voiceId, attId] of [
+      ['core', coreAttId],
+      ['specialist-sec', secFallbackAttId],
+      ['specialist-perf', perfAttId],
+      ['qa', qaRetryAttId],
+    ] as const) {
+      expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'voice-complete', voice_id: voiceId, voice_status: 'completed', selected_attempt_id: attId }, repo).envelope.status).toBe('recorded');
+    }
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: localPassId, scope: 'local', state: 'completed' }, repo).envelope.status).toBe('recorded');
+
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: grepPassId, scope: 'greptile', state: 'started', required_voice_ids: ['greptile'], context: candCtx }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: grepPassId, scope: 'greptile', state: 'attempt', voice_id: 'greptile', attempt_id: grepAttId, predecessor_attempt_id: null, attempt_outcome: 'completed', findings: grepFindings }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: grepPassId, scope: 'greptile', state: 'voice-complete', voice_id: 'greptile', voice_status: 'completed', selected_attempt_id: grepAttId }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', { v: 2, stage: 'review-and-prep', session_id: sidDirect, event_id: u(), pass_id: grepPassId, scope: 'greptile', state: 'completed' }, repo).envelope.status).toBe('recorded');
+
+    expect(metrics(fix.env, 'correction', { ...base(sidDirect), correction_kind: 'finding', pass_id: localPassId, voice_id: 'core', attempt_id: coreAttId, finding_id: 'F-CORE', resolution: 'fixed' }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'correction', { ...base(sidDirect), correction_kind: 'fallback', pass_id: localPassId, voice_id: 'specialist-sec', attempt_id: secFallbackAttId }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'correction', { ...base(sidDirect), correction_kind: 'retry', pass_id: localPassId, voice_id: 'qa', attempt_id: qaRetryAttId }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'end', { ...base(sidDirect), step_id: directStep, outcome: 'completed' }, repo).envelope.status).toBe('recorded');
+
+    const derivedRead = read(fix, sidDerived).envelope.data;
+    const directRead = read(fix, sidDirect).envelope.data;
+
+    expect(derivedRead.capture).toBe('ok');
+    expect(derivedRead.local_passes).toBe(directRead.local_passes);
+    expect(derivedRead.greptile_passes).toBe(directRead.greptile_passes);
+    expect(derivedRead.greptile_attempted).toBe(directRead.greptile_attempted);
+    expect(derivedRead.findings).toEqual(directRead.findings);
+    expect(derivedRead.greptile_findings).toEqual(directRead.greptile_findings);
+    expect(derivedRead.delegated).toEqual(directRead.delegated);
+  }, 60_000);
+
+  test('sandboxed first segment (session_id: null) + resumed second segment: cross-segment corrections, post-finish marker binding, idempotent replay, and forged session rejection', () => {
+    const fix = makeTelemetryFixture('community');
+    const { repo, baseSha, headSha } = setupGitRepoWithCommits(fix, 'repo-sandbox');
+    const dir = join(fix.home, 'ev-sandbox');
+    mkdirSync(dir, { recursive: true });
+
+    const runId = u();
+    const pass1Id = u();
+    const att1Id = u();
+    const corr1Id = u();
+    const corr2Id = u();
+
+    // Segment 1 starts with session_id: null (no telemetry start could run)
+    callReviewState(fix.env, repo, dir, ['start'], {
+      run_id: runId,
+      base: baseSha,
+      plan: { ref: 'docs/plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: 'hold scope', source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 3 },
+      session_id: null,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: pass1Id,
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['core'],
+      started_at: '2026-11-11T18:00:00Z',
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: pass1Id,
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: att1Id,
+      outcome: 'completed',
+      findings: [
+        { finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', duplicate_of: null, found_by: ['core', 'specialist:testing'], attribution_reason: null },
+      ],
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: pass1Id,
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: att1Id,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'pass'], {
+      pass_id: pass1Id,
+      state: 'completed',
+      completed_at: '2026-11-11T18:05:00Z',
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'correction'], {
+      correction_id: corr1Id,
+      target: { pass_id: pass1Id, voice_id: 'core', attempt_id: att1Id, finding_id: 'F-1' },
+      adjudication: 'accepted',
+      resolution: 'open',
+    });
+    callReviewState(fix.env, repo, dir, ['checkpoint'], {
+      checkpoint_id: u(),
+      kind: 'pause',
+      base: baseSha,
+    });
+
+    // Segment 2 starts with a real telemetry session, then finishes BEFORE derive runs (testing completed-marker binding!)
+    const sid2 = start(fix, repo);
+    callReviewState(fix.env, repo, dir, ['checkpoint'], {
+      checkpoint_id: u(),
+      kind: 'resume',
+      base: baseSha,
+      session_id: sid2,
+    });
+    callReviewState(fix.env, repo, dir, ['record', 'correction'], {
+      correction_id: corr2Id,
+      target: { pass_id: pass1Id, voice_id: 'core', attempt_id: att1Id, finding_id: 'F-1' },
+      resolution: 'fixed',
+      supersedes: corr1Id,
+    });
+    callReviewState(fix.env, repo, dir, ['finish'], {
+      outcome: 'prepared',
+      base: baseSha,
+    });
+
+    // Finish sid2 first so its handoff moves to telemetry-completed/
+    expect(runRaw(fix.env, ['finish', '--skill', 'extend:review-and-prep', '--session-id', sid2, '--outcome', 'success'], '', repo).status).toBe(0);
+
+    const statePath = join(dir, 'review-run-state.json');
+    const beforeState = readFileSync(statePath, 'utf8');
+
+    const d1 = JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout);
+    expect(d1.status).toBe('ok');
+    expect(d1.segments).toHaveLength(2);
+    expect(d1.segments[0]).toMatchObject({ segment: 1, derived: true, binding: 'derived', reason: null });
+    expect(d1.segments[1]).toMatchObject({ segment: 2, session_id: sid2, derived: false, binding: 'completed-marker', reason: null });
+    expect(d1.stage_runs).toEqual({ written: 1, present: 0 });
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeState);
+
+    const sid1 = d1.segments[0].session_id;
+    const read1 = read(fix, sid1).envelope.data;
+    expect(read1.capture).toBe('ok');
+    expect(read1.local_passes).toBe(1);
+    expect(read1.findings).toMatchObject({
+      accepted: 1,
+      fixed: 1,
+      open: 0,
+      by_part: {
+        core: { reported: 1, accepted: 1, rejected: 0 },
+        'specialist:testing': { reported: 1, accepted: 1, rejected: 0 },
+      },
+    });
+    expect(read1.qualified_elapsed_ms).toBeNull();
+    expect(read1.unknown_reasons).toContain('missing-end');
+    expect(read1.unknown_reasons).not.toContain('missing-reference');
+
+    const read2 = read(fix, sid2).envelope.data;
+    expect(read2.capture).toBe('ok');
+    expect(read2.unknown_reasons).not.toContain('missing-reference');
+
+    // Second derive replays every event and stage_runs row without duplicating ledger lines
+    const lines1Before = ledgerLines(fix, sid1).length;
+    const lines2Before = ledgerLines(fix, sid2).length;
+    const d2 = JSON.parse(runRaw(fix.env, ['derive', '--dir', dir], '', repo).stdout);
+    expect(d2.status).toBe('ok');
+    expect(d2.segments[0]).toMatchObject({ segment: 1, binding: 'already-bound', recorded: 0, replayed: lines1Before });
+    expect(d2.segments[1]).toMatchObject({ segment: 2, binding: 'already-bound', recorded: 0, replayed: lines2Before });
+    expect(d2.stage_runs).toEqual({ written: 0, present: 1 });
+    expect(ledgerLines(fix, sid1)).toHaveLength(lines1Before);
+    expect(ledgerLines(fix, sid2)).toHaveLength(lines2Before);
+
+    // Forged non-derived session_id with no handoff, marker, or bound ledger fails with identity-missing
+    const dirForged = join(fix.home, 'ev-forged');
+    mkdirSync(dirForged, { recursive: true });
+    const forgedSid = 'extend-' + u();
+    callReviewState(fix.env, repo, dirForged, ['start'], {
+      run_id: u(),
+      base: baseSha,
+      plan: { ref: 'docs/plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: 'hold scope', source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 3 },
+      session_id: forgedSid,
+    });
+    const dForged = JSON.parse(runRaw(fix.env, ['derive', '--dir', dirForged], '', repo).stdout);
+    expect(dForged).toMatchObject({
+      status: 'unavailable',
+      reason: 'identity-missing',
+      segments: [{ segment: 1, session_id: forgedSid, derived: false, binding: 'unbound', recorded: 0, replayed: 0, reason: 'identity-missing' }],
+    });
+    expect(existsSync(ledgerFile(fix, forgedSid))).toBe(false);
+  }, 60_000);
+});

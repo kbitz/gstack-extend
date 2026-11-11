@@ -1062,6 +1062,36 @@ clock-sensitive), and a `receipt_text` restating those counts. With
 `finish` before the first `begin`) prints `unavailable`/`identity-missing`.
 Missing data always reads as unknown — never as zero work.
 
+<a id="review-state-derive"></a>
+
+### Review-state derive
+
+`gstack-extend-telemetry derive --dir DIR` invokes `bin/review-state export --dir DIR`
+and writes the run's workflow-metrics records (`begin(kind=run)`, `pass` v2/v3 with
+`found_by` attribution and `delegate` metadata, `correction` for `finding`/`retry`/`fallback`,
+and `end` on closed recorded segments) and any missing `stage-runs` rows for closed
+segments whose `session_id` was `null` (`derived: true`) through the existing
+`workflow_metrics.mutate` and `provenance_row(..., derived=True)` write paths,
+leaving `review-run-state.json` untouched.
+
+- **Segment binding:** each segment binds when its ledger already has a `begin(kind=run)`
+  record (`already-bound`), when its recorded `session_id` matches an active handoff
+  (`handoff`) or a completion marker (`completed-marker`) for this checkout and
+  `extend:review-and-prep`, or when `derived: true` and its `session_id` equals
+  `"extend-" + uuidv5("9aa572eb-215f-452f-99e8-2bfdf0329cf3", "<run_id>:segment:<n>")`
+  with `run.repo` matching this checkout's `realpath(git rev-parse --git-common-dir)`
+  (`derived`). Any other session fails with `identity-missing`.
+- **Cross-segment corrections:** finding corrections derive into the session of their
+  target pass's segment, and `supersedes_event_id` walks the `supersedes` chain to the
+  nearest ancestor correction that emitted a metrics record (skipping receipt-only and
+  `fixed_in`-only corrections), so `metrics read` never reports `missing-reference` for
+  a cross-segment or skipped correction.
+- **Stage-runs rows for derived segments:** closed `derived: true` segments append one
+  schema-version-4 row (`agent`, `model`, and `effort` `null` with `*_source: "unknown"`,
+  `started_at` and `duration_s` from the segment bounds, `outcome` and `branch` from the
+  export) and write a `telemetry-completed` marker so repeated `derive` or `finish` calls
+  are idempotent.
+
 <a id="workflow-metrics-isolation"></a>
 
 ### Isolating examples and fixtures

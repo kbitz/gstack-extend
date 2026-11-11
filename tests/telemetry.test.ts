@@ -5788,3 +5788,181 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
 
   }, 30_000);
 });
+
+describe('Track 77B review-state stage-runs derivation', () => {
+  const REVIEW_STATE_BIN = join(ROOT, 'bin/review-state');
+  const GIT_COMMIT_ENV = {
+    GIT_AUTHOR_NAME: 'Test',
+    GIT_AUTHOR_EMAIL: 'test@example.com',
+    GIT_COMMITTER_NAME: 'Test',
+    GIT_COMMITTER_EMAIL: 'test@example.com',
+  };
+
+  test('derive --dir DIR writes valid schema_version 4 stage-runs rows for closed session_id: null segments with unknown agent/model/effort, guards duplicates via completion markers, and leaves state byte-unchanged', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const repo = join(fix.home, 'repo-derive');
+    mkdirSync(repo, { recursive: true });
+    const gitEnv = { ...fix.env, ...GIT_COMMIT_ENV };
+    expect(spawnSync('git', ['init', '-q', repo], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'symbolic-ref', 'HEAD', 'refs/heads/feat/derive'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/widget.git'], { env: gitEnv }).status).toBe(0);
+    writeFileSync(join(repo, 'f.txt'), '1\n');
+    expect(spawnSync('git', ['-C', repo, 'add', 'f.txt'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'commit', '-m', 'c1', '--quiet'], { env: gitEnv }).status).toBe(0);
+    const baseSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+    writeFileSync(join(repo, 'f.txt'), '2\n');
+    expect(spawnSync('git', ['-C', repo, 'add', 'f.txt'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'commit', '-m', 'c2', '--quiet'], { env: gitEnv }).status).toBe(0);
+    const headSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+
+    const dir = join(fix.home, 'ev-derive');
+    mkdirSync(dir, { recursive: true });
+    let seq = 0;
+    const callRs = (cmd: string[], payload: unknown) => {
+      const f = join(dir, `in-${++seq}.json`);
+      writeFileSync(f, JSON.stringify(payload));
+      const r = spawnSync(REVIEW_STATE_BIN, [...cmd, '--dir', dir, '--input', f], { env: fix.env, cwd: repo, encoding: 'utf8' });
+      expect(r.status, `${cmd.join(' ')}: ${r.stderr}`).toBe(0);
+      return JSON.parse(r.stdout.trim());
+    };
+
+    const runId = '019315e0-0000-7000-8000-000000000101';
+    const passId = '019315e0-0000-7000-8000-000000000102';
+    const attId = '019315e0-0000-7000-8000-000000000103';
+    callRs(['start'], {
+      run_id: runId,
+      base: baseSha,
+      plan: { ref: 'docs/plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: 'hold scope', source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 3 },
+      session_id: null,
+    });
+    callRs(['record', 'pass'], {
+      pass_id: passId,
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['core'],
+      started_at: '2026-11-11T18:00:00Z',
+    });
+    callRs(['record', 'pass'], {
+      pass_id: passId,
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: attId,
+      outcome: 'completed',
+      findings: [],
+    });
+    callRs(['record', 'pass'], {
+      pass_id: passId,
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: attId,
+    });
+    callRs(['record', 'pass'], {
+      pass_id: passId,
+      state: 'completed',
+      completed_at: '2026-11-11T18:05:00Z',
+    });
+    callRs(['checkpoint'], {
+      checkpoint_id: '019315e0-0000-7000-8000-000000000104',
+      kind: 'pause',
+      base: baseSha,
+    });
+    // Segment 2 also has session_id: null and finishes as prepared -> outcome: "success"
+    callRs(['checkpoint'], {
+      checkpoint_id: '019315e0-0000-7000-8000-000000000105',
+      kind: 'resume',
+      base: baseSha,
+      session_id: null,
+    });
+    callRs(['finish'], {
+      outcome: 'prepared',
+      base: baseSha,
+    });
+
+    // Pin deterministic segment timestamps in review-run-state.json so duration_s is exact
+    const statePath = join(dir, 'review-run-state.json');
+    const st = JSON.parse(readFileSync(statePath, 'utf8'));
+    st.segments[0].started_at = '2026-11-11T18:00:00Z';
+    st.segments[0].ended_at = '2026-11-11T18:02:05Z';
+    st.segments[1].started_at = '2026-11-11T18:10:00Z';
+    st.segments[1].ended_at = '2026-11-11T18:11:30Z';
+    writeFileSync(statePath, `${JSON.stringify(st, null, 2)}\n`);
+    const beforeState = readFileSync(statePath, 'utf8');
+
+    // Derive in an environment with CLAUDECODE=1 and GSTACK_EXTEND_REQUESTED_MODEL/EFFORT set:
+    // derived rows must NOT inherit the deriving process's harness/model/effort!
+    const deriveEnv = {
+      ...fix.env,
+      CLAUDECODE: '1',
+      CLAUDE_CODE_SESSION_ID: 'outer-claude-session',
+      CLAUDE_CODE_ENTRYPOINT: 'cli',
+      GSTACK_EXTEND_REQUESTED_MODEL: 'claude-opus-4-6',
+      GSTACK_EXTEND_REQUESTED_EFFORT: 'high',
+    };
+    const d1 = spawnSync(HELPER_BIN, ['derive', '--dir', dir], { env: deriveEnv, cwd: repo, encoding: 'utf8', timeout: 15_000 });
+    expect([d1.status, d1.stderr]).toEqual([0, '']);
+    const d1Json = JSON.parse(d1.stdout);
+    expect(d1Json).toMatchObject({
+      status: 'ok',
+      reason: null,
+      run_id: runId,
+      stage_runs: { written: 2, present: 0 },
+    });
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeState);
+
+    const rows = fix.readLedger();
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(validRow(row)).toBe(true);
+      expect(row).toMatchObject({
+        stage: 'review-and-prep',
+        agent: null,
+        model: null,
+        effort: null,
+        agent_source: 'unknown',
+        model_source: 'unknown',
+        effort_source: 'unknown',
+        repo: 'acme/widget',
+        branch: 'feat/derive',
+        source: 'gstack-extend',
+        schema_version: 4,
+        run_mode: 'unknown',
+        run_mode_source: 'no-harness',
+        user_signals_source: 'no-harness',
+      });
+    }
+    expect(rows[0]).toMatchObject({
+      session_id: d1Json.segments[0].session_id,
+      outcome: 'blocked',
+      started_at: '2026-11-11T18:00:00Z',
+      duration_s: 125,
+    });
+    expect(rows[1]).toMatchObject({
+      session_id: d1Json.segments[1].session_id,
+      outcome: 'success',
+      started_at: '2026-11-11T18:10:00Z',
+      duration_s: 90,
+    });
+
+    // Second derive or explicit finish --session-id does not duplicate either row
+    const d2 = spawnSync(HELPER_BIN, ['derive', '--dir', dir], { env: deriveEnv, cwd: repo, encoding: 'utf8', timeout: 15_000 });
+    expect(JSON.parse(d2.stdout).stage_runs).toEqual({ written: 0, present: 2 });
+    const finRetry = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:review-and-prep', '--session-id', d1Json.segments[0].session_id, '--start', '1794420000', '--outcome', 'blocked'], { env: fix.env, cwd: repo, encoding: 'utf8' });
+    expect(finRetry.status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(2);
+
+    // Counted by gstack-extend-telemetry report --json
+    const rep = spawnSync(HELPER_BIN, ['report', '--json'], { env: fix.env, cwd: repo, encoding: 'utf8' });
+    expect(rep.status).toBe(0);
+    const repData = JSON.parse(rep.stdout);
+    const revSkill = repData.skills.find((s: any) => s.skill === 'review-and-prep');
+    expect(revSkill.cells.unknown).toMatchObject({
+      runs: 2,
+      outcomes: expect.objectContaining({ blocked: 1, success: 1 }),
+    });
+  }, 30_000);
+});

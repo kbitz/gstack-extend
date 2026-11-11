@@ -88,6 +88,7 @@ DELEGATE_LABEL_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
 DELEGATE_OUTCOMES = ("credited", "fell-back")
 FALLBACK_REASONS = ("unresolved-claim", "timeout", "failed", "refused", "needs-context", "uncredited",
                     "unparsed-finding", "worktree-changed")
+NAMESPACE = "9aa572eb-215f-452f-99e8-2bfdf0329cf3"
 DELEGATE_COUNTS = ("wall_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 MAX_PROVIDERS = 8  # distinct provider labels in a read
 FIX_TEXT = {
@@ -1005,7 +1006,7 @@ def bind_initial(req):
     raise Fail("unavailable", "identity-missing", cause="no-handoff")
 
 
-def mutate(op, req):
+def mutate(op, req, binder=bind_initial):
     """Append one validated event, or replay/conflict an existing one. Returns (status, data)."""
     paths = run_paths(req["session_id"])
     digest = request_digest(op, req)
@@ -1013,7 +1014,7 @@ def mutate(op, req):
     ledger_exists = os.path.lexists(paths["ledger"])
     if not ledger_exists:
         if initial:
-            bind_initial(req)  # before any directory or file creation
+            binder(req)  # before any directory or file creation
         else:
             raise Fail("unavailable", "capture-missing", cause="no-bound-run")
     _ensure_dirs(paths)
@@ -1049,7 +1050,7 @@ def mutate(op, req):
         if bound is not None and initial:
             raise Fail("conflict", "event-conflict", cause="run-already-bound")
         if ledger_exists and initial and bound is None:
-            bind_initial(req)  # file existed without a bound run (e.g. empty): still bind exactly
+            binder(req)  # file existed without a bound run (e.g. empty): still bind exactly
         if not initial and bound is None:
             raise Fail("unavailable", "capture-missing", cause="no-bound-run")
         captured = _now_ms()

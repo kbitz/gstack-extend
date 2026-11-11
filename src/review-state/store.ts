@@ -41,9 +41,57 @@ export function cleanGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
   return out;
 }
 
-function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv): { ok: boolean; stdout: string } {
+export function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv): { ok: boolean; stdout: string } {
   const r = spawnSync('git', ['-C', cwd, ...args], { env, encoding: 'utf8', stdio: 'pipe', timeout: 5000 });
   return { ok: r.status === 0, stdout: (r.stdout ?? '').replace(/\r?\n$/, '') };
+}
+
+export type ValidatedStateDir =
+  | { ok: true; realTop: string; realDir: string; statePath: string; gitEnv: NodeJS.ProcessEnv }
+  | { ok: false; result: StoreResult };
+
+export function validateStateDir(
+  command: string,
+  dirArg: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  helperVersion: string | null,
+): ValidatedStateDir {
+  const reply = (reason: ReasonCode, detail: Record<string, unknown>, sPath: string | null, customFix?: string): ValidatedStateDir =>
+    ({ ok: false, result: makeEnvelope(command, reason, detail, sPath, null, customFix, helperVersion, null) });
+
+  if (isAbsolute(dirArg)) dirArg = dirArg.replace(/\/+$/, '') || '/'; // lstat must inspect the final component itself.
+  let statePath = isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
+
+  const gitEnv = cleanGitEnv(env);
+  const topRes = runGit(cwd, ['rev-parse', '--show-toplevel'], gitEnv);
+  if (!topRes.ok || !topRes.stdout) return reply('not-in-worktree', { cwd: truncate80(cwd) }, statePath);
+  const realTop = realpathSync(topRes.stdout);
+
+  if (!isAbsolute(dirArg)) {
+    return reply('bad-dir', { condition: 'relative', resolved_path: truncate80(resolve(cwd, dirArg)), toplevel: truncate80(realTop) }, null, 'Pass an absolute --dir path outside the Git work tree, or continue inline (D1).');
+  }
+
+  let dirStat;
+  try {
+    dirStat = lstatSync(dirArg);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === 'ENOENT' || e.code === 'ENOTDIR') {
+      return reply('bad-dir', { condition: 'missing', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, 'Create the directory supplied in --dir with mkdir -p outside the work tree, or continue inline (D1).');
+    }
+    return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'lstat', path: truncate80(dirArg) }, statePath);
+  }
+  if (dirStat.isSymbolicLink()) return reply('bad-dir', { condition: 'symlink', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, 'Pass a real directory path for --dir (final component must not be a symlink), or continue inline (D1).');
+  if (!dirStat.isDirectory()) return reply('bad-dir', { condition: 'not-directory', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, 'Pass an existing directory path for --dir, or continue inline (D1).');
+
+  const realDir = realpathSync(dirArg);
+  statePath = join(realDir, 'review-run-state.json');
+  if (realDir === realTop || realDir.startsWith(`${realTop}/`)) {
+    return reply('bad-dir', { condition: 'in-worktree', resolved_path: truncate80(realDir), toplevel: truncate80(realTop) }, statePath, 'Place --dir outside the Git work tree, or continue inline (D1).');
+  }
+
+  return { ok: true, realTop, realDir, statePath, gitEnv };
 }
 
 export function makeEnvelope(
@@ -105,33 +153,10 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   }
   const lockWaitMs = Number(waitRaw);
 
-  const gitEnv = cleanGitEnv(env);
-  const topRes = runGit(cwd, ['rev-parse', '--show-toplevel'], gitEnv);
-  if (!topRes.ok || !topRes.stdout) return reply('not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
-  const realTop = realpathSync(topRes.stdout);
-
-  if (!isAbsolute(dirArg)) {
-    return reply('bad-dir', { condition: 'relative', resolved_path: truncate80(resolve(cwd, dirArg)), toplevel: truncate80(realTop) }, null, null, 'Pass an absolute --dir path outside the Git work tree, or continue inline (D1).');
-  }
-
-  let dirStat;
-  try {
-    dirStat = lstatSync(dirArg);
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === 'ENOENT' || e.code === 'ENOTDIR') {
-      return reply('bad-dir', { condition: 'missing', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Create the directory supplied in --dir with mkdir -p outside the work tree, or continue inline (D1).');
-    }
-    return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'lstat', path: truncate80(dirArg) }, statePath, null);
-  }
-  if (dirStat.isSymbolicLink()) return reply('bad-dir', { condition: 'symlink', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass a real directory path for --dir (final component must not be a symlink), or continue inline (D1).');
-  if (!dirStat.isDirectory()) return reply('bad-dir', { condition: 'not-directory', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass an existing directory path for --dir, or continue inline (D1).');
-
-  const realDir = realpathSync(dirArg);
-  statePath = join(realDir, 'review-run-state.json');
-  if (realDir === realTop || realDir.startsWith(`${realTop}/`)) {
-    return reply('bad-dir', { condition: 'in-worktree', resolved_path: truncate80(realDir), toplevel: truncate80(realTop) }, statePath, null, 'Place --dir outside the Git work tree, or continue inline (D1).');
-  }
+  const dirCheck = validateStateDir(command, dirArg, cwd, env, helperVersion);
+  if (!dirCheck.ok) return dirCheck.result;
+  const { realTop, realDir, gitEnv } = dirCheck;
+  statePath = dirCheck.statePath;
 
   if (!isAbsolute(inputArg)) return reply('usage', { message: '--input must be an absolute path inside --dir' }, statePath, null);
   let inStat;

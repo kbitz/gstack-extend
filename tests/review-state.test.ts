@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
+import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
@@ -45,7 +46,7 @@ function runCli(args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; v
   let out = '', err = '';
   const code = main(args, { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: opts.cwd ?? repo, env: { ...process.env, ...opts.env }, versionPath: opts.versionPath });
   const json = out.trim().startsWith('{') ? JSON.parse(out.trim()) : null;
-  if (json) {
+  if (json && 'reason' in json) {
     // Check metadata on the real success/refusal paths, not only the envelope factory.
     const entry = REASON_TABLE.find((e) => e.reason === json.reason)!;
     expect(entry).toBeDefined();
@@ -878,5 +879,337 @@ describe('bin/review-state', () => {
       writeFileSync(statePath, JSON.stringify(badState));
       expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(62), kind: 'stop' }).json.reason).toBe('corrupt');
     }
+  });
+
+  test('export --dir DIR: uuidv5 RFC 4122 parity, 2-segment projection, cross-segment corrections, skipped segment:null records, stage_runs, refusals, and read-only --dir', () => {
+    // 1. RFC 4122 §4.3 UUIDv5 vector and Python uuid.uuid5 parity
+    expect(uuidv5('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'python.org')).toBe('886313e1-3b8a-5372-9b90-0c9aee199e5d');
+    const pyUuid = spawnSync(
+      'python3',
+      ['-c', `import uuid; print(uuid.uuid5(uuid.UUID("${NAMESPACE}"), "run-1:segment:1"))`],
+      { encoding: 'utf8' },
+    );
+    expect(pyUuid.status).toBe(0);
+    expect(uuidv5(NAMESPACE, 'run-1:segment:1')).toBe(pyUuid.stdout.trim());
+
+    // 2. Build a 2-segment run:
+    //    - Segment 1: session_id: null (sandboxed), pass 10 with core + delegated specialist-sec, finding F-1 (receipt_class stripped) and F-2,
+    //      correction 30 on F-1, pause checkpoint closing segment 1.
+    //    - Segment 2: recorded session_id via resume checkpoint, pass 11 with fell-back delegated attempt + fallback retry, non-delegated failed attempt + retry,
+    //      not-applicable voice, cross-segment corrections on F-1 (receipt-only 31 omitted, 32 superseding 31 -> supersedes_event_id names 30) and F-2
+    //      (receipt-only 33 followed by 34 -> supersedes_event_id omitted), and finish(prepared).
+    const d = newDir();
+    const runId = uid(1);
+    const recSid2 = `extend-${uid(902)}`;
+    callCmd(d, 'start', mkStart(1, { session_id: null }));
+    callCmd(d, 'record pass', mkPassStarted(10, { required_voices: ['core', 'specialist-sec'] }));
+    callCmd(d, 'record pass', {
+      pass_id: uid(10),
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: uid(20),
+      outcome: 'completed',
+      findings: [
+        { finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'], receipt_class: 'non-blocking' },
+        { finding_id: 'F-2', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+      ],
+    });
+    callCmd(d, 'record pass', {
+      pass_id: uid(10),
+      state: 'attempt',
+      voice_id: 'specialist-sec',
+      part: 'specialist:security',
+      attempt_id: uid(21),
+      outcome: 'completed',
+      delegate: {
+        provider: 'openai',
+        model: 'gpt-5',
+        outcome: 'credited',
+        fallback_reason: null,
+        replay: false,
+        wall_ms: 420,
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_input_tokens: 20,
+        cache_creation_input_tokens: null,
+        call_id: sha256('call-21'),
+      },
+      findings: [
+        { finding_id: 'F-3', severity_source: 'high', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'fixed', found_by: ['specialist:security'] },
+      ],
+    });
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(20) });
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'specialist-sec', selected_attempt_id: uid(21) });
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'completed', completed_at: '2026-11-10T18:05:00Z' });
+    callCmd(d, 'record correction', {
+      correction_id: uid(30),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      adjudication: 'accepted',
+      resolution: 'open',
+    });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'pause', base: baseSha });
+
+    // Segment 2: resume with recorded session_id
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'resume', base: baseSha, session_id: recSid2 });
+    callCmd(d, 'record pass', mkPassStarted(11, { cycle: 2, required_voices: ['core', 'specialist-sec', 'qa'] }));
+    // Voice specialist-sec: fell-back delegated attempt followed by completed native fallback attempt
+    callCmd(d, 'record pass', {
+      pass_id: uid(11),
+      state: 'attempt',
+      voice_id: 'specialist-sec',
+      part: 'specialist:security',
+      attempt_id: uid(22),
+      outcome: 'failed',
+      delegate: {
+        provider: 'openai',
+        model: 'gpt-5',
+        outcome: 'fell-back',
+        fallback_reason: 'timeout',
+        replay: false,
+        wall_ms: 5000,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: null,
+        call_id: sha256('call-22'),
+      },
+    });
+    callCmd(d, 'record pass', {
+      pass_id: uid(11),
+      state: 'attempt',
+      voice_id: 'specialist-sec',
+      attempt_id: uid(23),
+      predecessor_attempt_id: uid(22),
+      outcome: 'completed',
+      findings: [],
+    });
+    // Voice core: failed non-delegated attempt followed by completed retry
+    callCmd(d, 'record pass', {
+      pass_id: uid(11),
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: uid(24),
+      outcome: 'failed',
+    });
+    callCmd(d, 'record pass', {
+      pass_id: uid(11),
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: uid(25),
+      predecessor_attempt_id: uid(24),
+      outcome: 'completed',
+      findings: [],
+    });
+    callCmd(d, 'record pass', { pass_id: uid(11), state: 'voice-complete', voice_id: 'specialist-sec', selected_attempt_id: uid(23) });
+    callCmd(d, 'record pass', { pass_id: uid(11), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(25) });
+    callCmd(d, 'record pass', { pass_id: uid(11), state: 'voice-complete', voice_id: 'qa', not_applicable: 'not-applicable' });
+    callCmd(d, 'record pass', { pass_id: uid(11), state: 'completed', completed_at: '2026-11-10T18:15:00Z' });
+
+    // Cross-segment corrections recorded in segment 2 targeting segment 1's pass 10:
+    // - Correction 31 on F-1 is receipt-only (omitted from metrics records)
+    // - Correction 32 on F-1 supersedes 31 and sets resolution: 'fixed' -> its supersedes_event_id must name correction 30's event_id!
+    // - Correction 33 on F-2 is fixed_in-only (omitted from metrics records)
+    // - Correction 34 on F-2 supersedes 33 and sets resolution: 'fixed' -> its supersedes_event_id must be omitted!
+    callCmd(d, 'record correction', {
+      correction_id: uid(31),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      receipt_class: 'test-gap-recorded',
+      supersedes: uid(30),
+    });
+    callCmd(d, 'record correction', {
+      correction_id: uid(32),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      resolution: 'fixed',
+      supersedes: uid(31),
+    });
+    callCmd(d, 'record correction', {
+      correction_id: uid(33),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-2' },
+      fixed_in: headSha,
+    });
+    callCmd(d, 'record correction', {
+      correction_id: uid(34),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-2' },
+      resolution: 'fixed',
+      supersedes: uid(33),
+    });
+    callCmd(d, 'finish', { outcome: 'prepared', base: baseSha });
+
+    const statePath = join(d, 'review-run-state.json');
+    const beforeBytes = readFileSync(statePath, 'utf8');
+
+    // Run export on a read-only --dir (when not root) to prove no lock file is created
+    const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+    if (!isRoot) chmodSync(d, 0o500);
+    let expRes;
+    try {
+      expRes = runCli(['export', '--dir', d]);
+      expect(existsSync(join(d, 'review-run-state.json.lock'))).toBe(false);
+    } finally {
+      if (!isRoot) chmodSync(d, 0o700);
+    }
+    expect(expRes.code).toBe(0);
+    expect(expRes.err).toBe('');
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+
+    const exp = expRes.json;
+    expect(exp.schema).toBe(EXPORT_SCHEMA);
+    expect(exp.run.run_id).toBe(runId);
+    const derivedSid1 = `extend-${uuidv5(NAMESPACE, `${runId}:segment:1`)}`;
+    expect(exp.segments).toEqual([
+      expect.objectContaining({
+        segment: 1,
+        recorded_session_id: null,
+        session_id: derivedSid1,
+        derived: true,
+        end: 'paused',
+        outcome: 'blocked',
+        run_step_id: uuidv5(NAMESPACE, `${runId}:segment:1:run`),
+      }),
+      expect.objectContaining({
+        segment: 2,
+        recorded_session_id: recSid2,
+        session_id: recSid2,
+        derived: false,
+        end: 'finished',
+        outcome: 'success',
+        run_step_id: uuidv5(NAMESPACE, `${runId}:segment:2:run`),
+      }),
+    ]);
+
+    // stage_runs contains only closed derived segments (segment 1)
+    expect(exp.stage_runs).toEqual([
+      {
+        segment: 1,
+        session_id: derivedSid1,
+        started_at: exp.segments[0].started_at,
+        ended_at: exp.segments[0].ended_at,
+        outcome: 'blocked',
+        branch: exp.run.branch,
+      },
+    ]);
+
+    // Check stripped fields (receipt_class on findings, call_id on delegate)
+    const att20 = exp.records.find((r: any) => r.op === 'pass' && r.request.attempt_id === uid(20));
+    expect(att20.request.v).toBe(2);
+    expect(att20.request.findings[0]).not.toHaveProperty('receipt_class');
+    const att21 = exp.records.find((r: any) => r.op === 'pass' && r.request.attempt_id === uid(21));
+    expect(att21.request.v).toBe(3);
+    expect(att21.request.delegate).not.toHaveProperty('call_id');
+    expect(att21.request.delegate.provider).toBe('openai');
+
+    // Cross-segment finding corrections are routed to segment 1's session, receipt/fixed_in-only omitted, supersedes_event_id resolved
+    const findingCorrs = exp.records.filter((r: any) => r.op === 'correction' && r.request.correction_kind === 'finding');
+    expect(findingCorrs.map((r: any) => r.request.event_id)).toEqual([
+      uuidv5(NAMESPACE, `${runId}:correction:${uid(30)}`),
+      uuidv5(NAMESPACE, `${runId}:correction:${uid(32)}`),
+      uuidv5(NAMESPACE, `${runId}:correction:${uid(34)}`),
+    ]);
+    expect(findingCorrs.every((r: any) => r.session_id === derivedSid1)).toBe(true);
+    expect(findingCorrs[1].request.supersedes_event_id).toBe(uuidv5(NAMESPACE, `${runId}:correction:${uid(30)}`));
+    expect(findingCorrs[2].request).not.toHaveProperty('supersedes_event_id');
+
+    // Retry and fallback attempt corrections in segment 2 (ordered by pass.voices: core first, specialist-sec second)
+    const attemptCorrs = exp.records.filter((r: any) => r.op === 'correction' && r.request.correction_kind !== 'finding');
+    expect(attemptCorrs).toEqual([
+      {
+        session_id: recSid2,
+        op: 'correction',
+        request: {
+          v: 1,
+          stage: 'review-and-prep',
+          session_id: recSid2,
+          event_id: uuidv5(NAMESPACE, `${runId}:attempt-correction:${uid(11)}:core:${uid(25)}`),
+          correction_kind: 'retry',
+          pass_id: uid(11),
+          voice_id: 'core',
+          attempt_id: uid(25),
+        },
+      },
+      {
+        session_id: recSid2,
+        op: 'correction',
+        request: {
+          v: 1,
+          stage: 'review-and-prep',
+          session_id: recSid2,
+          event_id: uuidv5(NAMESPACE, `${runId}:attempt-correction:${uid(11)}:specialist-sec:${uid(23)}`),
+          correction_kind: 'fallback',
+          pass_id: uid(11),
+          voice_id: 'specialist-sec',
+          attempt_id: uid(23),
+        },
+      },
+    ]);
+
+    // Run end is omitted on derived segment 1 and emitted on recorded segment 2
+    const ends = exp.records.filter((r: any) => r.op === 'end');
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({
+      session_id: recSid2,
+      op: 'end',
+      request: {
+        step_id: uuidv5(NAMESPACE, `${runId}:segment:2:run`),
+        outcome: 'completed',
+      },
+    });
+
+    // 3. Branch move still exports cleanly; repo mismatch returns worktree-mismatch
+    git(repo, ['checkout', '-b', 'moved-branch', '--quiet']);
+    try {
+      expect(runCli(['export', '--dir', d]).code).toBe(0);
+    } finally {
+      git(repo, ['checkout', '-', '--quiet']);
+    }
+    const otherRepo = makeEmptyRepo(baseTmp);
+    expect(runCli(['export', '--dir', d], { cwd: otherRepo })).toMatchObject({
+      code: 1,
+      json: { command: 'export', status: 'refused', reason: 'worktree-mismatch' },
+    });
+
+    // 4. Upgraded v0.86.0 state with segment: null on pass 10 routes pass 10 and all corrections targeting pass 10 to skipped[]
+    const nullSegState = JSON.parse(beforeBytes) as ReviewRunState;
+    nullSegState.passes[0]!.segment = null;
+    const nullSegExport = projectState(nullSegState, readHelperVersion());
+    expect(nullSegExport.skipped).toEqual([
+      { kind: 'pass', id: uid(10), pass_id: uid(10), reason: 'segment-unknown' },
+      { kind: 'correction', id: uid(30), correction_id: uid(30), reason: 'segment-unknown' },
+      { kind: 'correction', id: uid(31), correction_id: uid(31), reason: 'segment-unknown' },
+      { kind: 'correction', id: uid(32), correction_id: uid(32), reason: 'segment-unknown' },
+      { kind: 'correction', id: uid(33), correction_id: uid(33), reason: 'segment-unknown' },
+      { kind: 'correction', id: uid(34), correction_id: uid(34), reason: 'segment-unknown' },
+    ]);
+    expect(nullSegExport.records.some((r) => r.request.pass_id === uid(10))).toBe(false);
+
+    // 5. Refusal envelopes and help for export
+    expect(runCli(['export', '--help']).code).toBe(0);
+    expect(runCli(['export', '--help']).out).toContain('review-state export');
+    expect(runCli(['--help']).out).toContain('bin/review-state export --dir DIR');
+    expect(runCli(['export', '--dir', d, '--input', statePath])).toMatchObject({
+      code: 2,
+      json: { command: 'export', status: 'usage', reason: 'usage' },
+    });
+    expect(runCli(['export', '--dir', newDir()])).toMatchObject({
+      code: 1,
+      json: { command: 'export', status: 'refused', reason: 'not-started' },
+    });
+    expect(runCli(['export', '--dir', 'rel/dir'])).toMatchObject({
+      code: 1,
+      json: { command: 'export', status: 'refused', reason: 'bad-dir' },
+    });
+    expect(runCli(['export', '--dir', d], { cwd: baseTmp })).toMatchObject({
+      code: 1,
+      json: { command: 'export', status: 'refused', reason: 'not-in-worktree' },
+    });
+    writeFileSync(statePath, JSON.stringify({ ...JSON.parse(beforeBytes), schema: 'review-run-state/v2' }));
+    expect(runCli(['export', '--dir', d])).toMatchObject({
+      code: 1,
+      json: { command: 'export', status: 'unreadable', reason: 'newer-schema' },
+    });
+    writeFileSync(statePath, '{corrupt\n');
+    expect(runCli(['export', '--dir', d])).toMatchObject({
+      code: 1,
+      json: { command: 'export', status: 'unreadable', reason: 'corrupt' },
+    });
   });
 });
