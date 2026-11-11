@@ -813,6 +813,85 @@ describe('reply parsing and the receipt contract', () => {
     }
   });
 
+  // Value: protects=delegated coverage when a closing Recommendation follows "because" with punctuation; fails_when=valid findings with a "because," or other punctuated Recommendation fall back as unparsed-finding or drop findings; why_new=because-comma recommendation regression; seam=parseFindings, recover and decide
+  test('regression: nine labelled red-team findings with a "because," recommendation parse, recover, and are credited without relaxing strict grammar', async () => {
+    const rawFindings = Array.from({ length: 9 }, (_, i) => {
+      const idx = i + 1;
+      const critical = idx <= 2;
+      return {
+        label: critical ? '[P1]' : idx <= 6 ? '[P2]' : '[P3]',
+        payload: {
+          severity: critical ? 'CRITICAL' as const : 'INFORMATIONAL' as const,
+          confidence: 10 * Math.min(10, idx + 1),
+          path: `src/module-${idx}.ts`,
+          line: idx * 10,
+          category: 'security',
+          summary: `synthetic red-team finding ${idx}`,
+          fix: `remediate finding ${idx}`,
+          fingerprint: `src/module-${idx}.ts:${idx * 10}:security`,
+          specialist: 'testing',
+        },
+      };
+    });
+    const expectedFindings = rawFindings.map(({ payload }, i) => ({
+      ...payload,
+      confidence: Math.min(10, i + 2),
+      specialist: 'red-team' as const,
+    }));
+    const recommendation = 'Recommendation: Request changes before merge because, beyond the single-line checks, multiple boundaries remain exposed.';
+    const reply = [...rawFindings.map(({ label, payload }) => `${label} ${JSON.stringify(payload)}`), recommendation].join('\n');
+
+    const parsed = parseFindings(reply, 'red-team');
+    expect(parsed).toEqual({ ok: true, findings: expectedFindings });
+
+    const { classifyOutsideReview } = await import(`data:text/javascript;base64,${Buffer.from(CLASSIFIER).toString('base64')}`);
+    const decided = decide('red-team', {
+      exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false,
+      stdout: reply, stderr: '', wall_ms: 12,
+    }, classifyOutsideReview);
+    expect(decided).toMatchObject({
+      outcome: 'credited',
+      fallback_reason: null,
+      parse: 'recovered',
+      verdict: 'findings',
+      findings: expectedFindings,
+    });
+
+    const oneFinding = `${rawFindings[0]!.label} ${JSON.stringify(rawFindings[0]!.payload)}`;
+    for (const suffix of [
+      ' because a concrete defect remains.',
+      ' because, beyond the happy path, a defect remains.',
+      ' because: a concrete defect remains.',
+      ' because-a concrete defect remains.',
+      ' because—a concrete defect remains.',
+    ]) {
+      expect(parseFindings(`${oneFinding}\nRecommendation: Request changes before merge${suffix}`, 'red-team')).toEqual({
+        ok: true,
+        findings: [expectedFindings[0]!],
+      });
+      expect(parseFindings(`NO_FINDINGS: none\nRecommendation: Merge${suffix}`, 'red-team')).toEqual({
+        ok: true,
+        findings: [],
+      });
+    }
+
+    for (const rejectedRec of [
+      'Recommendation: Request changes before merge for a concrete defect.',
+      'Recommendation: Request changes before merge becausefoo a defect remains.',
+      'Recommendation: Request changes before merge because_foo a defect remains.',
+      'Recommendation: Request changes before merge because',
+      'Recommendation: Request changes before merge because   ',
+    ]) {
+      expect(parseFindings(`${oneFinding}\n${rejectedRec}`, 'red-team')).toEqual({ ok: false });
+      expect(parseFindings(`NO_FINDINGS: none\n${rejectedRec}`, 'red-team')).toEqual({ ok: false });
+    }
+
+    expect(parseFindings(`${oneFinding}\n${recommendation}\n${oneFinding}`, 'red-team')).toEqual({ ok: false });
+    expect(parseFindings(`NO_FINDINGS: none\n${recommendation}\ntrailing line`, 'red-team')).toEqual({ ok: false });
+    expect(parseFindings(`[P1] not-json\n${recommendation}`, 'red-team')).toEqual({ ok: false });
+    expect(parseFindings(`${oneFinding}\n[P2] {"severity":"INFORMATIONAL","confidence":101,"path":"a.ts","category":"c","summary":"s"}\n${recommendation}`, 'red-team')).toEqual({ ok: false });
+  });
+
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
     for (const source of Object.values(RECEIPT_KEYS)) expect(PART_KEYS).toContain(source);
     expect(Object.keys(RECEIPT_KEYS)).toEqual(['part', 'provider', 'model', 'outcome', 'reason', 'wall_ms', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'findings', 'call']);
@@ -1477,11 +1556,24 @@ describe('installed classifier', () => {
     const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
     const json = { severity: 'CRITICAL', confidence: 9, path: 'a.ts', line: 1, category: 'testing', summary: 'gap', fix: 'test', specialist: 'testing' };
     const labelled = `[P1] ${JSON.stringify(json)}\nRecommendation: fix because a gap remains.`;
+    const commaLabelled = `[P1] ${JSON.stringify(json)}\nRecommendation: Request changes before merge because, beyond the single check, a gap remains.`;
     const clean = 'NO_FINDINGS: none\nRecommendation: merge because nothing is wrong.';
     const plain = JSON.stringify(json);
     const found = recover(labelled, 'review', 0, '', classifyOutsideReview);
     expect([found.credited, found.parse, found.classification.verdict]).toEqual([true, 'valid', 'findings']);
     expect(parseFindings(labelled, 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing' }] });
+    const commaFound = recover(commaLabelled, 'review', 0, '', classifyOutsideReview);
+    expect([commaFound.credited, commaFound.parse, commaFound.classification.verdict]).toEqual([true, 'valid', 'findings']);
+    expect(decide('red-team', {
+      exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false,
+      stdout: commaLabelled, stderr: '', wall_ms: 5,
+    }, classifyOutsideReview)).toMatchObject({
+      outcome: 'credited',
+      fallback_reason: null,
+      parse: 'valid',
+      verdict: 'findings',
+      findings: [{ ...json, confidence: 1, specialist: 'red-team' }],
+    });
     const none = recover(clean, 'review', 0, '', classifyOutsideReview);
     expect([none.credited, none.parse, none.classification.verdict]).toEqual([true, 'valid', 'clean']);
     expect(recover(plain, 'review', 0, '', classifyOutsideReview).credited).toBe(false);
