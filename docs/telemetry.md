@@ -420,6 +420,20 @@ fails, the line has only the session and start fields:
 GE_TELEMETRY: session=extend-0a1b2c3d-0000-4000-8000-000000000001 start=1790000000 work_item="issue-1234"
 ~~~
 
+When the state directory or per-key lock cannot be created or locked (`state-unwritable`), start instead prints one unavailable line on stdout and exits 0 without minting a session:
+
+~~~text
+GE_TELEMETRY: unavailable reason=state-unwritable dir="/Users/me/.gstack-extend" error=EACCES
+~~~
+
+When saving the handoff fails after the session id is minted (`handoff-unwritable`), start prints the `GE_TELEMETRY: session=… start=…` line first (without `work_item`), followed on the next line by:
+
+~~~text
+GE_TELEMETRY: unavailable reason=handoff-unwritable dir="/Users/me/.gstack-extend/telemetry/<hash>" error=ENOTDIR
+~~~
+
+Neither unavailable line matches the `GE_TELEMETRY: session=(\S+) start=(\d+)…` recovery regex below.
+
 Finish puts the value in the stage-runs row, also when it runs in a later session or
 with explicit ids (the handoff carries it). The identifying fields of that row:
 
@@ -2686,6 +2700,7 @@ Doctor pairing is not model coverage.
 | `gstack helper unresolvable:` | `gstack-telemetry-log` or `gstack-config` was not found. The line names the missing helper(s) and the searched locations. Provenance may still record | Install gstack for this host (`./setup --host <host>` in the gstack checkout) or set `GSTACK_DIR`, then rerun `gstack-extend doctor telemetry` |
 | `gstack state resolver unavailable` | The selected modern logger's colocated resolver is missing or fails. Skill-usage stays unwritten; provenance may still record | Reinstall gstack, then rerun `gstack-extend doctor telemetry` |
 | `PRODUCER_VERSION_UNKNOWN` | The installation's VERSION is missing, unsafe, oversized, not UTF-8, or not a three- or four-part ASCII numeric release. A newly constructed row has null `producer_version`; this diagnosis does not prove append success | Restore or upgrade the gstack-extend installation. Rows already saved for a retry keep their original producer value; see [Producer version](#producer-version) |
+| `GE_TELEMETRY: unavailable reason=state-unwritable\|handoff-unwritable dir=… error=…` | Start could not create or lock `telemetry-locks/` in the state directory (`state-unwritable`, printed instead of the session line) or could not save the invocation handoff under `telemetry/<key>/` after minting the session id (`handoff-unwritable`, printed on the line after `GE_TELEMETRY: session=… start=…`) | Repair `GSTACK_EXTEND_STATE_DIR` (or `~/.gstack-extend`) permissions and directory shape; for `handoff-unwritable`, finish can still recover with explicit `--session-id` and `--start` from the session line |
 
 Doctor is read-only and always exits zero for missing/empty sinks, malformed
 JSON, partial tails, and bad arguments. Debug mode prints the resolved binaries,
@@ -2694,7 +2709,7 @@ effort. It explains missing gstack/config, disabled tiers, rejected input,
 unwritable sinks/state, an unknown producer release, or upstream failure with
 corrective commands. Doctor reports skill-usage.jsonl only.
 The skill guard and doctor diagnose an unresolvable extend binary: a missing
-binary cannot diagnose itself. Normal skip paths remain silent. Missing Python
+binary cannot diagnose itself. Normal skip paths remain silent (except start's `GE_TELEMETRY: unavailable` stdout line when the state or handoff directory is unwritable). Missing Python
 is diagnosed by the shell guard in debug mode, or by doctor. Doctor also warns
 (text mode, and `warnings` plus `stale_wrapper` and `logger_supports_no_sweep` in
 JSON) about a stale wrapper that predates the start/finish protocol and about a

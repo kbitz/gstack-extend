@@ -3,27 +3,30 @@ export const SCHEMA_VERSION = 'review-run-state/v1' as const;
 export type ReasonCode =
   | 'recorded' | 'replayed' | 'invalid-input' | 'bad-dir' | 'not-in-worktree'
   | 'worktree-mismatch' | 'not-started' | 'paused' | 'finished' | 'exists'
-  | 'conflict' | 'corrupt' | 'usage' | 'unwritable' | 'busy';
+  | 'conflict' | 'corrupt' | 'newer-schema' | 'usage' | 'unwritable' | 'busy';
 export type StatusCode = 'recorded' | 'replayed' | 'refused' | 'conflict' | 'unreadable' | 'usage' | 'unwritable' | 'busy';
+export type SideEffects = 'committed' | 'none';
+export type RetryHint = 'no' | 'same-input' | 'after-fix' | 'never';
 export type CommandName = 'start' | 'record pass' | 'record correction' | 'record gate' | 'record audit' | 'checkpoint' | 'finish';
-export type ReasonEntry = { reason: ReasonCode; status: StatusCode; exit: 0 | 1 | 2 | 3 | 4; fix: string };
+export type ReasonEntry = { reason: ReasonCode; status: StatusCode; exit: 0 | 1 | 2 | 3 | 4; side_effects: SideEffects; retry: RetryHint; fix: string };
 
 export const REASON_TABLE: readonly ReasonEntry[] = [
-  { reason: 'recorded', status: 'recorded', exit: 0, fix: '' },
-  { reason: 'replayed', status: 'replayed', exit: 0, fix: '' },
-  { reason: 'invalid-input', status: 'refused', exit: 1, fix: 'Fix the payload violations and rerun with a new or corrected --input file.' },
-  { reason: 'bad-dir', status: 'refused', exit: 1, fix: 'Create --dir with mkdir -p outside the work tree, or continue inline (D1).' },
-  { reason: 'not-in-worktree', status: 'refused', exit: 1, fix: 'Run bin/review-state from inside the target Git work tree.' },
-  { reason: 'worktree-mismatch', status: 'refused', exit: 1, fix: 'Run on the bound repository and branch, or start a new run in a new --dir.' },
-  { reason: 'not-started', status: 'refused', exit: 1, fix: 'Run bin/review-state start first.' },
-  { reason: 'paused', status: 'refused', exit: 1, fix: 'Run bin/review-state checkpoint with kind "resume" before recording or finishing.' },
-  { reason: 'finished', status: 'refused', exit: 1, fix: 'Run is already closed; start a new run in a new --dir for a continuation.' },
-  { reason: 'exists', status: 'refused', exit: 1, fix: 'Resend the existing run_id for replay, or use a new --dir for a new run.' },
-  { reason: 'conflict', status: 'conflict', exit: 1, fix: 'For a retry, resend the original payload file unchanged; for new content, use a new record ID.' },
-  { reason: 'corrupt', status: 'unreadable', exit: 1, fix: 'Do not overwrite the corrupt state file; continue this review run inline (D1).' },
-  { reason: 'usage', status: 'usage', exit: 2, fix: 'Pass valid CLI flags, an absolute regular --input file (<=1 MiB) inside --dir, and GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS in 0..60000.' },
-  { reason: 'unwritable', status: 'unwritable', exit: 3, fix: 'Grant write permissions or free disk space on --dir, or continue inline (D1).' },
-  { reason: 'busy', status: 'busy', exit: 4, fix: 'Confirm no review-state process runs as the recorded pid on the recorded host, delete review-run-state.json.lock, and rerun the identical command.' },
+  { reason: 'recorded', status: 'recorded', exit: 0, side_effects: 'committed', retry: 'no', fix: '' },
+  { reason: 'replayed', status: 'replayed', exit: 0, side_effects: 'none', retry: 'no', fix: '' },
+  { reason: 'invalid-input', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Fix the payload violations and rerun with a new or corrected --input file.' },
+  { reason: 'bad-dir', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Create --dir with mkdir -p outside the work tree, or continue inline (D1).' },
+  { reason: 'not-in-worktree', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Run bin/review-state from inside the target Git work tree.' },
+  { reason: 'worktree-mismatch', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Run on the bound repository and branch, or start a new run in a new --dir.' },
+  { reason: 'not-started', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Run bin/review-state start first.' },
+  { reason: 'paused', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Run bin/review-state checkpoint with kind "resume" before recording or finishing.' },
+  { reason: 'finished', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Run is already closed; start a new run in a new --dir for a continuation.' },
+  { reason: 'exists', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Resend the existing run_id for replay, or use a new --dir for a new run.' },
+  { reason: 'conflict', status: 'conflict', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'For a retry, resend the original payload file unchanged; for new content, use a new record ID.' },
+  { reason: 'corrupt', status: 'unreadable', exit: 1, side_effects: 'none', retry: 'never', fix: 'Do not overwrite the corrupt state file; continue this review run inline (D1).' },
+  { reason: 'newer-schema', status: 'unreadable', exit: 1, side_effects: 'none', retry: 'never', fix: 'Upgrade gstack-extend on this machine, or continue this review run inline (D1).' },
+  { reason: 'usage', status: 'usage', exit: 2, side_effects: 'none', retry: 'after-fix', fix: 'Pass valid CLI flags, an absolute regular --input file (<=1 MiB) inside --dir, and GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS in 0..60000.' },
+  { reason: 'unwritable', status: 'unwritable', exit: 3, side_effects: 'none', retry: 'same-input', fix: 'Grant write permissions or free disk space on --dir, or continue inline (D1).' },
+  { reason: 'busy', status: 'busy', exit: 4, side_effects: 'none', retry: 'same-input', fix: 'Confirm no review-state process runs as the recorded pid on the recorded host, delete review-run-state.json.lock, and rerun the identical command.' },
 ] as const;
 
 export const REASONS = Object.fromEntries(REASON_TABLE.map((e) => [e.reason, e])) as Record<ReasonCode, ReasonEntry>;
@@ -41,8 +44,8 @@ export const REQUEST_SHAPES = {
   finish: { required: ['outcome', 'base'], optional: { stop_reason: null, delta_base: null, stop_count: null, wtree: null, review_restriction_resolved: false, readiness_confirmed_at: null, full_review_evidence: null, user_facing_changes: [], evidence: [] } },
 } as const satisfies Record<string, { required: readonly string[]; optional: Record<string, unknown> }>;
 
-const STATE_KEYS = {
-  root: ['schema', 'rev', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish'],
+export const STATE_KEYS = {
+  root: ['schema', 'rev', 'writer', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish'],
   run: ['run_id', 'skill', 'repo', 'branch', 'pr', 'gh_login', 'started_at'],
   pr: ['url', 'repo', 'number', 'head_repo', 'head_branch', 'base_ref'],
   binding: ['head', 'tree', 'base', 'wtree'],
@@ -50,20 +53,31 @@ const STATE_KEYS = {
   policy: ['value', 'source', 'delegation'],
   continuation: ['prior_stops', 'max', 'continues'],
   segment: ['segment', 'started_at', 'ended_at', 'end', 'session_id', 'toplevel'],
-  pass: ['pass_id', 'scope', 'cycle', 'coverage', 'delta_from', 'candidate', 'required_voices', 'started_at', 'completed_at', 'state', 'voices', 'recorded_at', 'completed_recorded_at'],
+  pass: ['pass_id', 'segment', 'scope', 'cycle', 'coverage', 'delta_from', 'candidate', 'required_voices', 'started_at', 'completed_at', 'state', 'voices', 'recorded_at', 'completed_recorded_at'],
   candidate: ['commit', 'tree', 'base', 'wtree'],
   voice: ['voice_id', 'part', 'required', 'not_applicable', 'selected_attempt_id', 'attempts', 'recorded_at'],
   attempt: ['attempt_id', 'part', 'outcome', 'predecessor_attempt_id', 'dispatched_at', 'returned_at', 'delegate', 'findings', 'recorded_at'],
   delegate: ['provider', 'model', 'outcome', 'fallback_reason', 'replay', 'wall_ms', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'call_id'],
   finding: ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'duplicate_of', 'found_by', 'attribution_reason', 'receipt_class'],
-  correction: ['correction_id', 'target', 'adjudication', 'resolution', 'receipt_class', 'fixed_in', 'supersedes', 'head', 'tree', 'recorded_at'],
+  correction: ['correction_id', 'segment', 'target', 'adjudication', 'resolution', 'receipt_class', 'fixed_in', 'supersedes', 'head', 'tree', 'recorded_at'],
   target: ['pass_id', 'voice_id', 'attempt_id', 'finding_id'],
-  gate: ['gate_id', 'name', 'result', 'reason', 'candidate', 'details', 'evidence', 'recorded_at'],
-  audit: ['audit_id', 'name', 'result', 'details', 'candidate', 'evidence', 'recorded_at'],
-  checkpoint: ['checkpoint_id', 'kind', 'head', 'tree', 'base', 'wtree', 'session_id', 'evidence', 'recorded_at'],
+  gate: ['gate_id', 'segment', 'name', 'result', 'reason', 'candidate', 'details', 'evidence', 'recorded_at'],
+  audit: ['audit_id', 'segment', 'name', 'result', 'details', 'candidate', 'evidence', 'recorded_at'],
+  checkpoint: ['checkpoint_id', 'segment', 'kind', 'head', 'tree', 'base', 'wtree', 'session_id', 'evidence', 'recorded_at'],
   finish: ['outcome', 'stop_reason', 'head', 'tree', 'base', 'delta_base', 'stop_count', 'wtree', 'review_restriction_resolved', 'readiness_confirmed_at', 'full_review_evidence', 'user_facing_changes', 'evidence', 'finished_at'],
   evidence: ['path', 'sha256'],
 } as const;
+
+export const ADDITIVE_V1_DEFAULTS = {
+  root: { writer: null },
+  passes: { segment: null },
+  corrections: { segment: null },
+  gates: { segment: null },
+  audits: { segment: null },
+  checkpoints: { segment: null },
+} as const;
+
+export const VERSION_RE = /^[0-9]+(?:\.[0-9]+){2,3}$/;
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const SESSION_RE = /^extend-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -108,16 +122,16 @@ export type FindingRecord = { finding_id: string; severity_source: string; sever
 export type DelegateRecord = { provider: string; model: string; outcome: string; fallback_reason: string | null; replay: boolean; wall_ms: number; input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number | null; call_id: string };
 export type AttemptRecord = { attempt_id: string; part: string | null; outcome: string; predecessor_attempt_id: string | null; dispatched_at: string | null; returned_at: string | null; delegate: DelegateRecord | null; findings: FindingRecord[] | null; recorded_at: string };
 export type VoiceRecord = { voice_id: string; part: string | null; required: boolean; not_applicable: string | null; selected_attempt_id: string | null; attempts: AttemptRecord[]; recorded_at: string | null };
-export type PassRecord = { pass_id: string; scope: string; cycle: number; coverage: string; delta_from: string | null; candidate: CandidateBinding; required_voices: string[]; started_at: string; completed_at: string | null; state: 'open' | 'completed'; voices: VoiceRecord[]; recorded_at: string; completed_recorded_at: string | null };
-export type CorrectionRecord = { correction_id: string; target: { pass_id: string; voice_id: string; attempt_id: string; finding_id: string }; adjudication: string | null; resolution: string | null; receipt_class: string | null; fixed_in: string | null; supersedes: string | null; head: string; tree: string; recorded_at: string };
-export type GateRecord = { gate_id: string; name: string; result: string; reason: string | null; candidate: CandidateBinding; details: Record<string, unknown>; evidence: EvidenceRef[]; recorded_at: string };
-export type AuditRecord = { audit_id: string; name: string; result: string; details: Record<string, unknown>; candidate: CandidateBinding; evidence: EvidenceRef[]; recorded_at: string };
-export type CheckpointRecord = { checkpoint_id: string; kind: string; head: string; tree: string; base: string | null; wtree: string | null; session_id: string | null; evidence: EvidenceRef[]; recorded_at: string };
+export type PassRecord = { pass_id: string; segment: number | null; scope: string; cycle: number; coverage: string; delta_from: string | null; candidate: CandidateBinding; required_voices: string[]; started_at: string; completed_at: string | null; state: 'open' | 'completed'; voices: VoiceRecord[]; recorded_at: string; completed_recorded_at: string | null };
+export type CorrectionRecord = { correction_id: string; segment: number | null; target: { pass_id: string; voice_id: string; attempt_id: string; finding_id: string }; adjudication: string | null; resolution: string | null; receipt_class: string | null; fixed_in: string | null; supersedes: string | null; head: string; tree: string; recorded_at: string };
+export type GateRecord = { gate_id: string; segment: number | null; name: string; result: string; reason: string | null; candidate: CandidateBinding; details: Record<string, unknown>; evidence: EvidenceRef[]; recorded_at: string };
+export type AuditRecord = { audit_id: string; segment: number | null; name: string; result: string; details: Record<string, unknown>; candidate: CandidateBinding; evidence: EvidenceRef[]; recorded_at: string };
+export type CheckpointRecord = { checkpoint_id: string; segment: number | null; kind: string; head: string; tree: string; base: string | null; wtree: string | null; session_id: string | null; evidence: EvidenceRef[]; recorded_at: string };
 export type FullReviewEvidence = { status: 'available'; commit: string; tree: string; source: string } | { status: 'unavailable'; reason: string };
 export type FinishRecord = { outcome: string; stop_reason: string | null; head: string; tree: string; base: string; delta_base: string | null; stop_count: number | null; wtree: string | null; review_restriction_resolved: boolean; readiness_confirmed_at: string | null; full_review_evidence: FullReviewEvidence | null; user_facing_changes: string[]; evidence: EvidenceRef[]; finished_at: string };
 export type SegmentRecord = { segment: number; started_at: string; ended_at: string | null; end: 'paused' | 'finished' | null; session_id: string | null; toplevel: string };
 export type ReviewRunState = {
-  schema: typeof SCHEMA_VERSION; rev: number;
+  schema: typeof SCHEMA_VERSION; rev: number; writer: string | null;
   run: { run_id: string; skill: 'review-and-prep'; repo: string; branch: string; pr: PrInfo | null; gh_login: string | null; started_at: string };
   binding: { head: string; tree: string; base: string; wtree: string | null };
   plan: { ref: string; sha256: string };
@@ -143,6 +157,24 @@ const isIsoZ = (v: unknown): v is string => typeof v === 'string' && ISO_Z_RE.te
 const isPart = (v: unknown): v is string => typeof v === 'string' && PART_RE.test(v) && v !== 'specialist:red-team';
 const isStr = (v: unknown, min: number, max: number, noWs = false): v is string =>
   typeof v === 'string' && v.length >= min && v.length <= max && !CTRL_RE.test(v) && (!noWs || !/\s/.test(v));
+export const isVersion = (v: unknown): v is string => isStr(v, 5, 64, true) && VERSION_RE.test(v);
+
+export function parseVersionTuple(v: unknown): [number, number, number, number] | null {
+  if (!isVersion(v)) return null;
+  const parts = v.split('.').map((n) => Number(n));
+  if (parts.some((n) => !Number.isSafeInteger(n))) return null;
+  return [parts[0]!, parts[1]!, parts[2]!, parts[3] ?? 0];
+}
+
+export function isVersionNewer(candidate: unknown, baseline: unknown): boolean {
+  const c = parseVersionTuple(candidate);
+  const b = parseVersionTuple(baseline);
+  if (!c || !b) return false;
+  for (let i = 0; i < 4; i++) {
+    if (c[i]! !== b[i]!) return c[i]! > b[i]!;
+  }
+  return false;
+}
 const isRelPath = (v: unknown): v is string =>
   isStr(v, 1, 500) && !v.startsWith('/') && !v.includes('\\') && v.split('/').every((p) => p !== '' && p !== '.' && p !== '..');
 const isHttpUrl = (v: unknown): v is string => {
@@ -166,6 +198,7 @@ const R = {
   uuid: { check: reCheck(UUID_RE), expected: 'uuid' },
   uuidN: { check: nullable(reCheck(UUID_RE)), expected: 'uuid|null' },
   sessionN: { check: nullable(reCheck(SESSION_RE)), expected: 'extend-<uuid>|null' },
+  versionN: { check: nullable(isVersion), expected: 'version|null' },
   voice: { check: reCheck(VOICE_RE), expected: 'voice-id' },
   safeId: { check: reCheck(SAFE_ID_RE), expected: 'safe-id' },
   safeIdN: { check: nullable(reCheck(SAFE_ID_RE)), expected: 'safe-id|null' },
@@ -279,10 +312,16 @@ function checkCandAndEv(cand: { commit: string; base: string | null }, evs: Evid
   return cTree;
 }
 
-export function applyCommand(state: ReviewRunState | null, command: CommandName, rawInput: unknown, git: GitInfo, env: EnvChecker, nowIso: string): ApplyOutcome {
+export function applyCommand(state: ReviewRunState | null, command: CommandName, rawInput: unknown, git: GitInfo, env: EnvChecker, nowIso: string, helperVersion: string | null = null): ApplyOutcome {
   const rev = state?.rev ?? null;
   if (!isObj(rawInput)) return invalid(rev, [{ path: '$', rule: 'invalid-type', expected: 'object' }]);
   const v: Violation[] = [];
+  const activeSegment = state ? state.segments[state.segments.length - 1]!.segment : 1;
+  const recorded = (next: ReviewRunState, detail: Record<string, unknown>): ApplyOutcome => ({
+    reason: 'recorded',
+    state: { ...next, writer: helperVersion },
+    detail,
+  });
 
   if (command === 'start') {
     const top = checkShape(rawInput, 'start', { run_id: R.uuid, base: R.hex40, wtree: R.wtreeN, gh_login: R.strN(1, 128, true), session_id: R.sessionN }, v);
@@ -343,14 +382,14 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     if (v.length > 0) return invalid(rev, v);
 
     const next: ReviewRunState = {
-      schema: SCHEMA_VERSION, rev: 1,
+      schema: SCHEMA_VERSION, rev: 1, writer: helperVersion,
       run: { run_id: canon.run_id, skill: 'review-and-prep', repo: git.repo, branch: git.branch, pr: canon.pr, gh_login: canon.gh_login, started_at: nowIso },
       binding: { head: git.head, tree: git.tree, base: canon.base, wtree: canon.wtree },
       plan: canon.plan, policy: canon.policy, continuation: canon.continuation,
       segments: [{ segment: 1, started_at: nowIso, ended_at: null, end: null, session_id: canon.session_id, toplevel: git.toplevel }],
       passes: [], corrections: [], gates: [], audits: [], checkpoints: [], finish: null,
     };
-    return { reason: 'recorded', state: next, detail: { head: git.head, tree: git.tree, recorded_at: nowIso } };
+    return recorded(next, { head: git.head, tree: git.tree, recorded_at: nowIso });
   }
 
   const checkLifecycle = (): ApplyOutcome | null => {
@@ -394,13 +433,13 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       if (v.length > 0) return invalid(rev, v);
 
       const pass: PassRecord = {
-        pass_id: canon.pass_id, scope: canon.scope, cycle: canon.cycle, coverage: canon.coverage, delta_from: canon.delta_from,
+        pass_id: canon.pass_id, segment: activeSegment, scope: canon.scope, cycle: canon.cycle, coverage: canon.coverage, delta_from: canon.delta_from,
         candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree },
         required_voices: canon.required_voices, started_at: canon.started_at, completed_at: null, state: 'open',
         voices: canon.required_voices.map((vid) => ({ voice_id: vid, part: null, required: true, not_applicable: null, selected_attempt_id: null, attempts: [], recorded_at: null })),
         recorded_at: nowIso, completed_recorded_at: null,
       };
-      return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, passes: [...state!.passes, pass] }, detail: { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso } };
+      return recorded({ ...state!, rev: state!.rev + 1, passes: [...state!.passes, pass] }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
     }
 
     if (pState === 'attempt') {
@@ -479,7 +518,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       const nextVoices = voice
         ? pass.voices.map((vo) => vo.voice_id === canon.voice_id ? { ...vo, part: canon.part ?? vo.part, attempts: [...vo.attempts, attRecord] } : vo)
         : [...pass.voices, { voice_id: canon.voice_id, part: canon.part, required: false, not_applicable: null, selected_attempt_id: null, attempts: [attRecord], recorded_at: null }];
-      return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, detail: { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso } };
+      return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
     }
 
     if (pState === 'voice-complete') {
@@ -503,7 +542,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       const nextVoices = voice
         ? pass.voices.map((vo) => vo.voice_id === canon.voice_id ? { ...vo, selected_attempt_id: canon.selected_attempt_id, not_applicable: canon.not_applicable, recorded_at: nowIso } : vo)
         : [...pass.voices, { voice_id: canon.voice_id, part: null, required: false, not_applicable: canon.not_applicable, selected_attempt_id: canon.selected_attempt_id, attempts: [], recorded_at: nowIso }];
-      return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, detail: { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso } };
+      return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
     }
 
     const c = checkShape(rawInput, 'record pass (completed)', { pass_id: R.uuid, completed_at: R.isoZ }, v);
@@ -516,7 +555,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const life = checkLifecycle();
     if (life) return life;
     if (!pass) return invalid(state!.rev, [{ path: 'pass_id', rule: 'invalid-reference', expected: 'existing-pass' }]);
-    return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, completed_at: canon.completed_at, state: 'completed' as const, completed_recorded_at: nowIso } : p) }, detail: { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso } };
+    return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, completed_at: canon.completed_at, state: 'completed' as const, completed_recorded_at: nowIso } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
   }
 
   if (command === 'record correction') {
@@ -533,7 +572,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const canon = { correction_id: c.correction_id as string, target, adjudication: c.adjudication as string | null, resolution: c.resolution as string | null, receipt_class: c.receipt_class as string | null, fixed_in: c.fixed_in as string | null, supersedes: c.supersedes as string | null };
     const existing = state?.corrections.find((x) => x.correction_id === canon.correction_id);
     if (existing && state) {
-      const { recorded_at: _, head, tree, ...stored } = existing;
+      const { recorded_at: _, segment: _seg, head, tree, ...stored } = existing;
       return replayOrConflict(state.rev, canon.correction_id, stored, canon, head, tree, existing.recorded_at);
     }
     const life = checkLifecycle();
@@ -549,7 +588,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     if ((effAdj === 'rejected' || effAdj === 'duplicate') && effRes !== 'unknown') return invalid(state!.rev, [{ path: 'resolution', rule: 'invalid-value', expected: 'unknown-for-rejected-or-duplicate' }]);
     if (canon.fixed_in !== null && !env.commitExists(canon.fixed_in)) return invalid(state!.rev, [{ path: 'fixed_in', rule: 'commit-not-found', expected: 'existing-git-commit' }]);
 
-    return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, corrections: [...state!.corrections, { ...canon, head: git.head, tree: git.tree, recorded_at: nowIso }] }, detail: { head: git.head, tree: git.tree, recorded_at: nowIso } };
+    return recorded({ ...state!, rev: state!.rev + 1, corrections: [...state!.corrections, { ...canon, segment: activeSegment, head: git.head, tree: git.tree, recorded_at: nowIso }] }, { head: git.head, tree: git.tree, recorded_at: nowIso });
   }
 
   if (command === 'record gate') {
@@ -582,8 +621,8 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const cTree = checkCandAndEv(canon.candidate, collectEvidenceItems(command, canon), env, v);
     if (v.length > 0) return invalid(state!.rev, v);
 
-    const gateRecord: GateRecord = { ...canon, candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree }, recorded_at: nowIso };
-    return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, gates: [...state!.gates, gateRecord] }, detail: { head: gateRecord.candidate.commit, tree: gateRecord.candidate.tree, recorded_at: nowIso } };
+    const gateRecord: GateRecord = { ...canon, segment: activeSegment, candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree }, recorded_at: nowIso };
+    return recorded({ ...state!, rev: state!.rev + 1, gates: [...state!.gates, gateRecord] }, { head: gateRecord.candidate.commit, tree: gateRecord.candidate.tree, recorded_at: nowIso });
   }
 
   if (command === 'record audit') {
@@ -616,8 +655,8 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const cTree = checkCandAndEv(canon.candidate, collectEvidenceItems(command, canon), env, v);
     if (v.length > 0) return invalid(state!.rev, v);
 
-    const auditRecord: AuditRecord = { ...canon, candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree }, recorded_at: nowIso };
-    return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, audits: [...state!.audits, auditRecord] }, detail: { head: auditRecord.candidate.commit, tree: auditRecord.candidate.tree, recorded_at: nowIso } };
+    const auditRecord: AuditRecord = { ...canon, segment: activeSegment, candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree }, recorded_at: nowIso };
+    return recorded({ ...state!, rev: state!.rev + 1, audits: [...state!.audits, auditRecord] }, { head: auditRecord.candidate.commit, tree: auditRecord.candidate.tree, recorded_at: nowIso });
   }
 
   if (command === 'checkpoint') {
@@ -645,8 +684,9 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       : canon.kind === 'resume'
         ? [...state!.segments, { segment: state!.segments.length + 1, started_at: nowIso, ended_at: null, end: null, session_id: canon.session_id, toplevel: git.toplevel }]
         : state!.segments;
-    const cpRecord: CheckpointRecord = { ...canon, head: git.head, tree: git.tree, recorded_at: nowIso };
-    return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, segments: nextSegments, checkpoints: [...state!.checkpoints, cpRecord] }, detail: { head: git.head, tree: git.tree, recorded_at: nowIso } };
+    const cpSegment = nextSegments[nextSegments.length - 1]!.segment;
+    const cpRecord: CheckpointRecord = { ...canon, segment: cpSegment, head: git.head, tree: git.tree, recorded_at: nowIso };
+    return recorded({ ...state!, rev: state!.rev + 1, segments: nextSegments, checkpoints: [...state!.checkpoints, cpRecord] }, { head: git.head, tree: git.tree, recorded_at: nowIso });
   }
 
   // finish
@@ -696,10 +736,46 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
   if (v.length > 0) return invalid(state!.rev, v);
 
   const nextSegments = state!.segments.map((s, i) => i === state!.segments.length - 1 ? { ...s, ended_at: nowIso, end: 'finished' as const } : s);
-  return { reason: 'recorded', state: { ...state!, rev: state!.rev + 1, segments: nextSegments, finish: { ...canon, head: git.head, tree: git.tree, finished_at: nowIso } }, detail: { head: git.head, tree: git.tree, recorded_at: nowIso } };
+  return recorded({ ...state!, rev: state!.rev + 1, segments: nextSegments, finish: { ...canon, head: git.head, tree: git.tree, finished_at: nowIso } }, { head: git.head, tree: git.tree, recorded_at: nowIso });
 }
 
-export function validateStoredState(raw: unknown, statePath: string): { ok: true; state: ReviewRunState } | { ok: false; detail: { path: string; message: string } } {
+function applyAdditiveV1Defaults(raw: Record<string, unknown>): void {
+  for (const [k, def] of Object.entries(ADDITIVE_V1_DEFAULTS.root)) {
+    if (!(k in raw)) raw[k] = def;
+  }
+  for (const coll of ['passes', 'corrections', 'gates', 'audits', 'checkpoints'] as const) {
+    const arr = raw[coll];
+    if (!Array.isArray(arr)) continue;
+    for (const item of arr) {
+      if (!isObj(item)) continue;
+      for (const [k, def] of Object.entries(ADDITIVE_V1_DEFAULTS[coll])) {
+        if (!(k in item)) item[k] = def;
+      }
+    }
+  }
+}
+
+export type StoredValidationResult =
+  | { ok: true; state: ReviewRunState }
+  | { ok: false; reason: 'corrupt' | 'newer-schema'; detail: Record<string, unknown> };
+
+export function validateStoredState(raw: unknown, statePath: string, helperVersion: string | null = null): StoredValidationResult {
+  if (isObj(raw) && typeof raw.schema === 'string') {
+    const m = /^review-run-state\/v([1-9]\d*)$/.exec(raw.schema);
+    if (m && Number(m[1]) > 1) {
+      return {
+        ok: false,
+        reason: 'newer-schema',
+        detail: {
+          path: truncate80(statePath),
+          schema: truncate80(raw.schema),
+          writer: isVersion(raw.writer) ? raw.writer : null,
+          message: truncate80(`unsupported schema ${raw.schema}`),
+        },
+      };
+    }
+    if (raw.schema === SCHEMA_VERSION) applyAdditiveV1Defaults(raw);
+  }
   const v: Violation[] = [];
   const object = (value: unknown, keys: readonly string[], rules: Record<string, FieldRule>, path: string): Record<string, unknown> | null => {
     if (!isObj(value)) { v.push({ path, rule: 'invalid-type', expected: 'object' }); return null; }
@@ -721,7 +797,7 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
   const reference = (ok: boolean, path: string) => { if (!ok) v.push({ path, rule: 'invalid-reference', expected: 'existing-record' }); };
   const candidate = (x: unknown, path: string) => object(x, STATE_KEYS.candidate, { commit: R.hex40, tree: R.hex40, base: R.hex40N, wtree: R.wtreeN }, path);
   const evidence = (x: unknown, path: string) => array(x, path, (e, p) => { object(e, STATE_KEYS.evidence, { path: R.relPath, sha256: R.hex64 }, p); });
-  const root = object(raw, STATE_KEYS.root, { schema: R.enum([SCHEMA_VERSION]), rev: R.posInt }, '');
+  const root = object(raw, STATE_KEYS.root, { schema: R.enum([SCHEMA_VERSION]), rev: R.posInt, writer: R.versionN }, '');
   if (root) {
     const run = object(root.run, STATE_KEYS.run, { run_id: R.uuid, skill: R.enum(['review-and-prep']), repo: R.str(1, 500), branch: R.str(1, 200), gh_login: R.strN(1, 128, true), started_at: R.isoZ }, 'run');
     if (run && run.pr !== null) object(run.pr, STATE_KEYS.pr, { url: R.url, repo: R.str(1, 200, true), number: R.posInt, head_repo: R.str(1, 200, true), head_branch: R.str(1, 200, true), base_ref: R.str(1, 200, true) }, 'run.pr');
@@ -743,10 +819,15 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
       if (!root.segments.length) v.push({ path: 'segments', rule: 'missing-segment', expected: 'nonempty-array' });
       root.segments.forEach((s, i) => reference(isObj(s) && s.segment === i + 1, `segments[${i}].segment`));
     }
+    const segCount = Array.isArray(root.segments) ? root.segments.length : 0;
+    const segRule: FieldRule = {
+      check: nullable((x): x is number => isPosInt(x) && x <= segCount),
+      expected: `int-1..${segCount}|null`,
+    };
     const passIds = new Set<string>(), attemptIds = new Set<string>(), findingIds = new Set<string>();
     const findingTargets = new Set<string>();
     array(root.passes, 'passes', (x, path) => {
-      const p = object(x, STATE_KEYS.pass, { pass_id: R.uuid, scope: R.enum(ENUMS.passScope), cycle: R.posInt, coverage: R.enum(ENUMS.passCoverage), delta_from: R.hex40N, required_voices: strings(R.voice.check, true), started_at: R.isoZ, completed_at: R.isoZN, state: R.enum(['open', 'completed']), recorded_at: R.isoZ, completed_recorded_at: R.isoZN }, path);
+      const p = object(x, STATE_KEYS.pass, { pass_id: R.uuid, segment: segRule, scope: R.enum(ENUMS.passScope), cycle: R.posInt, coverage: R.enum(ENUMS.passCoverage), delta_from: R.hex40N, required_voices: strings(R.voice.check, true), started_at: R.isoZ, completed_at: R.isoZN, state: R.enum(['open', 'completed']), recorded_at: R.isoZ, completed_recorded_at: R.isoZN }, path);
       if (!p) return;
       unique(passIds, p.pass_id, `${path}.pass_id`); candidate(p.candidate, `${path}.candidate`);
       const voiceIds = new Set<string>();
@@ -777,7 +858,7 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
     });
     const correctionIds = new Set<string>(), chains = new Map<string, unknown>();
     array(root.corrections, 'corrections', (x, path) => {
-      const c = object(x, STATE_KEYS.correction, { correction_id: R.uuid, adjudication: R.enumN(ENUMS.correctionAdjudication), resolution: R.enumN(ENUMS.resolution), receipt_class: R.enumN(ENUMS.receiptClass), fixed_in: R.hex40N, supersedes: R.uuidN, head: R.hex40, tree: R.hex40, recorded_at: R.isoZ }, path);
+      const c = object(x, STATE_KEYS.correction, { correction_id: R.uuid, segment: segRule, adjudication: R.enumN(ENUMS.correctionAdjudication), resolution: R.enumN(ENUMS.resolution), receipt_class: R.enumN(ENUMS.receiptClass), fixed_in: R.hex40N, supersedes: R.uuidN, head: R.hex40, tree: R.hex40, recorded_at: R.isoZ }, path);
       if (!c) return;
       unique(correctionIds, c.correction_id, `${path}.correction_id`);
       const t = object(c.target, STATE_KEYS.target, { pass_id: R.uuid, voice_id: R.voice, attempt_id: R.uuid, finding_id: R.safeId }, `${path}.target`);
@@ -788,7 +869,7 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
     });
     const gateIds = new Set<string>(), auditIds = new Set<string>(), checkpointIds = new Set<string>();
     array(root.gates, 'gates', (x, path) => {
-      const g = object(x, STATE_KEYS.gate, { gate_id: R.uuid, name: R.safeId, result: R.enum(ENUMS.gateResult), reason: R.strN(1, 500), recorded_at: R.isoZ }, path);
+      const g = object(x, STATE_KEYS.gate, { gate_id: R.uuid, segment: segRule, name: R.safeId, result: R.enum(ENUMS.gateResult), reason: R.strN(1, 500), recorded_at: R.isoZ }, path);
       if (!g) return;
       unique(gateIds, g.gate_id, `${path}.gate_id`); candidate(g.candidate, `${path}.candidate`); evidence(g.evidence, `${path}.evidence`);
       if (g.name === 'pregate') object(g.details, ['raw_verdict', 'wrapper_verdict', 'policy', 'record_path', 'record_sha256', 'skipped_lanes'], { raw_verdict: R.str(1, 64), wrapper_verdict: R.str(1, 64), policy: R.enum(ENUMS.pregatePolicy), record_path: R.relPath, record_sha256: R.hex64, skipped_lanes: { check: (x) => Array.isArray(x) && x.every(R.safeId.check), expected: 'safe-id-array' } }, `${path}.details`);
@@ -796,7 +877,7 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
       else object(g.details, [], {}, `${path}.details`);
     });
     array(root.audits, 'audits', (x, path) => {
-      const a = object(x, STATE_KEYS.audit, { audit_id: R.uuid, name: R.enum(ENUMS.auditName), result: R.str(1, 200), recorded_at: R.isoZ }, path);
+      const a = object(x, STATE_KEYS.audit, { audit_id: R.uuid, segment: segRule, name: R.enum(ENUMS.auditName), result: R.str(1, 200), recorded_at: R.isoZ }, path);
       if (!a) return;
       unique(auditIds, a.audit_id, `${path}.audit_id`); candidate(a.candidate, `${path}.candidate`); evidence(a.evidence, `${path}.evidence`);
       if (a.name === 'documentation') object(a.details, ['report_id', 'section_path', 'section_sha256'], { report_id: R.safeId, section_path: R.relPath, section_sha256: R.hex64 }, `${path}.details`);
@@ -806,7 +887,7 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
       }
     });
     array(root.checkpoints, 'checkpoints', (x, path) => {
-      const c = object(x, STATE_KEYS.checkpoint, { checkpoint_id: R.uuid, kind: R.enum(ENUMS.checkpointKind), head: R.hex40, tree: R.hex40, base: R.hex40N, wtree: R.wtreeN, session_id: R.sessionN, recorded_at: R.isoZ }, path);
+      const c = object(x, STATE_KEYS.checkpoint, { checkpoint_id: R.uuid, segment: segRule, kind: R.enum(ENUMS.checkpointKind), head: R.hex40, tree: R.hex40, base: R.hex40N, wtree: R.wtreeN, session_id: R.sessionN, recorded_at: R.isoZ }, path);
       if (c) { unique(checkpointIds, c.checkpoint_id, `${path}.checkpoint_id`); evidence(c.evidence, `${path}.evidence`); }
     });
     if (root.finish !== null) {
@@ -821,7 +902,17 @@ export function validateStoredState(raw: unknown, statePath: string): { ok: true
       }
     }
   }
-  if (v.length) return { ok: false, detail: { path: truncate80(statePath), message: truncate80(`${v[0]!.rule} at ${v[0]!.path}`) } };
+  if (v.length) {
+    const msg = truncate80(`${v[0]!.rule} at ${v[0]!.path}`);
+    if (isObj(raw) && raw.schema === SCHEMA_VERSION && isVersionNewer(raw.writer, helperVersion)) {
+      return {
+        ok: false,
+        reason: 'newer-schema',
+        detail: { path: truncate80(statePath), schema: SCHEMA_VERSION, writer: raw.writer as string, message: msg },
+      };
+    }
+    return { ok: false, reason: 'corrupt', detail: { path: truncate80(statePath), message: msg } };
+  }
   return { ok: true, state: raw as ReviewRunState };
 }
 
