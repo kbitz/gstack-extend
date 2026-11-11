@@ -1,11 +1,11 @@
 import { isAbsolute, join } from 'node:path';
 import { REASON_TABLE, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
-import { executeCommand, makeEnvelope, type StoreResult } from './store.ts';
+import { executeCommand, makeEnvelope, readHelperVersion, type StoreResult } from './store.ts';
 
-export type CliIo = { stdout(text: string): void; stderr(text: string): void; cwd: string; env?: NodeJS.ProcessEnv };
+export type CliIo = { stdout(text: string): void; stderr(text: string): void; cwd: string; env?: NodeJS.ProcessEnv; versionPath?: string };
 
 export function renderMainHelp(): string {
-  const reasons = REASON_TABLE.map((r) => `  ${r.reason} (status=${r.status}, exit=${r.exit})`).join('\n');
+  const reasons = REASON_TABLE.map((r) => `  ${r.reason} (status=${r.status}, exit=${r.exit}, side_effects=${r.side_effects}, retry=${r.retry})`).join('\n');
   return `review-state — experimental recorder for /review-and-prep run state (${SCHEMA_VERSION})
 Experimental until Track 79A's default decision; internal store only.
 
@@ -14,10 +14,14 @@ Usage:
   bin/review-state record pass|correction|gate|audit --dir DIR --input FILE
   bin/review-state checkpoint --dir DIR --input FILE
   bin/review-state finish --dir DIR --input FILE
+  bin/review-state --version
   bin/review-state --help | -h | <command> --help
 
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)
+
+Envelope:
+  {v:1, command, status, reason, detail, fix, state_path, rev, helper_version, side_effects, retry, retry_after_ms}
 
 Reasons:
 ${reasons}
@@ -54,6 +58,11 @@ function emitResult(res: StoreResult, io: CliIo): number {
 }
 
 export function main(argv: string[], io: CliIo): number {
+  const env = io.env ?? process.env;
+  if (argv.length === 1 && argv[0] === '--version') {
+    io.stdout(`review-state ${readHelperVersion(io.versionPath) ?? 'unknown'}\n`);
+    return 0;
+  }
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
     io.stdout(renderMainHelp());
     return 0;
@@ -97,13 +106,13 @@ export function main(argv: string[], io: CliIo): number {
   const validCommands: readonly CommandName[] = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'];
   if (!(validCommands as readonly string[]).includes(commandStr)) {
     const label = commandStr || 'unknown';
-    return emitResult(makeEnvelope(truncate80(label), 'usage', { message: truncate80(`unknown command "${label}"`) }, statePath, null), io);
+    return emitResult(makeEnvelope(truncate80(label), 'usage', { message: truncate80(`unknown command "${label}"`) }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
   }
   if (flagErr || dirArg === undefined || inputArg === undefined) {
     const msg = flagErr ?? (dirArg === undefined ? '--dir is required' : '--input is required');
-    return emitResult(makeEnvelope(commandStr, 'usage', { message: msg }, statePath, null), io);
+    return emitResult(makeEnvelope(commandStr, 'usage', { message: msg }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
   }
-  return emitResult(executeCommand(commandStr as CommandName, dirArg, inputArg, io.cwd, io.env ?? process.env), io);
+  return emitResult(executeCommand(commandStr as CommandName, dirArg, inputArg, io.cwd, env, io.versionPath), io);
 }
 
 if (import.meta.main) {

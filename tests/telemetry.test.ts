@@ -367,9 +367,21 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
     const debug = runHelper({ ...env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, args);
     expect(debug.stderr).toContain('sink unwritable');
     expect(debug.stderr).toContain('repair permissions');
+    const beforeHandoffs = handoffs(fix).length;
+    const stateQuiet = runHelper({ ...fix.env, GSTACK_EXTEND_STATE_DIR: blocked }, args);
+    expect(stateQuiet.status).toBe(0);
+    expect(stateQuiet.stderr).toBe('');
+    expect(stateQuiet.stdout).toBe(
+      `GE_TELEMETRY: unavailable reason=state-unwritable dir=${JSON.stringify(blocked)} error=ENOTDIR\n`,
+    );
+    expect(handoffs(fix)).toHaveLength(beforeHandoffs);
     const state = runHelper({ ...fix.env, GSTACK_EXTEND_STATE_DIR: blocked, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, args);
     expect(state.status).toBe(0);
+    expect(state.stdout).toBe(
+      `GE_TELEMETRY: unavailable reason=state-unwritable dir=${JSON.stringify(blocked)} error=ENOTDIR\n`,
+    );
     expect(state.stderr).toContain('state handoff unwritable');
+    expect(handoffs(fix)).toHaveLength(beforeHandoffs);
   });
   for (const name of ['repo"quote', 'repo\\backslash', 'repo\nnewline', 'repo-雪', 'r'.repeat(200)]) {
     test('filesystem name is escaped, never rejected: ' + JSON.stringify(name), () => {
@@ -3395,7 +3407,12 @@ telemetry.main(["start", "--skill", "extend:roadmap"])
         ...DEBUG, GSTACK_EXTEND_WORK_ITEM: 'unsaved-launch-key',
       });
       expect(started.status).toBe(0);
-      expect(started.stdout).toMatch(/^GE_TELEMETRY: session=\S+ start=\d+/);
+      const startedLines = started.stdout.trimEnd().split('\n');
+      expect(startedLines).toHaveLength(2);
+      expect(startedLines[0]).toMatch(/^GE_TELEMETRY: session=\S+ start=\d+$/);
+      expect(startedLines[1]).toBe(
+        `GE_TELEMETRY: unavailable reason=handoff-unwritable dir=${JSON.stringify(dirname(open.path))} error=${mode === 'unlistable-store' ? 'ENOTDIR' : 'ERANGE'}`,
+      );
       expect(started.stderr).toContain('state handoff unwritable');
       expect(started.stdout).not.toContain('work_item=');
       if (mode === 'unlistable-store') expect(started.stderr).toContain('injected listdir failure');

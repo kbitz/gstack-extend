@@ -81,7 +81,7 @@ function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at:
   mkdirSync(join(file, '..'), { recursive: true });
   const lines = rows.map(({ op, at, request }) => {
     const digest = createHash('sha256').update(canonical({ op, request })).digest('hex');
-    const record = { v: 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: producerVersion, request };
+    const record = { v: op === 'usage' ? 2 : 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: producerVersion, request };
     expect(validRecord(record), `${op} ${JSON.stringify(validRecord.errors)}`).toBe(true); // helper and schema agree
     return JSON.stringify(record);
   });
@@ -3500,6 +3500,347 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(audited.status).toBe('recorded');
     expect(audited.violations).toEqual([]);
   }, 60_000);
+
+  test('nested containing steps (run > phase > voice) assign usage to the innermost step via ancestor elimination', () => {
+    const { fix, repo } = ownClaudeFixture();
+    const sid = 'extend-' + u();
+    const run = runRows(sid, T0);
+    const phaseStep = u();
+    const voiceStep = u();
+    const testsStep = u();
+    // claude-parent.jsonl has turn 1 at T0+10s..T0+12s (input 100, output 40) and turn 2 at T0+45s (input 200, output 60).
+    // Nest voiceStep [T0+5s, T0+20s] inside phaseStep (local-pass) [T0+2s, T0+35s], both inside run.step.
+    craft(fix, sid, [
+      ...run.rows,
+      { op: 'begin', at: T0 + 2_000, request: { ...base(sid), step_id: phaseStep, parent_step_id: run.step, kind: 'phase', phase: 'local-pass' } },
+      { op: 'begin', at: T0 + 5_000, request: { ...base(sid), step_id: voiceStep, parent_step_id: phaseStep, kind: 'voice', phase: 'voice' } },
+      { op: 'end', at: T0 + 20_000, request: { ...base(sid), step_id: voiceStep, outcome: 'completed' } },
+      { op: 'end', at: T0 + 35_000, request: { ...base(sid), step_id: phaseStep, outcome: 'completed' } },
+      { op: 'begin', at: T0 + 40_000, request: { ...base(sid), step_id: testsStep, parent_step_id: run.step, kind: 'phase', phase: 'tests' } },
+      { op: 'end', at: T0 + 55_000, request: { ...base(sid), step_id: testsStep, outcome: 'completed' } },
+    ]);
+
+    const status = runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(status).toBe('recorded');
+
+    const usageRec = ledgerLines(fix, sid).map(l => JSON.parse(l)).find(r => r.op === 'usage')!;
+    expect(usageRec.request.buckets).toEqual([
+      expect.objectContaining({ placement: 'step', step_id: voiceStep, input: 100, output: 40 }),
+      expect.objectContaining({ placement: 'step', step_id: testsStep, input: 200, output: 60 }),
+    ]);
+
+    const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
+    expect(usageEnv.status).toBe('ok');
+    expect(usageEnv.data.by_phase.voice.direct).toMatchObject({ input: 100, output: 40 });
+    expect(usageEnv.data.by_phase.tests.direct).toMatchObject({ input: 200, output: 60 });
+    expect(usageEnv.data.by_phase['local-pass']).toBeUndefined();
+    expect(usageEnv.data.by_phase.unattributed).toBeUndefined();
+  });
+
+  test('missing-usage projection returns capture=missing, no-usage-record, and null totals on a bound ledger without usage', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const run = runRows(sid, T0);
+    craft(fix, sid, [
+      ...run.rows,
+      { op: 'end', at: T0 + 10_000, request: { ...base(sid), step_id: run.step, outcome: 'completed' } },
+    ]);
+
+    const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
+    expect(usageEnv.status).toBe('ok');
+    expect(usageEnv.reason).toBeNull();
+    expect(usageEnv.data).toEqual({
+      capture: 'missing',
+      reasons: ['no-usage-record'],
+      stage: 'review-and-prep',
+      harness: null,
+      window: null,
+      observed_through_ms: null,
+      totals: {
+        direct: { input: null, cache_read: null, cache_write: null, output: null, reasoning: null, null_reasons: ['not-reported'] },
+        correlated: { input: null, cache_read: null, cache_write: null, output: null, reasoning: null, null_reasons: ['not-reported'] },
+        unknown: { input: null, cache_read: null, cache_write: null, output: null, reasoning: null, null_reasons: ['not-reported'] },
+      },
+      by_model: [],
+      by_phase: {},
+      by_pass: [],
+      children: { direct: 0, correlated: 0, unknown: 0, 'outlived-step': 0, 'may-continue': 0 },
+      cli_reported: [],
+      windows: [],
+    });
+  });
+
+  test('conflicting usage rows and dangling step, pass, and attempt references report partial capture without double counting', () => {
+    const fix = makeTelemetryFixture('community');
+    const ownSource = {
+      ref: 'a'.repeat(64),
+      agent: 'claude',
+      relation: 'own',
+      parent_ref: null,
+      evidence: 'direct',
+      link: null,
+      link_evidence: null,
+      models: ['claude-opus-4-6'],
+      first_ms: T0 + 10_000,
+      last_ms: T0 + 12_000,
+      complete: true,
+      reasons: [],
+    };
+    const makeUsageReq = (overrides: Record<string, any> = {}) => ({
+      v: 1,
+      stage: 'review-and-prep',
+      session_id: 'extend-' + u(),
+      event_id: u(),
+      status: 'ok',
+      harness: 'claude',
+      window: { begin_ms: T0, end_ms: T_END },
+      observed_through_ms: T0 + 20_000,
+      reasons: [],
+      sources: [ownSource],
+      buckets: [
+        { source: 0, model: 'claude-opus-4-6', step_id: null, placement: 'outside-steps', input: 100, cache_read: 0, cache_write: 0, output: 40, reasoning: null, null_reasons: ['not-reported'], responses: 1 },
+      ],
+      windows: [],
+      cli_reported: [],
+      ...overrides,
+    });
+
+    // 1. Two distinct usage records in one ledger: conflicting-usage, no double-counted totals.
+    const sidDup = 'extend-' + u();
+    const runDup = runRows(sidDup, T0);
+    const req1 = makeUsageReq({ session_id: sidDup, event_id: u() });
+    const req2 = makeUsageReq({
+      session_id: sidDup,
+      event_id: u(),
+      buckets: [{ source: 0, model: 'claude-opus-4-6', step_id: null, placement: 'outside-steps', input: 500, cache_read: 0, cache_write: 0, output: 200, reasoning: null, null_reasons: ['not-reported'], responses: 1 }],
+    });
+    craft(fix, sidDup, [
+      ...runDup.rows,
+      { op: 'usage', at: T0 + 30_000, request: req1 },
+      { op: 'usage', at: T0 + 31_000, request: req2 },
+    ]);
+    const dupEnv = JSON.parse(readUsage(fix, sidDup).stdout);
+    expect(dupEnv).toMatchObject({ status: 'partial', reason: 'malformed-record' });
+    expect(dupEnv.data.capture).toBe('partial');
+    expect(dupEnv.data.reasons).toContain('conflicting-usage');
+    expect(dupEnv.data.totals.direct).toMatchObject({ input: 100, output: 40 });
+
+    // 2. Same event_id on two usage records with differing payloads: event-conflict + conflicting-usage, no double-counted totals.
+    const sidSameId = 'extend-' + u();
+    const sharedEventId = u();
+    craft(fix, sidSameId, [
+      ...runRows(sidSameId, T0).rows,
+      { op: 'usage', at: T0 + 30_000, request: makeUsageReq({ session_id: sidSameId, event_id: sharedEventId }) },
+      { op: 'usage', at: T0 + 31_000, request: makeUsageReq({
+        session_id: sidSameId,
+        event_id: sharedEventId,
+        buckets: [{ source: 0, model: 'claude-opus-4-6', step_id: null, placement: 'outside-steps', input: 900, cache_read: 0, cache_write: 0, output: 300, reasoning: null, null_reasons: ['not-reported'], responses: 1 }],
+      }) },
+    ]);
+    const sameIdEnv = JSON.parse(readUsage(fix, sidSameId).stdout);
+    expect(sameIdEnv).toMatchObject({ status: 'partial', reason: 'malformed-record' });
+    expect(sameIdEnv.data.capture).toBe('partial');
+    expect(sameIdEnv.data.reasons).toEqual(expect.arrayContaining(['conflicting-usage', 'event-conflict']));
+    expect(sameIdEnv.data.totals.direct).toMatchObject({ input: 100, output: 40 });
+
+    // 3. Dangling step_id, source.link pass_id/attempt_id, and cli_reported.link pass_id/attempt_id each yield missing-reference.
+    const knownPass = passRows('extend-' + u(), { at: T0 + 5_000, voices: [{ voice: 'red-team', findings: [] }] });
+    for (const [label, buildCase] of [
+      ['dangling-step', (sid: string) => ({
+        extraRows: [],
+        req: makeUsageReq({
+          session_id: sid,
+          buckets: [{ source: 0, model: 'claude-opus-4-6', step_id: u(), placement: 'step', input: 100, cache_read: 0, cache_write: 0, output: 40, reasoning: null, null_reasons: ['not-reported'], responses: 1 }],
+        }),
+      })],
+      ['dangling-source-pass', (sid: string) => ({
+        extraRows: [],
+        req: makeUsageReq({
+          session_id: sid,
+          sources: [
+            ownSource,
+            { ref: 'b'.repeat(64), agent: 'claude', relation: 'subagent', parent_ref: 'a'.repeat(64), evidence: 'direct', link: { pass_id: u(), attempt_id: null, voice_id: 'red-team', pass: 1, attempt: 1 }, link_evidence: 'direct', models: ['claude-sonnet-4-6'], first_ms: T0 + 10_000, last_ms: T0 + 12_000, complete: true, reasons: [] },
+          ],
+        }),
+      })],
+      ['dangling-source-attempt', (sid: string) => {
+        const p = passRows(sid, { at: T0 + 5_000, voices: [{ voice: 'red-team', findings: [] }] });
+        return {
+          extraRows: p.rows,
+          req: makeUsageReq({
+            session_id: sid,
+            sources: [
+              ownSource,
+              { ref: 'b'.repeat(64), agent: 'claude', relation: 'subagent', parent_ref: 'a'.repeat(64), evidence: 'direct', link: { pass_id: p.passId, attempt_id: u(), voice_id: 'red-team', pass: 1, attempt: 1 }, link_evidence: 'direct', models: ['claude-sonnet-4-6'], first_ms: T0 + 10_000, last_ms: T0 + 12_000, complete: true, reasons: [] },
+            ],
+          }),
+        };
+      }],
+      ['dangling-cli-pass', (sid: string) => ({
+        extraRows: [],
+        req: makeUsageReq({
+          session_id: sid,
+          cli_reported: [{
+            voice_id: 'red-team',
+            link: { pass_id: knownPass.passId, attempt_id: null, voice_id: 'red-team', pass: 1, attempt: 1 },
+            input_tokens: 50, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
+          }],
+        }),
+      })],
+      ['dangling-cli-attempt', (sid: string) => {
+        const p = passRows(sid, { at: T0 + 5_000, voices: [{ voice: 'red-team', findings: [] }] });
+        return {
+          extraRows: p.rows,
+          req: makeUsageReq({
+            session_id: sid,
+            cli_reported: [{
+              voice_id: 'red-team',
+              link: { pass_id: p.passId, attempt_id: u(), voice_id: 'red-team', pass: 1, attempt: 1 },
+              input_tokens: 50, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
+            }],
+          }),
+        };
+      }],
+    ] as const) {
+      const sid = 'extend-' + u();
+      const { extraRows, req } = buildCase(sid);
+      craft(fix, sid, [
+        ...runRows(sid, T0).rows,
+        ...extraRows,
+        { op: 'usage', at: T0 + 30_000, request: req },
+      ]);
+      const env = JSON.parse(readUsage(fix, sid).stdout);
+      expect(env, label).toMatchObject({ status: 'partial', reason: 'malformed-record' });
+      expect(env.data.capture, label).toBe('partial');
+      expect(env.data.reasons, label).toContain('missing-reference');
+      expect(env.data.totals.direct, label).toMatchObject({ input: 100, output: 40 });
+      if (label === 'dangling-step') {
+        expect(env.data.by_phase.unattributed.direct, label).toMatchObject({ input: 100, output: 40 });
+      }
+    }
+  });
+
+  test('projection limits: 16 model groups and 32 pass groups at the limit and limit+1 null overflowed projections without truncating', () => {
+    const fix = makeTelemetryFixture('community');
+
+    // Model groups: MAX_USAGE_MODELS = 16 vs 17.
+    for (const count of [16, 17]) {
+      const sid = 'extend-' + u();
+      const req = {
+        v: 1,
+        stage: 'review-and-prep',
+        session_id: sid,
+        event_id: u(),
+        status: 'ok',
+        harness: 'claude',
+        window: { begin_ms: T0, end_ms: T_END },
+        observed_through_ms: T0 + 20_000,
+        reasons: [],
+        sources: [
+          { ref: 'a'.repeat(64), agent: 'claude', relation: 'own', parent_ref: null, evidence: 'direct', link: null, link_evidence: null, models: ['claude-model-01'], first_ms: T0 + 10_000, last_ms: T0 + 12_000, complete: true, reasons: [] },
+        ],
+        buckets: Array.from({ length: count }, (_, i) => ({
+          source: 0,
+          model: `claude-model-${String(i + 1).padStart(2, '0')}`,
+          step_id: null,
+          placement: 'outside-steps',
+          input: 10,
+          cache_read: 0,
+          cache_write: 0,
+          output: 2,
+          reasoning: null,
+          null_reasons: ['not-reported'],
+          responses: 1,
+        })),
+        windows: [],
+        cli_reported: [],
+      };
+      craft(fix, sid, [
+        ...runRows(sid, T0).rows,
+        { op: 'usage', at: T0 + 30_000, request: req },
+      ]);
+      const env = JSON.parse(readUsage(fix, sid).stdout);
+      expect(env.status).toBe('ok');
+      expect(env.reason).toBeNull();
+      expect(env.data.totals.direct).toMatchObject({ input: count * 10, output: count * 2 });
+      if (count === 16) {
+        expect(env.data.capture).toBe('ok');
+        expect(env.data.reasons).not.toContain('too-many-models');
+        expect(env.data.by_model).toHaveLength(16);
+      } else {
+        expect(env.data.capture).toBe('partial');
+        expect(env.data.reasons).toContain('too-many-models');
+        expect(env.data.by_model).toBeNull();
+      }
+    }
+
+    // Pass groups: MAX_USAGE_PASSES = 32 vs 33.
+    for (const count of [32, 33]) {
+      const sid = 'extend-' + u();
+      const sources = Array.from({ length: count }, (_, i) => ({
+        ref: String(i + 1).padStart(64, '0'),
+        agent: 'claude',
+        relation: 'subagent',
+        parent_ref: null,
+        evidence: 'direct',
+        link: { pass_id: null, pass: 1, attempt_id: null, attempt: i + 1, voice_id: `voice-${String(i + 1).padStart(2, '0')}` },
+        link_evidence: 'direct',
+        models: ['claude-sonnet-4-6'],
+        first_ms: T0 + 10_000,
+        last_ms: T0 + 12_000,
+        complete: true,
+        reasons: [],
+      }));
+      const buckets = Array.from({ length: count }, (_, i) => ({
+        source: i,
+        model: 'claude-sonnet-4-6',
+        step_id: null,
+        placement: 'outside-steps',
+        input: 5,
+        cache_read: 0,
+        cache_write: 0,
+        output: 1,
+        reasoning: null,
+        null_reasons: ['not-reported'],
+        responses: 1,
+      }));
+      const req = {
+        v: 1,
+        stage: 'review-and-prep',
+        session_id: sid,
+        event_id: u(),
+        status: 'ok',
+        harness: 'claude',
+        window: { begin_ms: T0, end_ms: T_END },
+        observed_through_ms: T0 + 20_000,
+        reasons: [],
+        sources,
+        buckets,
+        windows: [],
+        cli_reported: [],
+      };
+      craft(fix, sid, [
+        ...runRows(sid, T0).rows,
+        { op: 'usage', at: T0 + 30_000, request: req },
+      ]);
+      const env = JSON.parse(readUsage(fix, sid).stdout);
+      expect(env.status).toBe('ok');
+      expect(env.reason).toBeNull();
+      expect(env.data.totals.direct).toMatchObject({ input: count * 5, output: count * 1 });
+      if (count === 32) {
+        expect(env.data.capture).toBe('ok');
+        expect(env.data.reasons).not.toContain('too-many-passes');
+        expect(env.data.by_pass).toHaveLength(32);
+      } else {
+        expect(env.data.capture).toBe('partial');
+        expect(env.data.reasons).toContain('too-many-passes');
+        expect(env.data.by_pass).toBeNull();
+      }
+    }
+  });
 });
 
 describe('Track 69A first-cycle overlap measurement', () => {

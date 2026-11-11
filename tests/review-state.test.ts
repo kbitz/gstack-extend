@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
-import { applyCommand, REASON_TABLE, serializeState, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
+import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
+import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -40,14 +41,26 @@ function writeJson(dir: string, name: string, payload: unknown): string {
   return p;
 }
 
-function runCli(args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
+function runCli(args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; versionPath?: string } = {}) {
   let out = '', err = '';
-  const code = main(args, { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: opts.cwd ?? repo, env: { ...process.env, ...opts.env } });
+  const code = main(args, { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: opts.cwd ?? repo, env: { ...process.env, ...opts.env }, versionPath: opts.versionPath });
   const json = out.trim().startsWith('{') ? JSON.parse(out.trim()) : null;
+  if (json) {
+    // Check metadata on the real success/refusal paths, not only the envelope factory.
+    const entry = REASON_TABLE.find((e) => e.reason === json.reason)!;
+    expect(entry).toBeDefined();
+    expect(code, json.reason).toBe(entry.exit);
+    expect(json.status, json.reason).toBe(entry.status);
+    expect(json.side_effects, json.reason).toBe(entry.side_effects);
+    expect(json.retry, json.reason).toBe(entry.retry);
+    expect(json.helper_version, json.reason).toBe(readHelperVersion(opts.versionPath));
+    expect(json.retry_after_ms, json.reason).toBe(json.reason === 'busy'
+      ? Number(opts.env?.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? process.env.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? '5000') : null);
+  }
   return { code, out, err, json };
 }
 
-function callCmd(dir: string, cmd: string, payload: unknown, opts: { cwd?: string; env?: NodeJS.ProcessEnv; file?: string } = {}) {
+function callCmd(dir: string, cmd: string, payload: unknown, opts: { cwd?: string; env?: NodeJS.ProcessEnv; file?: string; versionPath?: string } = {}) {
   const f = writeJson(dir, opts.file ?? `in-${++dirSeq}.json`, payload);
   return runCli([...cmd.split(' '), '--dir', dir, '--input', f], opts);
 }
@@ -127,7 +140,7 @@ describe('bin/review-state', () => {
     callCmd(d, 'finish', { outcome: 'blocked', stop_reason: 'test', base: baseSha, full_review_evidence: { status: 'available', commit: headSha, tree: treeSha, source: 'ev://baseline' }, evidence });
     const statePath = join(d, 'review-run-state.json');
     const valid = JSON.parse(readFileSync(statePath, 'utf8'));
-    const { head: correctionHead, tree: correctionTree, recorded_at, ...correctionInput } = valid.corrections[0];
+    const { head: correctionHead, tree: correctionTree, segment: _correctionSegment, recorded_at, ...correctionInput } = valid.corrections[0];
     const changedGit = { repo: valid.run.repo, toplevel: repo, branch: 'main', head: baseSha, tree: treeSha };
     const noExternalReads = { commitExists: () => { throw Error('replay consulted Git'); }, commitTree: () => { throw Error('replay consulted Git'); }, isAncestor: () => { throw Error('replay consulted Git'); }, checkEvidence: () => { throw Error('replay consulted evidence'); } };
     expect(applyCommand(valid, 'record correction', correctionInput, changedGit, noExternalReads, '2026-11-10T19:00:00Z')).toMatchObject({ reason: 'replayed', detail: { head: correctionHead ?? headSha, tree: correctionTree ?? treeSha, recorded_at } });
@@ -384,7 +397,13 @@ describe('bin/review-state', () => {
 
     const rawBytes = readFileSync(join(d, 'review-run-state.json'), 'utf8');
     const parsed = JSON.parse(rawBytes) as ReviewRunState;
-    expect(Object.keys(parsed)).toEqual(['schema', 'rev', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish']);
+    expect(Object.keys(parsed)).toEqual(['schema', 'rev', 'writer', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish']);
+    expect(Object.keys(parsed)).toEqual([...STATE_KEYS.root]);
+    expect(Object.keys(parsed.passes[0]!)).toEqual([...STATE_KEYS.pass]);
+    expect(Object.keys(parsed.corrections[0]!)).toEqual([...STATE_KEYS.correction]);
+    expect(Object.keys(parsed.gates[0]!)).toEqual([...STATE_KEYS.gate]);
+    expect(Object.keys(parsed.audits[0]!)).toEqual([...STATE_KEYS.audit]);
+    expect(Object.keys(parsed.checkpoints[0]!)).toEqual([...STATE_KEYS.checkpoint]);
     expect(serializeState(parsed)).toBe(rawBytes);
     const reverseKeys = (value: any): any => Array.isArray(value) ? value.map(reverseKeys)
       : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse().map(([k, v]) => [k, reverseKeys(v)])) : value;
@@ -609,5 +628,255 @@ describe('bin/review-state', () => {
     setTimeout(() => { if (existsSync(lockPath)) unlinkSync(lockPath); }, 120);
     const wRes = await waiter;
     expect(wRes).toMatchObject({ code: 0, json: { reason: 'recorded', rev: 5 } });
+  });
+
+  test('--version ignores inherited version overrides', () => {
+    const versionFile = join(newDir(), 'VERSION');
+    writeFileSync(versionFile, '9.9.9\n');
+    const expected = readFileSync(join(REPO_ROOT, 'VERSION'), 'utf8').trim();
+    expect(runCli(['--version'], { env: { GSTACK_EXTEND_REVIEW_STATE_VERSION_PATH: versionFile } })).toMatchObject({
+      code: 0,
+      out: `review-state ${expected}\n`,
+      err: '',
+    });
+  });
+
+  test('--version flag and helper_version envelope field read VERSION and fall back on missing, symlink, or malformed files', () => {
+    const repoVersion = readFileSync(join(REPO_ROOT, 'VERSION'), 'utf8').trim();
+    expect(readHelperVersion()).toBe(repoVersion);
+
+    const verRes = runCli(['--version'], { cwd: baseTmp });
+    expect(verRes.code).toBe(0);
+    expect(verRes.out).toBe(`review-state ${repoVersion}\n`);
+    expect(verRes.err).toBe('');
+
+    // Missing VERSION file falls back to unknown / null
+    const missingPath = join(baseTmp, 'no-such-version');
+    expect(runCli(['--version'], { versionPath: missingPath })).toMatchObject({
+      code: 0,
+      out: 'review-state unknown\n',
+    });
+
+    // Symlink VERSION file is refused and falls back to unknown / null
+    const realVerFile = join(baseTmp, 'ver-real');
+    writeFileSync(realVerFile, '1.2.3.4\n');
+    const symVerFile = join(baseTmp, 'ver-sym');
+    symlinkSync(realVerFile, symVerFile);
+    expect(readHelperVersion(realVerFile)).toBe('1.2.3.4');
+    expect(readHelperVersion(symVerFile)).toBeNull();
+
+    // Malformed VERSION file falls back to null
+    const badVerFile = join(baseTmp, 'ver-bad');
+    writeFileSync(badVerFile, 'v0.86.1-beta\n');
+    expect(readHelperVersion(badVerFile)).toBeNull();
+
+    // Envelopes carry helper_version (both string and null fallback) and stamp writer on writes
+    const d = newDir();
+    const startRes = callCmd(d, 'start', mkStart(1), { versionPath: realVerFile });
+    expect(startRes.json.helper_version).toBe('1.2.3.4');
+    const state1 = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(state1.writer).toBe('1.2.3.4');
+
+    const passRes = callCmd(d, 'record pass', mkPassStarted(10), { versionPath: badVerFile });
+    expect(passRes.json.helper_version).toBeNull();
+    const state2 = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(state2.writer).toBeNull();
+  });
+
+  test('cross-version compatibility: newer-schema for v2+ and for v1 with newer writer + unknown key, corrupt for equal/older/null writer', () => {
+    const curVerFile = join(baseTmp, 'ver-0861');
+    writeFileSync(curVerFile, '0.86.1\n');
+    const options = { versionPath: curVerFile };
+
+    const d = newDir();
+    callCmd(d, 'start', mkStart(1), options);
+    const statePath = join(d, 'review-run-state.json');
+    const baseline = JSON.parse(readFileSync(statePath, 'utf8'));
+
+    // 1. Schema v2 returns newer-schema (exit 1, status unreadable) without modifying file
+    const v2Bytes = JSON.stringify({ ...baseline, schema: 'review-run-state/v2' });
+    writeFileSync(statePath, v2Bytes);
+    const v2Res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
+    expect(v2Res.code).toBe(1);
+    expect(v2Res.json).toMatchObject({
+      status: 'unreadable',
+      reason: 'newer-schema',
+      side_effects: 'none',
+      retry: 'never',
+      retry_after_ms: null,
+      detail: { schema: 'review-run-state/v2' },
+    });
+    expect(readFileSync(statePath, 'utf8')).toBe(v2Bytes);
+
+    // 2. Schema v1 with a newer 3- or 4-part writer AND an unknown key returns newer-schema
+    for (const newerWriter of ['0.86.1.1', '0.86.2', '0.87.0', '1.0.0']) {
+      const newerUnknown = JSON.stringify({ ...baseline, writer: newerWriter, future_v1_field: true });
+      writeFileSync(statePath, newerUnknown);
+      const res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
+      expect(res.code).toBe(1);
+      expect(res.json).toMatchObject({
+        status: 'unreadable',
+        reason: 'newer-schema',
+        detail: { schema: 'review-run-state/v1', writer: newerWriter },
+      });
+      expect(readFileSync(statePath, 'utf8')).toBe(newerUnknown);
+    }
+
+    // 3. Same unknown key with equal (including padded 0.86.1.0), older, or null writer returns corrupt
+    for (const sameOrOlderWriter of ['0.86.1', '0.86.1.0', '0.86.0', '0.85.9.9', null]) {
+      const corruptBytes = JSON.stringify({ ...baseline, writer: sameOrOlderWriter, future_v1_field: true });
+      writeFileSync(statePath, corruptBytes);
+      const res = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
+      expect(res.code).toBe(1);
+      expect(res.json.reason).toBe('corrupt');
+      expect(readFileSync(statePath, 'utf8')).toBe(corruptBytes);
+    }
+
+    // 4. Schema v1 with a newer writer but valid v1 structure reads and writes cleanly, updating writer to current helper_version
+    writeFileSync(statePath, JSON.stringify({ ...baseline, writer: '9.9.9' }));
+    const okRes = callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'stop' }, options);
+    expect(okRes.code).toBe(0);
+    expect(okRes.json.reason).toBe('recorded');
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).writer).toBe('0.86.1');
+  });
+
+  test('stored v0.86.0 state without writer or segment reads cleanly and gains both on the next write', () => {
+    expect(Object.keys(ADDITIVE_V1_DEFAULTS)).toEqual(['root', 'passes', 'corrections', 'gates', 'audits', 'checkpoints']);
+    const d = newDir();
+    writeFileSync(join(d, 'ev.txt'), 'proof');
+    const ev = [{ path: 'ev.txt', sha256: sha256('proof') }];
+    callCmd(d, 'start', mkStart(1));
+    callCmd(d, 'record pass', mkPassStarted(10));
+    callCmd(d, 'record pass', {
+      pass_id: uid(10),
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: uid(20),
+      outcome: 'completed',
+      findings: [{ finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] }],
+    });
+    callCmd(d, 'record correction', {
+      correction_id: uid(30),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      resolution: 'fixed',
+    });
+    callCmd(d, 'record gate', { gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } });
+    callCmd(d, 'record audit', { audit_id: uid(50), name: 'coverage', result: 'passed', details: { pct: 95, threshold: 80 }, candidate: { commit: headSha } });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'before-fix', evidence: ev });
+
+    const statePath = join(d, 'review-run-state.json');
+    const v086State = JSON.parse(readFileSync(statePath, 'utf8'));
+    delete v086State.writer;
+    for (const coll of ['passes', 'corrections', 'gates', 'audits', 'checkpoints'] as const) {
+      for (const rec of v086State[coll]) delete rec.segment;
+    }
+    writeFileSync(statePath, `${JSON.stringify(v086State, null, 2)}\n`);
+
+    // Replay against v0.86.0 state works cleanly without conflict
+    expect(callCmd(d, 'start', mkStart(1)).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', mkPassStarted(10)).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record gate', { gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } }).json.reason).toBe('replayed');
+
+    // Next write stamps root writer, preserves null segment on pre-existing records, and stamps segment=1 on new record
+    const nextCp = callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'stop' });
+    expect(nextCp.json.reason).toBe('recorded');
+    const upgraded = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(upgraded.writer).toBe(readHelperVersion());
+    expect(upgraded.passes[0]?.segment).toBeNull();
+    expect(upgraded.corrections[0]?.segment).toBeNull();
+    expect(upgraded.gates[0]?.segment).toBeNull();
+    expect(upgraded.audits[0]?.segment).toBeNull();
+    expect(upgraded.checkpoints[0]?.segment).toBeNull();
+    expect(upgraded.checkpoints[1]?.segment).toBe(1);
+  });
+
+  test('side_effects, retry, and retry_after_ms match REASON_TABLE across all reasons', () => {
+    for (const entry of REASON_TABLE) {
+      expect(entry.side_effects, entry.reason).toBe(entry.reason === 'recorded' ? 'committed' : 'none');
+      const retry = ['recorded', 'replayed'].includes(entry.reason) ? 'no'
+        : ['busy', 'unwritable'].includes(entry.reason) ? 'same-input'
+        : ['worktree-mismatch', 'finished', 'exists', 'corrupt', 'newer-schema'].includes(entry.reason) ? 'never'
+        : 'after-fix';
+      expect(entry.retry, entry.reason).toBe(retry);
+    }
+
+    // Verify busy CLI envelope carries lockWaitMs in retry_after_ms while recorded/replayed carry null
+    const d = newDir();
+    const rec = callCmd(d, 'start', mkStart(1));
+    expect(rec.json).toMatchObject({ reason: 'recorded', side_effects: 'committed', retry: 'no', retry_after_ms: null });
+    const rep = callCmd(d, 'start', mkStart(1));
+    expect(rep.json).toMatchObject({ reason: 'replayed', side_effects: 'none', retry: 'no', retry_after_ms: null });
+
+    const lockPath = join(d, 'review-run-state.json.lock');
+    writeFileSync(lockPath, JSON.stringify({ pid: 99999, host: 'test', started_at: '2026-11-10T18:00:00Z' }));
+    const busy = callCmd(d, 'start', mkStart(1), { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '15' } });
+    expect(busy.code).toBe(4);
+    expect(busy.json).toMatchObject({ reason: 'busy', side_effects: 'none', retry: 'same-input', retry_after_ms: 15 });
+    unlinkSync(lockPath);
+  });
+
+  test('segment stamping across pause and resume, replay invariance, and out-of-range segment validation', () => {
+    const d = newDir();
+    callCmd(d, 'start', mkStart(1));
+    callCmd(d, 'record pass', mkPassStarted(10));
+    callCmd(d, 'record pass', {
+      pass_id: uid(10),
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: uid(20),
+      outcome: 'completed',
+      findings: [
+        { finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-2', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+      ],
+    });
+    callCmd(d, 'record correction', {
+      correction_id: uid(30),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      resolution: 'fixed',
+    });
+    callCmd(d, 'record gate', { gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } });
+    callCmd(d, 'record audit', { audit_id: uid(50), name: 'coverage', result: 'passed', details: { pct: 90, threshold: 80 }, candidate: { commit: headSha } });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'pause', base: baseSha });
+
+    // Resume opens segment 2; the resume checkpoint itself carries segment 2
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'resume', session_id: `extend-${uid(950)}` });
+    callCmd(d, 'record pass', mkPassStarted(11, { cycle: 2 }));
+    callCmd(d, 'record correction', {
+      correction_id: uid(31),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-2' },
+      resolution: 'fixed',
+    });
+    callCmd(d, 'record gate', { gate_id: uid(41), name: 'tests', result: 'passed', candidate: { commit: headSha } });
+    callCmd(d, 'record audit', { audit_id: uid(51), name: 'coverage', result: 'passed', details: { pct: 95, threshold: 80 }, candidate: { commit: headSha } });
+
+    const statePath = join(d, 'review-run-state.json');
+    const st = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(st.segments.map((s) => s.segment)).toEqual([1, 2]);
+    expect(st.passes.map((p) => p.segment)).toEqual([1, 2]);
+    expect(st.corrections.map((c) => c.segment)).toEqual([1, 2]);
+    expect(st.gates.map((g) => g.segment)).toEqual([1, 2]);
+    expect(st.audits.map((a) => a.segment)).toEqual([1, 2]);
+    expect(st.checkpoints.map((c) => c.segment)).toEqual([1, 2]);
+
+    // Replay of segment-1 records while in segment 2 is unaffected by segment or writer
+    expect(callCmd(d, 'record pass', mkPassStarted(10)).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record correction', {
+      correction_id: uid(30),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      resolution: 'fixed',
+    }).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record gate', { gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } }).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record audit', { audit_id: uid(50), name: 'coverage', result: 'passed', details: { pct: 90, threshold: 80 }, candidate: { commit: headSha } }).json.reason).toBe('replayed');
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'pause', base: baseSha }).json.reason).toBe('replayed');
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'resume', session_id: `extend-${uid(950)}` }).json.reason).toBe('replayed');
+
+    // Out-of-range segment values (0, 3 when segments.length is 2, or string) are rejected as corrupt
+    for (const badSeg of [0, 3, -1, '1']) {
+      const badState = structuredClone(st) as any;
+      badState.passes[0].segment = badSeg;
+      writeFileSync(statePath, JSON.stringify(badState));
+      expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(62), kind: 'stop' }).json.reason).toBe('corrupt');
+    }
   });
 });

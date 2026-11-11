@@ -2003,6 +2003,10 @@ def main(args):
     except OSError as error:
         debug(f"state handoff unwritable at {handoff_dir}: {error.strerror}",
               "repair GSTACK_EXTEND_STATE_DIR permissions")
+        if command == "start":
+            err_name = errno.errorcode.get(error.errno, "unknown")
+            print(f"GE_TELEMETRY: unavailable reason=state-unwritable dir={quoted_path(str(extend_state))} error={err_name}")
+            return
         # An explicit finish can still record skill-usage. The gstack sink is not this state directory.
         if command != "start" and logger:
             explicit = values.get("--session-id")
@@ -2041,6 +2045,7 @@ def main(args):
         # The launcher's key for this run, saved so a finish in a later session keeps it.
         work_item = accepted_work_item(os.environ.get(WORK_ITEM_ENV), "start environment")
         handoff_saved = False
+        handoff_error = None
         try:
             candidates, _, broken = enumerate_candidates(handoff_dir, legacy_file)
             if broken:
@@ -2054,6 +2059,7 @@ def main(args):
             save_state(handoff_dir / invocation_name(sid), saved_state)
             handoff_saved = True
         except OSError as error:
+            handoff_error = errno.errorcode.get(error.errno, "unknown")
             debug(f"state handoff unwritable at {handoff_dir}: {error.strerror}",
                   ("inspect handoff seq/start values and the system clock; supply explicit --start and --session-id"
                    if error.errno == errno.ERANGE else
@@ -2061,6 +2067,8 @@ def main(args):
         # quoted_path: clean() admits spaces, "=", quotes and backslashes, so recovery parses the value as JSON.
         print(f"GE_TELEMETRY: session={sid} start={now}"
               + (f" work_item={quoted_path(work_item)}" if handoff_saved and work_item is not None else ""))
+        if handoff_error is not None:
+            print(f"GE_TELEMETRY: unavailable reason=handoff-unwritable dir={quoted_path(str(handoff_dir))} error={handoff_error}")
         return
     explicit_sid = values.get("--session-id")
     explicit_start = integer(values.get("--start"))

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.87.0] - 2026-11-11
+
+### Added
+
+- Telemetry start now prints an explicit `GE_TELEMETRY: unavailable` line with its reason when it cannot write its state directory, and the experimental review-state helper now reports its version, refuses a state written under a newer schema with its own reason, and adds retry hints and segment numbers to its results and records.
+- Telemetry start reports state and handoff storage failures.
+- Review-state adds version identity, compatibility checks, retry hints, and record segments.
+
+### Upgrade notes
+
+- Anything that treated telemetry start output as empty when its state directory is unwritable now receives one `GE_TELEMETRY: unavailable` line, which never matches the documented session-line pattern.
+
 ## [0.86.2] - 2026-11-10
 
 ### Fixed

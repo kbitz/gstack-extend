@@ -3,9 +3,36 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { applyCommand, collectEvidenceItems, REASONS, serializeState, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type ReviewRunState, type StatusCode } from './state.ts';
+import { applyCommand, collectEvidenceItems, isVersion, REASONS, serializeState, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
 
-export type StoreResult = { v: 1; command: string; status: StatusCode; reason: ReasonCode; detail: Record<string, unknown>; fix: string | null; state_path: string | null; rev: number | null; exitCode: 0 | 1 | 2 | 3 | 4 };
+export const DEFAULT_VERSION_PATH = resolve(import.meta.dir, '..', '..', 'VERSION');
+
+export function readHelperVersion(versionPath = DEFAULT_VERSION_PATH): string | null {
+  try {
+    const st = lstatSync(versionPath);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > 128) return null;
+    const raw = readFileSync(versionPath, 'utf8').trim();
+    return isVersion(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export type StoreResult = {
+  v: 1;
+  command: string;
+  status: StatusCode;
+  reason: ReasonCode;
+  detail: Record<string, unknown>;
+  fix: string | null;
+  state_path: string | null;
+  rev: number | null;
+  helper_version: string | null;
+  side_effects: SideEffects;
+  retry: RetryHint;
+  retry_after_ms: number | null;
+  exitCode: 0 | 1 | 2 | 3 | 4;
+};
 
 export function cleanGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('GIT_')));
@@ -19,10 +46,33 @@ function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv): { ok: bool
   return { ok: r.status === 0, stdout: (r.stdout ?? '').replace(/\r?\n$/, '') };
 }
 
-export function makeEnvelope(command: string, reason: ReasonCode, detail: Record<string, unknown>, statePath: string | null, rev: number | null, customFix?: string): StoreResult {
+export function makeEnvelope(
+  command: string,
+  reason: ReasonCode,
+  detail: Record<string, unknown>,
+  statePath: string | null,
+  rev: number | null,
+  customFix?: string,
+  helperVersion: string | null = readHelperVersion(),
+  retryAfterMs: number | null = reason === 'busy' ? 5000 : null,
+): StoreResult {
   const meta = REASONS[reason];
   const isOk = reason === 'recorded' || reason === 'replayed';
-  return { v: 1, command, status: meta.status, reason, detail, fix: isOk ? null : (customFix ?? meta.fix), state_path: statePath, rev, exitCode: meta.exit };
+  return {
+    v: 1,
+    command,
+    status: meta.status,
+    reason,
+    detail,
+    fix: isOk ? null : (customFix ?? meta.fix),
+    state_path: statePath,
+    rev,
+    helper_version: helperVersion,
+    side_effects: meta.side_effects,
+    retry: meta.retry,
+    retry_after_ms: reason === 'busy' ? retryAfterMs : null,
+    exitCode: meta.exit,
+  };
 }
 
 function writeAll(fd: number, buf: Buffer): void {
@@ -42,22 +92,26 @@ function parseLockHolder(lockPath: string): { pid: number | null; host: string |
   return { pid: null, host: null, started_at: null, unknown: true };
 }
 
-export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env): StoreResult {
+export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env, versionPath?: string): StoreResult {
+  const helperVersion = readHelperVersion(versionPath);
+  const reply = (reason: ReasonCode, detail: Record<string, unknown>, sPath: string | null, rev: number | null, customFix?: string, retryAfterMs: number | null = null) =>
+    makeEnvelope(command, reason, detail, sPath, rev, customFix, helperVersion, retryAfterMs);
+
   if (isAbsolute(dirArg)) dirArg = dirArg.replace(/\/+$/, '') || '/'; // lstat must inspect the final component itself.
   let statePath = isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
   const waitRaw = env.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? '5000';
   if (!/^\d+$/.test(waitRaw) || Number(waitRaw) < 0 || Number(waitRaw) > 60000) {
-    return makeEnvelope(command, 'usage', { message: truncate80(`invalid GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS "${waitRaw}"; expected integer in 0..60000`) }, statePath, null);
+    return reply('usage', { message: truncate80(`invalid GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS "${waitRaw}"; expected integer in 0..60000`) }, statePath, null);
   }
   const lockWaitMs = Number(waitRaw);
 
   const gitEnv = cleanGitEnv(env);
   const topRes = runGit(cwd, ['rev-parse', '--show-toplevel'], gitEnv);
-  if (!topRes.ok || !topRes.stdout) return makeEnvelope(command, 'not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
+  if (!topRes.ok || !topRes.stdout) return reply('not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
   const realTop = realpathSync(topRes.stdout);
 
   if (!isAbsolute(dirArg)) {
-    return makeEnvelope(command, 'bad-dir', { condition: 'relative', resolved_path: truncate80(resolve(cwd, dirArg)), toplevel: truncate80(realTop) }, null, null, 'Pass an absolute --dir path outside the Git work tree, or continue inline (D1).');
+    return reply('bad-dir', { condition: 'relative', resolved_path: truncate80(resolve(cwd, dirArg)), toplevel: truncate80(realTop) }, null, null, 'Pass an absolute --dir path outside the Git work tree, or continue inline (D1).');
   }
 
   let dirStat;
@@ -66,30 +120,30 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === 'ENOENT' || e.code === 'ENOTDIR') {
-      return makeEnvelope(command, 'bad-dir', { condition: 'missing', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Create the directory supplied in --dir with mkdir -p outside the work tree, or continue inline (D1).');
+      return reply('bad-dir', { condition: 'missing', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Create the directory supplied in --dir with mkdir -p outside the work tree, or continue inline (D1).');
     }
-    return makeEnvelope(command, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'lstat', path: truncate80(dirArg) }, statePath, null);
+    return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'lstat', path: truncate80(dirArg) }, statePath, null);
   }
-  if (dirStat.isSymbolicLink()) return makeEnvelope(command, 'bad-dir', { condition: 'symlink', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass a real directory path for --dir (final component must not be a symlink), or continue inline (D1).');
-  if (!dirStat.isDirectory()) return makeEnvelope(command, 'bad-dir', { condition: 'not-directory', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass an existing directory path for --dir, or continue inline (D1).');
+  if (dirStat.isSymbolicLink()) return reply('bad-dir', { condition: 'symlink', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass a real directory path for --dir (final component must not be a symlink), or continue inline (D1).');
+  if (!dirStat.isDirectory()) return reply('bad-dir', { condition: 'not-directory', resolved_path: truncate80(dirArg), toplevel: truncate80(realTop) }, statePath, null, 'Pass an existing directory path for --dir, or continue inline (D1).');
 
   const realDir = realpathSync(dirArg);
   statePath = join(realDir, 'review-run-state.json');
   if (realDir === realTop || realDir.startsWith(`${realTop}/`)) {
-    return makeEnvelope(command, 'bad-dir', { condition: 'in-worktree', resolved_path: truncate80(realDir), toplevel: truncate80(realTop) }, statePath, null, 'Place --dir outside the Git work tree, or continue inline (D1).');
+    return reply('bad-dir', { condition: 'in-worktree', resolved_path: truncate80(realDir), toplevel: truncate80(realTop) }, statePath, null, 'Place --dir outside the Git work tree, or continue inline (D1).');
   }
 
-  if (!isAbsolute(inputArg)) return makeEnvelope(command, 'usage', { message: '--input must be an absolute path inside --dir' }, statePath, null);
+  if (!isAbsolute(inputArg)) return reply('usage', { message: '--input must be an absolute path inside --dir' }, statePath, null);
   let inStat;
-  try { inStat = lstatSync(inputArg); } catch { return makeEnvelope(command, 'usage', { message: '--input file does not exist' }, statePath, null); }
-  if (inStat.isSymbolicLink() || !inStat.isFile()) return makeEnvelope(command, 'usage', { message: '--input must be a regular file, not a symlink or directory' }, statePath, null);
-  if (inStat.size > 1048576) return makeEnvelope(command, 'usage', { message: '--input file exceeds 1 MiB limit (1048576 bytes)' }, statePath, null);
+  try { inStat = lstatSync(inputArg); } catch { return reply('usage', { message: '--input file does not exist' }, statePath, null); }
+  if (inStat.isSymbolicLink() || !inStat.isFile()) return reply('usage', { message: '--input must be a regular file, not a symlink or directory' }, statePath, null);
+  if (inStat.size > 1048576) return reply('usage', { message: '--input file exceeds 1 MiB limit (1048576 bytes)' }, statePath, null);
   let realInput: string;
-  try { realInput = realpathSync(inputArg); } catch { return makeEnvelope(command, 'usage', { message: '--input path could not be resolved' }, statePath, null); }
-  if (!realInput.startsWith(`${realDir}/`)) return makeEnvelope(command, 'usage', { message: '--input file must reside inside --dir' }, statePath, null);
+  try { realInput = realpathSync(inputArg); } catch { return reply('usage', { message: '--input path could not be resolved' }, statePath, null); }
+  if (!realInput.startsWith(`${realDir}/`)) return reply('usage', { message: '--input file must reside inside --dir' }, statePath, null);
 
   let rawInput: unknown;
-  try { rawInput = JSON.parse(readFileSync(realInput, 'utf8')); } catch { return makeEnvelope(command, 'invalid-input', { violations: [{ path: '$', rule: 'invalid-json', expected: 'valid-json-object' }] }, statePath, null); }
+  try { rawInput = JSON.parse(readFileSync(realInput, 'utf8')); } catch { return reply('invalid-input', { violations: [{ path: '$', rule: 'invalid-json', expected: 'valid-json-object' }] }, statePath, null); }
 
   const evidenceErrors = new Map<string, string>();
   for (const item of collectEvidenceItems(command, rawInput)) {
@@ -125,11 +179,11 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       const e = err as NodeJS.ErrnoException;
       if (created) unlinkQuiet(lockPath);
       if (!created && e.code === 'EEXIST') {
-        if (Date.now() - startMs >= lockWaitMs) return makeEnvelope(command, 'busy', { holder: parseLockHolder(lockPath) }, statePath, null);
+        if (Date.now() - startMs >= lockWaitMs) return reply('busy', { holder: parseLockHolder(lockPath) }, statePath, null, undefined, lockWaitMs);
         Bun.sleepSync(Math.min(50, Math.max(1, lockWaitMs - (Date.now() - startMs))));
         continue;
       }
-      return makeEnvelope(command, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(lockPath) }, statePath, null);
+      return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(lockPath) }, statePath, null);
     }
   }
 
@@ -142,27 +196,27 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     const revRefRes = symRefRes.ok ? symRefRes : runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], gitEnv);
     const headRes = runGit(cwd, ['rev-parse', 'HEAD'], gitEnv);
     const treeRes = headRes.ok ? runGit(cwd, ['rev-parse', `${headRes.stdout}^{tree}`], gitEnv) : headRes;
-    if (!commonDirRes.ok || !revRefRes.ok || !headRes.ok || !treeRes.ok) return makeEnvelope(command, 'not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
+    if (!commonDirRes.ok || !revRefRes.ok || !headRes.ok || !treeRes.ok) return reply('not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
     const gitInfo: GitInfo = { toplevel: realTop, repo: realpathSync(resolve(cwd, commonDirRes.stdout)), branch: revRefRes.stdout, head: headRes.stdout, tree: treeRes.stdout };
     let storedState: ReviewRunState | null = null;
     try {
       const rawBytes = readFileSync(statePath!, 'utf8');
       let parsedState: unknown;
-      try { parsedState = JSON.parse(rawBytes); } catch (err) { return makeEnvelope(command, 'corrupt', { path: truncate80(statePath!), message: truncate80((err as Error).message) }, statePath, null); }
-      const validated = validateStoredState(parsedState, statePath!);
-      if (!validated.ok) return makeEnvelope(command, 'corrupt', validated.detail, statePath, null);
+      try { parsedState = JSON.parse(rawBytes); } catch (err) { return reply('corrupt', { path: truncate80(statePath!), message: truncate80((err as Error).message) }, statePath, null); }
+      const validated = validateStoredState(parsedState, statePath!, helperVersion);
+      if (!validated.ok) return reply(validated.reason, validated.detail, statePath, null);
       storedState = validated.state;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code !== 'ENOENT') return makeEnvelope(command, 'corrupt', { path: truncate80(statePath!), message: truncate80(e.message) }, statePath, null);
+      if (e.code !== 'ENOENT') return reply('corrupt', { path: truncate80(statePath!), message: truncate80(e.message) }, statePath, null);
     }
 
     if (storedState !== null && (storedState.run.repo !== gitInfo.repo || storedState.run.branch !== gitInfo.branch)) {
-      return makeEnvelope(command, 'worktree-mismatch', { expected_repo: truncate80(storedState.run.repo), actual_repo: truncate80(gitInfo.repo), expected_branch: truncate80(storedState.run.branch), actual_branch: truncate80(gitInfo.branch) }, statePath, storedState.rev);
+      return reply('worktree-mismatch', { expected_repo: truncate80(storedState.run.repo), actual_repo: truncate80(gitInfo.repo), expected_branch: truncate80(storedState.run.branch), actual_branch: truncate80(gitInfo.branch) }, statePath, storedState.rev);
     }
 
-    const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString());
-    if (outcome.reason !== 'recorded') return makeEnvelope(command, outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
+    const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString(), helperVersion);
+    if (outcome.reason !== 'recorded') return reply(outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
 
     const serialized = Buffer.from(serializeState(outcome.state), 'utf8');
     tmpPath = join(realDir, `review-run-state.json.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
@@ -174,12 +228,12 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (tmpPath) unlinkQuiet(tmpPath);
-      return makeEnvelope(command, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'write', path: truncate80(tmpPath) }, statePath, storedState?.rev ?? null);
+      return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'write', path: truncate80(tmpPath) }, statePath, storedState?.rev ?? null);
     }
 
     const detail = { ...outcome.detail };
     try { unlinkSync(lockPath); } catch (err) { detail.warnings = [`failed to remove lock: ${(err as NodeJS.ErrnoException).code ?? 'error'}`]; }
-    return makeEnvelope(command, 'recorded', detail, statePath, outcome.state.rev);
+    return reply('recorded', detail, statePath, outcome.state.rev);
   } finally {
     if (!committed) { if (tmpPath) unlinkQuiet(tmpPath); unlinkQuiet(lockPath); }
   }

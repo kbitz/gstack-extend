@@ -285,6 +285,36 @@
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `107b814`, before draft creation at the external full-suite gate.
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: Reject nonregular and oversized VERSION files
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Existing VERSION fixtures cover missing, symlinked and malformed files, but do not separately exercise the nonregular-file and 128-byte size guards.
+- **Hypothesis (untested):** Extend the existing version fixture with a directory and oversized padded-valid release text, asserting unknown/null fallback. Re-verify the current boundary first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/store.ts:13`
+- **Evidence:** Read-only coverage audit traced path 07 on `43e5c71`; current targeted tests pass and no failure was reproduced. These cases add hardening beyond the approved T1–T3 required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `43e5c71`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Classify incompatible state without a local helper version
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The compatibility table supplies a valid local VERSION; it does not combine unavailable local version identity with invalid v1 state naming a newer writer.
+- **Hypothesis (untested):** Add that combination to the compatibility fixture and assert that unknown local identity cannot establish writer ordering. Re-verify the documented refusal first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/state.ts:908`
+- **Evidence:** Read-only coverage audit traced path 15 on `43e5c71`; current compatibility tests pass and no failure was reproduced. This is additional hardening beyond the approved T1–T3 required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `43e5c71`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Ignore unsafe numeric version ordering
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Current compatibility fixtures use small version components and do not exercise the safe-integer guard during writer-version comparison.
+- **Hypothesis (untested):** Extend the existing table with a writer component above Number.MAX_SAFE_INTEGER and verify that it cannot establish version ordering. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/state.ts:165`
+- **Evidence:** Read-only coverage audit traced path 16 on `43e5c71`; current version tests pass and no failure was reproduced. This is additional hardening beyond the approved T1–T3 required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `43e5c71`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
