@@ -2,6 +2,23 @@
 
 ## Unprocessed
 
+### [review:files=docs/designs/review-run-state.md] File the review-run-state SPEC anchor correction for the next design edit
+
+- **Description:** The documentation audit found the opening link targets the prior O6 heading anchor. The current SPEC heading is O6: Bounded, measured stage effort. This source-pointer issue does not alter the documented helper behavior or D9 wire derivations.
+- **Classification:** non-blocking and filed; owner convergence approval "Approved". Leave the design unchanged in this continuation.
+- **Source severity:** Low / documentation audit.
+- **Context:** PR #238, initial documentation audit on cb15aff.
+- **Revisit when:** The next edit to docs/designs/review-run-state.md, or Track 77B adoption.
+
+### [review:files=docs/designs/review-run-state.md] File the D9 status-vocabulary source-heading correction
+
+- **Description:** D9 cites a PR body status vocabulary heading that no longer exists. The vocabulary currently lives under Receipt layout and kept marker set in docs/workflow-handoffs.md. The derivation bytes were verified; only the source locator is stale.
+- **Classification:** non-blocking and filed; owner convergence approval "Approved". Leave the design unchanged in this continuation.
+- **Source severity:** Low / documentation audit.
+- **Context:** PR #238, initial documentation audit on cb15aff.
+- **Revisit when:** Track 78A consumes D9, or that producer section is renamed.
+
+
 ### [review:files=src/review-state/state.ts] Pass completion remains a recording fact until renderers enforce review coverage
 
 - **Description:** Carried review suggested refusing incomplete required-voice closure. D1/D5 assign workflow judgment to skill prose and D13 deliberately allows recording completed passes without voice selection; no current recorder contract is broken.
