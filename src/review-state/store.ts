@@ -43,7 +43,7 @@ function parseLockHolder(lockPath: string): { pid: number | null; host: string |
 }
 
 export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env): StoreResult {
-  dirArg = dirArg.replace(/\/+$/, '') || '/'; // lstat must inspect the final component itself.
+  if (isAbsolute(dirArg)) dirArg = dirArg.replace(/\/+$/, '') || '/'; // lstat must inspect the final component itself.
   let statePath = isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
   const waitRaw = env.GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS ?? '5000';
   if (!/^\d+$/.test(waitRaw) || Number(waitRaw) < 0 || Number(waitRaw) > 60000) {

@@ -176,6 +176,15 @@ describe('bin/review-state', () => {
       ['finish', () => ({ outcome: 'prepared', base: baseSha }), 'base', 'outcome'],
     ] as const;
     for (const [cmd, build, field, enumPath] of shapes) {
+      const valid: any = build();
+      const setup = () => {
+        const d = newDir();
+        if (cmd !== 'start') callCmd(d, 'start', mkStart());
+        if ((cmd === 'record pass' && valid.state !== 'started') || cmd === 'record correction') callCmd(d, 'record pass', mkPassStarted());
+        if (cmd === 'record correction') callCmd(d, 'record pass', { pass_id: uid(10), state: 'attempt', voice_id: 'core', attempt_id: uid(20), outcome: 'completed', findings: [{ finding_id: 'F', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] }] });
+        return d;
+      };
+      expect(callCmd(setup(), cmd, valid).json.reason, `${cmd}:${valid.state ?? 'valid'} baseline`).toBe('recorded');
       for (const mode of ['unknown', 'hyphenated', 'camelCase', 'missing', 'type', 'enum']) {
         const payload: any = build();
         if (mode === 'unknown') payload.extra = true;
@@ -187,10 +196,13 @@ describe('bin/review-state', () => {
           for (const key of parts.slice(0, -1)) obj = obj[key];
           obj[parts.at(-1)!] = 'not-an-enum';
         }
-        const d = newDir();
-        if (cmd !== 'start') callCmd(d, 'start', mkStart());
+        const d = setup();
         const before = existsSync(join(d, 'review-run-state.json')) ? readFileSync(join(d, 'review-run-state.json'), 'utf8') : null;
-        expect(callCmd(d, cmd, payload).json.reason, `${cmd}:${mode}`).toBe('invalid-input');
+        const result = callCmd(d, cmd, payload).json;
+        expect(result.reason, `${cmd}:${mode}`).toBe('invalid-input');
+        const path = mode === 'enum' ? enumPath : mode === 'unknown' ? 'extra' : mode === 'hyphenated' ? 'record-id' : mode === 'camelCase' ? 'recordId' : field;
+        const rule = mode === 'enum' ? 'invalid-enum' : mode === 'missing' ? 'missing-key' : mode === 'type' ? 'invalid-value' : 'unknown-key';
+        expect(result.detail.violations, `${cmd}:${mode}`).toContainEqual(expect.objectContaining({ path, rule }));
         expect(existsSync(join(d, 'review-run-state.json')) ? readFileSync(join(d, 'review-run-state.json'), 'utf8') : null).toBe(before);
       }
     }
@@ -239,6 +251,7 @@ describe('bin/review-state', () => {
   test('final-component directory symlinks stay refused with trailing slash and pinned detail evidence is verified', () => {
     const d = newDir(), link = join(baseTmp, 'trailing-link'); symlinkSync(d, link);
     const input = writeJson(d, 'input.json', mkStart());
+    expect(runCli(['start', '--dir', '', '--input', input]).json).toMatchObject({ reason: 'bad-dir', detail: { condition: 'relative' } });
     expect(runCli(['start', '--dir', `${link}/`, '--input', input]).json).toMatchObject({ reason: 'bad-dir', detail: { condition: 'symlink' } });
     callCmd(d, 'start', mkStart());
     for (const [cmd, payload] of [
