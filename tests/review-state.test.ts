@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
-import { applyCommand, REASON_TABLE, serializeState, type ReviewRunState } from '../src/review-state/state.ts';
+import { applyCommand, REASON_TABLE, serializeState, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -386,6 +386,14 @@ describe('bin/review-state', () => {
     const parsed = JSON.parse(rawBytes) as ReviewRunState;
     expect(Object.keys(parsed)).toEqual(['schema', 'rev', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish']);
     expect(serializeState(parsed)).toBe(rawBytes);
+    const reverseKeys = (value: any): any => Array.isArray(value) ? value.map(reverseKeys)
+      : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse().map(([k, v]) => [k, reverseKeys(v)])) : value;
+    const reordered = reverseKeys(parsed);
+    expect(validateStoredState(reordered, join(d, 'review-run-state.json')).ok).toBe(true);
+    expect(serializeState(reordered)).toBe(rawBytes);
+    expect(Object.keys(parsed.audits[0]!.details)).toEqual(['pct', 'threshold']);
+    const unavailable = { ...parsed, finish: { ...parsed.finish!, full_review_evidence: { status: 'unavailable' as const, reason: 'record-missing' } } };
+    expect(serializeState(reverseKeys(unavailable))).toBe(serializeState(unavailable));
   });
 
   test.each([

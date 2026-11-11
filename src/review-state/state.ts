@@ -858,10 +858,22 @@ export function serializeState(s: ReviewRunState): string {
       }, STATE_KEYS.voice)),
     }, STATE_KEYS.pass)),
     corrections: s.corrections.map((c) => pick({ ...c, target: pick(c.target, STATE_KEYS.target) }, STATE_KEYS.correction)),
-    gates: s.gates.map((g) => pick({ ...g, candidate: ordCand(g.candidate), evidence: ordEv(g.evidence) }, STATE_KEYS.gate)),
-    audits: s.audits.map((a) => pick({ ...a, candidate: ordCand(a.candidate), evidence: ordEv(a.evidence) }, STATE_KEYS.audit)),
+    gates: s.gates.map((g) => pick({
+      ...g, candidate: ordCand(g.candidate), evidence: ordEv(g.evidence),
+      details: pick(g.details, g.name === 'pregate'
+        ? ['raw_verdict', 'wrapper_verdict', 'policy', 'record_path', 'record_sha256', 'skipped_lanes']
+        : g.name === 'greptile' ? ['value', 'run'] : []),
+    }, STATE_KEYS.gate)),
+    audits: s.audits.map((a) => pick({
+      ...a, candidate: ordCand(a.candidate), evidence: ordEv(a.evidence),
+      details: pick(a.details, a.name === 'coverage' ? ['pct', 'threshold'] : ['report_id', 'section_path', 'section_sha256']),
+    }, STATE_KEYS.audit)),
     checkpoints: s.checkpoints.map((cp) => pick({ ...cp, evidence: ordEv(cp.evidence) }, STATE_KEYS.checkpoint)),
-    finish: s.finish ? pick({ ...s.finish, user_facing_changes: [...s.finish.user_facing_changes], evidence: ordEv(s.finish.evidence) }, STATE_KEYS.finish) : null,
+    finish: s.finish ? pick({
+      ...s.finish, user_facing_changes: [...s.finish.user_facing_changes], evidence: ordEv(s.finish.evidence),
+      full_review_evidence: s.finish.full_review_evidence
+        ? pick(s.finish.full_review_evidence, s.finish.full_review_evidence.status === 'available' ? ['status', 'commit', 'tree', 'source'] : ['status', 'reason']) : null,
+    }, STATE_KEYS.finish) : null,
   }, STATE_KEYS.root);
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
