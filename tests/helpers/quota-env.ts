@@ -8,7 +8,7 @@ export function quotaFixture() {
   const home = mkdtempSync(join(tmpdir(), 'quota-test-'));
   const fixtures = join(home, 'fixtures');
   cpSync(join(QUOTA_ROOT, 'tests/fixtures/quota'), fixtures, { recursive: true });
-  for (const path of ['.claude/projects', '.codex/sessions', '.cursor/projects', '.grok/sessions', 'Library/Application Support/com.conductor.app/cursor-sdk-store', 'state', 'fixtures/bin']) {
+  for (const path of ['.claude/projects', '.codex/sessions', '.cursor/projects', '.grok/sessions', 'state', 'fixtures/bin']) {
     mkdirSync(join(home, path), { recursive: true });
   }
   // Explicit allowlist: never spread process.env into a quota test child.

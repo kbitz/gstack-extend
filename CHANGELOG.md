@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.85.0] - 2026-11-10
+
+### Added
+
+- A compatibility catalog documents stable interfaces, experimental exclusions, version rules and recovery guidance.
+
+### Changed
+
+- The quota ledger no longer reads Conductor's Cursor SDK store and drops its `--conductor-store` option and the `conductor` value of `--route`, and a new compatibility catalog lists the stable interfaces, experimental exclusions, support conditions and recovery links.
+
+### Removed
+
+- Quota stops reading Conductor's Cursor SDK store and rejects `--conductor-store` and `--route conductor`; remove those arguments from existing commands.
+
+### Upgrade notes
+
+- Quota commands that pass `--conductor-store` or give `conductor` as the `--route` value now fail with a usage error (exit 2), so remove those arguments; runs recorded earlier with that route still appear unchanged in unfiltered runs output and in summaries grouped by route.
+
 ## [0.84.0] - 2026-11-10
 
 ### Changed

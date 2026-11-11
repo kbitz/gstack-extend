@@ -267,6 +267,7 @@ obligation remains pending until demonstrated or separately amended by the owner
 | [Telemetry](telemetry.md), [stage-run schema](stage-runs.schema.json) | Provenance producer/consumer contract and qualified evidence |
 | [Quota ledger](quota-ledger.md), [merge gate](merge-gate.md) | Experimental ledger and shadow verdict contracts |
 | [Review independence](designs/review-independence.md) | Current evidence/definition limits; no empirical clearance or new gate |
+| [Compatibility catalog](compatibility.md) | Stable surfaces, experimental exclusions, support conditions and recovery links under the release policy; no independent policy and no acceptance evidence |
 
 Superseded history: [Group 4 re-plan](archive/group-4-replan.md) explains the
 2026-05 test-migration decisions. Retired as an active scheduling authority on

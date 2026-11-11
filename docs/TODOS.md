@@ -235,6 +235,25 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** A live caller depends on recorder recovery, or temporary commit/cleanup handling changes.
 
+### [review:files=tests/quota_cases.py|bin/lib/quota/index.py|bin/lib/quota/cli.py] Test gap: Exercise a complete pre-upgrade native SDK store
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The legacy route test seeds native source and usage facts and finishes with the current code. It does not seed a fully persisted historical run, receipt and file checkpoint with the old source key and root metadata.
+- **Hypothesis (untested):** Prepare a finished store using the old reader, then query it after upgrade with the retired files unreadable. Compare the route and token totals and verify no retired-file rescan. Re-verify the contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/quota_cases.py:1291`
+- **Evidence:** Outside reviews and coverage audit source reads; the current legacy-readback test and selected suites pass, and no product defect was reproduced. The approved T2 fixture is complete; this is additional hardening.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `088b064`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/index.py|tests/quota_cases.py] Test gap: Ignore retired NDJSON filenames inside active roots
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The retirement test plants the old SDK directory outside supported roots. It does not separately put a `runs.ndjson` file beside a supported JSONL log inside an active root.
+- **Hypothesis (untested):** Extend the existing fixture with both files and assert that only the supported log is indexed. Re-verify the discovery contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/quota/index.py:54`
+- **Evidence:** Coverage audit path 05; source inspection confirms the filename clause was removed, existing discovery tests pass, and no failure was reproduced.
+- **Context:** Filed by `/review-and-prep` on 2026-11-10 at `088b064`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
 
 ### [review:files=tests/skill-protocols.test.ts] Test gap: Exercise the remaining removed-host detector branches
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`

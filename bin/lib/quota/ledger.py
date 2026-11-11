@@ -122,7 +122,7 @@ def lifecycle(store,args,context):
                         conflicts[field]=state['metadata'][field]
                     state['metadata'][field]=value
             state['metadata_conflicts']=conflicts
-            for field in ('cwd','repo_root','claude_config_dir','codex_home','cursor_projects_dir','conductor_store','auth'):
+            for field in ('cwd','repo_root','claude_config_dir','codex_home','cursor_projects_dir','auth'):
                 value=getattr(args,field,None)
                 if value is not None:
                     state['metadata']['context'][field]=value
@@ -167,6 +167,7 @@ def source_relationship(source,state,all_states,all_sources=None):
     start,end=state['started_at'],state.get('ended_at') or now()
     if source.get('session') in own:
         return 'own','exact',[]
+    # Matches only native Cursor SDK sources indexed before the reader was removed, so runs recorded earlier read back unchanged.
     if not own and state['metadata'].get('agent')=='cursor' and source.get('native_sdk'):
         candidates=[s for s in (all_sources or []) if s.get('native_sdk') and s.get('cwd')==state['metadata']['context']['cwd'] and
                     s.get('first') is not None and s['first']<end and (s.get('last') or end)>=start]
