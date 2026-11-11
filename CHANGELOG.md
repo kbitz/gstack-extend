@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.2] - 2026-11-10
+
+### Fixed
+
+- Delegated reviews accept punctuation after `because` in a closing recommendation, avoiding an unnecessary fallback when the findings are valid.
+- Delegated reviews accept punctuation after `because` in closing recommendations, preserving valid findings that previously fell back.
+
 ## [0.86.1] - 2026-11-10
 
 ### Changed
