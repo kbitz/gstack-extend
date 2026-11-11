@@ -26,8 +26,9 @@ skill-usage rows.
   records a completion append; it does not prove the wrapper saw a successful return. A
   missing row is not evidence that a run did not happen.
 - **stage-runs/\<host>.jsonl** (plus historical **stage-runs.jsonl**) contains a local
-  provenance row when a finish ran with provenance on and the append succeeded. It
-  answers which harness, model, and effort level that finish recorded, whether the
+  provenance row when a finish or [review-state derive](#review-state-derive) ran
+  with provenance on and the append succeeded. It
+  answers which harness, model, and effort level the producer recorded, whether the
   run was user-directed or orchestrated, optional hand-run usability signals, and
   where each value came from, in the published [schema](stage-runs.schema.json) any
   caller can validate and join. One row is one successful append, not proof of one
@@ -597,7 +598,7 @@ IDs and timestamps from its own session's local log, never content.
 
 ### Caller identity
 
-Every producer call carries the exact `extend-<uuid>` session ID its own
+Every streamed producer call carries the exact `extend-<uuid>` session ID its own
 invocation's legacy start printed. Metrics never adopts a handoff by
 directory, time or order. The first `begin` with `kind:"run"` binds to that
 invocation's saved handoff by direct lookup (one bounded `git rev-parse`
@@ -609,7 +610,9 @@ governs legacy calls. A paused run's resume runs its own legacy start and
 records a new run under the ID that start printed; it never reuses the paused
 segment's ID, and a read of the new run counts only its own segment. Joining to a stage-runs row is by that ID; it does
 not retroactively prove an ambiguous implicit legacy finish was attributed
-correctly.
+correctly. The experimental [review-state derive](#review-state-derive) command
+also supports recorded completion markers and deterministic session IDs for
+segments whose start could not write a handoff; its binding rules are separate.
 
 Producers send metrics calls one at a time from the invocation's own session:
 the per-run lock never waits, so parallel tool calls or subagents drop events
@@ -1066,7 +1069,7 @@ Missing data always reads as unknown — never as zero work.
 
 ### Review-state derive
 
-This command and `review-state export` are experimental until Track 79A's default
+This command and [`review-state export`](designs/review-run-state.md#d8-commands-result-envelope-and-reason-codes) are experimental until Track 79A's default
 decision. No installed skill calls either yet. Run derive from the recording
 checkout after recording state, and rerun it there to recover a missed write.
 
@@ -1106,7 +1109,7 @@ leaving `review-run-state.json` untouched.
   `GSTACK_EXTEND_WORKFLOW_METRICS=off` switch disables metrics only; eligible
   provenance rows can still be written. A metrics failure does not suppress a
   valid derived provenance row.
-- **Result and recovery:** derive always exits 0 and prints one `v:1` JSON envelope
+- **Result and recovery:** `derive --dir DIR` always exits 0 and prints one `v:1` JSON envelope
   with `status: ok|partial|unavailable|disabled`, `reason`, and `data`. `data.current`
   carries the latest segment's `segment`, `session_id`, `run_step_id` and `run_begin`
   (`recorded`, `replayed`, `disabled` or `unavailable`); `data.sessions` reports each
@@ -1308,7 +1311,9 @@ pass and an attempt keep theirs; a replay keeps its `event_id`. Ledgers written
 before this rule can hold hand-patterned IDs (for example one repeated digit or
 a zero-padded counter) from real sessions. Those rows are real observations,
 retained unchanged, and an ID's shape alone never classifies a row as
-synthetic.
+synthetic. The experimental [review-state derive](#review-state-derive) projection
+instead uses deterministic UUIDv5 IDs for replay; this rule governs streamed
+capture, not that projection.
 
 <a id="workflow-metrics-id-shape"></a>
 
@@ -2417,8 +2422,9 @@ summary: rows=2 valid=0 v4=0 v3=0 v2=0 v1=0 legacy=0 invalid=1 unsupported=1 rou
 Development and tests need Bun 1.3.3 or newer (`engines.bun` in `package.json`;
 the text `bun.lock` alone needs 1.2). The suites run launchers that start Bun with
 `--no-env-file --no-install --config=/dev/null`, whose three flags first coexist in
-1.3.3. Telemetry itself needs no Bun: the wrapper is Python and the skill blocks
-only call it. Run `bun install
+1.3.3. Legacy start/finish, metrics and report need no Bun: the wrapper is Python
+and the skill blocks only call it. Experimental `derive` invokes `bin/review-state`,
+which needs Bun 1.3.3+. Run `bun install
 --frozen-lockfile` once per checkout before `bun run test`, `bun run test:full`,
 or the telemetry suites. The telemetry suites compile the actual schema and run
 the exact command above. Tests never install packages: without the install they
@@ -2538,8 +2544,9 @@ at gstack 1.87.4.0 and 1.87.5.0. Outside git, `skill_start.repo` is the string
 current behavior.
 
 A `skill_start` row means a start ran with gstack's tier on. A `skill_run` row
-records a completion append, even if the logger later timed out or failed. A stage-runs row means
-a finish ran with provenance on and its append succeeded. A missing row is not
+records a completion append, even if the logger later timed out or failed. A finish-produced stage-runs row means
+a finish ran with provenance on and its append succeeded; [review-state derive](#review-state-derive)
+can also recover a row for a closed segment whose start had no session ID. A missing row is not
 evidence that a run did not happen. Upstream nulls `skill_run.duration_s` above
 86400 seconds (read in gstack 1.89.1.0 source, `gstack-telemetry-log`); stage-runs
 never caps. `skill_run.gstack_version` is upstream's version, seen on captured
@@ -2547,7 +2554,10 @@ rows. Skill-usage rows carry no gstack-extend version. A v1/v2 stage-runs row ca
 `producer_version`, the release that constructed it; a legacy row carries none.
 
 **What provenance can and cannot prove.** One stage-runs row per extend-skill
-finish whose append succeeded. Unless a valid `--agent` overrides detection,
+finish whose append succeeded, or per closed derived segment recovered by
+[review-state derive](#review-state-derive). The detection rules below describe
+finish-produced rows; derived rows keep harness, model and effort unknown.
+Unless a valid `--agent` overrides detection,
 the agent is the harness detected for the finish command: the nearest marked
 ancestor when several harness markers are present, otherwise the latest
 comparable harness log when ancestry is unavailable. Model and effort are the pair behind the most turns in the
