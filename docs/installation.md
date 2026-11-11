@@ -242,7 +242,9 @@ next check. These are illustrative numbers, not a published release promise.
 and `MIGRATION_WARN` separately. The first cutover's release notes disclose
 padded equality and link this recovery guidance. See the
 [qualification record](acceptance/release-compatibility.md) for candidate-only
-proof and the pending real published-tag upgrade.
+proof and the pending real published-tag upgrade. See the
+[compatibility catalog](compatibility.md) for which surfaces the version rules
+cover.
 
 To roll back an otherwise clean install, first save user work and identify the
 last four-part tag from its release history. Replace the example below with
@@ -263,7 +265,7 @@ detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
 This leaves detached HEAD. It refreshes the skills that tag's setup knows; a
 skill added after that tag stays installed and may fail until you resume
 upgrades. It does not undo install migrations or rewrite saved telemetry/ledgers. Retain readers capable of every
-emitted schema (including stage-runs v2 and v3), reading both the legacy
+emitted schema (including stage-runs v2, v3 and v4), reading both the legacy
 `analytics/stage-runs.jsonl` and per-host `analytics/stage-runs/*.jsonl` files.
 An older writer resumes appending to the legacy path; retain the per-host files
 and their capable readers. Inspect warnings and preserve user-owned

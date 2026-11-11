@@ -15,7 +15,9 @@ Conductor is no longer supported. A public release is the planned next stage.
 Quota-driven routing and unattended shipping remain later work. The
 [roadmap](docs/ROADMAP.md) lists the required work;
 [acceptance records](docs/PROGRESS.md#acceptance) distinguish pending proof from
-shipped code. Workspace hosts and agent harnesses are separate support axes.
+shipped code. The [compatibility catalog](docs/compatibility.md) lists stable
+interfaces, experimental exclusions, support conditions and recovery links.
+Workspace hosts and agent harnesses are separate support axes.
 
 ## Skills
 
@@ -228,8 +230,8 @@ See the [release policy](docs/SPEC.md#release-policy),
 [qualification evidence](docs/acceptance/release-compatibility.md).
 [Stage-runs schema v4](docs/telemetry.md#versions) is one example of the
 versioned provenance schemas in SPEC's [Stable surfaces](docs/SPEC.md#release-policy);
-the full O5.1 catalog remains a required pending obligation on the
-[roadmap](docs/ROADMAP.md).
+the [compatibility catalog](docs/compatibility.md) lists the full set of surfaces.
+O5 acceptance remains pending in the [acceptance records](docs/PROGRESS.md#acceptance).
 Release history is in [CHANGELOG.md](CHANGELOG.md); planned work is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 

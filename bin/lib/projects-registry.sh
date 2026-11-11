@@ -13,7 +13,7 @@
 #   }
 #
 # Write strategy: read → jq transform → temp file in same dir → atomic mv.
-# Concurrency: no file lock. Sibling Conductor workspaces racing on init =
+# Concurrency: no file lock. Sibling workspaces racing on init =
 # last-write-wins. Documented limitation; revisit when registry has 10+
 # projects or a race is observed.
 #

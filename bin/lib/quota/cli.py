@@ -40,11 +40,11 @@ def parser():
         p.add_argument('--pool')
         p.add_argument('--since')
         p.add_argument('--days',type=float)
-        for field in ('claude-config-dir','codex-home','cursor-projects-dir','conductor-store','cwd','repo-root'):
+        for field in ('claude-config-dir','codex-home','cursor-projects-dir','cwd','repo-root'):
             p.add_argument('--'+field)
         if name in ('sample','runs','summary'):
             for field in ('session-id','stage','agent','model','effort','route'):
-                choices=('claude','codex','cursor','grok','unknown') if field=='agent' else ('cli','conductor','sdk','unknown') if field=='route' else None
+                choices=('claude','codex','cursor','grok','unknown') if field=='agent' else ('cli','sdk','unknown') if field=='route' else None
                 p.add_argument('--'+field,choices=choices)
         if name=='sample':
             p.add_argument('--phase',choices=('start','attach','finish','abandon'))
@@ -128,7 +128,7 @@ def status(store,args,context,sampled):
 
 
 def discovery_key(context):
-    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','cursor_projects_dir','conductor_store','grok_home','cwd','repo_root'))
+    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','cursor_projects_dir','grok_home','cwd','repo_root'))
 
 
 def coverage_for(store,context,cache):

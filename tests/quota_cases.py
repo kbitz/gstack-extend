@@ -42,7 +42,7 @@ class QuotaTests(unittest.TestCase):
         shutil.copytree(ROOT/'tests/fixtures/quota',self.fixtures)
         (self.fixtures/'bin').mkdir()
         os.environ.update(HOME=str(self.home),GSTACK_EXTEND_STATE_DIR=str(self.dir/'state'),GSTACK_EXTEND_QUOTA_FIXTURES=str(self.fixtures),GSTACK_EXTEND_QUOTA_NOW='2026-09-23T12:00:00Z')
-        for path in ('.claude/projects','.codex/sessions','.cursor/projects','.grok/sessions','Library/Application Support/com.conductor.app/cursor-sdk-store'):
+        for path in ('.claude/projects','.codex/sessions','.cursor/projects','.grok/sessions'):
             (self.home/path).mkdir(parents=True,exist_ok=True)
         self.store=Store(self.dir/'state')
         self.args=parser().parse_args(['sample','--session-id','run-a','--phase','start','--agent','claude','--auth','subscription','--harness-session','session-a'])
@@ -303,9 +303,9 @@ class QuotaTests(unittest.TestCase):
     def test_vendor_hang_kills_process_group_and_strips_markers(self):
         from quota.common import run_vendor
         stub=self.fixtures/'bin/claude'
-        stub.write_text('#!/usr/bin/python3\nimport os,signal,time\nassert not any(k.startswith(("CLAUDE_CODE_","CONDUCTOR_")) or k=="CLAUDECODE" for k in os.environ)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("ready",flush=True)\ntime.sleep(30)\n')
+        stub.write_text('#!/usr/bin/python3\nimport os,signal,time\nassert not any(k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE","GSTACK_EXTEND_WORKSPACE_OWNER") for k in os.environ)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("ready",flush=True)\ntime.sleep(30)\n')
         stub.chmod(0o755)
-        os.environ.update(CLAUDECODE='1',CLAUDE_CODE_SESSION_ID='outer',CONDUCTOR_SESSION_ID='outer')
+        os.environ.update(CLAUDECODE='1',CLAUDE_CODE_SESSION_ID='outer',GSTACK_EXTEND_WORKSPACE_OWNER='outer')
         with self.assertRaises(QuotaError) as caught:
             run_vendor('claude',[],self.context,time.monotonic()+.15)
         self.assertEqual(caught.exception.code,'timeout')
@@ -948,15 +948,13 @@ class QuotaTests(unittest.TestCase):
         # Cursor cwd identity uses the run-collapsing mapping documented at
         # docs/quota-ledger.md#dx-13-decision-table, Cursor cwd slug row.
         # 2026-09-24 is dated probe context, not a fresh host or version claim.
-        # Paseo and Conductor rows are synthetic geometry. Conductor documents
-        # an ordinary layout in that same class, not native-host acceptance.
+        # Paseo rows are synthetic geometry.
         # Expected components are independent literals. case-digits pins kept
         # letter case and digits; partial requires a whole-component match.
         profiles=(
             ('ordinary','/workspace/project','workspace-project',True),
             ('paseo','/workspace/.paseo/worktrees/slot/project','workspace-paseo-worktrees-slot-project',True),
             ('punctuation','/workspace/-- example..__ project--/','workspace-example-project',True),
-            ('conductor','/workspace/conductor/workspaces/project/topic','workspace-conductor-workspaces-project-topic',True),
             ('case-digits','/Workspace/Project2','Workspace-Project2',True),
             ('mismatch','/workspace/.paseo/worktrees/slot/project','workspace--paseo-worktrees-slot-project',False),
             ('partial','/workspace/project','workspace-project-v2',False),
@@ -1227,7 +1225,7 @@ class QuotaTests(unittest.TestCase):
         before={'meter':'claude:five_hour','used':10,'resets_at':now()+1000,'window_s':18000}
         after=dict(before,used=10.2,resolution=1)
         self.assertTrue(intervals.meter_change(before,after,now()-10,now())['below_resolution'])
-        self.assertEqual(usage.tokens({'inputTokens':10,'cacheReadTokens':4},'cursor-sdk')['input'],6)
+        self.assertEqual(usage.tokens({'inputTokens':10,'cacheReadTokens':4},'cursor')['input'],10)
         state={}
         row={'type':'assistant','timestamp':'2026-09-23T12:00:00Z','message':{'model':'<synthetic>','usage':{'input_tokens':1}}}
         self.assertIsNone(usage.parse_record(self.store,'claude',row,state,1))
@@ -1267,6 +1265,63 @@ class QuotaTests(unittest.TestCase):
         with mock.patch.object(telemetry.subprocess,'run',side_effect=OSError('ps failed')):
             self.assertIsNone(telemetry.harness_ancestor({'claude'}))
         self.assertIsNone(telemetry.process_argv0(-1))
+
+    def test_conductor_store_is_not_read(self):
+        former=self.home/'Library/Application Support/com.conductor.app/cursor-sdk-store'
+        shard=former/'shard-a'
+        shard.mkdir(parents=True)
+        (shard/'agents.ndjson').write_text(json.dumps(dict(agentId='agent-a',cwd=self.context['cwd']))+'\n')
+        (shard/'runs.ndjson').write_text(json.dumps(dict(runId='run-1',agentId='agent-a',startedAt='2026-09-23T12:00:05Z',endedAt='2026-09-23T12:00:10Z',
+                                                         model=dict(id='composer-fixture'),usage=dict(inputTokens=10,cacheReadTokens=2,outputTokens=4)))+'\n')
+        self.assertNotIn('conductor_store',context_from(self.args))
+        coverage=scan(self.store,self.context)
+        self.assertFalse(any(r['agent']=='cursor-sdk' or str(r['root']).startswith(str(former)) for r in coverage['roots']))
+        self.assertEqual(self.store.all('source'),[])
+        self.assertEqual(self.store.all('usage'),[])
+        with self.assertRaises(QuotaError) as caught:
+            parser().parse_args(['status','--conductor-store',str(former)])
+        self.assertEqual(caught.exception.code,'usage')
+        with self.assertRaises(QuotaError) as caught:
+            parser().parse_args(['sample','--session-id','run-a','--phase','start','--route','conductor'])
+        self.assertEqual(caught.exception.code,'usage')
+        result=self.command('runs','--route','conductor')
+        self.assertEqual(result.returncode,2)
+        self.assertEqual(json.loads(result.stdout)['error']['code'],'usage')
+
+    def test_legacy_conductor_route_rows_stay_readable(self):
+        import argparse
+        legacy_args=argparse.Namespace(session_id='run-a',phase='start',stage='implement',agent='cursor',model='composer-fixture',
+                                       effort=None,route='conductor',auth='subscription',harness_session=None)
+        legacy_context=dict(self.context,auth='subscription',conductor_store=str(self.home/'Library/Application Support/com.conductor.app/cursor-sdk-store'))
+        ledger.lifecycle(self.store,legacy_args,legacy_context)
+        self.advance(30)
+        state=self.store.get('state','run-a')
+        pool=state['identities']['cursor']['pool']
+        source=dict(key='legacy-sdk:native',agent='cursor',session='native',parent=None,native_sdk=True,
+                    cwd=self.context['cwd'],first=now()-20,last=now()-5,complete=True,reason=None)
+        tokens=dict(input=12,cache_read=3,cache_write=0,output=5,reasoning=1)
+        fact=dict(id='legacy-sdk-event',agent='cursor',session='native',source_keys=['legacy-sdk:native'],pool=pool,
+                  ts=now()-10,start=now()-20,end=now()-5,model='composer-fixture',tokens=tokens,
+                  boundary=False,complete=True,why=[],turn_evidence='cursor-sdk')
+        with self.store.transaction():
+            self.store.put('source',source['key'],source)
+            self.store.put('usage',fact['id'],fact)
+        finish_args=argparse.Namespace(session_id='run-a',phase='finish',stage=None,agent=None,model=None,
+                                       effort=None,route=None,auth=None,harness_session=None)
+        ledger.lifecycle(self.store,finish_args,self.context)
+        runs_res=self.command('runs')
+        self.assertEqual(runs_res.returncode,0,runs_res.stdout+runs_res.stderr)
+        runs=json.loads(runs_res.stdout)['runs']
+        self.assertEqual(len(runs),1)
+        self.assertEqual(runs[0]['route'],'conductor')
+        self.assertEqual(runs[0]['consumption'],[dict(model='composer-fixture',**tokens,why={})])
+        sum_res=self.command('summary','--by','route')
+        self.assertEqual(sum_res.returncode,0,sum_res.stdout+sum_res.stderr)
+        groups=json.loads(sum_res.stdout)['groups']
+        group=next(g for g in groups if g['config']=={'route':'conductor'})
+        self.assertEqual(group['run_count'],1)
+        self.assertEqual(group['consumption']['input']['median'],12)
+        self.assertEqual(group['consumption']['output']['median'],5)
 
     @unittest.skipUnless(os.environ.get('EVALS_ALL')=='1','real-time timing is opt-in')
     def test_real_time_active_budget(self):

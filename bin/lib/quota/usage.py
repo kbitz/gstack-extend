@@ -18,8 +18,6 @@ def tokens(usage, agent):
     incoming=number(usage.get('inputTokens',usage.get('input_tokens')))
     read=number(usage.get('cacheReadTokens',usage.get('cached_input_tokens')))
     write=number(usage.get('cacheWriteTokens'))
-    if agent=='cursor-sdk' and incoming is not None:
-        incoming=max(0,incoming-(read or 0))
     return dict(input=incoming,cache_read=read,cache_write=write,output=number(usage.get('outputTokens',usage.get('output_tokens'))),
                 reasoning=number(usage.get('reasoningTokens')))
 
@@ -96,14 +94,6 @@ def parse_record(store,agent,row,state,line_index):
         model=message.get('model')
         if row.get('cwd'):
             state['cwd']=row['cwd']
-    elif agent=='cursor-sdk':
-        if not isinstance(row.get('usage'),dict):
-            return None
-        ts=timestamp(row.get('endedAt') or row.get('updatedAt'))
-        ident=row.get('runId')
-        state['session']=store.digest(row.get('agentId',''),'session')
-        usage=tokens(row['usage'],'cursor-sdk')
-        model=(row.get('model') or {}).get('id')
     elif agent=='grok':
         usage=row.get('usage') or payload.get('usage')
         if not isinstance(usage,dict):
@@ -121,10 +111,9 @@ def parse_record(store,agent,row,state,line_index):
     end=timestamp(row.get('ended_at',row.get('endedAt')))
     state['first']=min(state.get('first') or ts,ts)
     state['last']=max(state.get('last') or ts,ts)
-    return dict(id=store.digest(ident,agent+'-usage'),ts=ts,agent='cursor' if agent=='cursor-sdk' else agent,
+    return dict(id=store.digest(ident,agent+'-usage'),ts=ts,agent=agent,
                 session=state.get('session'),parent=state.get('parent'),model=model,tokens=usage,
-                start=start,end=end,boundary=False,complete=not state.get('partial'),why=[state['partial']] if state.get('partial') else [],
-                turn_evidence='cursor-sdk' if agent=='cursor-sdk' and start is not None and end is not None else None)
+                start=start,end=end,boundary=False,complete=not state.get('partial'),why=[state['partial']] if state.get('partial') else [])
 
 
 def prefer(existing,event):

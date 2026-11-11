@@ -271,7 +271,6 @@ def context_from(args):
                 claude_config_dir=str(Path(getattr(args, 'claude_config_dir', None) or os.environ.get('CLAUDE_CONFIG_DIR') or home/'.claude').absolute()),
                 codex_home=str(Path(getattr(args, 'codex_home', None) or os.environ.get('CODEX_HOME') or home/'.codex').absolute()),
                 cursor_projects_dir=str(Path(getattr(args, 'cursor_projects_dir', None) or home/'.cursor/projects').absolute()),
-                conductor_store=str(Path(getattr(args, 'conductor_store', None) or home/'Library/Application Support/com.conductor.app/cursor-sdk-store').absolute()),
                 grok_home=str(home/'.grok'), auth=auth,
                 sandboxed=bool(os.environ.get('CODEX_SANDBOX') or os.environ.get('CODEX_SANDBOX_NETWORK_DISABLED')))
 
