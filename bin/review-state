@@ -1,0 +1,3 @@
+#!/bin/sh
+# Internal review-and-prep run-state helper. Upstream gstack remains unmodified.
+exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/review-state/cli.ts" "$@"
