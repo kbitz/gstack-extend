@@ -4030,7 +4030,9 @@ describe('Track 77B review-state derive parity and sandboxed-segment recovery', 
   test('derive reports a blocked completion-marker store without appending duplicate rows', () => {
     const { fix, repo, dir, baseSha } = deriveFixture();
     callReviewState(fix.env, repo, dir, ['finish'], { outcome: 'prepared', base: baseSha });
-    const slot = createHash('sha256').update(JSON.stringify([repo, 'extend:review-and-prep']).replace(',', ', ')).digest('hex');
+    const slotResult = spawnSync('python3', ['-c', 'import hashlib,json,os,sys; print(hashlib.sha256(json.dumps([os.path.realpath(sys.argv[1]), "extend:review-and-prep"]).encode()).hexdigest())', repo], { env: fix.env, encoding: 'utf8' });
+    expect(slotResult.status).toBe(0);
+    const slot = slotResult.stdout.trim();
     const markerRoot = join(fix.home, '.gstack-extend/telemetry-completed');
     mkdirSync(markerRoot, { recursive: true });
     writeFileSync(join(markerRoot, slot), 'blocked');
