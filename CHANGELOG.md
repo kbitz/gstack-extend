@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.86.1] - 2026-11-10
+
+### Changed
+
+- Interactive `/docs-ship` runs continue to the merge question and merge only after an explicit answer.
+- Interactive `/docs-ship` runs that pass continue to the merge question in the same invocation.
+
 ## [0.86.0] - 2026-11-10
 
 ### Added
