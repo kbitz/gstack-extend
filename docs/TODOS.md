@@ -2,6 +2,151 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/state.ts] Pass completion remains a recording fact until renderers enforce review coverage
+
+- **Description:** Carried review suggested refusing incomplete required-voice closure. D1/D5 assign workflow judgment to skill prose and D13 deliberately allows recording completed passes without voice selection; no current recorder contract is broken.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** INFORMATIONAL (original red-team and native adversarial notes)
+- **Context:** PR #238 repair-only continuation; carried: incomplete pass closure / explicit N-A selection.
+- **Revisit when:** Track 78A starts rendering readiness or a skill begins treating a completed recorded pass as sufficient review coverage.
+
+### [review:files=src/review-state/state.ts] Clarify composite replay identity and global attempt-ID uniqueness before export
+
+- **Description:** Carried review contrasted composite pass/voice/attempt replay keys with global uniqueness refusal. Different composite keys are distinct requests; no immutable replay defect remains. Keep the distinction explicit when a caller is written.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** Original label not present in the compact carried disposition; original review artifacts retained; no severity inferred
+- **Context:** PR #238 repair-only continuation; carried: reused attempt ID under another voice/pass.
+- **Revisit when:** Track 77B projects attempts to workflow metrics or a real caller needs to reuse an attempt UUID across voices.
+
+### [review:files=docs/designs/review-run-state.md] Define rendered-line handling for Unicode separators
+
+- **Description:** Carried review raised C1/Unicode line separators. D7 currently forbids C0 and DEL, and this Track ships no receipt renderer; no forged output is produced by this helper.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** INFORMATIONAL (original red-team note)
+- **Context:** PR #238 repair-only continuation; carried: C1 / Unicode line separators.
+- **Revisit when:** Track 78A writes the first receipt/handoff renderer.
+
+### [review:files=src/review-state/store.ts] Revisit evidence-root exclusions when a skill chooses directories
+
+- **Description:** Carried review proposed excluding ancestor and sibling worktree roots in addition to D2's current-worktree exclusion. The skill currently owns selecting a dedicated per-invocation directory; stricter exclusions change that location contract.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** INFORMATIONAL (original red-team note)
+- **Context:** PR #238 repair-only continuation; carried: ancestor/sibling evidence directory.
+- **Revisit when:** Track 77B selects the first live run directory, or a real run places state in an ancestor or sibling checkout.
+
+### [review:files=src/review-state/store.ts] Revisit isolated Git account configuration for trusted repositories
+
+- **Description:** Carried review noted global/system Git configuration is disabled. D2 now discloses this experimental limitation; no supported local-owner run requiring safe.directory was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** INFORMATIONAL (original red-team and native adversarial notes)
+- **Context:** PR #238 repair-only continuation; carried: global Git config.
+- **Revisit when:** A real intended-user repository requires account-level safe.directory configuration, or helper adoption in Track 77B expands that support contract.
+
+### [review:files=src/review-state/store.ts] Distinguish Git execution failures from invalid commit input at adoption
+
+- **Description:** The carried red-team note concerns existing timeout, spawn and signal failures being reported as commit-not-found or not-ancestor, plus inaccessible-input diagnostics. Git calls already have a five-second timeout; D14 defers an internal-error envelope. No incorrect successful record or data loss was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** INFORMATIONAL (original red-team note)
+- **Context:** PR #238 repair-only continuation; carried: Git timeouts and input diagnostics.
+- **Revisit when:** Track 77B writes a caller that must distinguish transient Git execution errors from invalid input, or a real run needs structured internal-error recovery.
+
+### [review:files=src/review-state/store.ts] Define dot-suffixed directory symlink policy
+
+- **Description:** Outside challenge P2/Low and structured P3/Low noted --dir /link/. resolves through link. D2 permits symlinked ancestors and the literal final component here is dot; realpath confinement remains enforced. Clarify the intended normalization boundary before changing accepted paths.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** P2/Low (outside challenge); P3/Low (outside structured); INFORMATIONAL confidence5 (red-team); CRITICAL confidence7 (native-adversarial)
+- **Context:** PR #238 repair-only continuation; outside:challenge / outside:structured; red-team INFORMATIONAL confidence5; native-adversarial CRITICAL confidence7.
+- **Revisit when:** Track 77B adopts the helper, or a real caller supplies dot-suffixed evidence paths.
+
+### [review:files=src/review-state/store.ts] Choose stable supplied-versus-resolved state-path spelling for callers
+
+- **Description:** Outside challenge P3/Low noted early refusals use the supplied state path and later outcomes use the real path. No existing caller or D8 requirement compares these spellings; rendering/adoption is deferred.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** P3/Low (outside challenge); INFORMATIONAL confidence3 (native-adversarial)
+- **Context:** PR #238 repair-only continuation; outside:challenge; native-adversarial INFORMATIONAL confidence3.
+- **Revisit when:** Track 77B writes a caller that consumes state_path, especially with a symlinked home or ancestor directory.
+
+### [review:files=src/review-state/state.ts] Extend stored-state lifecycle consistency checks before foreign-state support
+
+- **Description:** Outside challenge P3/Low noted manually inconsistent pass state and completion timestamps can satisfy independent field types. D3 currently promises keys, types and internal references; no helper-produced inconsistent state was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** P3/Low (outside challenge); INFORMATIONAL confidence6 (red-team); CRITICAL confidence5 (native-adversarial)
+- **Context:** PR #238 repair-only continuation; outside:challenge; red-team INFORMATIONAL confidence6; native-adversarial CRITICAL confidence5.
+- **Revisit when:** Track 77B adds compatibility or another writer, or Track 79A supports recovering edited/corrupt state.
+
+### [review:files=tests/review-state.test.ts] Strengthen explicit correction replay binding assertions when fixtures change
+
+- **Description:** Outside challenge P3/Low flagged nullish fallbacks in the correction head/tree assertion. Existing tests change Git binding and the reader requires these fields; no missed current defect or unmet plan-required test was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** P3/Low (outside challenge)
+- **Context:** PR #238 repair-only continuation; outside:challenge.
+- **Revisit when:** The correction fixture or replay binding changes next, or a demonstrated regression survives the current test.
+
+### [review:files=tests/review-state.test.ts] Exercise writer-to-reader boundary parity beyond current cases
+
+- **Description:** Outside structured P3/Low could not demonstrate a writer/reader mismatch at PR strings, required voices, attribution, coverage thresholds or Greptile values. Challenge also suggested string thresholds, nonempty skipped lanes and model-label edges; keep these as unproven coverage work.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** P3/Low (outside structured); INFORMATIONAL confidence6 (red-team); CRITICAL confidence5 (native-adversarial)
+- **Context:** PR #238 repair-only continuation; outside:structured / outside:challenge residual coverage note; red-team INFORMATIONAL confidence6; native-adversarial CRITICAL confidence5.
+- **Revisit when:** Track 77B adds a caller or schema compatibility, or a real boundary input produces an unreadable helper-written state.
+
+### [review:files=tests/review-state.test.ts] Keep Git-binding test fixtures independent of account identity
+
+- **Description:** Outside structured P3/Low questioned whether makeEmptyRepo configures repository-local identity; tests/helpers/fixture-repo.ts does so. No current fixture failure is demonstrated. Retain the concern only for future fixture-helper changes.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** P3/Low (outside structured)
+- **Context:** PR #238 repair-only continuation; outside:structured.
+- **Revisit when:** makeEmptyRepo or Git-binding subprocess setup stops providing repository-local user.name/user.email.
+
+### [review:files=src/review-state/store.ts] Make evidence-cache misses explicit when collectors evolve
+
+- **Description:** The red team raised a fail-open cache-miss hypothesis. Current request validators and collectors use relative paths and exact hashes consistently; no unverified current record was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** red-team INFORMATIONAL confidence4; native-adversarial INFORMATIONAL confidence3
+- **Context:** PR #238 repair-only continuation; red-team INFORMATIONAL confidence4; native-adversarial INFORMATIONAL confidence3.
+- **Revisit when:** Track 77B changes canonicalization/evidence collection, or a real accepted record lacks a verified evidence pair.
+
+### [review:files=src/review-state/state.ts] Preserve source JSON-path diagnostics for merged detail evidence
+
+- **Description:** The red team inferred that merging detail references with the evidence array can produce synthetic indexes in a refusal. Current refusals still reject invalid evidence and preserve bytes; no incorrect successful record was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** red-team INFORMATIONAL confidence5
+- **Context:** PR #238 repair-only continuation; red-team INFORMATIONAL confidence5.
+- **Revisit when:** Pinned evidence diagnostics or the details collector changes next, or a real caller cannot identify a failed detail pin.
+
+### [review:files=tests/review-state.test.ts] Assert that the pinned-tree fixture actually advances HEAD
+
+- **Description:** The red team noted the no-wait fixture does not separately assert advance() ran. Current code does execute the injected advance; this is a future regression-detection weakness, not a demonstrated current defect or a missing plan-required test.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** red-team INFORMATIONAL confidence7
+- **Context:** PR #238 repair-only continuation; red-team INFORMATIONAL confidence7.
+- **Revisit when:** runGit changes process API/argv shape or the Git binding fixture is edited.
+
+### [review:files=src/review-state/state.ts] Check stored-reader narrowing when adding a TypeScript compile gate
+
+- **Description:** The adversarial voice reported a possible strict TypeScript closure-narrowing error at d.parts.includes. Bun runs this code, the repo has no typecheck script/dependency/gate, and the approved plan requires Bun tests; no currently required check fails.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** native-adversarial CRITICAL confidence4 (fixability label; owner non-blocking)
+- **Context:** PR #238 repair-only continuation; native-adversarial CRITICAL confidence4 (fixability label; owner non-blocking).
+- **Revisit when:** Track 77B imports this reader into compiled TypeScript, or the project adopts a strict typecheck gate.
+
+### [review:files=src/review-state/store.ts] Revisit branch and commit sampling under concurrent checkout changes
+
+- **Description:** The adversarial voice raised a branch-switch race between symbolic-ref and HEAD reads. The repaired contract pins a captured commit/tree after lock wait; no intended-use failure under concurrent workspace branch switching was demonstrated.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** native-adversarial CRITICAL confidence3 (unshown race hypothesis)
+- **Context:** PR #238 repair-only continuation; native-adversarial CRITICAL confidence3 (unshown race hypothesis).
+- **Revisit when:** A live caller permits concurrent checkout/branch changes, or a real run records mismatched branch/head.
+
+### [review:files=src/review-state/state.ts] Define schema compatibility before the first skill adopts the helper
+
+- **Description:** The adversarial voice noted required additive fields retain the v1 schema name. This helper is new on an unreleased feature branch and no skill calls it; D14 explicitly assigns cross-version compatibility to Track 77B. Do not add a migration in Track 76B.
+- **Classification:** non-blocking and filed; owner approval "Approved" applies to the convergence rule. No repair in this continuation.
+- **Source severity:** native-adversarial INFORMATIONAL confidence5
+- **Context:** PR #238 repair-only continuation; native-adversarial INFORMATIONAL confidence5.
+- **Revisit when:** Track 77B ships the first caller or a subsequent release must read state from an earlier adopted helper.
+
+
 ### [review:files=src/review-state/cli.ts|tests/review-state.test.ts] Test gap: CLI flag refusals and error envelopes
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Duplicate and missing-value flags, plus exact one-line JSON, two-line stderr and exit-code agreement.
@@ -11,6 +156,8 @@
 - **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
 - **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** CLI parsing or error-envelope behavior changes, or Track 77B begins calling the helper.
+
 
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Attempt and finding semantic refusals
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
@@ -21,6 +168,8 @@
 - **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
 - **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Attempt schemas, attribution or delegation wiring changes.
+
 
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Voice selection semantic refusals
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
@@ -31,6 +180,8 @@
 - **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
 - **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Voice completion or selected-attempt handling changes.
+
 
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Correction chain semantic refusals
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
@@ -41,6 +192,8 @@
 - **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
 - **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Correction targeting, supersedes or effective-state handling changes.
+
 
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Finish ancestry and checkpoint field refusals
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
@@ -51,6 +204,8 @@
 - **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
 - **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Track 79A resume/finish integration begins, or checkpoint/finish validation changes.
+
 
 ### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: Temporary-state and postcommit failure handling
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
@@ -61,6 +216,8 @@
 - **Evidence:** Read-only coverage audit on `cecc16b`; no failure reproduced for this gap. The six gaps are separate from the repaired, demonstrated canonicalization defect.
 - **Context:** Filed by `/review-and-prep` on 2026-11-10 at `cecc16b`, before the draft's cycle-cap receipt.
 - **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A live caller depends on recorder recovery, or temporary commit/cleanup handling changes.
+
 
 ### [review:files=tests/skill-protocols.test.ts] Test gap: Exercise the remaining removed-host detector branches
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
