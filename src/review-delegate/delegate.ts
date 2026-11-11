@@ -268,7 +268,7 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
   for (const line of reply.replace(/\r\n/g, '\n').split('\n')) {
     if (!line.trim()) continue;
     if (recommendation) return { ok: false };
-    if (/^Recommendation: .+ because .+$/.test(line.trim())) { recommendation = true; continue; }
+    if (/^Recommendation: .+ because\b.+$/.test(line.trim())) { recommendation = true; continue; }
     if (line.trim() === 'NO_FINDINGS: none' && !clean && !findings.length) { clean = true; continue; }
     const label = LABEL_LINE.exec(line);
     if (!label || clean) return { ok: false };
