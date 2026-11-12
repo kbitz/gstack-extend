@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { prepare, snapshotDiff, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
+import { prepare, snapshotDiff, CLOSING_LINES, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
 import { recover, type Classifier } from '../src/outside-review/recovery';
 import { run, measurement } from '../src/outside-review/run';
 import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
@@ -87,27 +87,32 @@ describe('completed outside recovery', () => {
 describe('no-findings line the review prompt asks for', () => {
   const gates = ['review', 'structured'] as const;
   const NO_FINDINGS_SENTENCE = `If you have no findings, write the line "NO_FINDINGS: none" immediately before the Recommendation line, with nothing between them, and give your reason in the Recommendation's because-clause.`;
-  // A reply that follows the prompt: rationale prose, the line, then a Recommendation with its reason.
-  const NO_FINDINGS_REPLY = 'I checked every hunk of the diff against the acceptance criteria and the supplied callers.\nNO_FINDINGS: none\nRecommendation: approve because every criterion is met and no caller changes behavior.';
+  const RECOMMENDATION_SENTENCE = 'After the findings, write Recommendation: <action> because <specific reason>.';
+  const VERDICT_SENTENCE = 'End with exactly one more line, the last line of the reply: VERDICT: CLEAN if you report no findings, or VERDICT: FINDINGS if you report any finding.';
+  // A reply that follows the prompt: rationale prose, the line, a Recommendation with its reason, and the last verdict line.
+  const NO_FINDINGS_REPLY = 'I checked every hunk of the diff against the acceptance criteria and the supplied callers.\nNO_FINDINGS: none\nRecommendation: approve because every criterion is met and no caller changes behavior.\nVERDICT: CLEAN';
   // Reconstructs the shape of the Track 64A review reply (PR #192), not its text: a bold NO_FINDINGS opening,
   // prose, then a qualified Recommendation. The installed classifier left it uncredited.
   const REJECTED_2026_11_02 = '**NO_FINDINGS**\n\nThe prompt change keeps every gate and the tests pin each criterion.\n\nRecommendation: approve, subject to the AC4 check, because the change is confined to the prompt text.';
 
-  // Value: protects=an outside review that follows POLICY's no-findings instruction is credited on both
-  //   gates, and the instruction keeps its place before the Recommendation line; fails_when=POLICY drops or
-  //   reorders the line; why_new=a paid review was
-  //   discarded as untagged_review after a bold NO_FINDINGS opening; seam=none;
+  // Value: protects=an outside review that follows POLICY's no-findings, Recommendation, and closing VERDICT instructions is credited on both
+  //   gates, and the instructions keep their order (NO_FINDINGS before Recommendation before VERDICT last); fails_when=POLICY drops or
+  //   reorders the closing lines; why_new=paid reviews were discarded as untagged_review or unverified_verdict when closing lines drifted; seam=none;
   //   no_claim=that a model follows the prompt; the classifier here is the strict stub
   test('no-findings line: POLICY asks for it and the stub credits a reply that follows it', () => {
+    expect(POLICY.endsWith(CLOSING_LINES)).toBe(true);
     expect(POLICY).toContain(NO_FINDINGS_SENTENCE);
     expect(POLICY).not.toContain('end with NO_FINDINGS and an explicit rationale');
+    expect(POLICY).not.toContain('End with Recommendation');
     for (const retained of ['Report concrete findings with [P0], [P1], [P2] or [P3], path, evidence and impact.',
-      'End with Recommendation: <action> because <specific reason>.',
+      RECOMMENDATION_SENTENCE,
+      VERDICT_SENTENCE,
       'If essential context is missing, return NEEDS_CONTEXT: <specific callers, contracts or tests>.',
       'Never declare a review complete when essential context is missing.']) {
       expect(POLICY).toContain(retained);
     }
-    expect(POLICY.indexOf(NO_FINDINGS_SENTENCE)).toBeLessThan(POLICY.indexOf('End with Recommendation:'));
+    expect(POLICY.indexOf(NO_FINDINGS_SENTENCE)).toBeLessThan(POLICY.indexOf('Recommendation: <action> because <specific reason>'));
+    expect(POLICY.indexOf('Recommendation: <action> because <specific reason>')).toBeLessThan(POLICY.indexOf('VERDICT: CLEAN'));
     for (const gate of gates) {
       const followed = recover(NO_FINDINGS_REPLY, gate, 0, '', classify);
       expect([gate, followed.credited, followed.parse, followed.classification.verdict]).toEqual([gate, true, 'valid', 'clean']);
@@ -129,8 +134,101 @@ describe('no-findings line the review prompt asks for', () => {
       const followed = recover(NO_FINDINGS_REPLY, gate, 0, '', classifyOutsideReview);
       expect([gate, followed.credited, followed.parse, followed.classification.verdict]).toEqual([gate, true, 'valid', 'clean']);
       const old = recover(REJECTED_2026_11_02, gate, 0, '', classifyOutsideReview);
-      expect([gate, old.credited, old.parse, old.classification.verdict, old.classification.reason])
-        .toEqual([gate, false, 'failed', 'unverified', 'untagged_review']);
+      expect([gate, old.credited, old.parse, old.classification.verdict]).toEqual([gate, false, 'failed', 'unverified']);
+      expect(['missing_verdict', 'untagged_review']).toContain(old.classification.reason!);
+    }
+  });
+});
+
+// Upstream 7cb151bf (1.99.0.0): on the review and structured gates, the reply's last nonempty line must be
+// `VERDICT: CLEAN` or `VERDICT: FINDINGS` to credit a non-blocking review. The fixture below mirrors that rule subset;
+// the installed classifier runs the same shapes when GSTACK_OUTSIDE_TEST_ROOT is set.
+const lastLineVerdict: Classifier = ({ text, gate, exit }) => {
+  const lines = text.trimEnd().split(/\r?\n/);
+  const last = (lines.at(-1) ?? '').replace(/^[\t ]*(?:#{1,6}[\t ]+|[-+*][\t ]+)?/, '').replace(/[*_`]/g, '').trim();
+  const token = /^VERDICT: (CLEAN|FINDINGS)$/.exec(last)?.[1] as 'CLEAN' | 'FINDINGS' | undefined;
+  const body = token ? lines.slice(0, -1).join('\n') : text;
+  const levels = [...body.matchAll(/\[(P[0-3])\]/g)].map(m => m[1]!).sort();
+  const highest = levels[0] ?? null;
+  const findings = { highest };
+  if (exit || !text.trim()) return { execution: { state: 'unavailable' }, findings, verdict: 'unavailable', reason: 'execution_failed' };
+  if (gate === 'review' && !/^Recommendation: .+ because\b.+/m.test(body)) {
+    return { execution: { state: 'ran' }, findings, verdict: 'unavailable', reason: 'missing_markers' };
+  }
+  if (highest === 'P0' || highest === 'P1') return { execution: { state: 'ran' }, findings, verdict: 'findings' };
+  const earlierVerdict = [...body.matchAll(/^[\t ]*Verdict[\t ]*:[\t ]*([^\r\n]*)$/gim)].at(-1)?.[1]?.trim();
+  if (earlierVerdict !== undefined && !/^(?:ready|lgtm|approved?|ship(?:[\t ]+it)?|pass(?:ed)?|clean|good to (?:go|merge|ship)|NO_?FINDINGS)\b/i.test(earlierVerdict)) {
+    return { execution: { state: 'ran' }, findings, verdict: 'unverified', reason: 'unverified_verdict' };
+  }
+  if (!token) return { execution: { state: 'ran' }, findings, verdict: 'unverified', reason: 'missing_verdict' };
+  if (token === 'FINDINGS' && !highest) return { execution: { state: 'ran' }, findings, verdict: 'unverified', reason: 'untagged_review' };
+  return { execution: { state: 'ran' }, findings, verdict: 'clean' };
+};
+
+describe('verdict line last (upstream 7cb151bf, 1.99.0.0)', () => {
+  const gates = ['review', 'structured'] as const;
+  const FINDING_BODY = [
+    '**[P3] `docs/x.md`: clarify the fallback order in the prose note**',
+    'The section lists the reasons without stating that the first match wins.',
+    '',
+    '**[P2] `src/x.ts`: guard the optional field before trimming**',
+    'An empty string input reaches the branch without an explicit check.',
+    '',
+    '- Checked callers in `src/x.ts` and `tests/x.test.ts`.',
+    '- No blocking defect found.',
+  ].join('\n');
+  const REC_LINE = 'Recommendation: merge, optionally tightening the note, because every finding is non-blocking.';
+  // Reconstructs the shape (not the text) of the two 2026-11-12 outside replies: VERDICT: FINDINGS before Recommendation.
+  const OLD_SHAPE = `${FINDING_BODY}\n\nVERDICT: FINDINGS\n\n${REC_LINE}`;
+  // The corrected shape requested by CLOSING_LINES: Recommendation before the final VERDICT: FINDINGS line.
+  const FIXED_SHAPE = `${FINDING_BODY}\n\n${REC_LINE}\nVERDICT: FINDINGS`;
+  const CLEAN_SHAPE = 'I checked every hunk of the diff against the acceptance criteria and the supplied callers.\nNO_FINDINGS: none\nRecommendation: approve because every criterion is met and no caller changes behavior.\nVERDICT: CLEAN';
+
+  // Value: protects=the corrected reply shape (Recommendation before a final VERDICT line) is credited through run() on both gates while
+  //   the old 2026-11-12 shape (VERDICT: FINDINGS before Recommendation) has its documented uncredited/unverified_verdict outcome and
+  //   recovery deliberately does not move the verdict line; fails_when=run() or recovery reorders a misplaced verdict line or stops crediting
+  //   the corrected shape; why_new=Track 77B's two outside voices put VERDICT: FINDINGS before Recommendation under the old prompt and were
+  //   discarded as unverified_verdict on 1.99.1.0; seam=run() and recover() with lastLineVerdict;
+  //   no_claim=that a model follows the prompt
+  test('credits the corrected shape and clean shape through the adapter, and documents the old verdict-before-recommendation shape as uncredited without recovery reordering', async () => {
+    await temporary(async dir => {
+      const results = await run(request, '+diff', dir, 'model', async () => ({ status: 'completed', result: FIXED_SHAPE }), lastLineVerdict);
+      expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict, r.classification.findings.highest])).toEqual([
+        ['challenge', true, 'valid', 'clean', 'P2'],
+        ['structured', true, 'valid', 'clean', 'P2'],
+      ]);
+      expect(results.map(r => measurement(r).credited)).toEqual([true, true]);
+    });
+    await temporary(async dir => {
+      const results = await run(request, '+diff', dir, 'model', async () => ({ status: 'completed', result: CLEAN_SHAPE }), lastLineVerdict);
+      expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict, r.classification.findings.highest])).toEqual([
+        ['challenge', true, 'valid', 'clean', null],
+        ['structured', true, 'valid', 'clean', null],
+      ]);
+      expect(results.map(r => measurement(r).credited)).toEqual([true, true]);
+    });
+    await temporary(async dir => {
+      const results = await run(request, '+diff', dir, 'model', async () => ({ status: 'completed', result: OLD_SHAPE }), lastLineVerdict);
+      expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict, r.classification.reason, r.classification.findings.highest])).toEqual([
+        ['challenge', false, 'failed', 'unverified', 'unverified_verdict', 'P2'],
+        ['structured', false, 'failed', 'unverified', 'unverified_verdict', 'P2'],
+      ]);
+      expect(results.map(r => measurement(r).credited)).toEqual([false, false]);
+    });
+  });
+
+  // Holds for installed gstack 1.99.0.0 and later.
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier gives the same outcomes for the corrected, clean, and old shapes (installed only)', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    for (const gate of gates) {
+      const fixed = recover(FIXED_SHAPE, gate, 0, '', classifyOutsideReview);
+      expect([gate, fixed.credited, fixed.parse, fixed.classification.verdict, fixed.classification.findings.highest]).toEqual([gate, true, 'valid', 'clean', 'P2']);
+      const clean = recover(CLEAN_SHAPE, gate, 0, '', classifyOutsideReview);
+      expect([gate, clean.credited, clean.parse, clean.classification.verdict, clean.classification.findings.highest]).toEqual([gate, true, 'valid', 'clean', null]);
+      const old = recover(OLD_SHAPE, gate, 0, '', classifyOutsideReview);
+      expect([gate, old.credited, old.parse, old.classification.verdict, old.classification.reason, old.classification.findings.highest]).toEqual([
+        gate, false, 'failed', 'unverified', 'unverified_verdict', 'P2',
+      ]);
     }
   });
 });

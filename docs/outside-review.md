@@ -27,6 +27,18 @@ installed-host acceptance, and a passing `upstream-check` is not that check.
 Re-inspect the adapter against the installed upstream before changing the
 revision above.
 
+Upstream `7cb151bf` (gstack PR #4140, committed 2026-11-07) introduced the
+closing verdict-line rule and first shipped in 1.99.0.0 (upstream CHANGELOG
+dated 2026-11-09); installed 1.99.1.0 (checkout `b9bbc31c`) carries it. On the
+review and structured gates the reply's last nonempty line, `VERDICT: CLEAN` or
+`VERDICT: FINDINGS`, is the only evidence for a clean verdict; a reply without
+it reads `missing_verdict`. A `VERDICT: FINDINGS` line followed by the
+Recommendation reads `unverified_verdict`; a misplaced `VERDICT: CLEAN` reads
+`missing_verdict`. `POLICY` and the delegate format ask for it last
+from this change. The inspected revision above stays `e2fffee3` (1.91.208.0)
+until an installed-call check; the corrected reply shape was also checked in
+memory against that revision's classifier during planning.
+
 ## Invocation and scope
 
 Internal command (Bun 1.3.3+):
@@ -97,7 +109,19 @@ no-findings conclusion. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 
-The review policy (`POLICY` in `src/outside-review/prompt.ts`) asks a voice with no findings to write the line `NO_FINDINGS: none` immediately before its `Recommendation: <action> because <specific reason>` line, with nothing between them, and to give its reason in the because-clause. The installed classifier reads a no-findings statement only as the reply's last prose sentence or the Recommendation's because-clause, unqualified by contrast or exception words. A reply that opens with `NO_FINDINGS` and ends on other prose therefore stays uncredited, and recovery does not rewrite it. `GSTACK_OUTSIDE_TEST_ROOT=<installed gstack root> bun test tests/outside-review.test.ts` checks both against the installed classifier.
+The review policy (`POLICY` in `src/outside-review/prompt.ts`) asks a voice to
+write its closing lines in this order: for a clean review, `NO_FINDINGS: none`
+immediately before `Recommendation: <action> because <specific reason>`, with
+nothing between them and its reason in the because-clause; after any findings,
+`Recommendation: <action> because <specific reason>`; and as the last line of
+the reply, `VERDICT: CLEAN` (no findings) or `VERDICT: FINDINGS` (any finding).
+Installed gstack 1.99.0.0 and later no longer reads a no-findings sentence as
+clean and requires that final `VERDICT:` line for any reply without a blocking
+finding. Recovery never moves a misplaced verdict line, so the 2026-11-12 reply
+shape (`VERDICT: FINDINGS` before the closing `Recommendation`) and a reply that
+opens with `NO_FINDINGS` and ends on other prose both stay uncredited.
+`GSTACK_OUTSIDE_TEST_ROOT=<installed gstack root> bun test tests/outside-review.test.ts`
+checks these shapes against the installed classifier.
 
 Before a call, the helper exclusively creates a `.claim` containing only its
 hash, phase, dispatch time and prompt byte measurements. It saves the original
