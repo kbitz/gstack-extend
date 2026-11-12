@@ -3,8 +3,9 @@
 `/review-and-prep` and `/ship-and-land` can satisfy their pregate gate when
 every blocking secret finding is a reviewed MEDIUM false positive. Upstream
 gstack, its raw pregate record, and its non-downgradable secrets policy stay
-unchanged. HIGH findings never qualify. This does not change the pre-push hook,
-PR-text redaction, or any other secrets scanner.
+unchanged. HIGH findings never qualify. The pre-push hook and pregate remain
+unchanged; PR-text scanning gains only the run-bound known-safe rule in
+`scan-text` below.
 
 ## Approval and storage
 
@@ -164,6 +165,60 @@ stale. Unrelated symlinks do not block a clean upstream secrets result.
 
 The [upstream issue draft](designs/secret-scanner-upstream-issue.md) is text
 for the maintainer to review and file if desired; it has not been submitted.
+
+## Known-safe run values in PR text
+
+`/review-and-prep` scans PR title, body and comment text from the repository
+root through `scan-text`:
+
+```sh
+<extend-root>/bin/secret-dispositions scan-text \
+  --gstack-root <trusted-installed-gstack-root> \
+  --from-file <file> \
+  [--evidence-dir <dir>] \
+  [--pr-url <url>]
+```
+
+- `--gstack-root <dir>` (`<root>/bin/gstack-redact` must be a regular executable
+  file outside the project) and `--from-file <file>` (a regular file, not a
+  symlink) are required. `--evidence-dir <dir>` and `--pr-url <url>` are
+  optional; each flag may appear at most once. With neither optional flag,
+  `scan-text` returns upstream's result with status `none`.
+- `--evidence-dir <dir>` must be an existing directory (not a symlink), given as
+  an absolute path with no empty, `.` or `..` segments and no trailing slash,
+  whose realpath lies strictly below `<state-root>/projects/<one segment>/review-and-prep/`
+  (where `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`;
+  empty values count as unset and relative values are ignored) or
+  `$HOME/scratch/review-and-prep/`. The scanner matches the exact absolute path
+  and, when under `$HOME`, its `~/` spelling.
+- `--pr-url <url>` must match `^https://github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$`.
+  Only `<prUrl>#issuecomment-<digits>` occurrences are matched; nothing else in
+  the URL is a component.
+- An occurrence is kept only when delimited after: the text ends there, or the
+  next character is not `[A-Za-z0-9_]` and is not a space, `.` or `-` followed
+  by an ASCII digit. Each maximal ASCII digit run inside a kept evidence-dir
+  occurrence is an `evidence-dir` component; the digit run after
+  `#issuecomment-` is a `pr-comment` component.
+- Only `pii.cc` and `pii.phone.e164` findings with severity `MEDIUM` and
+  category `pii` whose start offset (`line`, `col`) falls inside a component and
+  whose first 4 characters equal `preview.slice(0, 4)` are eligible. `HIGH` and
+  `secret` findings never qualify.
+- When an eligible finding is present and `oversize` is false, `scan-text`
+  creates a transient `0700` directory `.scan-text-*` beside `<file>`, writes a
+  `0600` copy with the same basename and digits inside components masked to `x`,
+  runs `gstack-redact` again, and removes the directory in `finally`.
+- Status is `none` when no eligible finding exists, `oversize` is true, or no
+  eligible finding vanishes; `applied` when the second scan adds no finding key
+  (`id|severity|category|line|col`), retains every non-eligible finding, and
+  at least one eligible finding vanishes; and `inconclusive` (returning
+  upstream's findings unchanged) when the second scan fails, adds a finding, or
+  drops a non-eligible finding.
+- Output JSON: `{version: 1, status, reason?, upstream_exit, findings, counts, repoVisibility, oversize, known_safe: [{id, line, col, context}]}`.
+  On usage or first-scan failure, `scan-text` prints `{"version":1,"error":"..."}` and exits `1`.
+- Exit codes: `0` clean, `2` `MEDIUM` remaining, `3` `HIGH` remaining (matching
+  `gstack-redact`), and `1` for usage errors or an unavailable scanner.
+  `scan-text` uses no `.gstack/secret-dispositions.json` entries or approvals
+  and never writes the input file.
 
 ## Verification limits
 
