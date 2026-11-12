@@ -1440,7 +1440,7 @@ describe('bin/review-state', () => {
   });
 
   // Value: protects=digest-pinned evidence and exclusive output ownership; fails_when=render reopens checked paths, removes an unowned file after open fails, or rounds an existing numeric suffix; why_new=review reproductions; seam=child-local filesystem mocks; no_claim=OS sandboxing
-  test.each(['replace-section', 'failed-open', 'large-suffix'])('render consumes checked bytes and preserves outputs it did not create (%s)', (mode) => {
+  test.each(['replace-section', 'failed-open', 'readback-replacement', 'large-suffix'])('render consumes checked bytes and preserves outputs it did not create (%s)', (mode) => {
       const d = newDir();
       callCmd(d, 'start', mkStart());
       callCmd(d, 'record gate', { gate_id: uid(41), name: 'greptile', result: 'not-run', candidate: { commit: headSha, base: baseSha }, details: { value: 'skipped — no root configuration', run: null } });
@@ -1454,7 +1454,7 @@ describe('bin/review-state', () => {
         const mode = ${JSON.stringify(mode)};
         const storePath = ${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))};
         const store = await import(storePath);
-        const checkDirFile = store.checkDirFile, openSync = fs.openSync;
+        const checkDirFile = store.checkDirFile, openSync = fs.openSync, readFileSync = fs.readFileSync;
         if (mode === 'replace-section') mock.module(storePath, () => ({ ...store,
           checkDirFile(...args) {
             const result = checkDirFile(...args);
@@ -1471,15 +1471,24 @@ describe('bin/review-state', () => {
             return openSync(path, flags, permissions);
           }
         }));
+        if (mode === 'readback-replacement') mock.module('node:fs', () => ({ ...fs,
+          readFileSync(path, ...args) {
+            if (String(path).includes('/full-receipt-')) {
+              fs.renameSync(path, String(path) + '.original');
+              fs.writeFileSync(path, 'Other writer owns this output.\\n');
+            }
+            return readFileSync(path, ...args);
+          }
+        }));
         const { executeRender } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/render.ts'))});
         console.log(JSON.stringify(executeRender(${JSON.stringify(d)}, ${JSON.stringify(input)}, ${JSON.stringify(repo)})));
       `;
       const r = spawnSync(process.execPath, ['--no-env-file', '--config=/dev/null', '--no-install', '-e', child], { cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 15000 });
       expect(r.status, r.stderr).toBe(0);
       const result = JSON.parse(r.stdout);
-      if (mode === 'failed-open') {
+      if (mode === 'failed-open' || mode === 'readback-replacement') {
         expect(result.ok).toBe(false);
-        expect(result.envelope).toMatchObject({ reason: 'unwritable', detail: { errno: 'EMFILE' } });
+        expect(result.envelope).toMatchObject({ reason: 'unwritable', detail: { errno: mode === 'failed-open' ? 'EMFILE' : 'EIO' } });
         expect(existsSync(join(d, 'full-receipt-1.md'))).toBe(true);
         expect(readFileSync(join(d, 'full-receipt-1.md'), 'utf8')).toBe('Other writer owns this output.\n');
       } else {

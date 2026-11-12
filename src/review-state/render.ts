@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, fsyncSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { RECEIPT_KEYS } from '../review-delegate/delegate.ts';
@@ -355,18 +355,27 @@ function allocateExclusiveFile(
     const fn = `${prefix}-${maxN + BigInt(i)}.md`, outPath = join(realDir, fn);
     let fd: number | null = null;
     let created = false;
+    let ownedStat: Stats | null = null;
+    const cleanupOwnedFile = () => {
+      if (ownedStat === null) return;
+      try {
+        const current = lstatSync(outPath);
+        if (current.dev === ownedStat.dev && current.ino === ownedStat.ino) unlinkQuiet(outPath);
+      } catch { /* A removed or unreadable path is not ours to clean up. */ }
+    };
     try {
       fd = openSync(outPath, 'wx', 0o600); created = true;
+      ownedStat = fstatSync(fd);
       writeAll(fd, buf); fsyncSync(fd); closeSync(fd); fd = null;
       const rb = readFileSync(outPath);
-      if (!rb.equals(buf)) { unlinkQuiet(outPath); return { ok: false, detail: { errno: 'EIO', syscall: 'readback', path: truncate80(outPath) } }; }
+      if (!rb.equals(buf)) { cleanupOwnedFile(); return { ok: false, detail: { errno: 'EIO', syscall: 'readback', path: truncate80(outPath) } }; }
       const s = rb.toString('utf8');
       return { ok: true, file: { path: outPath, display: tilde(`${nd}/${fn}`, home), sha256: createHash('sha256').update(rb).digest('hex'), bytes: rb.length, chars: s.length } };
     } catch (err) {
       if (fd !== null) { try { closeSync(fd); } catch { /* ignore */ } }
       const e = err as NodeJS.ErrnoException;
       if (!created && e.code === 'EEXIST') continue;
-      if (created) unlinkQuiet(outPath);
+      if (created) cleanupOwnedFile();
       return { ok: false, detail: { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(outPath) } };
     }
   }
