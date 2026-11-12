@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.2] - 2026-11-12
+
+### Fixed
+
+- The docs-ship test for SHA claims now uses a fixed fixture, so that check stays the same from run to run.
+
 ## [0.89.1] - 2026-11-12
 
 ### Changed
