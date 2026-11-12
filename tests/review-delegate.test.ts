@@ -892,6 +892,97 @@ describe('reply parsing and the receipt contract', () => {
     expect(parseFindings(`${oneFinding}\n[P2] {"severity":"INFORMATIONAL","confidence":101,"path":"a.ts","category":"c","summary":"s"}\n${recommendation}`, 'red-team')).toEqual({ ok: false });
   });
 
+  // Value: protects=advisory-only and clean delegate replies end with the exact VERDICT line upstream 1.99.0.0+ requires and are
+  //   accepted by parseFindings and decide(), while the 2026-11-12 shapes without it fall back as uncredited and malformed verdict
+  //   lines are rejected; fails_when=parseFindings rejects a trailing VERDICT: CLEAN|FINDINGS line, accepts extra/misplaced/other
+  //   verdict lines, or decide() drops findings on a credited advisory reply; why_new=Track 77B's maintainability and red-team
+  //   delegates ended on Recommendation with only P2/P3 findings and fell back as uncredited; seam=parseFindings and decide()
+  test('regression: parseFindings accepts an optional final VERDICT line and decide credits reconstructed 77B advisory replies when it is present', () => {
+    const rec = 'Recommendation: merge, optionally addressing the advisory notes, because every finding is non-blocking.';
+    const maintLine = '[P3] {"severity":"INFORMATIONAL","confidence":80,"path":"src/alpha.ts","line":14,"category":"maintainability","summary":"fictional maintainability note","fix":"extract constant"}';
+    const redTeamLines = [
+      '[P2] {"severity":"INFORMATIONAL","confidence":75,"path":"src/beta.ts","line":20,"category":"security","summary":"fictional red-team p2 one","fix":"tighten guard"}',
+      '[P2] {"severity":"INFORMATIONAL","confidence":82,"path":"src/gamma.ts","line":33,"category":"security","summary":"fictional red-team p2 two","fix":"check length"}',
+      '[P3] {"severity":"INFORMATIONAL","confidence":60,"path":"src/delta.ts","line":41,"category":"security","summary":"fictional red-team p3 one","fix":"log reason"}',
+      '[P3] {"severity":"INFORMATIONAL","confidence":65,"path":"src/epsilon.ts","line":52,"category":"security","summary":"fictional red-team p3 two","fix":"clamp bound"}',
+      '[P3] {"severity":"INFORMATIONAL","confidence":70,"path":"src/zeta.ts","line":64,"category":"security","summary":"fictional red-team p3 three","fix":"trim input"}',
+    ];
+    for (const verdictLine of ['VERDICT: FINDINGS', 'VERDICT: CLEAN']) {
+      expect(parseFindings(`${maintLine}\n${rec}\n${verdictLine}`, 'maintainability')).toEqual({
+        ok: true,
+        findings: [{
+          severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14,
+          category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability',
+        }],
+      });
+      expect(parseFindings(`NO_FINDINGS: none\n${rec}\n${verdictLine}`, 'maintainability')).toEqual({ ok: true, findings: [] });
+    }
+    for (const rejected of [
+      `${maintLine}\n${rec}\nVERDICT: FINDINGS\ntrailing line`,
+      `NO_FINDINGS: none\n${rec}\nVERDICT: CLEAN\ntrailing line`,
+      `${maintLine}\n${rec}\nVERDICT: FINDINGS\nVERDICT: FINDINGS`,
+      `NO_FINDINGS: none\n${rec}\nVERDICT: CLEAN\nVERDICT: FINDINGS`,
+      `${maintLine}\nVERDICT: FINDINGS\n${rec}`,
+      `NO_FINDINGS: none\nVERDICT: CLEAN\n${rec}`,
+      `${maintLine}\n${rec}\nVERDICT: MAYBE`,
+      `NO_FINDINGS: none\n${rec}\nVERDICT: MAYBE`,
+      `NO_FINDINGS: none\n${rec}\n**VERDICT: CLEAN**`,
+    ]) {
+      expect(parseFindings(rejected, 'maintainability')).toEqual({ ok: false });
+    }
+
+    // Inline fixture classifier mirroring upstream 7cb151bf (1.99.0.0) last-line verdict rule.
+    const lastLineVerdict = ({ text, gate, exit }: { text: string; gate: 'review' | 'structured'; exit: number }) => {
+      const lines = text.trimEnd().split(/\r?\n/);
+      const last = (lines.at(-1) ?? '').replace(/^[\t ]*(?:#{1,6}[\t ]+|[-+*][\t ]+)?/, '').replace(/[*_`]/g, '').trim();
+      const token = /^VERDICT: (CLEAN|FINDINGS)$/.exec(last)?.[1] as 'CLEAN' | 'FINDINGS' | undefined;
+      const body = token ? lines.slice(0, -1).join('\n') : text;
+      const levels = [...body.matchAll(/\[(P[0-3])\]/g)].map(m => m[1]!).sort();
+      const highest = levels[0] ?? null;
+      const findings = { highest };
+      if (exit || !text.trim()) return { execution: { state: 'unavailable' }, findings, verdict: 'unavailable' as const, reason: 'execution_failed' };
+      if (gate === 'review' && !/^Recommendation: .+ because\b.+/m.test(body)) {
+        return { execution: { state: 'ran' }, findings, verdict: 'unavailable' as const, reason: 'missing_markers' };
+      }
+      if (highest === 'P0' || highest === 'P1') return { execution: { state: 'ran' }, findings, verdict: 'findings' as const };
+      const earlierVerdict = [...body.matchAll(/^[\t ]*Verdict[\t ]*:[\t ]*([^\r\n]*)$/gim)].at(-1)?.[1]?.trim();
+      if (earlierVerdict !== undefined && !/^(?:ready|lgtm|approved?|ship(?:[\t ]+it)?|pass(?:ed)?|clean|good to (?:go|merge|ship)|NO_?FINDINGS)\b/i.test(earlierVerdict)) {
+        return { execution: { state: 'ran' }, findings, verdict: 'unverified' as const, reason: 'unverified_verdict' };
+      }
+      if (!token) return { execution: { state: 'ran' }, findings, verdict: 'unverified' as const, reason: 'missing_verdict' };
+      if (token === 'FINDINGS' && !highest) return { execution: { state: 'ran' }, findings, verdict: 'unverified' as const, reason: 'untagged_review' };
+      return { execution: { state: 'ran' }, findings, verdict: 'clean' as const };
+    };
+
+    const maintOld = `${maintLine}\n${rec}`;
+    const redTeamOld = `${redTeamLines.join('\n')}\n${rec}`;
+    const spawned = (stdout: string) => ({ exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false, stdout, stderr: '', wall_ms: 10 });
+
+    expect(decide('maintainability', spawned(maintOld), lastLineVerdict)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'uncredited', parse: 'failed', verdict: 'unverified', findings: [],
+    });
+    expect(decide('red-team', spawned(redTeamOld), lastLineVerdict)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'uncredited', parse: 'failed', verdict: 'unverified', findings: [],
+    });
+
+    const maintFixed = decide('maintainability', spawned(`${maintOld}\nVERDICT: FINDINGS`), lastLineVerdict);
+    expect(maintFixed).toMatchObject({
+      outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean',
+      findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
+    });
+    const redTeamFixed = decide('red-team', spawned(`${redTeamOld}\nVERDICT: FINDINGS`), lastLineVerdict);
+    expect(redTeamFixed).toMatchObject({
+      outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean',
+    });
+    expect(redTeamFixed.findings.map(f => [f.path, f.confidence, f.specialist])).toEqual([
+      ['src/beta.ts', 8, 'red-team'],
+      ['src/gamma.ts', 8, 'red-team'],
+      ['src/delta.ts', 6, 'red-team'],
+      ['src/epsilon.ts', 7, 'red-team'],
+      ['src/zeta.ts', 7, 'red-team'],
+    ]);
+  });
+
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
     for (const source of Object.values(RECEIPT_KEYS)) expect(PART_KEYS).toContain(source);
     expect(Object.keys(RECEIPT_KEYS)).toEqual(['part', 'provider', 'model', 'outcome', 'reason', 'wall_ms', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'findings', 'call']);
@@ -1132,11 +1223,18 @@ describe('tools mode', () => {
   test('effectiveArgv, callId, and buildPrompt bind the new confidence policy and tools-mode flags', () => {
     expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
     const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
-    // The explicit percent-scale rule intentionally invalidates old cached calls.
-    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('30c8742c56b27287889188b65fe8594ff63d85a8c4b20d434c9e9cedb0f4f7ae');
-    const legacyPrompt = diffPrompt.replace('Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.\n', '');
+    // The closing verdict-line and explicit percent-scale rules intentionally invalidate old cached calls.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('3f34fb694b0d14cf837278bf6c6454f98cfef9d9febcfab8687e72594600ca57');
+    const preVerdictPrompt = diffPrompt.replace(
+      'After the findings, write Recommendation: <action> because <specific reason>.\nEnd with exactly one more line, the last line of the reply: VERDICT: CLEAN if you report no findings, or VERDICT: FINDINGS if you report any finding.',
+      'End with Recommendation: <action> because <specific reason>.',
+    );
+    // Independent HEAD bc33386 bytes before the closing verdict-line update.
+    expect(createHash('sha256').update(preVerdictPrompt).digest('hex')).toBe('30c8742c56b27287889188b65fe8594ff63d85a8c4b20d434c9e9cedb0f4f7ae');
+    const legacyPrompt = preVerdictPrompt.replace('Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.\n', '');
     // Independent legacy bytes from origin/main@5b54ffe.
     expect(createHash('sha256').update(legacyPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(preVerdictPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(legacyPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(diffPrompt).toContain(DELEGATE_POLICY);
     expect(diffPrompt).not.toContain('disposable copy of the repository');
@@ -1170,7 +1268,8 @@ describe('tools mode', () => {
     if (!diffParsed.ok) return;
     const diffProv = diffParsed.config.providers.alpha!;
     expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
-    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('b8d806cb3ad984da1ab076a59e6fb333fc2f43f48b829fc7d3a7559fc042d2f9');
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('23810f73bf2daa28c81a4bda1461110796bd5ee3d4e6cf322ed12630df8e055c');
+    expect(callId(preVerdictPrompt, diffProv, 'alpha')).toBe('b8d806cb3ad984da1ab076a59e6fb333fc2f43f48b829fc7d3a7559fc042d2f9');
     expect(callId(legacyPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
     expect(callId(diffPrompt, diffProv, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([diffPrompt, ['/bin/echo', 'hi'], 'model-a', 'alpha'])).digest('hex'),
@@ -1555,9 +1654,9 @@ describe('installed classifier', () => {
   test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('credits a labelled finding reply and a no-findings reply, and does not credit plain upstream JSON lines', async () => {
     const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
     const json = { severity: 'CRITICAL', confidence: 9, path: 'a.ts', line: 1, category: 'testing', summary: 'gap', fix: 'test', specialist: 'testing' };
-    const labelled = `[P1] ${JSON.stringify(json)}\nRecommendation: fix because a gap remains.`;
-    const commaLabelled = `[P1] ${JSON.stringify(json)}\nRecommendation: Request changes before merge because, beyond the single check, a gap remains.`;
-    const clean = 'NO_FINDINGS: none\nRecommendation: merge because nothing is wrong.';
+    const labelled = `[P1] ${JSON.stringify(json)}\nRecommendation: fix because a gap remains.\nVERDICT: FINDINGS`;
+    const commaLabelled = `[P1] ${JSON.stringify(json)}\nRecommendation: Request changes before merge because, beyond the single check, a gap remains.\nVERDICT: FINDINGS`;
+    const clean = 'NO_FINDINGS: none\nRecommendation: merge because nothing is wrong.\nVERDICT: CLEAN';
     const plain = JSON.stringify(json);
     const found = recover(labelled, 'review', 0, '', classifyOutsideReview);
     expect([found.credited, found.parse, found.classification.verdict]).toEqual([true, 'valid', 'findings']);
@@ -1580,5 +1679,24 @@ describe('installed classifier', () => {
     expect(recover(`${plain}\nRecommendation: fix because a gap remains.`, 'review', 0, '', classifyOutsideReview).credited).toBe(false);
     const refused = recover('I cannot review this.\nRecommendation: none because I refuse.', 'review', 0, '', classifyOutsideReview);
     expect(refused.credited).toBe(false);
+
+    // Reconstructed 77B advisory delegate replies through the installed classifier (1.99.0.0+):
+    // without the final VERDICT: FINDINGS line they fall back as uncredited; with it they are credited.
+    const advisory = '[P3] {"severity":"INFORMATIONAL","confidence":80,"path":"src/alpha.ts","line":14,"category":"maintainability","summary":"fictional maintainability note","fix":"extract constant"}\nRecommendation: merge, optionally extracting the constant, because the finding is informational.';
+    const spawned = (stdout: string) => ({ exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false, stdout, stderr: '', wall_ms: 5 });
+    expect(decide('maintainability', spawned(advisory), classifyOutsideReview)).toMatchObject({
+      outcome: 'fell-back',
+      fallback_reason: 'uncredited',
+      parse: 'failed',
+      verdict: 'unverified',
+      findings: [],
+    });
+    expect(decide('maintainability', spawned(`${advisory}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
+      outcome: 'credited',
+      fallback_reason: null,
+      parse: 'valid',
+      verdict: 'clean',
+      findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
+    });
   });
 });
