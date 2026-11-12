@@ -649,7 +649,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/, 'first-cycle': /^overlap$/,
   'documentation-audit': /^final$/, 'documentation-scope': /^contracts$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
-  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, blocking: /^shown$/, 'post-audit': /^classify$/, specialists: /^fold$/, 'red-team': /^ensure$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, blocking: /^shown$/, 'post-audit': /^classify$/, 'run-state': /^record$/, specialists: /^fold$/, 'red-team': /^ensure$/,
   // The six delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
   delegate: /^(?!.*\b(testing|maintainability|performance|simplification|adversarial|red-team)\b.*\b\1\b)(?:testing|maintainability|performance|simplification|adversarial|red-team)(?:,(?:testing|maintainability|performance|simplification|adversarial|red-team))*$/,
   'max-continuations': /^[0-9]$/,
@@ -1392,7 +1392,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -2012,7 +2012,7 @@ describe('(G) test-gaps', () => {
       'It is independent of `repair-review` and `repair-cycles`, may be sent alone or with either, and is never set by the light review default.',
       'a reproduced defect keeps its regression test',
       'It waives no gate and never authorizes a continuation.',
-      '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
+      '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`), `run-state` (`record`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
     expect(POLICY_VALUES['test-gaps']!.source).toBe('^record$');
     expect('test-gaps=record').not.toMatch(/routine|standard|novel/);
     expect(has(prep, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
@@ -3047,5 +3047,87 @@ describe('(O) capped-review recovery', () => {
     const stopped = run('B-STOPPED-NONE-RECORDED');
     expect(stopped.outcome).toBe(HOLD);
     expect(stopped.mismatches.map((m) => m.binding)).toEqual(['stopped']);
+  });
+});
+
+// Track 77B (third PR): `run-state=record`.
+describe('(P) run-state=record', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+  const without = (...keys: string[]) => {
+    const copy = { ...POLICY_VALUES };
+    for (const k of keys) delete copy[k];
+    return copy;
+  };
+
+  // Value: protects=run-state=record parses alone and with other keys, refuses near misses and repeats, and an older map without the key voids the whole line; fails_when=the regex loosens, a repeat parses or an older install would not drop the line; why_new=Track 77B T5, T7; seam=none; no_claim=installed-agent execution
+  test('the parser accepts run-state=record, refuses near misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('run-state=record'))?.get('run-state')).toBe('record');
+    const all = parsePolicy(line('in-cap=delta; documentation-audit=final; documentation-scope=contracts; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; full-suite=external'));
+    expect(all?.get('run-state')).toBe('record');
+    expect(all?.get('post-audit')).toBe('classify');
+    expect(all?.get('full-suite')).toBe('external');
+    for (const bad of [
+      'run-state=Record',
+      'run-state=on',
+      'run-state=',
+      'run-state',
+      'run_state=record',
+      'run-state=record; run-state=record',
+    ]) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    expect(parsePolicy(line('in-cap=delta; run-state=record'), without('run-state'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; post-audit=classify'), without('run-state'))?.get('post-audit')).toBe('classify');
+  });
+
+  // Value: protects=an H-E prompt carrying run-state=record continues as FULL with no mismatches, while a bad value or repeat holds as policy-malformed; fails_when=run-state=record breaks H-E continuation; why_new=Track 77B T5, T7; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries run-state=record continues and a bad value holds as policy-malformed', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of [
+      'run-state=record',
+      'post-audit=classify; run-state=record',
+    ]) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['run-state=Record', 'run-state=on', 'run-state=record; run-state=record']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=grep -F capability check against the real skill, rollout phrases in the skill and doc, and unchanged B-TRUSTED outcome; fails_when=the check fails on the skill, run-state=recorded matches, or the doc drops the rollout/contract text; why_new=Track 77B T1, T5, T7; seam=none; no_claim=installed-agent execution
+  test('grep -F finds run-state=record in the skill, rejects run-state=recorded, and the skill and doc publish the check and rollout', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'run-state=record', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'run-state=recorded', skillPath]).status).toBe(1);
+    const check = `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+    for (const phrase of [
+      '`run-state=record` (its only value) is opt-in.',
+      'The light review default never sets it',
+      'An installation without the value reads the whole line as `none supplied`',
+      '(exit 0 means supported) and omits the value otherwise, keeping its other keys',
+    ]) {
+      expect(has(prep, phrase), `skill: ${phrase}`).toBe(true);
+    }
+    for (const phrase of [
+      '`post-audit` (`classify`), `run-state` (`record`) and `max-continuations`',
+      '`run-state=record` follows the same rollout order and the same check',
+      'update the caller\'s own H-E parser first, since an older H-E parser holds a returned policy that carries it as `policy-malformed` (`HOLD`)',
+      'an installation without it reads the whole line as `none supplied`',
+      'and a caller omits it when the check fails and keeps its other keys',
+      'It is independent of every other key and never set by the light review default.',
+      'It records the run state through the experimental review-state helper and derives the review\'s workflow metrics, finding attribution and missing stage-run rows ([review-run-state-calls.md](review-run-state-calls.md)).',
+      'It waives no gate, changes no handoff line and never authorizes a continuation, and a prepared receipt still emits `review: COMPLETE`.',
+    ]) {
+      expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
+    }
+    expect(run('B-TRUSTED').outcome).toBe(TRUSTED);
   });
 });

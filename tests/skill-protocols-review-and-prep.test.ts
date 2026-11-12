@@ -16,6 +16,7 @@ import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
 import { FALLBACK_REASONS, PARTS, PART_KEYS, RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
+import { main as reviewStateMain } from '../src/review-state/cli.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -538,7 +539,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -1525,14 +1526,14 @@ describe('review-and-prep final-gate repair', () => {
         return /CANDIDATE_SNAPSHOT: ([0-9a-f]{40})/.exec(r.stdout)![1]!;
       };
       const s1 = takeSnap();
-      const runFence = (action: string, kind: string, arg: string, dir = evDir) => {
+      const runFence = (action: string, kind: string, arg: string, dir = evDir, extraEnv?: Record<string, string>) => {
         const script = block
           .replaceAll('<workspace>', cwd)
           .replaceAll('<evidence-directory>', dir)
           .replaceAll('<action>', action)
           .replaceAll('<kind>', kind)
           .replaceAll('<record-file-or-boundary>', arg);
-        return runShell(sh.shell, sh.args, script, env, cwd);
+        return runShell(sh.shell, sh.args, script, extraEnv ? { ...env, ...extraEnv } : env, cwd);
       };
       const writeInput = (data: unknown): string => {
         const p = join(tmp, `input-${++n}.json`);
@@ -1808,6 +1809,141 @@ describe('review-and-prep final-gate repair', () => {
         const cStop = runFence('check', 'cycle-1-fix-review', 'stop');
         expect(cStop.status, cStop.stderr).toBe(0);
         expect(cStop.stdout.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-fix-review; provenance=late; fix-reviewed=true');
+      });
+
+      // Value: protects=with REVIEW_STATE_DIR set, cycle-1-baseline requires a readable state, cycle-1 full pass, completed required voices and probe-<id> gates on both write-point and late paths; fails_when=113A regression returns or an unreadable/incomplete state seals cycle-1-baseline; why_new=Track 77B T3; seam=real review-state helper
+      test(`${sh.shell}: REVIEW_STATE_DIR precheck enforces cycle-1 pass, required voices and probe gates on write-point and late writes`, () => {
+        const { cwd, evDir, b, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const callState = (repoCwd: string, dir: string, cmd: string[], payload: unknown) => {
+          const inFile = join(dir, `state-in-${++n}.json`);
+          writeFileSync(inFile, JSON.stringify(payload));
+          let out = '';
+          let err = '';
+          const code = reviewStateMain([...cmd, '--dir', dir, '--input', inFile], {
+            stdout: (s) => { out += s; },
+            stderr: (s) => { err += s; },
+            cwd: repoCwd,
+            env,
+          });
+          expect(code, err || out).toBe(0);
+        };
+
+        const absentDir = join(tmp, `state-absent-${++n}`);
+        mkdirSync(absentDir, { recursive: true });
+        const wAbsent = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: absentDir });
+        expect(wAbsent.status).toBe(3);
+        expect(wAbsent.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (run-state unreadable)');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        const garbageDir = join(tmp, `state-garbage-${++n}`);
+        mkdirSync(garbageDir, { recursive: true });
+        writeFileSync(join(garbageDir, 'review-run-state.json'), '{not-json\n');
+        const wGarbage = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: garbageDir });
+        expect(wGarbage.status).toBe(3);
+        expect(wGarbage.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (run-state unreadable)');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        callState(cwd, evDir, ['start'], {
+          run_id: '019315e0-0000-7000-8000-000000000001',
+          base: b,
+          plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+          policy: { value: 'review-and-prep-policy/v1; run-state=record', source: 'caller prompt' },
+          continuation: { prior_stops: 0, max: 0 },
+        });
+        const wNoPass = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+        expect(wNoPass.status).toBe(3);
+        expect(wNoPass.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (cycle-1-pass)');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        callState(cwd, evDir, ['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000002',
+          state: 'started',
+          scope: 'local',
+          cycle: 1,
+          coverage: 'full',
+          candidate: { commit: b, base: b },
+          required_voices: ['core'],
+          started_at: '2026-11-12T00:00:00Z',
+        });
+        const wNoVoice = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+        expect(wNoVoice.status).toBe(3);
+        expect(wNoVoice.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (core)');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        callState(cwd, evDir, ['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000002',
+          state: 'attempt',
+          voice_id: 'core',
+          attempt_id: '019315e0-0000-7000-8000-000000000003',
+          outcome: 'completed',
+          findings: [],
+        });
+        callState(cwd, evDir, ['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000002',
+          state: 'voice-complete',
+          voice_id: 'core',
+          selected_attempt_id: '019315e0-0000-7000-8000-000000000003',
+        });
+        const wNoProbe = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+        expect(wNoProbe.status).toBe(3);
+        expect(wNoProbe.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (0123456789ab)');
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+        callState(cwd, evDir, ['record', 'gate'], {
+          gate_id: '019315e0-0000-7000-8000-000000000004',
+          name: 'probe-0123456789ab',
+          result: 'passed',
+          candidate: { commit: b, base: b },
+        });
+        const wOk = runFence('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+        expect(wOk.status, wOk.stderr).toBe(0);
+        expect(wOk.stdout.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+        expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(true);
+
+        const late = setupRepo(sh);
+        callState(late.cwd, late.evDir, ['start'], {
+          run_id: '019315e0-0000-7000-8000-000000000011',
+          base: late.b,
+          plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+          policy: { value: 'review-and-prep-policy/v1; run-state=record', source: 'caller prompt' },
+          continuation: { prior_stops: 0, max: 0 },
+        });
+        callState(late.cwd, late.evDir, ['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000012',
+          state: 'started',
+          scope: 'local',
+          cycle: 1,
+          coverage: 'full',
+          candidate: { commit: late.b, base: late.b },
+          required_voices: ['core'],
+          started_at: '2026-11-12T00:00:00Z',
+        });
+        callState(late.cwd, late.evDir, ['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000012',
+          state: 'attempt',
+          voice_id: 'core',
+          attempt_id: '019315e0-0000-7000-8000-000000000013',
+          outcome: 'completed',
+          findings: [],
+        });
+        callState(late.cwd, late.evDir, ['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000012',
+          state: 'voice-complete',
+          voice_id: 'core',
+          selected_attempt_id: '019315e0-0000-7000-8000-000000000013',
+        });
+        expect(late.runFence('check', 'cycle-1-baseline', 'next-cycle').status).toBe(1);
+        writeFileSync(join(late.evDir, 'review-cycle-1.txt'), `core review complete for snapshot ${late.s1}\n`);
+        const wLateRefused = late.runFence(
+          'write',
+          'cycle-1-baseline',
+          late.writeInput(late.baseRecord({ provenance: 'late', sources: ['review-cycle-1.txt'] })),
+          late.evDir,
+          { REVIEW_STATE_DIR: late.evDir },
+        );
+        expect(wLateRefused.status).toBe(3);
+        expect(wLateRefused.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (0123456789ab)');
+        expect(existsSync(join(late.evDir, 'cycle-1-baseline.json'))).toBe(false);
       });
     }
   });
@@ -2337,7 +2473,7 @@ describe('review-and-prep repair-cycles=light', () => {
   const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
   const flat = prep.replace(/\s+/g, ' ');
   const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
-  const bullet = policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- A policy never waives a gate'));
+  const bullet = policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- `run-state=record`'));
   const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
   const delta = skillSection(prep, '### Scope a re-review to its delta').replace(/\s+/g, ' ');
   const baseline = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
@@ -2409,7 +2545,7 @@ describe('review-and-prep test-gaps=record', () => {
 
   // Value: protects=the value is an opt-in grammar key with a literal capability check, an older-install note and no default; fails_when=the key leaves the grammar line, the grep literal wraps, the light default sets it or the bullet moves into another bullet's slice; why_new=new policy value; seam=none; no_claim=installed-agent execution
   test('the value is opt-in, checkable, placed before repair-review and absent from the light default', () => {
-    expect(prep).toContain('repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>`');
+    expect(prep).toContain('repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`');
     expect(bullet.startsWith('- `test-gaps=record` (its only value) is opt-in.')).toBe(true);
     expect(bullet).toContain("Omitted, every gap takes today's handling and nothing is recorded.");
     expect(bullet).toContain("It applies only while that section's upstream anchors still match; otherwise today's behavior runs and the receipt says so.");
@@ -2420,8 +2556,8 @@ describe('review-and-prep test-gaps=record', () => {
     expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
     expect(policy.indexOf('- `final-gate-repair=tests-docs`')).toBeLessThan(policy.indexOf('- `test-gaps=record`'));
     expect(policy.indexOf('- `test-gaps=record`')).toBeLessThan(policy.indexOf('- `repair-review=behavior-changing`'));
-    // The repair-cycles bullet's slice (to the no-waiver bullet) holds no copy of this value.
-    expect(policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- A policy never waives a gate'))).not.toContain('test-gaps');
+    // The repair-cycles bullet's slice (to the next bullet) holds no copy of this value.
+    expect(policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- `run-state=record`'))).not.toContain('test-gaps');
     expect(light).toContain('It never sets `test-gaps=record`: recording a gap instead of writing its test needs a caller that accepts the coverage risk, so it is an explicit caller opt-in.');
     expect(light).toContain('It never sets `repair-review=behavior-changing`');
   });
@@ -2611,7 +2747,7 @@ describe('review-and-prep delegate=<part>', () => {
 
   // Value: protects=the one policy grammar line gains the value without losing a locked substring; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
   test('the grammar line carries the value after parent-io and keeps the locked run after it', () => {
-    expect(flat).toContain('parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>');
+    expect(flat).toContain('parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>');
   });
 
   // Value: protects=the bullet's position, the six delegable parts, the always-host list, the refusal wording and the no-waiver rule; fails_when=a part is added silently, an always-host part becomes delegable or the older-install check is lost; why_new=criterion 1, 2, 9; seam=none
@@ -2907,7 +3043,7 @@ describe('review-and-prep specialists=fold', () => {
 
   // Value: protects=the one policy grammar line gains the value after final-gate-repair and keeps every locked run around it; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
   test('the grammar line carries the value after final-gate-repair and keeps the locked runs around it', () => {
-    expect(flat).toContain('final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>');
+    expect(flat).toContain('final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>');
     expect(flat).toContain('documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold;');
   });
 
@@ -3783,7 +3919,7 @@ describe('review-and-prep blocking=shown', () => {
     expect(bullet).toContain(check);
     expect(prep).toContain(`  \`${check}\` (exit 0 means`);
     expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
-    expect(policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- A policy never waives a gate'))).not.toContain('blocking=shown');
+    expect(policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- `run-state=record`'))).not.toContain('blocking=shown');
     expect(light).toContain('It never sets `blocking=shown`: letting an unshown finding pass readiness needs a caller that accepts that risk, so it is an explicit caller opt-in.');
   });
 
@@ -3974,5 +4110,98 @@ describe('Track 75A review corrections', () => {
     const section = skillSection(readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8'), "### Classify changes after the documentation audit's last attempt").replace(/\s+/g, ' ');
     expect(section).toContain('Only names with no documented external contract qualify. Renaming a documented command, flag, configuration key, exported API, policy-grammar token or receipt/handoff label is `documented-behavior` even when every reference and its documentation are updated.');
     expect(section).toContain('When the value is on the policy line but no exhausted-audit freshness check was reached, record `post-audit: not applied — no exhausted-audit freshness check reached`.');
+  });
+});
+
+// Track 77B (third PR): `run-state=record` wires the experimental review-state helper and derive into /review-and-prep.
+describe('review-and-prep run-state=record', () => {
+  const prepPath = join(ROOT, 'skills', 'review-and-prep.md');
+  const prep = readFileSync(prepPath, 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policyRaw = skillSection(prep, '### Read an optional review policy');
+  const policy = policyRaw.replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `run-state=record`'), policy.indexOf('- A policy never waives a gate'));
+  const metricsRaw = skillSection(prep, '### Workflow metrics (optional, local)');
+  const metrics = metricsRaw.replace(/\s+/g, ' ');
+  const callsRaw = readFileSync(join(ROOT, 'docs', 'review-run-state-calls.md'), 'utf8');
+  const calls = callsRaw.replace(/\s+/g, ' ');
+
+  // Value: protects=the policy line and bullet place run-state=record after repair-cycles=light, keep the single-line grep -F check, and leave the light default section untouched; fails_when=the key moves, the grep literal wraps, or the light section gains run-state; why_new=Track 77B T1; seam=none; no_claim=installed-agent execution
+  test('the policy line and bullet place run-state=record before max-continuations and keep the light section unchanged', () => {
+    expect(prep).toContain('post-audit=classify; run-state=record; max-continuations=<0-9>`');
+    expect(policy.indexOf('- `repair-cycles=light`')).toBeLessThan(policy.indexOf('- `run-state=record`'));
+    expect(policy.indexOf('- `run-state=record`')).toBeLessThan(policy.indexOf('- A policy never waives a gate'));
+    expect(bullet.startsWith('- `run-state=record` (its only value) is opt-in.')).toBe(true);
+    expect(bullet).toContain('experimental `bin/review-state` helper as `docs/review-run-state-calls.md` under the installed skill\'s extend root defines (resolve `<extend-root>` from this installed skill\'s `.extend-root`, as **Use the light review default** does)');
+    expect(bullet).toContain('replacing the run `begin` and `end`, pass, correction and context-override metrics writes in **Workflow metrics (optional, local)** with that document\'s derive command');
+    expect(bullet).toContain('It waives no gate, changes no finding, gate, readiness or handoff line (the full receipt gains only the run-state lines that document names), never authorizes a continuation and combines with every key.');
+    expect(bullet).toContain('Omitted, nothing changes.');
+    expect(bullet).toContain('The light review default never sets it, because recording run state needs a caller that opts in until Track 79A\'s default decision.');
+    const check = `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"`;
+    expect(bullet).toContain(check);
+    expect(prep).toContain(`  \`${check}\` (exit 0 means`);
+    expect(bullet).toContain('(exit 0 means supported) and omits the value otherwise, keeping its other keys');
+    expect(spawnSync('grep', ['-F', 'run-state=record', prepPath]).status).toBe(0);
+    expect(light).not.toContain('run-state');
+  });
+
+  // Value: protects=the Workflow metrics section conditions its inline begin/end/pass/correction/override rules on run-state=record without adding a code fence; fails_when=the conditional paragraph is dropped or adds a bash fence that breaks spanBlock; why_new=Track 77B T2; seam=none; no_claim=installed-agent execution
+  test('Workflow metrics conditions its inline writes on run-state=record without changing its fences', () => {
+    const afterContract = metricsRaw.slice(
+      metricsRaw.indexOf('Full contract:'),
+      metricsRaw.indexOf('Resolve `gstack-extend-telemetry`'),
+    );
+    expect(afterContract).not.toContain('```');
+    const para = afterContract.replace(/\s+/g, ' ');
+    expect(para).toContain('Under `run-state=record` (**Read an optional review policy**), read `<extend-root>/docs/review-run-state-calls.md` once at Step 1 and follow it instead of this section\'s run `begin` and `end`, pass, correction and context-override rules;');
+    expect(para).toContain('spans, waits and decisions stay, with `GX_RUN` from derive\'s `current.run_step_id`, `GX_SID` from its `current.session_id`, `GX_CAPTURE=1` only when `current.run_begin` is `recorded` or `replayed`, and no context-override argument.');
+    expect(para).toContain('Without the value this section applies unchanged.');
+    expect(metrics).toContain('`end` the run step just before the legacy telemetry finish');
+  });
+
+  // Value: protects=docs/review-run-state-calls.md resolves every Fixed points heading against skills/review-and-prep.md, names the degraded receipt lines, REVIEW_STATE_DIR, external-gate + pause order, derived run end, and the four byte-exact templates stay verbatim in the skill; fails_when=a Fixed points heading drifts, a degraded or pause rule is lost, or a byte-exact template changes; why_new=Track 77B T4; seam=none; no_claim=installed-agent execution
+  test('the calls document resolves every Fixed points heading and the skill keeps the four byte-exact templates', () => {
+    const skillHeadings = new Set(
+      prep.split('\n').filter((line) => /^##+ /.test(line)).map((line) => line.trim()),
+    );
+    const fixedStart = callsRaw.indexOf('## Fixed points');
+    const fixedEnd = callsRaw.indexOf('\n## ', fixedStart + 1);
+    expect(fixedStart).toBeGreaterThan(-1);
+    expect(fixedEnd).toBeGreaterThan(fixedStart);
+    const fixedSection = callsRaw.slice(fixedStart, fixedEnd);
+    const tableHeadings = [...fixedSection.matchAll(/`(##+ [^`]+)`/g)].map((m) => m[1]!);
+    expect(tableHeadings.length).toBeGreaterThanOrEqual(15);
+    for (const h of tableHeadings) {
+      expect(skillHeadings.has(h), `missing heading in skill: ${h}`).toBe(true);
+    }
+
+    for (const phrase of [
+      '`"<extend-root>/bin/review-state" --version` exits 0',
+      '`Run state: unavailable (helper-missing)`',
+      'Step 1\'s own `evidence` and `scope` spans come before `start` and are not emitted under `run-state=record`.',
+      'mapping the record\'s outcome `passed` to `passed`, `reproduced` to `failed` with reason `reproduced`, `blocked` to `blocked` with reason `blocked`, `inconclusive` to `blocked` with reason `inconclusive`, and `not-run` to `not-run`',
+      'Run `checkpoint external-gate`, then `checkpoint pause` (both with the fetched base), at the pause; on resume, run `checkpoint resume` and then `record gate` named `external-gate` with result `attested` for the attestation.',
+      'It writes the run `begin`, `pass`, `correction` and run `end` records and any missing `stage-runs` rows; the model writes none of those.',
+      'set `GX_RUN` from `data.current.run_step_id`, `GX_SID` from `data.current.session_id`, and `GX_CAPTURE=1` only when `data.current.run_begin` is `recorded` or `replayed`.',
+      '`REVIEW_STATE_DIR`',
+      '`refused cycle-1-baseline: write point not reached (<id>)`',
+      '`retry: "same-input"`',
+      '`Run state: unavailable (<reason>)`',
+      '`Workflow metrics (local, optional): capture=partial (run-state unavailable: <reason>).`',
+      '`Run state: recorded (<state path>; rev <n>)`',
+      '`Prepared HEAD:`',
+      '`Review handoff:`',
+      '`Delegated part:` (12 segments)',
+      '`delegation: active (…)`',
+    ]) {
+      expect(calls, phrase).toContain(phrase);
+    }
+
+    expect(prep).toContain('Prepared HEAD: <full SHA>; readiness confirmed at <UTC>');
+    expect(prep).toContain('Review handoff: review-and-prep/v1; review: COMPLETE; tree: <Git tree SHA>; base: <full base SHA>');
+    expect(prep).toContain('Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>');
+    expect(prep).toContain('delegation: active (parts=<list>; config=<sha256>; tools=<part>[,<part>...])');
+    for (const text of [bullet, callsRaw]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });

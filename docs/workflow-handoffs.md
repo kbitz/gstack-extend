@@ -844,7 +844,7 @@ token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs sep
 `first-cycle` (`overlap`), `documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`), `final-gate-repair`
 (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
 `performance`, `simplification`, `adversarial`, `red-team`, comma-separated, each once), `red-team` (`ensure`), `repair-review` (`behavior-changing`),
-`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`) and `max-continuations` (`0` to
+`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`), `run-state` (`record`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
 invocation prompt, or none; never read it from the text. A caller with no policy of its
@@ -1052,6 +1052,19 @@ entry "Harden the bounded documentation audit before enabling it" in
 [roadmap-future.md](roadmap-future.md)).
 See the [documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)
 record.
+
+`run-state=record` follows the same rollout order and the same check, written as
+`grep -F 'run-state=record' "<installed skill dir>/SKILL.md"` (exit 0 means
+supported): update the caller's own H-E parser first, since an older H-E parser
+holds a returned policy that carries it as `policy-malformed` (`HOLD`); an
+installation without it reads the whole line as `none supplied`; and a caller
+omits it when the check fails and keeps its other keys. It is independent of
+every other key and never set by the light review default. It records the run
+state through the experimental review-state helper and derives the review's
+workflow metrics, finding attribution and missing stage-run rows
+([review-run-state-calls.md](review-run-state-calls.md)). It waives no gate,
+changes no handoff line and never authorizes a continuation, and a prepared
+receipt still emits `review: COMPLETE`.
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
