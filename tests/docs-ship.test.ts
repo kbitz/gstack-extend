@@ -791,12 +791,30 @@ describe('links, anchors and claims', () => {
 
   test('a wrong SHA, a misquoted user line and a broken anchor are three findings', () => {
     const r = repo({});
-    const real = git(r.dir, 'rev-parse', 'main');
+    const writeObject = (type: 'tree' | 'commit', stdin: string): string => {
+      const res = spawnSync('git', ['hash-object', '-t', type, '-w', '--stdin'], {
+        cwd: r.dir,
+        env: GIT_ENV,
+        input: Buffer.from(stdin, 'utf8'),
+        encoding: 'utf8',
+      });
+      if (res.status !== 0) throw new Error(`git hash-object -t ${type}: ${res.stderr}`);
+      return res.stdout.trim();
+    };
+    const emptyTree = writeObject('tree', '');
+    expect(emptyTree).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904');
+    const real = writeObject(
+      'commit',
+      `tree ${emptyTree}\nauthor T <t@t.invalid> 0 +0000\ncommitter T <t@t.invalid> 0 +0000\n\ndocs-ship claims fixture\n`,
+    );
+    expect(real).toBe('9f7fc3adc09e038960fc06b111ee10b3cf4578cd');
+    const realPrefix = real.slice(0, 10);
+    expect(/[0-9]/.test(realPrefix) && /[a-f]/.test(realPrefix)).toBe(true);
     write(r.dir, {
       'docs/notes.md': [
         '# Notes',
         '',
-        `Base commit \`${real.slice(0, 10)}\` is real; commit 1f2e3d4c5b6a is not.`,
+        `Existing commit \`${realPrefix}\` is real; commit 1f2e3d4c5b6a is not.`,
         '',
         'The owner said "we just need to ensure we get a far lighter review burden for docs than normal PRs".',
         '',
@@ -825,9 +843,22 @@ describe('links, anchors and claims', () => {
     expect(findings.find((f) => f[1] === 'quote')![3]).toBe('fix: quote the brief exactly: "we just need to ensure we are getting a far lighter review burden for those than normal PRs"');
     expect(findings.find((f) => f[1] === 'anchor')![2]).toBe('docs/guide.md has no heading for #install');
     const claims = lines(out.stdout, 'CLAIM');
-    expect(claims.find((c) => c[1] === 'sha' && c[3] === 'exists')?.[2]).toBe(real.slice(0, 10));
+    expect(claims.find((c) => c[1] === 'sha' && c[3] === 'exists')?.[2]).toBe(realPrefix);
     expect(claims.find((c) => c[1] === 'quote' && c[3] === 'confirmed')?.[2]).toBe('a far lighter review burden for those than normal PRs');
     expect(field(out.stdout, 'LINKS')).toBe('2');
+  });
+
+  // Value: protects=the intentional mixed digit/letter guard in src/docs-ship/check.ts (otherClaims skips SHA-shaped tokens lacking a-f letters);
+  // fails_when=a digit-only token in the SHA length range is checked as a commit SHA in prose or inline code;
+  // why_new=existing claims tests only exercise mixed-hex SHAs and short numbers; seam=none.
+  test('digit-only SHA-length tokens in prose and inline code are skipped as SHA claims', () => {
+    const r = repo({
+      'docs/notes.md': '# Notes\n\nPlain token 2390976789 and inline `2390976789` are skipped by the mixed-character SHA guard.\n',
+    });
+    const out = cli(r.dir, 'check', '--base', r.base);
+    expect(out.code).toBe(0);
+    expect(lines(out.stdout, 'FINDING')).toEqual([]);
+    expect(lines(out.stdout, 'CLAIM').filter((c) => c[1] === 'sha')).toEqual([]);
   });
 
   test('a missing link target and a link that leaves the repository are findings', () => {
