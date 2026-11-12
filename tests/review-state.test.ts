@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
-import { executeRender, RENDER_SCHEMA, RENDER_SHAPES } from '../src/review-state/render.ts';
+import { RENDER_SCHEMA, RENDER_SHAPES } from '../src/review-state/render.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
@@ -1211,7 +1211,7 @@ describe('bin/review-state', () => {
       code: 1,
       json: { command: 'export', status: 'unreadable', reason: 'newer-schema' },
     });
-    writeFileSync( statePath, '{corrupt\n');
+    writeFileSync(statePath, '{corrupt\n');
     expect(runCli(['export', '--dir', d])).toMatchObject({
       code: 1,
       json: { command: 'export', status: 'unreadable', reason: 'corrupt' },
@@ -1312,6 +1312,9 @@ describe('bin/review-state', () => {
 
     for (const [name, payload, want] of [
       ['r-unknown.json', { output: 'full-receipt', unknown_key: 1 }, { path: 'unknown_key', rule: 'unknown-key', expected: 'no unknown keys' }],
+      ['r-null-section.json', { output: 'full-receipt', sections: [null] }, { path: 'sections[0]', rule: 'invalid-type', expected: 'object' }],
+      ['r-null-receipt.json', { output: 'comment', full_receipt: null }, { path: 'full_receipt', rule: 'invalid-type', expected: 'object' }],
+      ['r-null-summary.json', { output: 'body', full_receipt: null, summary: null, comment_url: commentUrl }, { path: 'summary', rule: 'invalid-type', expected: 'object' }],
       ['r-bad-digest.json', { output: 'full-receipt', sections: [{ path: 'sections.md', sha256: '0'.repeat(64) }] }, { path: 'sections[0]', rule: 'evidence-digest-mismatch', expected: 'valid-file-in-dir-with-matching-sha256' }],
     ] as const) {
       expect(runRender(dReady, name, payload).json.detail.violations).toContainEqual(want);
@@ -1434,5 +1437,58 @@ describe('bin/review-state', () => {
     callCmd(dNeeds, 'start', mkStart(8));
     callCmd(dNeeds, 'finish', { outcome: 'needs-context', base: baseSha, stop_reason: 'missing spec' });
     expect(readFileSync(runRender(dNeeds, 'n-final.json', { output: 'final' }).json.files[0].path, 'utf8')).toContain('status: needs-context;');
+  });
+
+  // Value: protects=digest-pinned evidence and exclusive output ownership; fails_when=render reopens checked paths, removes an unowned file after open fails, or rounds an existing numeric suffix; why_new=review reproductions; seam=child-local filesystem mocks; no_claim=OS sandboxing
+  test.each(['replace-section', 'failed-open', 'large-suffix'])('render consumes checked bytes and preserves outputs it did not create (%s)', (mode) => {
+      const d = newDir();
+      callCmd(d, 'start', mkStart());
+      callCmd(d, 'record gate', { gate_id: uid(41), name: 'greptile', result: 'not-run', candidate: { commit: headSha, base: baseSha }, details: { value: 'skipped — no root configuration', run: null } });
+      callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'ready', base: baseSha });
+      writeFileSync(join(d, 'section.md'), 'Digest-pinned section.\n');
+      const input = writeJson(d, 'render.json', { output: 'full-receipt', sections: [{ path: 'section.md', sha256: sha256('Digest-pinned section.\n') }] });
+      if (mode === 'large-suffix') writeFileSync(join(d, 'full-receipt-9007199254740993.md'), 'existing receipt\n');
+      const child = `
+        import { mock } from 'bun:test';
+        const fs = await import('node:fs');
+        const mode = ${JSON.stringify(mode)};
+        const storePath = ${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))};
+        const store = await import(storePath);
+        const checkDirFile = store.checkDirFile, openSync = fs.openSync;
+        if (mode === 'replace-section') mock.module(storePath, () => ({ ...store,
+          checkDirFile(...args) {
+            const result = checkDirFile(...args);
+            if (result.ok && args[1] === 'section.md') fs.writeFileSync(result.realPath, 'Replacement after validation.\\n');
+            return result;
+          }
+        }));
+        if (mode === 'failed-open') mock.module('node:fs', () => ({ ...fs,
+          openSync(path, flags, permissions) {
+            if (flags === 'wx' && String(path).includes('/full-receipt-')) {
+              fs.writeFileSync(path, 'Other writer owns this output.\\n');
+              throw Object.assign(new Error('injected descriptor exhaustion'), { code: 'EMFILE' });
+            }
+            return openSync(path, flags, permissions);
+          }
+        }));
+        const { executeRender } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/render.ts'))});
+        console.log(JSON.stringify(executeRender(${JSON.stringify(d)}, ${JSON.stringify(input)}, ${JSON.stringify(repo)})));
+      `;
+      const r = spawnSync(process.execPath, ['--no-env-file', '--config=/dev/null', '--no-install', '-e', child], { cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 15000 });
+      expect(r.status, r.stderr).toBe(0);
+      const result = JSON.parse(r.stdout);
+      if (mode === 'failed-open') {
+        expect(result.ok).toBe(false);
+        expect(result.envelope).toMatchObject({ reason: 'unwritable', detail: { errno: 'EMFILE' } });
+        expect(existsSync(join(d, 'full-receipt-1.md'))).toBe(true);
+        expect(readFileSync(join(d, 'full-receipt-1.md'), 'utf8')).toBe('Other writer owns this output.\n');
+      } else {
+        expect(result.ok).toBe(true);
+        const output = result.renderDoc.files[0].path;
+        expect(readFileSync(output, 'utf8')).toContain('Digest-pinned section.\n');
+        expect(readFileSync(output, 'utf8')).not.toContain('Replacement after validation.');
+        if (mode === 'replace-section') expect(readFileSync(join(d, 'section.md'), 'utf8')).toBe('Replacement after validation.\n');
+        if (mode === 'large-suffix') expect(output).toBe(join(d, 'full-receipt-9007199254740994.md'));
+      }
   });
 });

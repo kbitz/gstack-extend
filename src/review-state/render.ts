@@ -334,7 +334,6 @@ export type RenderCommandResult = { ok: true; exitCode: 0; renderDoc: ReviewStat
 const OUTPUT_KINDS: readonly RenderOutputKind[] = ['full-receipt', 'comment', 'body', 'final'];
 
 function validateEvRef(raw: unknown, field: string, v: Violation[], pat?: RegExp, exp?: string): EvidenceRef | null {
-  if (raw == null) return null;
   if (!isObj(raw)) { v.push({ path: field, rule: 'invalid-type', expected: 'object' }); return null; }
   const c = validateFields(raw, ['path', 'sha256'], {}, { path: R.relPath, sha256: R.hex64 }, field, v), p = String(c.path ?? '');
   if (pat && p && !pat.test(p)) v.push({ path: `${field}.path`, rule: 'invalid-value', expected: exp ?? pat.source });
@@ -344,19 +343,21 @@ function validateEvRef(raw: unknown, field: string, v: Violation[], pat?: RegExp
 function allocateExclusiveFile(
   realDir: string, dirAsGiven: string, prefix: string, content: string, home: string,
 ): { ok: true; file: ReviewStateRenderFile } | { ok: false; detail: Record<string, unknown> } {
-  let maxN = 0;
+  let maxN = 0n;
   const re = new RegExp(`^${prefix}-([1-9]\\d*)\\.md$`);
   try {
-    for (const e of readdirSync(realDir)) { const m = re.exec(e); if (m && Number(m[1]) > maxN) maxN = Number(m[1]); }
+    for (const e of readdirSync(realDir)) { const m = re.exec(e); if (m && BigInt(m[1]!) > maxN) maxN = BigInt(m[1]!); }
   } catch (err) {
     return { ok: false, detail: { errno: (err as NodeJS.ErrnoException).code ?? 'EIO', syscall: 'readdir', path: truncate80(realDir) } };
   }
   const nd = normalizeDir(dirAsGiven), buf = Buffer.from(content, 'utf8');
   for (let i = 1; i <= 64; i++) {
-    const fn = `${prefix}-${maxN + i}.md`, outPath = join(realDir, fn);
+    const fn = `${prefix}-${maxN + BigInt(i)}.md`, outPath = join(realDir, fn);
     let fd: number | null = null;
+    let created = false;
     try {
-      fd = openSync(outPath, 'wx', 0o600); writeAll(fd, buf); fsyncSync(fd); closeSync(fd); fd = null;
+      fd = openSync(outPath, 'wx', 0o600); created = true;
+      writeAll(fd, buf); fsyncSync(fd); closeSync(fd); fd = null;
       const rb = readFileSync(outPath);
       if (!rb.equals(buf)) { unlinkQuiet(outPath); return { ok: false, detail: { errno: 'EIO', syscall: 'readback', path: truncate80(outPath) } }; }
       const s = rb.toString('utf8');
@@ -364,8 +365,8 @@ function allocateExclusiveFile(
     } catch (err) {
       if (fd !== null) { try { closeSync(fd); } catch { /* ignore */ } }
       const e = err as NodeJS.ErrnoException;
-      if (fd === null && e.code === 'EEXIST') continue;
-      unlinkQuiet(outPath);
+      if (!created && e.code === 'EEXIST') continue;
+      if (created) unlinkQuiet(outPath);
       return { ok: false, detail: { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(outPath) } };
     }
   }
@@ -393,6 +394,8 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
   const rules: Record<string, FieldRule> = {
     output: R.enum(OUTPUT_KINDS),
     sections: { check: (x) => Array.isArray(x) && x.length <= 50, expected: 'array-0..50' },
+    full_receipt: { check: (x) => isObj(x) || (output === 'final' && x === null), expected: output === 'final' ? 'object|null' : 'object', rule: 'invalid-type' },
+    summary: { check: isObj, expected: 'object', rule: 'invalid-type' },
     review_restriction_resolved: { check: (x) => x === undefined || typeof x === 'boolean', expected: 'boolean' },
     comment_url: { check: (x) => x === null || isHttpUrl(x), expected: 'http-url|null' },
     save_before_shipping: R.strN(1, 500),
@@ -424,9 +427,11 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
   if (inputPr && state.run.pr && STATE_KEYS.pr.some((k) => inputPr[k] !== state.run.pr![k])) return fail('invalid-input', { violations: [{ path: 'pr', rule: 'conflicts-with-state', expected: 'matches-run-pr' }] });
   if (inputGhLogin && state.run.gh_login && inputGhLogin !== state.run.gh_login) return fail('invalid-input', { violations: [{ path: 'gh_login', rule: 'conflicts-with-state', expected: 'matches-run-gh-login' }] });
 
+  const checkedBytes = new Map<string, Buffer>();
   for (const [ref, path] of [...sectionsRefs.map((r, i) => [r, `sections[${i}]`] as const), ...(fullRef ? [[fullRef, 'full_receipt'] as const] : []), ...(sumRef ? [[sumRef, 'summary'] as const] : []), ...(comRef ? [[comRef, 'comment_file'] as const] : [])]) {
     const res = checkDirFile(realDir, ref.path, ref.sha256);
     if (!res.ok) v.push({ path, rule: res.error, expected: 'valid-file-in-dir-with-matching-sha256' });
+    else checkedBytes.set(path, res.bytes);
   }
   if (v.length > 0) return fail('invalid-input', { violations: v.slice(0, 20) });
 
@@ -434,7 +439,7 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
     let prefix = 'final', content = '';
     if (output === 'full-receipt') {
       prefix = 'full-receipt';
-      content = renderFullReceipt(state, { sectionsText: sectionsRefs.map((r) => readFileSync(join(realDir, r.path), 'utf8')), reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
+      content = renderFullReceipt(state, { sectionsText: sectionsRefs.map((_, i) => checkedBytes.get(`sections[${i}]`)!.toString('utf8')), reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
     } else if (output === 'comment') {
       prefix = `comment-${exit === 'ready' ? 'receipt' : exit === 'paused' ? 'paused' : 'stopped'}`;
       content = renderComment(state, { fullReceipt: fullRef!, reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
@@ -442,7 +447,7 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
       prefix = 'pr-body';
       const commentUrl = canon.comment_url as string | null;
       if (commentUrl === null && exit !== 'blocked') return fail('invalid-input', { violations: [{ path: 'comment_url', rule: 'invalid-value', expected: 'http-url-for-non-blocked-body' }] });
-      const summaryText = readFileSync(join(realDir, sumRef!.path), 'utf8'), sumErr = validateSummaryText(summaryText, exit);
+      const summaryText = checkedBytes.get('summary')!.toString('utf8'), sumErr = validateSummaryText(summaryText, exit);
       if (sumErr) return fail('invalid-input', { violations: [{ path: 'summary', rule: 'invalid-value', expected: sumErr }] });
       content = renderBody(state, { fullReceipt: fullRef!, summaryText, commentUrl }, dirArg, home);
     } else {
@@ -458,7 +463,7 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
         if (autoLines.length > 0) v.push({ path: 'auto_choice_lines', rule: 'forbidden-for-exit', expected: 'empty' });
         if (v.length > 0) return fail('invalid-input', { violations: v.slice(0, 20) });
         const expectedReceipt = `${evalGrammar('compact', state, { dir: dirArg, home, fullReceipt: fullRef!, resolved: state.finish!.review_restriction_resolved === true }).join('\n')}\n`;
-        if (readFileSync(join(realDir, comRef!.path), 'utf8') !== expectedReceipt) return fail('invalid-input', { violations: [{ path: 'comment_file', rule: 'receipt-mismatch', expected: 'matches-finished-state' }] });
+        if (checkedBytes.get('comment_file')!.toString('utf8') !== expectedReceipt) return fail('invalid-input', { violations: [{ path: 'comment_file', rule: 'receipt-mismatch', expected: 'matches-finished-state' }] });
       } else if (exit === 'paused') {
         if (typeof canon.required_user_checks !== 'string') v.push({ path: 'required_user_checks', rule: 'missing-key', expected: 'string-1..2000' });
         if (!effPr) v.push({ path: 'pr', rule: 'missing-key', expected: 'object' });
