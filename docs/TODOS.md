@@ -315,6 +315,46 @@
 - **Context:** Filed by `/review-and-prep` on 2026-11-11 at `43e5c71`, before draft creation at the external full-suite gate.
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=bin/lib/telemetry.py|tests/workflow-metrics.test.ts] Test gap: Exercise export subprocess failure envelopes
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Derive's export boundary handles launch failure, timeout, malformed JSON and an incompatible export schema; existing tests cover a valid export refusal rather than these subprocess faults.
+- **Hypothesis (untested):** Extend the derive boundary fixture with those faults and assert one unavailable response and recovery diagnostic. Re-verify the current boundary first; this would not prove real Bun absence or timing on every host.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1966`
+- **Evidence:** Read-only coverage audit traced path 16 at `c5c311d`; current targeted checks pass and no failure was reproduced. This is additional fault coverage beyond the approved plan's required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `c5c311d`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py|tests/workflow-metrics.test.ts] Test gap: Exercise derived stage-run lock failures
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The blocked completion-marker fixture does not exercise opening or locking an unsafe or unwritable telemetry lock directory.
+- **Hypothesis (untested):** Extend the derive fixture with a blocked lock store and verify the lock-failure response without a stage row or escaped error. Re-verify the current boundary first; this would not cover every operating system's locking implementation.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:2164`
+- **Evidence:** Read-only coverage audit traced path 23 at `c5c311d`; current targeted checks pass and no failure was reproduced. This is additional fault coverage beyond the approved plan's required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `c5c311d`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py|tests/workflow-metrics.test.ts] Test gap: Exercise post-append provenance marker failures
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Current coverage rejects an unusable completion-marker store before appending; it does not inject an append failure or a marker-save failure after an append succeeds.
+- **Hypothesis (untested):** Extend the derive fixture with those faults, checking partial responses and the documented retry side effects. Re-verify the current boundary first; this would not establish crash atomicity between the row and marker files.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:2159`
+- **Evidence:** Read-only coverage audit traced path 24 at `c5c311d`; current targeted checks pass and no failure was reproduced. This is additional fault coverage beyond the approved plan's required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `c5c311d`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Exercise concurrent derive and finish deduplication
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Sequential derive retries and finish ordering pass, but the suite does not launch simultaneous derive processes or a derive/finish race.
+- **Hypothesis (untested):** Add parallel real-CLI launches to the existing isolated telemetry fixture and verify readable metrics and one stage row. Re-verify the locking contract first; this would not establish cross-host filesystem or crash-recovery guarantees.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:2114`
+- **Evidence:** Read-only coverage audit traced user-flow path 30 at `c5c311d`; current targeted checks pass and no race was reproduced. This is additional concurrency coverage beyond the approved plan's required tests.
+- **Context:** Filed by `/review-and-prep` on 2026-11-11 at `c5c311d`, before draft creation at the external full-suite gate.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

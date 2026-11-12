@@ -1,4 +1,5 @@
 import { isAbsolute, join } from 'node:path';
+import { executeExport, EXPORT_SCHEMA } from './export.ts';
 import { REASON_TABLE, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
 import { executeCommand, makeEnvelope, readHelperVersion, type StoreResult } from './store.ts';
 
@@ -14,8 +15,11 @@ Usage:
   bin/review-state record pass|correction|gate|audit --dir DIR --input FILE
   bin/review-state checkpoint --dir DIR --input FILE
   bin/review-state finish --dir DIR --input FILE
+  bin/review-state export --dir DIR
   bin/review-state --version
   bin/review-state --help | -h | <command> --help
+
+export is read-only: no --input, no lock, and no state writes.
 
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)
@@ -36,6 +40,9 @@ Docs: docs/designs/review-run-state.md
 }
 
 export function renderCommandHelp(cmd: string): string | null {
+  if (cmd === 'export') {
+    return `review-state export — experimental read-only projection (${EXPORT_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n\nDocs: docs/designs/review-run-state.md\n`;
+  }
   const matching = Object.entries(REQUEST_SHAPES).filter(([k]) => k === cmd || k.startsWith(`${cmd} (`) || (cmd === 'record' && k.startsWith('record ')));
   if (matching.length === 0) return null;
   const sections = matching.map(([name, shape]) => {
@@ -103,6 +110,16 @@ export function main(argv: string[], io: CliIo): number {
   }
 
   const statePath = dirArg && isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
+  if (commandStr === 'export') {
+    if (flagErr || dirArg === undefined || inputArg !== undefined) {
+      const msg = flagErr ?? (inputArg !== undefined ? 'export does not accept --input' : '--dir is required');
+      return emitResult(makeEnvelope('export', 'usage', { message: msg }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
+    }
+    const res = executeExport(dirArg, io.cwd, env, io.versionPath);
+    if (!res.ok) return emitResult(res.envelope, io);
+    io.stdout(`${JSON.stringify(res.exportDoc)}\n`);
+    return 0;
+  }
   const validCommands: readonly CommandName[] = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'];
   if (!(validCommands as readonly string[]).includes(commandStr)) {
     const label = commandStr || 'unknown';

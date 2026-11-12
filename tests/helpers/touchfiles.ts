@@ -333,6 +333,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
     'bin/lib/workflow_metrics.py',
+    'bin/review-state',
+    'src/review-state/**',
     // Track 49A: the blocks call the helper `setup` installs; the suite copies it into each fixture home.
     'bin/lib/telemetry-call.sh',
     'docs/stage-runs.schema.json',
@@ -394,6 +396,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/quota/__init__.py',
     'bin/lib/quota/common.py',
     'bin/lib/quota/usage.py',
+    'bin/review-state',
+    'src/review-state/**',
     'tests/fixtures/run-usage/**',
     'docs/workflow-metrics.schema.json',
     'docs/telemetry.md',

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.0] - 2026-11-11
+
+### Added
+
+- The telemetry helper gains an experimental `derive` command that writes a review's workflow metrics, finding attribution and any missing stage-run rows from the run state the experimental review-state helper records, and that helper gains a read-only `export` command; no installed skill calls either yet.
+- `bin/review-state export --dir DIR` projects recorded review state without changing it.
+- `bin/gstack-extend-telemetry derive --dir DIR` recovers telemetry from recorded review state and requires Bun 1.3.3 or newer.
+
+### Upgrade notes
+
+- `bin/gstack-extend-telemetry derive --dir DIR` requires Bun 1.3.3 or newer.
+
 ## [0.87.0] - 2026-11-11
 
 ### Added

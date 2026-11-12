@@ -1506,39 +1506,44 @@ def resolve_blocked_reason(raw_reason, outcome, mode):
     return None, "not-supplied"
 
 
-def provenance_row(stage, sid, start, duration, values, root, work_item=None, observed=None, saved_work_item=None):
+def provenance_row(stage, sid, start, duration, values, root, work_item=None, observed=None, saved_work_item=None,
+                   derived=False, branch_override=None):
     now = time.time()
     begin = start if start is not None else int(now) - duration
-    agent, model, effort = detect(begin, now, root)
-    detected_agent = agent
+    if derived:
+        agent = model = effort = detected_agent = None
+    else:
+        agent, model, effort = detect(begin, now, root)
+        detected_agent = agent
     if isinstance(observed, dict):
         observed.update(begin=begin, end=now, agent=detected_agent)
     # A source labels the value finally written, so a rejected flag leaves the detected value's source in place.
     flagged = set()
-    explicit = values.get("--agent")
-    if explicit in HARNESSES:
-        if explicit != agent:
-            model = effort = None  # detected values describe a different harness
-        agent = explicit
-        flagged.add("agent")
-    elif explicit is not None:
-        trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor or grok)")
-    model_flag, effort_flag = clean(values.get("--model")), clean(values.get("--effort"))
-    if model_flag is not None:
-        model = model_flag
-        flagged.add("model")
-    if effort_flag is not None:
-        effort = effort_flag
-        flagged.add("effort")
     requested = set()
-    if model is None:
-        model = requested_value(REQUESTED_MODEL_ENV)
-        if model is not None:
-            requested.add("model")
-    if effort is None:
-        effort = requested_value(REQUESTED_EFFORT_ENV)
-        if effort is not None:
-            requested.add("effort")
+    if not derived:
+        explicit = values.get("--agent")
+        if explicit in HARNESSES:
+            if explicit != agent:
+                model = effort = None  # detected values describe a different harness
+            agent = explicit
+            flagged.add("agent")
+        elif explicit is not None:
+            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor or grok)")
+        model_flag, effort_flag = clean(values.get("--model")), clean(values.get("--effort"))
+        if model_flag is not None:
+            model = model_flag
+            flagged.add("model")
+        if effort_flag is not None:
+            effort = effort_flag
+            flagged.add("effort")
+        if model is None:
+            model = requested_value(REQUESTED_MODEL_ENV)
+            if model is not None:
+                requested.add("model")
+        if effort is None:
+            effort = requested_value(REQUESTED_EFFORT_ENV)
+            if effort is not None:
+                requested.add("effort")
 
     def source(field, value):
         return (SOURCE_UNKNOWN if value is None else SOURCE_FLAG if field in flagged
@@ -1552,6 +1557,8 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
         except (OSError, subprocess.SubprocessError):
             # A stuck git must not skip the skill-usage completion that follows this row.
             repo = branch = None
+    if branch_override is not None:
+        branch = clean(branch_override)
     raw_outcome = values.get("--outcome")
     resolved_outcome = raw_outcome if raw_outcome in OUTCOMES else "unknown"
     route, entrypoint = route_for(agent)
@@ -1916,15 +1923,295 @@ def run_report(args):
     return 0
 
 
+def _clean_git_capture(args):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S, env=env)
+    return os.fsdecode(result.stdout).removesuffix("\n") if result.returncode == 0 else ""
+
+
+DERIVE_EXPORT_TIMEOUT_S = 15
+
+
+def derive_result(status, reason, directory, run_id=None, current=None, sessions=None, stage_runs=None, skipped=None):
+    print(json.dumps({"v": 1, "status": status, "reason": reason, "data": {
+        "run_id": run_id, "current": current, "sessions": sessions or [],
+        "stage_runs": stage_runs or {"written": 0, "present": 0, "skipped": 0}, "skipped": skipped or [],
+    }}, separators=(",", ":")))
+    if status != "ok":
+        # JSON quoting keeps paths containing newlines on this one diagnostic line.
+        print(f"derive {status} ({reason}); rerun derive --dir {json.dumps(directory)} from this repository "
+              "once the telemetry directory is writable; docs/telemetry.md#review-state-derive", file=sys.stderr)
+    return 0
+
+
+def run_derive(args):
+    """Derive workflow-metrics records and missing stage-runs rows from review-run-state.json via bin/review-state export."""
+    derive_usage = "gstack-extend-telemetry derive --dir DIR"
+    if args in (["-h"], ["--help"]):
+        print(f"Usage: {derive_usage}\nExperimental until Track 79A; no installed skill calls it yet.")
+        return 0
+
+    def emit_unavailable(reason, detail=None, run_id=None, segments=None, skipped=None, stage_runs=None):
+        return derive_result("unavailable", reason, args[1] if len(args) == 2 else None,
+                             run_id=run_id, sessions=segments, skipped=skipped, stage_runs=stage_runs)
+
+    if len(args) != 2 or args[0] != "--dir" or not args[1]:
+        return emit_unavailable("usage", {"message": f"invalid arguments; use '{derive_usage}'"})
+
+    dir_arg = args[1]
+    review_state_bin = Path(__file__).resolve().parent.parent / "review-state"
+    try:
+        export_res = subprocess.run(
+            [str(review_state_bin), "export", "--dir", dir_arg],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=DERIVE_EXPORT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return emit_unavailable("io-error", {"message": "review-state export unavailable"})
+
+    raw_stdout = os.fsdecode(export_res.stdout).strip()
+    try:
+        parsed_out = json.loads(raw_stdout) if raw_stdout else None
+    except (ValueError, RecursionError):
+        parsed_out = None
+
+    if export_res.returncode != 0:
+        if isinstance(parsed_out, dict) and isinstance(parsed_out.get("reason"), str):
+            return emit_unavailable(parsed_out["reason"], parsed_out.get("detail"))
+        return emit_unavailable("export-failed", {"returncode": export_res.returncode})
+
+    if not isinstance(parsed_out, dict) or parsed_out.get("schema") != "review-state-export/v1":
+        return emit_unavailable("export-failed", {"message": "invalid export schema"})
+
+    wm = _load_workflow_metrics()
+    run_info = parsed_out.get("run") if isinstance(parsed_out.get("run"), dict) else {}
+    run_id = run_info.get("run_id")
+    export_repo = run_info.get("repo")
+    segments_list = parsed_out.get("segments") if isinstance(parsed_out.get("segments"), list) else []
+    records_list = parsed_out.get("records") if isinstance(parsed_out.get("records"), list) else []
+    skipped_list = parsed_out.get("skipped") if isinstance(parsed_out.get("skipped"), list) else []
+    stage_runs_list = parsed_out.get("stage_runs") if isinstance(parsed_out.get("stage_runs"), list) else []
+
+    top_root = _clean_git_capture(["git", "rev-parse", "--show-toplevel"])
+    common_dir = _clean_git_capture(["git", "rev-parse", "--git-common-dir"])
+    actual_common_repo = os.path.realpath(os.path.join(os.getcwd(), common_dir)) if common_dir else None
+
+    extend_state = state_root()
+    skill = "extend:review-and-prep"
+    slot_root = top_root or str(Path.cwd())
+    slot_key = hashlib.sha256(json.dumps([slot_root, skill]).encode()).hexdigest()
+    marker_dir = extend_state / "telemetry-completed" / slot_key
+
+    seg_summaries = []
+    bound_derived_sids = set()
+    metrics_off, _ = wm.metrics_disabled()
+    provenance_on = provenance_enabled(extend_state)
+    current = None
+
+    for seg in segments_list:
+        if not isinstance(seg, dict):
+            continue
+        seg_num = seg.get("segment")
+        sid = seg.get("session_id")
+        is_derived = bool(seg.get("derived"))
+        seg_records = [r for r in records_list if isinstance(r, dict) and r.get("session_id") == sid]
+        projected_events = {r.get("request", {}).get("event_id") for r in seg_records}
+        run_step_id = seg.get("run_step_id")
+        run_begin = "disabled" if metrics_off else "unavailable"
+
+        bind_mode = ["already-bound"]
+
+        def make_binder(s_num, s_derived):
+            def _binder(req):
+                wm._session(req.get("session_id"), "session_id")
+                if not s_derived:
+                    try:
+                        wm.bind_initial(req)
+                        bind_mode[0] = "handoff"
+                        return
+                    except wm.Fail as err:
+                        if err.reason != "identity-missing":
+                            raise
+                    if not top_root:
+                        raise wm.Fail("unavailable", "ambiguous-binding", cause="git-root-unavailable")
+                    marker_file = marker_dir / invocation_name(req["session_id"])
+                    if read_marker(marker_file, req["session_id"], skill, top_root):
+                        bind_mode[0] = "completed-marker"
+                        return
+                    raise wm.Fail("unavailable", "identity-missing", cause="no-handoff")
+                expected_sid = "extend-" + str(uuid.uuid5(uuid.UUID(wm.NAMESPACE), f"{run_id}:segment:{s_num}"))
+                if req["session_id"] != expected_sid:
+                    raise wm.Fail("unavailable", "identity-missing", cause="derived-session-mismatch")
+                if not actual_common_repo or export_repo != actual_common_repo:
+                    raise wm.Fail("unavailable", "identity-mismatch", cause="repo-mismatch")
+                bind_mode[0] = "derived"
+            return _binder
+
+        binder = make_binder(seg_num, is_derived)
+        # Provenance is independently enabled: metrics failure or opt-out must
+        # not suppress an otherwise valid derived stage-run row.
+        if is_derived:
+            try:
+                binder({"session_id": sid})
+                bound_derived_sids.add(sid)
+            except wm.Fail:
+                pass
+            bind_mode[0] = "already-bound"
+        recorded_count = 0
+        replayed_count = 0
+        failed_count = 0
+        seg_reason = None
+        bound_ok = False
+
+        for idx, rec in enumerate([] if metrics_off else seg_records):
+            op = rec.get("op")
+            req = rec.get("request")
+            try:
+                if op == "end" and isinstance(req, dict):
+                    req = dict(req, step_id=run_step_id)
+                wm.validate_request(op, req)
+                status, result = wm.mutate(op, req, binder=binder, bound_event_ids=projected_events)
+                if status == "recorded":
+                    recorded_count += 1
+                else:
+                    replayed_count += 1
+                if idx == 0:
+                    bound_ok = True
+                    run_begin = status
+                    run_step_id = result.get("bound_step_id", run_step_id)
+            except wm.Fail as err:
+                failed_count += 1
+                seg_reason = err.reason
+                if idx == 0:
+                    bind_mode[0] = "unbound"
+                break
+
+        seg_summaries.append({
+            "segment": seg_num,
+            "session_id": sid,
+            "derived": is_derived,
+            "binding": "disabled" if metrics_off else bind_mode[0] if bound_ok else "unbound",
+            "recorded": recorded_count,
+            "replayed": replayed_count,
+            "failed": failed_count,
+            "reason": seg_reason,
+        })
+        current = {"segment": seg_num, "session_id": sid, "run_step_id": run_step_id, "run_begin": run_begin}
+
+    stage_runs_summary = {"written": 0, "present": 0, "skipped": 0}
+    stage_runs_error = None
+    eligible_stage_runs = [
+        sr for sr in stage_runs_list
+        if isinstance(sr, dict) and sr.get("session_id") in bound_derived_sids
+    ]
+    stage_runs_summary["skipped"] = len(stage_runs_list) - len(eligible_stage_runs) if provenance_on else len(stage_runs_list)
+    if eligible_stage_runs and provenance_on:
+        ledger = stage_run_path(extend_state)
+        held_lock = -1
+        try:
+            lock_dir = extend_state / "telemetry-locks"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            held_lock = os.open(lock_dir / (slot_key + ".lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            fcntl.flock(held_lock, fcntl.LOCK_EX)
+            for sr in eligible_stage_runs:
+                sid = sr["session_id"]
+                marker_file = marker_dir / invocation_name(sid)
+                if read_marker(marker_file, sid, skill, slot_root):
+                    stage_runs_summary["present"] += 1
+                    continue
+                if store_shape(marker_dir) == "bad":
+                    stage_runs_error = "stage-runs-marker-unwritable"
+                    continue
+                start_ts = parse_ts(sr.get("started_at"))
+                end_ts = parse_ts(sr.get("ended_at"))
+                if start_ts is None or end_ts is None:
+                    stage_runs_error = "invalid-stage-run-timestamps"
+                    continue
+                begin_epoch = int(start_ts)
+                duration_s = max(0, int(round(end_ts - start_ts)))
+                row = provenance_row(
+                    "review-and-prep",
+                    sid,
+                    begin_epoch,
+                    duration_s,
+                    {"--outcome": sr.get("outcome")},
+                    top_root,
+                    derived=True,
+                    branch_override=sr.get("branch"),
+                )
+                if append_row(ledger, row, "provenance sink"):
+                    if store_shape(marker_dir) != "bad":
+                        try:
+                            save_state(
+                                marker_file,
+                                dict(
+                                    session_id=sid,
+                                    skill=skill,
+                                    root=slot_root,
+                                    done=["provenance"],
+                                    completed_at=int(time.time()),
+                                ),
+                            )
+                        except OSError:
+                            stage_runs_error = "stage-runs-marker-unwritable"
+                    stage_runs_summary["written"] += 1
+                else:
+                    stage_runs_error = "stage-runs-unwritable"
+        except OSError:
+            stage_runs_error = "stage-runs-lock-unwritable"
+        finally:
+            if held_lock >= 0:
+                os.close(held_lock)
+
+    any_bound = any(s["binding"] != "unbound" for s in seg_summaries)
+    all_bound_and_clean = (
+        bool(seg_summaries)
+        and all(s["binding"] != "unbound" and s["reason"] is None for s in seg_summaries)
+        and len(skipped_list) == 0
+        and stage_runs_error is None
+    )
+    if metrics_off and stage_runs_error is None:
+        status = "disabled"
+        reason = "disabled"
+    elif all_bound_and_clean:
+        status = "ok"
+        reason = None
+    elif any_bound:
+        status = "partial"
+        reason = next(
+            (s["reason"] for s in seg_summaries if s["reason"] is not None),
+            stage_runs_error or ("segment-unknown" if skipped_list else "partial"),
+        )
+    else:
+        status = "unavailable"
+        reason = next((s["reason"] for s in seg_summaries if s["reason"] is not None), "identity-missing")
+
+    return derive_result(status, reason, dir_arg, run_id, current, seg_summaries, stage_runs_summary, skipped_list)
+
+
+def _derive_dispatch(args):
+    try:
+        run_derive(args)
+    except Exception:
+        derive_result("unavailable", "io-error", args[1] if len(args) == 2 else None)
+
+
 def main(args):
     if args and args[0] == "metrics":
         _metrics_dispatch(args[1:])
+        return
+    if args and args[0] == "derive":
+        _derive_dispatch(args[1:])
         return
     if args and args[0] == "report":
         run_report(args[1:])
         return
     if args and args[0] in ("-h", "--help"):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
+        print("       gstack-extend-telemetry derive --dir DIR")
         print("       gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...")
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown] [--blocked-reason TOKEN]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")

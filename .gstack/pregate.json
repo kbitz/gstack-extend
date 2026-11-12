@@ -165,7 +165,9 @@
       "tests/review-delegate.test.ts"
     ],
     "bin/review-state": [
-      "tests/review-state.test.ts"
+      "tests/review-state.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/workflow-metrics.test.ts"
     ],
     "bin/roadmap-audit": [
       "tests/audit-cli-contract.test.ts",
@@ -417,6 +419,10 @@
     ],
     "src/pregate-deps/**": [
       "tests/pregate-deps.test.ts"
+    ],
+    "src/review-state/**": [
+      "tests/telemetry.test.ts",
+      "tests/workflow-metrics.test.ts"
     ],
     "src/secret-dispositions/**": [
       "tests/secret-dispositions.test.ts"
