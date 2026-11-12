@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md|docs/review-run-state-calls.md] Test gap: Installed opt-in run-state caller journey
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Static locks and native helper fixtures do not establish installed-agent adherence to the opted-in lifecycle. This is the existing Track 79A measurement follow-on, not a new release requirement.
+- **Hypothesis (untested):** At Track 79A, retain real opted-in activation, start/derive, voice/probe recording, pause/resume, failure retry/degraded capture and finish evidence with unchanged outward lines.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `docs/review-run-state-calls.md:17`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failed installed-agent run demonstrated and no fixture result is claimed as live acceptance.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; accepted follow-on remains Track 79A.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Track 79A measures the first installed opted-in caller run or the next Track touches these files.
+
 ### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Malformed run-state fence inputs
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Structurally invalid parsed state/pass objects are not directly exercised by the new fence integration case.
