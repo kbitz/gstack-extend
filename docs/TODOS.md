@@ -2,6 +2,51 @@
 
 ## Unprocessed
 
+### [review:files=src/review-delegate/delegate.ts|docs/delegated-review.md] Revisit delegate verdict and finding consistency
+
+- **Description:** The parser accepts either exact final verdict token while preserving every finding. Consider checking token/content consistency or explicitly documenting that upstream owns the verdict. This is the approved optional-token contract, not a demonstrated lost-finding defect.
+- **Classification:** Non-blocking observation under `blocking=shown`; filed at the owner's direction after accepting the saved outside coverage.
+- **Source severity:** P3 (both outside voices); INFORMATIONAL (adversarial and red-team).
+- **Evidence:** Saved outside reviews of `f669f5c`, the optional-token parser cases, and host preservation probe. Artifact digests are retained in the private owner coverage exception; no response was reformatted or resent.
+- **Context:** Owner quote: "Yes to all"; user directed filing remaining observations on 2026-11-12. Changing the current parser contract needs a separate decision.
+- **Revisit when:** The next Track changes delegate reply validation or verdict semantics.
+
+### [review:files=src/review-delegate/delegate.ts|docs/delegated-review.md] Revisit formatted final verdict acceptance
+
+- **Description:** Upstream can credit a decorated verdict that the delegate parser rejects, such as a bold verdict line. The current strict parser deliberately falls back on the whole reply rather than losing findings. Reassess that formatting boundary with retained model outputs before loosening it.
+- **Classification:** Non-blocking observation under `blocking=shown`; an explicitly accepted limitation of this plan.
+- **Source severity:** P3 (outside challenge).
+- **Evidence:** Saved outside challenge of `f669f5c`; current parser and rejection test enforce exact trimmed tokens.
+- **Context:** Filed at the user's direction after the owner's "Yes to all" coverage exception; this PR preserves the strict parser.
+- **Revisit when:** A real delegated reply falls back solely because its final verdict is decorated, or the next Track changes format recovery.
+
+### [review:files=tests/outside-review.test.ts|tests/review-delegate.test.ts] Reassess the shared last-line classifier fixture
+
+- **Description:** Both suites contain an inline subset of the upstream last-line classifier. Consider a shared TypeScript fixture if a later classifier change must update both, preserving their adapter and parser assertions. Inline fixtures were explicitly required by this plan; no current drift was demonstrated.
+- **Classification:** Non-blocking maintenance observation under `blocking=shown`.
+- **Source severity:** P3 (both outside voices).
+- **Evidence:** Saved outside reviews of `f669f5c`; both inline fixtures and installed-classifier cases were inspected and the selected suite passed.
+- **Context:** Filed at the user's direction after the owner's "Yes to all" coverage exception; no helper extraction in this PR.
+- **Revisit when:** The next Track changes either mirrored classifier rule.
+
+### [review:files=tests/outside-review.test.ts|tests/review-delegate.test.ts] Version-qualify optional installed-classifier expectations
+
+- **Description:** The legacy rejected shape accepts either pre-1.99 or 1.99 reason codes, while the new installed assertions document 1.99+ behavior. Consider making each optional installed check's supported version explicit without treating a fixture as live provider acceptance.
+- **Classification:** Non-blocking observation under `blocking=shown`; broader installed-version requalification remains outside this plan.
+- **Source severity:** P3 (both outside voices); CRITICAL (adversarial claim, retained without downgrade).
+- **Evidence:** Current installed 1.99.1.0 run fixes the two owned failures and retains only five baseline failures. Host probes credit corrected clean/advisory/blocking replies on pinned `e2fffee3`; no production compatibility defect was shown.
+- **Context:** Filed at the user's direction after the owner's "Yes to all" coverage exception. Reading new non-TypeScript inputs in tests still requires the normal touchfile-map audit.
+- **Revisit when:** The next Track requalifies the adapter against another installed gstack version.
+
+### [review:files=src/outside-review/prompt.ts|src/outside-review/recovery.ts] Clarify closing instructions for missing-context replies
+
+- **Description:** Consider stating explicitly whether a `NEEDS_CONTEXT` reply should omit a verdict, since the normal closing instructions precede the missing-context instruction. Current recovery rejects missing-context and refusal replies even with a final clean token; no false credit was reproduced.
+- **Classification:** Non-blocking wording observation under `blocking=shown`; preserve the current recovery guard.
+- **Source severity:** P3 (outside challenge); INFORMATIONAL (red-team); CRITICAL (adversarial claim disproved by the host probe).
+- **Evidence:** Host probe rejects six missing-context/refusal shapes across both installed gates; saved outside challenge acknowledges that guard. Artifact digests remain in the private coverage exception.
+- **Context:** Filed at the user's direction after the owner's "Yes to all" coverage exception; no new outside model call or local reformat.
+- **Revisit when:** The next Track revises closing prompt instructions or missing-context handling.
+
 ### [review:files=docs/review-run-state-calls.md|skills/review-and-prep.md] Clarify non-ID run-state fence refusal recovery
 
 - **Description:** The saved outside reviews request explicit recovery instructions for run-state unreadable and cycle-1-pass refusals, plus disambiguation of voice and probe identifiers. No stalled run or fabricated state was demonstrated; existing D1 fallback remains the current rule.
