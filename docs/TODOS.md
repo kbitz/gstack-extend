@@ -2,6 +2,130 @@
 
 ## Unprocessed
 
+### [review:files=docs/review-run-state-calls.md|skills/review-and-prep.md] Clarify non-ID run-state fence refusal recovery
+
+- **Description:** The saved outside reviews request explicit recovery instructions for run-state unreadable and cycle-1-pass refusals, plus disambiguation of voice and probe identifiers. No stalled run or fabricated state was demonstrated; existing D1 fallback remains the current rule.
+- **Classification:** Non-blocking observation under `blocking=shown`; filed at the owner's direction after accepting the saved outside coverage.
+- **Source severity:** P2 (structured), P3 (challenge); retained without downgrade.
+- **Evidence:** Saved challenge/structured reviews of `69540ab`; provider artifacts and their SHA-256 digests are bound in the private owner-accepted coverage exception. No new outside call or reply reformat.
+- **Context:** Owner quote: "accept the reviews"; review-and-prep resumed on 2026-11-12 before PR creation.
+- **Revisit when:** Re-evaluate this wording when the next Track edits the caller procedure or Track 79A evaluates degraded runs.
+
+### [review:files=docs/review-run-state-calls.md|skills/review-and-prep.md] Clarify unavailable caller-document activation under version skew
+
+- **Description:** The saved outside reviews note no explicit fallback for a missing or unreadable calls document or missing derive helper while the loaded skill is newer. No supported installation failure was demonstrated. Preserve the current activation contract until the follow-up validates the skew case.
+- **Classification:** Non-blocking observation under `blocking=shown`; filed at the owner's direction after accepting the saved outside coverage.
+- **Source severity:** P3 (both outside voices); retained without downgrade.
+- **Evidence:** Saved challenge/structured reviews of `69540ab`; provider artifacts and their SHA-256 digests are bound in the private owner-accepted coverage exception. No new outside call or reply reformat.
+- **Context:** Owner quote: "accept the reviews"; review-and-prep resumed on 2026-11-12 before PR creation.
+- **Revisit when:** Revisit when installation/version-skew support or run-state activation changes.
+
+### [review:files=docs/review-run-state-calls.md|skills/review-and-prep.md] Verify activation timing before suppressing Step 1 spans
+
+- **Description:** The challenge asks whether helper-missing activation can suppress Step 1 evidence/scope spans before falling back to the inline path. This is an unproven measurement edge; d8 intentionally omits those spans on the recorded path. No live failure or review-output defect was shown.
+- **Classification:** Non-blocking observation under `blocking=shown`; filed at the owner's direction after accepting the saved outside coverage.
+- **Source severity:** P3 (challenge); retained without downgrade.
+- **Evidence:** Saved challenge/structured reviews of `69540ab`; provider artifacts and their SHA-256 digests are bound in the private owner-accepted coverage exception. No new outside call or reply reformat.
+- **Context:** Owner quote: "accept the reviews"; review-and-prep resumed on 2026-11-12 before PR creation.
+- **Revisit when:** Revisit when Track 79A measures activation failures or the next Track edits Step 1 capture.
+
+### [review:files=docs/review-run-state-calls.md|skills/review-and-prep.md] Measure capture loss when the first derive cannot bind
+
+- **Description:** The structured voice notes that start/first-derive failure leaves no metrics run. The approved plan explicitly accepts this loss and capture=partial rather than mixing inline and derived writers. Retain it as a measurement limitation, not an approval to change fallback in this PR.
+- **Classification:** Non-blocking observation under `blocking=shown`; filed at the owner's direction after accepting the saved outside coverage.
+- **Source severity:** P3 (structured); retained without downgrade.
+- **Evidence:** Saved challenge/structured reviews of `69540ab`; provider artifacts and their SHA-256 digests are bound in the private owner-accepted coverage exception. No new outside call or reply reformat.
+- **Context:** Owner quote: "accept the reviews"; review-and-prep resumed on 2026-11-12 before PR creation.
+- **Revisit when:** Revisit at Track 79A degraded-path measurement or a caller-fallback redesign.
+
+### [review:files=skills/review-and-prep.md|docs/designs/review-run-state.md] Measure the always-loaded run-state pointer and fence overhead
+
+- **Description:** The structured voice observes that the new opt-in pointer, policy bullet and fence grow loaded skill text. These additions are the approved T1-T3 approach; record their size and real-run cost alongside the on-demand procedure in the existing Track 79A comparison. No default behavior or correctness defect is shown.
+- **Classification:** Non-blocking observation under `blocking=shown`; filed at the owner's direction after accepting the saved outside coverage.
+- **Source severity:** P3 (structured); retained without downgrade.
+- **Evidence:** Saved challenge/structured reviews of `69540ab`; provider artifacts and their SHA-256 digests are bound in the private owner-accepted coverage exception. No new outside call or reply reformat.
+- **Context:** Owner quote: "accept the reviews"; review-and-prep resumed on 2026-11-12 before PR creation.
+- **Revisit when:** Revisit when Track 79A measures the default/record arms or changes the loading strategy.
+
+
+### [review:files=skills/review-and-prep.md|docs/review-run-state-calls.md] Test gap: Installed opt-in run-state caller journey
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Static locks and native helper fixtures do not establish installed-agent adherence to the opted-in lifecycle. This is the existing Track 79A measurement follow-on, not a new release requirement.
+- **Hypothesis (untested):** At Track 79A, retain real opted-in activation, start/derive, voice/probe recording, pause/resume, failure retry/degraded capture and finish evidence with unchanged outward lines.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `docs/review-run-state-calls.md:17`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failed installed-agent run demonstrated and no fixture result is claimed as live acceptance.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; accepted follow-on remains Track 79A.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Track 79A measures the first installed opted-in caller run or the next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Malformed run-state fence inputs
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Structurally invalid parsed state/pass objects are not directly exercised by the new fence integration case.
+- **Hypothesis (untested):** Extend existing fence fixture with one invalid-shape input per guard, retaining refusal exit and no-write assertions. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: First full cycle-one pass selection
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The required first-in-record-order selection has no multiple-pass fixture.
+- **Hypothesis (untested):** Add two matching full cycle-one passes with different prerequisites and require the first to govern. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Failed-attempt voice result
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The approved any-attempt result branch is not exercised independently of selection.
+- **Hypothesis (untested):** Record a failed attempt without voice-complete and verify that it counts as a result without claiming successful review. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Not-applicable voice result
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The explicit not-applicable result branch has no direct fence case.
+- **Hypothesis (untested):** Record a not-applicable voice and verify that no attempt is required for that prerequisite. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Probe gate candidate binding
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** A same-name probe gate on a different candidate has no negative test.
+- **Hypothesis (untested):** Extend the real fixture with a different candidate and require the original baseline write to refuse. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Opt-in derive help statement
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The changed derive help statement has live QA evidence but no permanent assertion.
+- **Hypothesis (untested):** Extend the existing help checks to require the experimental opt-in caller statement and exit zero. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+
 ### [review:files=docs/designs/review-run-state.md] File the review-run-state SPEC anchor correction for the next design edit
 
 - **Description:** The documentation audit found the opening link targets the prior O6 heading anchor. The current SPEC heading is O6: Bounded, measured stage effort. This source-pointer issue does not alter the documented helper behavior or D9 wire derivations.
