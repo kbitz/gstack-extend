@@ -2,6 +2,73 @@
 
 ## Unprocessed
 
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Malformed run-state fence inputs
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Structurally invalid parsed state/pass objects are not directly exercised by the new fence integration case.
+- **Hypothesis (untested):** Extend existing fence fixture with one invalid-shape input per guard, retaining refusal exit and no-write assertions. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: First full cycle-one pass selection
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The required first-in-record-order selection has no multiple-pass fixture.
+- **Hypothesis (untested):** Add two matching full cycle-one passes with different prerequisites and require the first to govern. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Failed-attempt voice result
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The approved any-attempt result branch is not exercised independently of selection.
+- **Hypothesis (untested):** Record a failed attempt without voice-complete and verify that it counts as a result without claiming successful review. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Not-applicable voice result
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The explicit not-applicable result branch has no direct fence case.
+- **Hypothesis (untested):** Record a not-applicable voice and verify that no attempt is required for that prerequisite. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts|skills/review-and-prep.md] Test gap: Probe gate candidate binding
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** A same-name probe gate on a different candidate has no negative test.
+- **Hypothesis (untested):** Extend the real fixture with a different candidate and require the original baseline write to refuse. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-review-and-prep.test.ts:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Opt-in derive help statement
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The changed derive help statement has live QA evidence but no permanent assertion.
+- **Hypothesis (untested):** Extend the existing help checks to require the experimental opt-in caller statement and exit zero. Re-verify the current contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1`
+- **Evidence:** Read-only coverage audit on `69540ab`; no failure reproduced. The existing 21 targeted suites passed.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; outside structured coverage is unverified.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+
 ### [review:files=docs/designs/review-run-state.md] File the review-run-state SPEC anchor correction for the next design edit
 
 - **Description:** The documentation audit found the opening link targets the prior O6 heading anchor. The current SPEC heading is O6: Bounded, measured stage effort. This source-pointer issue does not alter the documented helper behavior or D9 wire derivations.
