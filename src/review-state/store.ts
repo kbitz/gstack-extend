@@ -123,12 +123,64 @@ export function makeEnvelope(
   };
 }
 
-function writeAll(fd: number, buf: Buffer): void {
+export function writeAll(fd: number, buf: Buffer): void {
   let off = 0;
   while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off);
 }
 
-const unlinkQuiet = (p: string) => { try { unlinkSync(p); } catch { /* ignore */ } };
+export const unlinkQuiet = (p: string) => { try { unlinkSync(p); } catch { /* ignore */ } };
+
+export type InputJsonResult =
+  | { ok: true; rawInput: unknown; realInput: string }
+  | { ok: false; result: StoreResult };
+
+export function readInputJson(
+  command: string,
+  inputArg: string,
+  realDir: string,
+  statePath: string | null,
+  helperVersion: string | null,
+  rev: number | null = null,
+): InputJsonResult {
+  const reply = (reason: ReasonCode, detail: Record<string, unknown>): InputJsonResult =>
+    ({ ok: false, result: makeEnvelope(command, reason, detail, statePath, rev, undefined, helperVersion, null) });
+
+  if (!isAbsolute(inputArg)) return reply('usage', { message: '--input must be an absolute path inside --dir' });
+  let inStat;
+  try { inStat = lstatSync(inputArg); } catch { return reply('usage', { message: '--input file does not exist' }); }
+  if (inStat.isSymbolicLink() || !inStat.isFile()) return reply('usage', { message: '--input must be a regular file, not a symlink or directory' });
+  if (inStat.size > 1048576) return reply('usage', { message: '--input file exceeds 1 MiB limit (1048576 bytes)' });
+  let realInput: string;
+  try { realInput = realpathSync(inputArg); } catch { return reply('usage', { message: '--input path could not be resolved' }); }
+  if (!realInput.startsWith(`${realDir}/`)) return reply('usage', { message: '--input file must reside inside --dir' });
+
+  let rawInput: unknown;
+  try { rawInput = JSON.parse(readFileSync(realInput, 'utf8')); } catch { return reply('invalid-input', { violations: [{ path: '$', rule: 'invalid-json', expected: 'valid-json-object' }] }); }
+  return { ok: true, rawInput, realInput };
+}
+
+export type DirFileError = 'evidence-outside-dir' | 'evidence-not-regular-file' | 'evidence-digest-mismatch' | 'evidence-missing';
+
+export function checkDirFile(
+  realDir: string,
+  relPath: string,
+  sha256?: string,
+): { ok: true; realPath: string; bytes: Buffer; sha256: string } | { ok: false; error: DirFileError } {
+  const candidatePath = resolve(realDir, relPath);
+  if (!candidatePath.startsWith(`${realDir}/`)) return { ok: false, error: 'evidence-outside-dir' };
+  try {
+    const lst = lstatSync(candidatePath);
+    const realEv = realpathSync(candidatePath);
+    if (!realEv.startsWith(`${realDir}/`)) return { ok: false, error: 'evidence-outside-dir' };
+    if (!(lst.isSymbolicLink() ? statSync(realEv) : lst).isFile()) return { ok: false, error: 'evidence-not-regular-file' };
+    const bytes = readFileSync(realEv);
+    const actualSha = createHash('sha256').update(bytes).digest('hex');
+    if (sha256 !== undefined && actualSha !== sha256) return { ok: false, error: 'evidence-digest-mismatch' };
+    return { ok: true, realPath: realEv, bytes, sha256: actualSha };
+  } catch {
+    return { ok: false, error: 'evidence-missing' };
+  }
+}
 
 function parseLockHolder(lockPath: string): { pid: number | null; host: string | null; started_at: string | null; unknown: boolean } {
   try {
@@ -158,30 +210,15 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   const { realTop, realDir, gitEnv } = dirCheck;
   statePath = dirCheck.statePath;
 
-  if (!isAbsolute(inputArg)) return reply('usage', { message: '--input must be an absolute path inside --dir' }, statePath, null);
-  let inStat;
-  try { inStat = lstatSync(inputArg); } catch { return reply('usage', { message: '--input file does not exist' }, statePath, null); }
-  if (inStat.isSymbolicLink() || !inStat.isFile()) return reply('usage', { message: '--input must be a regular file, not a symlink or directory' }, statePath, null);
-  if (inStat.size > 1048576) return reply('usage', { message: '--input file exceeds 1 MiB limit (1048576 bytes)' }, statePath, null);
-  let realInput: string;
-  try { realInput = realpathSync(inputArg); } catch { return reply('usage', { message: '--input path could not be resolved' }, statePath, null); }
-  if (!realInput.startsWith(`${realDir}/`)) return reply('usage', { message: '--input file must reside inside --dir' }, statePath, null);
-
-  let rawInput: unknown;
-  try { rawInput = JSON.parse(readFileSync(realInput, 'utf8')); } catch { return reply('invalid-input', { violations: [{ path: '$', rule: 'invalid-json', expected: 'valid-json-object' }] }, statePath, null); }
+  const inCheck = readInputJson(command, inputArg, realDir, statePath, helperVersion);
+  if (!inCheck.ok) return inCheck.result;
+  const { rawInput } = inCheck;
 
   const evidenceErrors = new Map<string, string>();
   for (const item of collectEvidenceItems(command, rawInput)) {
     const key = `${item.path}:${item.sha256}`;
-    const candidatePath = resolve(realDir, item.path);
-    if (!candidatePath.startsWith(`${realDir}/`)) { evidenceErrors.set(key, 'evidence-outside-dir'); continue; }
-    try {
-      const lst = lstatSync(candidatePath);
-      const realEv = realpathSync(candidatePath);
-      if (!realEv.startsWith(`${realDir}/`)) { evidenceErrors.set(key, 'evidence-outside-dir'); continue; }
-      if (!(lst.isSymbolicLink() ? statSync(realEv) : lst).isFile()) { evidenceErrors.set(key, 'evidence-not-regular-file'); continue; }
-      if (createHash('sha256').update(readFileSync(realEv)).digest('hex') !== item.sha256) evidenceErrors.set(key, 'evidence-digest-mismatch');
-    } catch { evidenceErrors.set(key, 'evidence-missing'); }
+    const check = checkDirFile(realDir, item.path, item.sha256);
+    if (!check.ok) evidenceErrors.set(key, check.error);
   }
 
   const envChecker: EnvChecker = {

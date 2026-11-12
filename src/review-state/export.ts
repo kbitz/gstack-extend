@@ -391,27 +391,36 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
   };
 }
 
-export type ExportCommandResult =
-  | { ok: true; exitCode: 0; exportDoc: ReviewStateExport }
+export type LoadedStoredState =
+  | {
+      ok: true;
+      state: ReviewRunState;
+      statePath: string;
+      realDir: string;
+      realTop: string;
+      gitEnv: NodeJS.ProcessEnv;
+      helperVersion: string | null;
+    }
   | { ok: false; exitCode: 1 | 2 | 3 | 4; envelope: StoreResult };
 
-export function executeExport(
+export function loadStoredState(
+  command: string,
   dirArg: string,
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
   versionPath?: string,
-): ExportCommandResult {
+): LoadedStoredState {
   const helperVersion = readHelperVersion(versionPath);
-  const fail = (reason: ReasonCode, detail: Record<string, unknown>, sPath: string | null, rev: number | null = null, customFix?: string): ExportCommandResult => {
-    const envObj = makeEnvelope('export', reason, detail, sPath, rev, customFix, helperVersion, null);
+  const fail = (reason: ReasonCode, detail: Record<string, unknown>, sPath: string | null, rev: number | null = null, customFix?: string): LoadedStoredState => {
+    const envObj = makeEnvelope(command, reason, detail, sPath, rev, customFix, helperVersion, null);
     return { ok: false, exitCode: envObj.exitCode as 1 | 2 | 3 | 4, envelope: envObj };
   };
 
-  const dirCheck = validateStateDir('export', dirArg, cwd, env, helperVersion);
+  const dirCheck = validateStateDir(command, dirArg, cwd, env, helperVersion);
   if (!dirCheck.ok) {
     return { ok: false, exitCode: dirCheck.result.exitCode as 1 | 2 | 3 | 4, envelope: dirCheck.result };
   }
-  const { statePath, gitEnv } = dirCheck;
+  const { realTop, realDir, statePath, gitEnv } = dirCheck;
 
   const commonDirRes = runGit(cwd, ['rev-parse', '--git-common-dir'], gitEnv);
   const symRefRes = runGit(cwd, ['symbolic-ref', '--short', 'HEAD'], gitEnv);
@@ -460,6 +469,21 @@ export function executeExport(
     );
   }
 
-  const exportDoc = projectState(storedState, helperVersion);
+  return { ok: true, state: storedState, statePath, realDir, realTop, gitEnv, helperVersion };
+}
+
+export type ExportCommandResult =
+  | { ok: true; exitCode: 0; exportDoc: ReviewStateExport }
+  | { ok: false; exitCode: 1 | 2 | 3 | 4; envelope: StoreResult };
+
+export function executeExport(
+  dirArg: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  versionPath?: string,
+): ExportCommandResult {
+  const loaded = loadStoredState('export', dirArg, cwd, env, versionPath);
+  if (!loaded.ok) return loaded;
+  const exportDoc = projectState(loaded.state, loaded.helperVersion);
   return { ok: true, exitCode: 0, exportDoc };
 }

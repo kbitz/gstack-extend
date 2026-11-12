@@ -1,0 +1,240 @@
+{
+  "schema": "review-run-state/v1",
+  "rev": 6,
+  "writer": "0.89.0",
+  "run": {
+    "run_id": "01950000-0000-7000-8000-000000000001",
+    "skill": "review-and-prep",
+    "repo": "/home/example/work/example-repo/.git",
+    "branch": "feature/handoff-demo",
+    "pr": {
+      "url": "https://github.com/example-org/example-repo/pull/42",
+      "repo": "example-org/example-repo",
+      "number": 42,
+      "head_repo": "example-dev/example-repo",
+      "head_branch": "feature/handoff-demo",
+      "base_ref": "main"
+    },
+    "gh_login": "example-bot",
+    "started_at": "2026-01-02T03:00:00Z"
+  },
+  "binding": {
+    "head": "$HEAD",
+    "tree": "$TREE",
+    "base": "$BASE",
+    "wtree": "e5e5e5e5e5e5e5e5"
+  },
+  "plan": {
+    "ref": "docs/plans/example-plan.md",
+    "sha256": "$PLAN"
+  },
+  "policy": {
+    "value": null,
+    "source": "none supplied",
+    "delegation": {
+      "status": "active",
+      "parts": ["specialist:testing"],
+      "config": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tools": []
+    }
+  },
+  "continuation": {
+    "prior_stops": 0,
+    "max": 1,
+    "continues": null
+  },
+  "segments": [
+    {
+      "segment": 1,
+      "started_at": "2026-01-02T03:00:00Z",
+      "ended_at": "2026-01-02T03:04:05Z",
+      "end": "finished",
+      "session_id": "extend-01950000-0000-7000-8000-000000000002",
+      "toplevel": "/home/example/work/example-repo"
+    }
+  ],
+  "passes": [
+    {
+      "pass_id": "01950000-0000-7000-8000-000000000010",
+      "segment": 1,
+      "scope": "local",
+      "cycle": 1,
+      "coverage": "full",
+      "delta_from": null,
+      "candidate": {
+        "commit": "$HEAD",
+        "tree": "$TREE",
+        "base": "$BASE",
+        "wtree": "e5e5e5e5e5e5e5e5"
+      },
+      "required_voices": ["specialist-testing"],
+      "started_at": "2026-01-02T03:01:00Z",
+      "completed_at": "2026-01-02T03:01:30Z",
+      "state": "completed",
+      "voices": [
+        {
+          "voice_id": "specialist-testing",
+          "part": "specialist:testing",
+          "required": true,
+          "not_applicable": null,
+          "selected_attempt_id": "01950000-0000-7000-8000-000000000020",
+          "attempts": [
+            {
+              "attempt_id": "01950000-0000-7000-8000-000000000020",
+              "part": "specialist:testing",
+              "outcome": "completed",
+              "predecessor_attempt_id": null,
+              "dispatched_at": "2026-01-02T03:01:05Z",
+              "returned_at": "2026-01-02T03:01:14Z",
+              "delegate": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "outcome": "credited",
+                "fallback_reason": null,
+                "replay": false,
+                "wall_ms": 1200,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": null,
+                "call_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "findings": [],
+              "recorded_at": "2026-01-02T03:01:15Z"
+            }
+          ],
+          "recorded_at": "2026-01-02T03:01:20Z"
+        }
+      ],
+      "recorded_at": "2026-01-02T03:01:00Z",
+      "completed_recorded_at": "2026-01-02T03:01:30Z"
+    }
+  ],
+  "corrections": [],
+  "gates": [
+    {
+      "gate_id": "01950000-0000-7000-8000-000000000040",
+      "segment": 1,
+      "name": "pregate",
+      "result": "passed",
+      "reason": null,
+      "candidate": {
+        "commit": "$HEAD",
+        "tree": "$TREE",
+        "base": "$BASE",
+        "wtree": "e5e5e5e5e5e5e5e5"
+      },
+      "details": {
+        "raw_verdict": "pass",
+        "wrapper_verdict": "pass",
+        "policy": "base",
+        "record_path": "pregate.json",
+        "record_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "skipped_lanes": []
+      },
+      "evidence": [
+        {
+          "path": "pregate.json",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "recorded_at": "2026-01-02T03:02:00Z"
+    },
+    {
+      "gate_id": "01950000-0000-7000-8000-000000000041",
+      "segment": 1,
+      "name": "greptile",
+      "result": "passed",
+      "reason": null,
+      "candidate": {
+        "commit": "$GREP",
+        "tree": "$TREE",
+        "base": "$BASE",
+        "wtree": null
+      },
+      "details": {
+        "value": "completed on $GREP; findings dispositioned in the receipt, so triage only newer feedback",
+        "run": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1"
+      },
+      "evidence": [],
+      "recorded_at": "2026-01-02T03:03:00Z"
+    }
+  ],
+  "audits": [
+    {
+      "audit_id": "01950000-0000-7000-8000-000000000050",
+      "segment": 1,
+      "name": "coverage",
+      "result": "pass",
+      "details": {
+        "pct": 100,
+        "threshold": "pass"
+      },
+      "candidate": {
+        "commit": "$HEAD",
+        "tree": "$TREE",
+        "base": "$BASE",
+        "wtree": "e5e5e5e5e5e5e5e5"
+      },
+      "evidence": [],
+      "recorded_at": "2026-01-02T03:03:30Z"
+    },
+    {
+      "audit_id": "01950000-0000-7000-8000-000000000051",
+      "segment": 1,
+      "name": "documentation",
+      "result": "accepted",
+      "details": {
+        "report_id": "doc-1",
+        "section_path": "doc-section.md",
+        "section_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "candidate": {
+        "commit": "$HEAD",
+        "tree": "$TREE",
+        "base": "$BASE",
+        "wtree": "e5e5e5e5e5e5e5e5"
+      },
+      "evidence": [
+        {
+          "path": "doc-section.md",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "recorded_at": "2026-01-02T03:03:45Z"
+    }
+  ],
+  "checkpoints": [
+    {
+      "checkpoint_id": "01950000-0000-7000-8000-000000000060",
+      "segment": 1,
+      "kind": "ready",
+      "head": "$HEAD",
+      "tree": "$TREE",
+      "base": "$BASE",
+      "wtree": "e5e5e5e5e5e5e5e5",
+      "session_id": null,
+      "evidence": [],
+      "recorded_at": "2026-01-02T03:04:00Z"
+    }
+  ],
+  "finish": {
+    "outcome": "prepared",
+    "stop_reason": null,
+    "head": "$HEAD",
+    "tree": "$TREE",
+    "base": "$BASE",
+    "delta_base": null,
+    "stop_count": null,
+    "wtree": "e5e5e5e5e5e5e5e5",
+    "review_restriction_resolved": false,
+    "readiness_confirmed_at": "2026-01-02T03:04:05Z",
+    "full_review_evidence": null,
+    "user_facing_changes": [
+      "`bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.",
+      "`--help` lists the new `--format` option."
+    ],
+    "evidence": [],
+    "finished_at": "2026-01-02T03:04:05Z"
+  }
+}

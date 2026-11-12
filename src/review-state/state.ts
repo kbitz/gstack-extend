@@ -110,7 +110,7 @@ const ENUMS = {
   gateResult: ['passed', 'failed', 'blocked', 'not-run', 'attested'],
   pregatePolicy: ['base', 'head'],
   auditName: ['coverage', 'documentation'],
-  checkpointKind: ['before-fix', 'next-cycle', 'stop', 'pause', 'resume', 'external-gate'],
+  checkpointKind: ['before-fix', 'next-cycle', 'stop', 'pause', 'resume', 'external-gate', 'ready'],
   finishOutcome: ['prepared', 'stopped', 'blocked', 'needs-context'],
 } as const;
 
@@ -150,12 +150,12 @@ export type ApplyOutcome =
   | { reason: Exclude<ReasonCode, 'recorded' | 'replayed'>; rev: number | null; detail: Record<string, unknown>; fix?: string };
 
 export const truncate80 = (s: string): string => (s.length > 80 ? s.slice(0, 80) : s);
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const isNonNegInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v < 9007199254740992;
-const isPosInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
-const isIsoZ = (v: unknown): v is string => typeof v === 'string' && ISO_Z_RE.test(v) && Number.isFinite(Date.parse(v));
-const isPart = (v: unknown): v is string => typeof v === 'string' && PART_RE.test(v) && v !== 'specialist:red-team';
-const isStr = (v: unknown, min: number, max: number, noWs = false): v is string =>
+export const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+export const isNonNegInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v < 9007199254740992;
+export const isPosInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
+export const isIsoZ = (v: unknown): v is string => typeof v === 'string' && ISO_Z_RE.test(v) && Number.isFinite(Date.parse(v));
+export const isPart = (v: unknown): v is string => typeof v === 'string' && PART_RE.test(v) && v !== 'specialist:red-team';
+export const isStr = (v: unknown, min: number, max: number, noWs = false): v is string =>
   typeof v === 'string' && v.length >= min && v.length <= max && !CTRL_RE.test(v) && (!noWs || !/\s/.test(v));
 export const isVersion = (v: unknown): v is string => isStr(v, 5, 64, true) && VERSION_RE.test(v);
 
@@ -175,9 +175,9 @@ export function isVersionNewer(candidate: unknown, baseline: unknown): boolean {
   }
   return false;
 }
-const isRelPath = (v: unknown): v is string =>
+export const isRelPath = (v: unknown): v is string =>
   isStr(v, 1, 500) && !v.startsWith('/') && !v.includes('\\') && v.split('/').every((p) => p !== '' && p !== '.' && p !== '..');
-const isHttpUrl = (v: unknown): v is string => {
+export const isHttpUrl = (v: unknown): v is string => {
   if (!isStr(v, 8, 500, true) || (!v.startsWith('https://') && !v.startsWith('http://')) || v.includes('?')) return false;
   const auth = v.slice(v.indexOf('://') + 3).split('/')[0] ?? '';
   if (!auth || auth.includes('@')) return false;
@@ -193,8 +193,8 @@ const reCheck = (re: RegExp) => (v: unknown): v is string => typeof v === 'strin
 const inEnum = (arr: readonly string[]) => (v: unknown): v is string => typeof v === 'string' && arr.includes(v);
 const nullable = <T>(fn: (v: unknown) => v is T) => (v: unknown): v is T | null => v === null || fn(v);
 
-type FieldRule = { check: (v: unknown) => boolean; expected: string; rule?: string };
-const R = {
+export type FieldRule = { check: (v: unknown) => boolean; expected: string; rule?: string };
+export const R = {
   uuid: { check: reCheck(UUID_RE), expected: 'uuid' },
   uuidN: { check: nullable(reCheck(UUID_RE)), expected: 'uuid|null' },
   sessionN: { check: nullable(reCheck(SESSION_RE)), expected: 'extend-<uuid>|null' },
@@ -227,13 +227,13 @@ const R = {
 
 const joinPath = (base: string, k: string) => (base ? `${base}.${k}` : k);
 
-function checkKeys(obj: Record<string, unknown>, req: readonly string[], opt: readonly string[], base: string, v: Violation[]): void {
+export function checkKeys(obj: Record<string, unknown>, req: readonly string[], opt: readonly string[], base: string, v: Violation[]): void {
   const allowed = new Set([...req, ...opt]);
   for (const k of req) if (!(k in obj)) v.push({ path: joinPath(base, k), rule: 'missing-key', expected: k });
   for (const k of Object.keys(obj)) if (!allowed.has(k)) v.push({ path: joinPath(base, k), rule: 'unknown-key', expected: 'no unknown keys' });
 }
 
-function validateFields(obj: Record<string, unknown>, req: readonly string[], opt: Record<string, unknown>, rules: Record<string, FieldRule>, base: string, v: Violation[]): Record<string, unknown> {
+export function validateFields(obj: Record<string, unknown>, req: readonly string[], opt: Record<string, unknown>, rules: Record<string, FieldRule>, base: string, v: Violation[]): Record<string, unknown> {
   checkKeys(obj, req, Object.keys(opt), base, v);
   const out: Record<string, unknown> = {};
   for (const k of [...req, ...Object.keys(opt)]) {
@@ -662,6 +662,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
   if (command === 'checkpoint') {
     const c = checkShape(rawInput, 'checkpoint', { checkpoint_id: R.uuid, kind: R.enum(ENUMS.checkpointKind), base: R.hex40N, wtree: R.wtreeN, session_id: R.sessionN }, v);
     if ((c.kind === 'external-gate' || c.kind === 'pause') && c.base === null) v.push({ path: 'base', rule: 'invalid-value', expected: 'required-hex40-for-external-gate-and-pause' });
+    if (c.kind === 'ready' && c.base === null) v.push({ path: 'base', rule: 'invalid-value', expected: 'required-hex40-for-ready' });
     if (c.kind !== 'resume' && c.session_id !== null) v.push({ path: 'session_id', rule: 'invalid-value', expected: 'null-when-kind-not-resume' });
     const evidence = validateEvidenceList(rawInput.evidence, 'evidence', v);
     if (v.length > 0) return invalid(rev, v);
@@ -676,6 +677,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     if (life) return life;
     if (canon.kind === 'resume' && state!.segments[state!.segments.length - 1]!.end !== 'paused') return invalid(state!.rev, [{ path: 'kind', rule: 'invalid-lifecycle', expected: 'paused-run-required-for-resume' }]);
     if (canon.base !== null && !env.commitExists(canon.base)) v.push({ path: 'base', rule: 'commit-not-found', expected: 'existing-git-commit' });
+    else if (canon.kind === 'ready' && canon.base !== null && !env.isAncestor(canon.base, git.head)) v.push({ path: 'base', rule: 'not-ancestor', expected: 'ancestor-of-head' });
     canon.evidence.forEach((ev, i) => { const err = env.checkEvidence(ev.path, ev.sha256); if (err) v.push({ path: `evidence[${i}]`, rule: err, expected: 'valid-evidence-file-in-dir' }); });
     if (v.length > 0) return invalid(state!.rev, v);
 
