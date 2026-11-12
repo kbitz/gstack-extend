@@ -2,6 +2,30 @@
 
 ## Unprocessed
 
+### [review:files=src/outside-review/prompt.ts|tests/outside-review.test.ts] Test gap: Observe the corrected outside prompt on a real authorized review
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Unit and installed-classifier cases prove the requested reply order and parsing, but not that a real model follows the candidate prompt. The saved reviews used the installed pre-fix prompt and were accepted by the owner as this PR's coverage exception.
+- **Hypothesis (untested):** On the next authorized review using the updated installation, retain both actual reply endings and credited status without a formatting retry.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/outside-review/prompt.ts:16`
+- **Evidence:** Read-only coverage audit: 12 of 14 named paths covered; this is an unmeasured live-compliance path, not a failed candidate run. The user forbids new outside calls in this continuation.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; approved plan already identifies next-real-run observation as a limitation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next real outside review runs after this prompt is installed.
+
+### [review:files=src/review-delegate/delegate.ts|tests/review-delegate.test.ts] Test gap: Observe the corrected delegate prompt on a real authorized review
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Parser and installed-classifier tests preserve every finding for corrected replies, but no real delegate has run this candidate's shared closing instructions. Prior delegate fallback evidence used the older installed prompt.
+- **Hypothesis (untested):** On the next authorized delegated review using the updated installation, retain a compliant final verdict, credited outcome and all returned findings without resending a malformed reply.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/delegate.ts:178`
+- **Evidence:** Read-only coverage audit: the live-compliance path is unmeasured; no new code defect was reproduced. The user forbids new outside calls in this continuation.
+- **Context:** Filed by /review-and-prep on 2026-11-12 before PR creation; this follow-up does not expand this PR's approved test obligations.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next real delegated review runs after the shared closing instructions are installed.
+
 ### [review:files=src/review-delegate/delegate.ts|docs/delegated-review.md] Revisit delegate verdict and finding consistency
 
 - **Description:** The parser accepts either exact final verdict token while preserving every finding. Consider checking token/content consistency or explicitly documenting that upstream owns the verdict. This is the approved optional-token contract, not a demonstrated lost-finding defect.
