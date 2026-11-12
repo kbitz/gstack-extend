@@ -168,16 +168,25 @@ The delegate returns, in this form:
 - `evidence` is text or the testing checklist's object with exactly `detects`,
   `non_test_callers`, `search_command` and `stronger_proof`. Their JSON values
   are preserved without imposing types the checklist does not specify;
-- a clean reply has `NO_FINDINGS: none` immediately before the closing
-  `Recommendation: <action> because <reason>`;
+- a clean reply has `NO_FINDINGS: none` immediately before its
+  `Recommendation: <action> because <reason>` line;
+- an optional last line, `VERDICT: CLEAN` (no findings) or `VERDICT: FINDINGS`
+  (any finding), immediately after the `Recommendation: <action> because
+  <reason>` line (the prompt asks for it as the last line of the reply);
 - a reply that lacks context returns `NEEDS_CONTEXT: <what>`.
 
-Every reply needs its closing `Recommendation` line; a reply with no findings
-also needs the explicit `NO_FINDINGS: none` marker. Classifier recovery does
-not waive either requirement. Blank lines are allowed; fences, prose or finding lines outside this form make
-the whole reply fall back, so a partially parsed reply never loses findings.
-These response-format instructions override the checklist's output-format
-directions while preserving its schema and review criteria.
+Every reply needs its closing `Recommendation` line, and a reply with no
+findings also needs the explicit `NO_FINDINGS: none` marker immediately before
+it. An exact `VERDICT: CLEAN` or `VERDICT: FINDINGS` line is the only nonempty
+line allowed after the `Recommendation` line; installed gstack 1.99.0.0 and
+later credits a reply without a blocking finding only when that verdict line is
+last, and classifier recovery neither waives the `NO_FINDINGS: none` and
+`Recommendation` requirements nor moves a misplaced verdict line. Blank lines
+are allowed; a verdict line before the `Recommendation`, a second verdict line,
+or any fences, prose or finding lines outside this form make the whole reply
+fall back, so a partially parsed reply never loses findings. These
+response-format instructions override the checklist's output-format directions
+while preserving its schema and review criteria.
 
 The upstream checklist's own plain JSON-line output is not credited by the
 installed classifier (it needs a `Recommendation: ... because ...` line and a
