@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.1] - 2026-11-12
+
+### Changed
+
+- Review prompts place `VERDICT:` after `Recommendation:`, and delegate parsing accepts that final line.
+
+### Fixed
+
+- Outside-voice and delegated reviews now ask the reviewer to end with the verdict line that installed gstack 1.99.0.0 and later requires, after the recommendation, so a complete review with only advisory findings or none is no longer recorded as missing coverage because of its line order.
+
+### Upgrade notes
+
+- A review paused before this upgrade and resumed after it sends new outside-voice and delegate calls instead of replaying the saved ones, because the changed review prompt gives each call a new identity.
+- Reviews resumed across this update may make fresh outside and delegated calls because the prompt identity changes.
+
 ## [0.89.0] - 2026-11-12
 
 ### Added
