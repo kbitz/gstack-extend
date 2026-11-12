@@ -32,8 +32,9 @@ closing verdict-line rule and first shipped in 1.99.0.0 (upstream CHANGELOG
 dated 2026-11-09); installed 1.99.1.0 (checkout `b9bbc31c`) carries it. On the
 review and structured gates the reply's last nonempty line, `VERDICT: CLEAN` or
 `VERDICT: FINDINGS`, is the only evidence for a clean verdict; a reply without
-it reads `missing_verdict`, and a verdict line followed by the Recommendation
-reads `unverified_verdict`. `POLICY` and the delegate format ask for it last
+it reads `missing_verdict`. A `VERDICT: FINDINGS` line followed by the
+Recommendation reads `unverified_verdict`; a misplaced `VERDICT: CLEAN` reads
+`missing_verdict`. `POLICY` and the delegate format ask for it last
 from this change. The inspected revision above stays `e2fffee3` (1.91.208.0)
 until an installed-call check; the corrected reply shape was also checked in
 memory against that revision's classifier during planning.
