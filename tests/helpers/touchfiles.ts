@@ -210,6 +210,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     // Producer-side locks for the ship-and-land handoff read the consumer too.
     skill('ship-and-land'),
     'docs/telemetry.md',
+    'docs/review-run-state-calls.md',
     // The head-policy exception lock compares CLAUDE.md's Testing paragraph with the lane-map gate.
     'CLAUDE.md',
   ],

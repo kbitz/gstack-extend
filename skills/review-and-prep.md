@@ -180,6 +180,14 @@ prints the ID that the new run (and its single run `begin`) uses, as
 **Segments** above says.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
+Under `run-state=record` (**Read an optional review policy**), read
+`<extend-root>/docs/review-run-state-calls.md` once at Step 1 and follow it
+instead of this section's run `begin` and `end`, pass, correction and
+context-override rules; spans, waits and decisions stay, with `GX_RUN` from
+derive's `current.run_step_id`, `GX_SID` from its `current.session_id`,
+`GX_CAPTURE=1` only when `current.run_begin` is `recorded` or `replayed`, and no
+context-override argument. Without the value this section applies unchanged.
+
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
 producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
 with one JSON object (`v:1`, or `v:2` for a `pass` record, `stage:"review-and-prep"`, the retained
@@ -918,7 +926,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -1117,6 +1125,22 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
   otherwise, keeping its other keys. The value waives no gate and never
   authorizes a continuation.
+- `run-state=record` (its only value) is opt-in. It records this invocation's
+  run state through the experimental `bin/review-state` helper as
+  `docs/review-run-state-calls.md` under the installed skill's extend root
+  defines (resolve `<extend-root>` from this installed skill's `.extend-root`,
+  as **Use the light review default** does), replacing the run `begin` and
+  `end`, pass, correction and context-override metrics writes in **Workflow
+  metrics (optional, local)** with that document's derive command. It waives no
+  gate, changes no finding, gate, readiness or handoff line (the full receipt
+  gains only the run-state lines that document names), never authorizes a
+  continuation and combines with every key. Omitted, nothing changes. The light
+  review default never sets it, because recording run state needs a caller that
+  opts in until Track 79A's default decision. An installation without the value
+  reads the whole line as `none supplied`, so a caller first checks the loaded
+  copy with
+  `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"` (exit 0 means
+  supported) and omits the value otherwise, keeping its other keys.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless
@@ -2556,6 +2580,21 @@ if (action === "write") {
   try { r = JSON.parse(fs.readFileSync(arg, "utf8")); } catch { out("invalid " + kind + ": json", 3); }
   const bad = validate(r, "write");
   if (bad) out("invalid " + kind + ": " + bad, 3);
+  const stateDir = process.env.REVIEW_STATE_DIR;
+  if (isBase && typeof stateDir === "string" && stateDir.length > 0) {
+    let st;
+    try { st = JSON.parse(fs.readFileSync(path.join(stateDir, "review-run-state.json"), "utf8")); } catch { out("refused " + kind + ": write point not reached (run-state unreadable)", 3); }
+    if (!st || typeof st !== "object" || Array.isArray(st) || st.schema !== "review-run-state/v1" || !Array.isArray(st.passes) || !Array.isArray(st.gates)) out("refused " + kind + ": write point not reached (run-state unreadable)", 3);
+    const pass = st.passes.find(x => x && typeof x === "object" && x.scope === "local" && x.cycle === 1 && x.coverage === "full");
+    if (!pass || !Array.isArray(pass.required_voices) || !Array.isArray(pass.voices) || !pass.candidate || typeof pass.candidate.commit !== "string") out("refused " + kind + ": write point not reached (cycle-1-pass)", 3);
+    for (const vid of pass.required_voices) {
+      const v = pass.voices.find(x => x && x.voice_id === vid);
+      if (!v || (v.selected_attempt_id === null && v.not_applicable === null && (!Array.isArray(v.attempts) || v.attempts.length === 0))) out("refused " + kind + ": write point not reached (" + vid + ")", 3);
+    }
+    for (const p of r.probes) {
+      if (!st.gates.some(g => g && g.name === "probe-" + p.id && g.candidate && g.candidate.commit === pass.candidate.commit)) out("refused " + kind + ": write point not reached (" + p.id + ")", 3);
+    }
+  }
   const miss = readMiss();
   if (miss && r.provenance !== "late") out("refused " + kind + ": missed at " + (miss.data.boundary || "unknown"), 3);
   if (r.provenance === "late") {

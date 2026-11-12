@@ -1950,7 +1950,7 @@ def run_derive(args):
     """Derive workflow-metrics records and missing stage-runs rows from review-run-state.json via bin/review-state export."""
     derive_usage = "gstack-extend-telemetry derive --dir DIR"
     if args in (["-h"], ["--help"]):
-        print(f"Usage: {derive_usage}\nExperimental until Track 79A; no installed skill calls it yet.")
+        print(f"Usage: {derive_usage}\nExperimental until Track 79A; only /review-and-prep calls it, under the opt-in run-state=record review policy.")
         return 0
 
     def emit_unavailable(reason, detail=None, run_id=None, segments=None, skipped=None, stage_runs=None):

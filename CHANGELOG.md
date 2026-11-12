@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.0] - 2026-11-12
+
+### Added
+
+- `/review-and-prep` accepts a new opt-in review policy value, `run-state=record`, that records each review's run state through the experimental review-state helper and derives the review's workflow metrics, finding attribution and any missing stage-run rows from that state.
+- `/review-and-prep` accepts opt-in `run-state=record` for experimental recording and derived metrics.
+
+### Upgrade notes
+
+- A caller whose own review-policy parser predates `run-state=record` reads a returned policy carrying it as malformed and holds, so update that parser before passing the value.
+- Update caller review-policy parsers before passing `run-state=record`; older parsers hold the returned policy as malformed.
+
 ## [0.88.0] - 2026-11-11
 
 ### Added
