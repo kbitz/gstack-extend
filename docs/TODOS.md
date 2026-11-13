@@ -2,6 +2,13 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/cli.ts|src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Requalify failed-pregate evaluation after upstream added-line API drift
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** Installed gstack 1.99.2.0 returns added-line parts with `texts`, while the existing evaluator expects `text`. A raw failing secrets record therefore exits 2 with unavailable evidence. This preserves fail-closed behavior; clean records do not collect added lines. No compatibility change is included in this scan-text task.
+- **Evidence:** The continuation's first preflight found a synthetic basic-auth URL in a rejection test; its untouched evaluator returned an unavailable-evidence error. Earlier opt-in pregate cases also reported this pre-existing API drift. Raw results are retained privately.
+- **Revisit when:** the next Track changes pregate evaluation or requalifies it against the installed upstream API.
+
 ### [review:files=src/secret-dispositions/cli.ts|tests/secret-dispositions.test.ts] Test gap: Exercise remaining filesystem and scanner refusal paths
 
 - **Test gap:** non-blocking and filed; owner quote: "2 yes"; source: coverage-audit.
