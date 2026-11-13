@@ -2,6 +2,22 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/cli.ts|tests/secret-dispositions.test.ts] Test gap: Exercise remaining filesystem and scanner refusal paths
+
+- **Test gap:** non-blocking and filed; owner quote: "2 yes"; source: coverage-audit.
+- **Description:** Missing/nonexecutable/symlinked scanners, missing/directory/symlinked inputs and non-root cwd have no dedicated boundary assertions. The audit found no failing behavior; preserve this as informational coverage depth.
+- **Upstream severity:** INFORMATIONAL; no demonstrated regression.
+- **Context:** PR https://github.com/kbitz/gstack-extend/pull/248, full continuation coverage audit, 2026-11-13.
+- **Revisit when:** the next Track changes filesystem or scanner validation.
+
+### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Exercise attended PR-text routing and scanner fallback
+
+- **Test gap:** non-blocking and filed; owner quote: "2 yes"; source: coverage-audit.
+- **Description:** CLI and content tests do not prove an agent applies verified invocation context, records scanner JSON and uses the exit-1 fallback for every public write. Use an attended synthetic flow when evaluating these instructions.
+- **Upstream severity:** INFORMATIONAL; no demonstrated regression.
+- **Context:** PR https://github.com/kbitz/gstack-extend/pull/248, full continuation coverage audit, 2026-11-13.
+- **Revisit when:** the PR-text routing instructions or the attended workflow evaluation harness is changed.
+
 ### [review:files=src/secret-dispositions/scan-text.ts|skills/review-and-prep.md] Review follow-up: Review comment-number binding in copied PR text
 
 - **Classification:** non-blocking and filed; owner quote: "2 yes".
