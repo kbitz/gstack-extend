@@ -100,8 +100,10 @@ The supplied upstream root must be outside the target project.
 
 The evaluator reads both upstream added-line part shapes (`text` from older
 installs and `texts` with one reading per non-binary file from current ones),
-hashing the raw parts as upstream returns them; any other part shape exits 2
-with `unrecognized upstream added-line part shape`. A finding in a part upstream
+hashing the raw parts as upstream returns them. Its shape reader rejects
+unrecognized parts with `unrecognized upstream added-line part shape` (exit 2);
+malformed collection values or paths rejected earlier by the CLI also exit 2,
+with that earlier check's error. A finding in a part upstream
 marks binary reports `finding is in a binary part and cannot be dispositioned`
 (exit 1) and cannot be satisfied by any entry.
 
@@ -244,9 +246,13 @@ GSTACK_SECRET_DISPOSITIONS_INTEGRATION_ROOT=<trusted-installed-gstack-root> \
   bun test tests/secret-dispositions.test.ts
 ```
 
-The opt-in fixtures were last qualified on installed gstack `1.99.3.0`; the
-installed scanner decides which examples it flags, and the wrapper must match
-every blocking finding it reports. These are synthetic fixture approvals, not
+On installed gstack `1.99.3.0`, the wrapper-matching, tracked-Python and
+`scan-text` offset checks passed. The native-receipt assertion still fails
+because upstream requires `--review-targeted` for the fixture's secret path
+(#3859), so the first test's later installed edit/stale assertions remain
+unverified on that version. The installed scanner decides which examples it
+flags, and the wrapper must match every blocking finding it reports.
+These are synthetic fixture approvals, not
 approvals for the working project or proof of attended agent behavior. Workflow
 instructions require an actual in-session decision before any real entry is
 written.
