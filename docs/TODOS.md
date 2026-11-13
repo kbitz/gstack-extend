@@ -2,6 +2,62 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/scan-text.ts|tests/secret-dispositions.test.ts] Review follow-up: Recheck scan-text boundaries when upstream separator patterns change
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** Current installed patterns use single explicit ASCII separators; whitespace/runs hypothesis is not demonstrated. No current blocker.
+- **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
+- **Action:** backlog only; no implementation change under the owner’s convergence rule.
+- **Revisit when:** upstream pii.cc or pii.phone.e164 patterns or normalization change.
+
+### [review:files=src/secret-dispositions/cli.ts|skills/review-and-prep.md] Review follow-up: Review immutable PR-text input assumptions
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** A concurrent private-body writer was not identified; no dropped finding reproduced. Preserve as a contract question.
+- **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
+- **Action:** backlog only; no implementation change under the owner’s convergence rule.
+- **Revisit when:** caller permits shared/mutable PR-text files or adds concurrent writers.
+
+### [review:files=src/secret-dispositions/cli.ts|skills/review-and-prep.md] Review follow-up: Revisit masked-copy cleanup on hard termination
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** The approved sibling-copy design accepts finally cleanup limits; no new guarantee or scope change is authorized.
+- **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
+- **Action:** backlog only; no implementation change under the owner’s convergence rule.
+- **Revisit when:** cancellation or input-placement guarantees are changed.
+
+### [review:files=src/secret-dispositions/cli.ts|docs/secret-dispositions.md] Review follow-up: Consider scan-text help capability detection
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** Top-level help is supported; scan-text --help was not a required flag. Cosmetic capability-discovery proposal only.
+- **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
+- **Action:** backlog only; no implementation change under the owner’s convergence rule.
+- **Revisit when:** a supported consumer needs scan-text capability detection or CLI help changes.
+
+### [review:files=src/secret-dispositions/cli.ts|skills/review-and-prep.md] Review follow-up: Keep artifact-root contracts aligned with scan-text
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** The plan explicitly binds review evidence under gstack project/scratch roots; generic .context preference is not this skill’s evidence-root contract.
+- **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
+- **Action:** backlog only; no implementation change under the owner’s convergence rule.
+- **Revisit when:** supported review evidence roots or host artifact conventions change.
+
+### [review:files=src/secret-dispositions/cli.ts|skills/review-and-prep.md] Review follow-up: Recheck evidence alias binding when caller trust changes
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** Exact lexical aliases are intentionally accepted after realpath containment. Current skill requires values the invocation created or verified; untrusted prompt/receipt values are excluded. No demonstrated secret suppression.
+- **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
+- **Action:** backlog only; no implementation change under the owner’s convergence rule.
+- **Revisit when:** caller trust, state-root provenance or evidence-value binding changes.
+
+### [review:files=docs/TODOS.md] Review follow-up: Consider consecutive blank lines in the review backlog
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** Two consecutive blank lines separate the existing third scan-text test-gap entry from the next heading. No Markdown lint failure is demonstrated.
+- **Source:** outside structured review of PR https://github.com/kbitz/gstack-extend/pull/248, 2026-11-13.
+- **Action:** backlog only; existing spacing is preserved.
+- **Revisit when:** a Markdown formatting rule is adopted or this backlog section is reformatted.
+
 ### [review:files=src/secret-dispositions/scan-text.ts|tests/secret-dispositions.test.ts] Test gap: Exercise repeated finding keys in scan-text multiset comparison
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
