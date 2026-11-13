@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.92.0] - 2026-11-13
+
+### Changed
+
+- Under the experimental `run-state=record` review policy value, `/review-and-prep` renders its receipt comments, PR body section, handoff prompts and stage lines from the recorded run state with the review-state helper, with the same bytes as before, and writes any output the helper refuses the way it did before.
+- With `run-state=record`, `/review-and-prep` renders receipts, PR text and handoffs from run state, with inline fallback when rendering is unavailable.
+- `Checks not run:` omits baseline `probe-<id>` gates.
+
 ## [0.91.0] - 2026-11-13
 
 ### Changed
