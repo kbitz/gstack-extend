@@ -2,6 +2,38 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/scan-text.ts|skills/review-and-prep.md] Review follow-up: Review comment-number binding in copied PR text
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** The approved grammar accepts any ASCII digit run after a verified current-PR comment prefix. Reviewers propose tighter identity or length binding for copied text; no leak outside the documented context was demonstrated.
+- **Source:** full re-review of PR https://github.com/kbitz/gstack-extend/pull/248, 2026-11-13.
+- **Action:** backlog only; no implementation or informational correction.
+- **Revisit when:** PR-text provenance or the supported GitHub comment-ID binding changes.
+
+### [review:files=src/secret-dispositions/cli.ts|tests/secret-dispositions.test.ts] Review follow-up: Exercise scratch-root rejection with an existing directory
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** The scratch-root negative fixture is absent, so it reaches the missing-directory refusal rather than isolating strict-below validation. The implementation rejects the root correctly and no required test fails; this is coverage depth only.
+- **Source:** full re-review of PR https://github.com/kbitz/gstack-extend/pull/248, 2026-11-13.
+- **Action:** backlog only; no implementation or informational correction.
+- **Revisit when:** the next Track touches validation tests or the scratch-root rule.
+
+### [review:files=docs/TODOS.md] Review follow-up: Clarify the origin of recorded backlog whitespace
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** A reviewer reads the prior spacing note’s word existing as relative to the PR base, while it was recorded during this continuation. Track that provenance wording for a later editorial pass; the existing note and spacing are not corrected here.
+- **Source:** full re-review of PR https://github.com/kbitz/gstack-extend/pull/248, 2026-11-13.
+- **Action:** backlog only; no implementation or informational correction.
+- **Revisit when:** a dedicated backlog-formatting or review-note editing pass is requested.
+
+### [review:files=src/secret-dispositions/cli.ts|docs/secret-dispositions.md] Review follow-up: Clarify the scanner binary symlink requirement
+
+- **Classification:** non-blocking and filed; owner quote: "2 yes".
+- **Description:** The CLI rejects a symlink in the scanner binary leaf. The documented regular-executable requirement can be made more explicit in a future docs change. Current installed binaries work and unsupported layouts fail closed.
+- **Source:** full re-review of PR https://github.com/kbitz/gstack-extend/pull/248, 2026-11-13.
+- **Action:** backlog only; no implementation or informational correction.
+- **Revisit when:** scanner installation ownership or this CLI documentation is next revised.
+
 ### [review:files=src/secret-dispositions/scan-text.ts|tests/secret-dispositions.test.ts] Review follow-up: Recheck scan-text boundaries when upstream separator patterns change
 
 - **Classification:** non-blocking and filed; owner quote: "2 yes".
@@ -9,6 +41,8 @@
 - **Source:** carried /review-and-prep findings, PR https://github.com/kbitz/gstack-extend/pull/248; full continuation 2026-11-13.
 - **Action:** backlog only; no implementation change under the owner’s convergence rule.
 - **Revisit when:** upstream pii.cc or pii.phone.e164 patterns or normalization change.
+
+- **Additional filed hypotheses:** an upstream normalizer that strips more Cf characters, or a phone pattern that combines adjacent closing/opening parentheses. The installed normalization list omits the proposed Cf removal; all four combined-parenthesis examples produce no direct finding (repair-proof capture011). Keep these for the same upstream-change revisit trigger.
 
 ### [review:files=src/secret-dispositions/cli.ts|skills/review-and-prep.md] Review follow-up: Review immutable PR-text input assumptions
 
