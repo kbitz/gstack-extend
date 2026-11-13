@@ -37,6 +37,7 @@ export type ReviewStateShow = {
   schema: typeof SHOW_SCHEMA;
   state_path: string;
   rev: number;
+  writer: string | null;
   helper_version: string | null;
   lifecycle: 'open' | 'paused' | 'finished';
   exit: Exclude<RenderExitState, 'not-renderable'> | null;
@@ -275,7 +276,8 @@ export function executeShow(
     schema: SHOW_SCHEMA,
     state_path: statePath,
     rev: state.rev,
-    helper_version: loaded.helperVersion ?? state.writer,
+    writer: state.writer,
+    helper_version: loaded.helperVersion,
     lifecycle,
     exit,
     run: state.run,

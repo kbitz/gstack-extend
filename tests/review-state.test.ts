@@ -1611,7 +1611,7 @@ describe('bin/review-state', () => {
       },
     ]);
 
-    // validateStoredState accepts "interrupted" on the current helper, and reports newer-schema if an older enum rejected a newer writer.
+    // The current reader accepts interrupted; an unknown future enum from a newer writer stays newer-schema.
     const validInterrupted = validateStoredState(JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')), join(d, 'review-run-state.json'), '0.86.0');
     expect(validInterrupted.ok).toBe(true);
     const futureBadEnum = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8'));
@@ -1820,5 +1820,69 @@ describe('bin/review-state', () => {
     const dNewer = newDir();
     writeFileSync(join(dNewer, 'review-run-state.json'), JSON.stringify({ schema: 'review-run-state/v2', writer: '9.9.9' }));
     expect(runCli(['show', '--dir', dNewer]).json.reason).toBe('newer-schema');
+  });
+
+  // Value: protects=writer provenance versus the executing helper version; fails_when=show omits the stored writer or substitutes it for an unavailable helper version; why_new=Track 79A T2 required inspection fields; seam=real stored-state reader
+  test('show distinguishes the stored writer from the executing helper version', () => {
+    const d = newDir();
+    expect(callCmd(d, 'start', mkStart()).code).toBe(0);
+    const statePath = join(d, 'review-run-state.json');
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    state.writer = '99.0.0';
+    writeFileSync(statePath, JSON.stringify(state));
+    const versionPath = join(d, 'helper-version');
+    writeFileSync(versionPath, '0.92.0\n');
+    expect(runCli(['show', '--dir', d], { versionPath }).json).toMatchObject({
+      writer: '99.0.0', helper_version: '0.92.0',
+    });
+    expect(runCli(['show', '--dir', d], { versionPath: join(d, 'missing-version') }).json).toMatchObject({
+      writer: '99.0.0', helper_version: null,
+    });
+  });
+
+  // Value: protects=resume immediately after every supported checkpoint; fails_when=one checkpoint cannot resume or show loses its lifecycle, exit, or head binding; why_new=Track 79A T2's per-checkpoint proving matrix; seam=CLI and durable segments
+  test('show and the following resume agree for each checkpoint kind and a finished run', () => {
+    for (const kind of [null, 'before-fix', 'next-cycle', 'stop', 'ready', 'pause', 'external-gate', 'resume', 'finished']) {
+      const d = newDir();
+      expect(callCmd(d, 'start', mkStart(1)).code).toBe(0);
+      if (kind === 'finished') {
+        expect(callCmd(d, 'finish', { outcome: 'prepared', base: baseSha }).code).toBe(0);
+      } else if (kind !== null) {
+        expect(callCmd(d, 'checkpoint', {
+          checkpoint_id: uid(100), kind, base: baseSha,
+          ...(kind === 'resume' ? { session_id: `extend-${uid(1001)}` } : {}),
+        }).code).toBe(0);
+        if (kind === 'external-gate') {
+          expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(101), kind: 'pause', base: baseSha }).code).toBe(0);
+        }
+      }
+      const statePath = join(d, 'review-run-state.json');
+      const before = readFileSync(statePath, 'utf8');
+      const shown = runCli(['show', '--dir', d]);
+      expect(shown.code, String(kind)).toBe(0);
+      const paused = kind === 'pause' || kind === 'external-gate';
+      expect(shown.json).toMatchObject({
+        lifecycle: kind === 'finished' ? 'finished' : paused ? 'paused' : 'open',
+        exit: kind === 'finished' ? 'prepared' : kind === 'external-gate' ? 'external-gate' : kind === 'pause' ? 'paused' : kind === 'ready' ? 'ready' : null,
+        head: { current: headSha, relation: 'same' },
+        last_checkpoint: kind === null || kind === 'finished' ? null : { kind: kind === 'external-gate' ? 'pause' : kind },
+      });
+      expect(readFileSync(statePath, 'utf8')).toBe(before);
+      expect(existsSync(join(d, 'review-run-state.json.lock'))).toBe(false);
+      const resumed = callCmd(d, 'checkpoint', {
+        checkpoint_id: uid(102), kind: 'resume', base: baseSha, session_id: `extend-${uid(1002)}`,
+      });
+      if (kind === 'finished') {
+        expect(resumed.code).toBe(1);
+        expect(resumed.json.reason).toBe('finished');
+        expect(readFileSync(statePath, 'utf8')).toBe(before);
+      } else {
+        expect(resumed.code, String(kind)).toBe(0);
+        const after = JSON.parse(readFileSync(statePath, 'utf8'));
+        expect(after.segments).toHaveLength(shown.json.segments.length + 1);
+        expect(after.segments.at(-2).end).toBe(paused ? 'paused' : 'interrupted');
+        expect(after.segments.at(-1).end).toBeNull();
+      }
+    }
   });
 });

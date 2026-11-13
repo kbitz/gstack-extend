@@ -4393,9 +4393,18 @@ describe('review-and-prep run-state=record', () => {
       '| `ready` |',
       'Before `before-fix` (the 113A failure mode):',
       'do not re-run those voices or ask for `continuation=full`',
+      '`rev` lower than the corroborated full receipt',
+      'previous session has ended',
+      'Never `start` a replacement run in that directory',
+      'frozen candidate snapshots, never checkpoint HEADs',
+      'posted for the same head',
+      're-establish `checkpoint ready` after `resume`',
     ]) {
       expect(resumeSection, phrase).toContain(phrase);
     }
+    expect(resumeSection).not.toContain('.context/');
+    expect(resumeSection).not.toContain('or a fresh `start`');
+    expect(resumeSection).not.toContain('`details.value`');
 
     const expectedSkillPara = 'Under `run-state=record`, a resume or repeat invocation first runs the calls document\'s **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.';
     expect(flat).toContain(`${expectedSkillPara} With \`full-suite=external\` in the invocation prompt, read **Resume entry**`);
