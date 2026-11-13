@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
+import { RENDER_SCHEMA, RENDER_SHAPES } from '../src/review-state/render.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
@@ -1215,5 +1216,288 @@ describe('bin/review-state', () => {
       code: 1,
       json: { command: 'export', status: 'unreadable', reason: 'corrupt' },
     });
+  });
+
+  test('checkpoint ready records on open run, replays, requires 40-hex ancestor base, refuses paused/finished, and round-trips byte-identically', () => {
+    const d = newDir();
+    expect(callCmd(d, 'start', mkStart(1)).json).toMatchObject({ reason: 'recorded', rev: 1 });
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'ready' }).json.detail.violations).toContainEqual({
+      path: 'base', rule: 'invalid-value', expected: 'required-hex40-for-ready',
+    });
+
+    git(repo, ['checkout', '--orphan', 'unrelated-branch']);
+    writeFileSync(join(repo, 'unrelated.txt'), 'u');
+    git(repo, ['add', 'unrelated.txt']);
+    git(repo, ['commit', '-m', 'unrelated', '--quiet']);
+    const unrelatedSha = git(repo, ['rev-parse', 'HEAD']);
+    git(repo, ['checkout', '-f', 'main']);
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'ready', base: unrelatedSha }).json.detail.violations).toContainEqual({
+      path: 'base', rule: 'not-ancestor', expected: 'ancestor-of-head',
+    });
+
+    const readyPayload = { checkpoint_id: uid(62), kind: 'ready', base: baseSha, wtree: 'wt:ready' };
+    expect(callCmd(d, 'checkpoint', readyPayload).json).toMatchObject({ reason: 'recorded', rev: 2 });
+    expect(callCmd(d, 'checkpoint', readyPayload).json).toMatchObject({ reason: 'replayed', rev: 2 });
+    const statePath = join(d, 'review-run-state.json'), rawBytes = readFileSync(statePath, 'utf8');
+    const state = JSON.parse(rawBytes) as ReviewRunState;
+    expect(state.segments[0]?.end).toBeNull();
+    expect(state.checkpoints[0]).toMatchObject({ kind: 'ready', base: baseSha, wtree: 'wt:ready', head: headSha, tree: treeSha });
+
+    const validated = validateStoredState(JSON.parse(rawBytes), statePath, readHelperVersion());
+    expect(validated.ok && serializeState(validated.state)).toBe(rawBytes);
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(63), kind: 'pause', base: baseSha });
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(64), kind: 'ready', base: baseSha }).json).toMatchObject({ status: 'refused', reason: 'paused' });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(65), kind: 'resume', session_id: `extend-${uid(902)}` });
+    callCmd(d, 'finish', { outcome: 'prepared', base: baseSha });
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(66), kind: 'ready', base: baseSha }).json).toMatchObject({ status: 'refused', reason: 'finished' });
+  });
+
+  test('render command renders full-receipt, comment, body, and final across exit states without mutating or locking state', () => {
+    expect(Object.keys(RENDER_SHAPES)).toEqual(['render (full-receipt)', 'render (comment)', 'render (body)', 'render (final)']);
+    const helpDir = newDir();
+    expect(runCli(['render', '--help']).out).toContain(RENDER_SCHEMA);
+    expect(runCli(['--help']).out).toContain('bin/review-state render --dir DIR --input FILE');
+    expect(existsSync(join(helpDir, 'review-run-state.json'))).toBe(false);
+
+    const runRender = (dir: string, name: string, payload: unknown) => runCli(['render', '--dir', dir, '--input', writeJson(dir, name, payload)]);
+    const dMissing = newDir();
+    expect(runRender(dMissing, 'missing.json', { output: 'full-receipt' })).toMatchObject({
+      code: 1, json: { command: 'render', status: 'refused', reason: 'not-started' },
+    });
+
+    const dReady = newDir();
+    const files: Record<string, string> = {
+      'pregate.json': '{"ok":true}\n',
+      'doc-sec.md': '## Documentation\n- Current.\n',
+      'sections.md': '## Completion matrix\nAll required voices completed.\n',
+      'summary.md': 'Summary of changes.\nTests: pass.\n',
+      'bad-summary.md': '## Bad heading\nText.\n',
+    };
+    for (const [fn, txt] of Object.entries(files)) writeFileSync(join(dReady, fn), txt);
+    const commentUrl = 'https://github.com/kbitz/gstack-extend/pull/240#issuecomment-999';
+
+    callCmd(dReady, 'start', mkStart(1, {
+      wtree: 'e5e5e5e5e5e5e5e5',
+      policy: { value: 'review-and-prep-policy/v1; run-state=record', source: 'caller prompt', delegation: { status: 'active', parts: ['specialist:testing', 'native-adversarial'], config: sha256('cfg'), tools: ['specialist:testing'] } },
+    }));
+    expect(runRender(dReady, 'no-ready.json', { output: 'full-receipt' }).json.detail.violations).toContainEqual({
+      path: '$', rule: 'not-renderable', expected: 'renderable-exit-and-output',
+    });
+
+    callCmd(dReady, 'record pass', mkPassStarted(10, { required_voices: ['specialist-testing'] }));
+    callCmd(dReady, 'record pass', {
+      pass_id: uid(10), state: 'attempt', voice_id: 'specialist-testing', part: 'specialist:testing', attempt_id: uid(20), outcome: 'completed',
+      delegate: { provider: 'codex', model: 'gpt-5', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 900, input_tokens: 120, output_tokens: 40, cache_read_input_tokens: 10, cache_creation_input_tokens: null, call_id: sha256('call-ready') },
+      findings: [],
+    });
+    callCmd(dReady, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'specialist-testing', selected_attempt_id: uid(20) });
+    callCmd(dReady, 'record pass', { pass_id: uid(10), state: 'completed', completed_at: '2026-11-10T18:05:00Z' });
+    callCmd(dReady, 'record gate', {
+      gate_id: uid(40), name: 'pregate', result: 'passed', candidate: { commit: headSha, base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' },
+      details: { raw_verdict: 'pass', wrapper_verdict: 'pass', policy: 'base', record_path: 'pregate.json', record_sha256: sha256(files['pregate.json']!), skipped_lanes: [] },
+    });
+    callCmd(dReady, 'record gate', {
+      gate_id: uid(41), name: 'greptile', result: 'passed', candidate: { commit: baseSha, base: baseSha },
+      details: { value: `completed on ${baseSha}; findings dispositioned in the receipt, so triage only newer feedback`, run: 'https://github.com/kbitz/gstack-extend/pull/240#pullrequestreview-1' },
+    });
+    callCmd(dReady, 'record audit', { audit_id: uid(50), name: 'coverage', result: 'pass', details: { pct: 100, threshold: 'pass' }, candidate: { commit: headSha, base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' } });
+    callCmd(dReady, 'record audit', { audit_id: uid(51), name: 'documentation', result: 'accepted', details: { report_id: 'doc-1', section_path: 'doc-sec.md', section_sha256: sha256(files['doc-sec.md']!) }, candidate: { commit: headSha, base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' } });
+    callCmd(dReady, 'checkpoint', { checkpoint_id: uid(60), kind: 'ready', base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' });
+
+    const statePath = join(dReady, 'review-run-state.json'), stateBeforeRender = readFileSync(statePath, 'utf8');
+    expect(runCli(['render', '--dir', dReady, '--input', writeJson(dMissing, 'outside.json', { output: 'full-receipt' })])).toMatchObject({
+      code: 2, json: { command: 'render', status: 'usage', reason: 'usage' },
+    });
+
+    for (const [name, payload, want] of [
+      ['r-unknown.json', { output: 'full-receipt', unknown_key: 1 }, { path: 'unknown_key', rule: 'unknown-key', expected: 'no unknown keys' }],
+      ['r-null-section.json', { output: 'full-receipt', sections: [null] }, { path: 'sections[0]', rule: 'invalid-type', expected: 'object' }],
+      ['r-null-receipt.json', { output: 'comment', full_receipt: null }, { path: 'full_receipt', rule: 'invalid-type', expected: 'object' }],
+      ['r-null-summary.json', { output: 'body', full_receipt: null, summary: null, comment_url: commentUrl }, { path: 'summary', rule: 'invalid-type', expected: 'object' }],
+      ['r-bad-digest.json', { output: 'full-receipt', sections: [{ path: 'sections.md', sha256: '0'.repeat(64) }] }, { path: 'sections[0]', rule: 'evidence-digest-mismatch', expected: 'valid-file-in-dir-with-matching-sha256' }],
+    ] as const) {
+      expect(runRender(dReady, name, payload).json.detail.violations).toContainEqual(want);
+    }
+
+    const fullRes1 = runRender(dReady, 'r-full-1.json', { output: 'full-receipt', sections: [{ path: 'sections.md', sha256: sha256(files['sections.md']!) }] });
+    const fullRes2 = runRender(dReady, 'r-full-2.json', { output: 'full-receipt', sections: [{ path: 'sections.md', sha256: sha256(files['sections.md']!) }] });
+    for (const [res, idx] of [[fullRes1, 1], [fullRes2, 2]] as const) {
+      expect(res.code).toBe(0);
+      const p = res.json.files[0].path;
+      expect(p).toBe(join(dReady, `full-receipt-${idx}.md`));
+      expect(statSync(p).mode & 0o777).toBe(0o600);
+      expect(sha256(readFileSync(p, 'utf8'))).toBe(res.json.files[0].sha256);
+    }
+    expect(readFileSync(fullRes1.json.files[0].path, 'utf8')).toContain('delegation: active (parts=testing,adversarial; config=');
+    expect(readFileSync(fullRes1.json.files[0].path, 'utf8')).toContain('## Completion matrix');
+
+    const fullRef1 = { path: 'full-receipt-1.md', sha256: fullRes1.json.files[0].sha256 };
+    const commentRes = runRender(dReady, 'r-comment.json', { output: 'comment', full_receipt: fullRef1 });
+    expect(commentRes.json).toMatchObject({ schema: RENDER_SCHEMA, output: 'comment', exit: 'ready', files: [{ path: join(dReady, 'comment-receipt-1.md') }] });
+    const comRef1 = { path: 'comment-receipt-1.md', sha256: commentRes.json.files[0].sha256 };
+
+    expect(runRender(dReady, 'r-bad-sum.json', {
+      output: 'body', full_receipt: fullRef1, summary: { path: 'bad-summary.md', sha256: sha256(files['bad-summary.md']!) }, comment_url: commentUrl,
+    }).json.detail.violations).toContainEqual({ path: 'summary', rule: 'invalid-value', expected: 'no-h2-heading' });
+
+    const bodyRes = runRender(dReady, 'r-body.json', {
+      output: 'body', comment_url: commentUrl, full_receipt: fullRef1, summary: { path: 'summary.md', sha256: sha256(files['summary.md']!) },
+    });
+    expect(readFileSync(bodyRes.json.files[0].path, 'utf8')).toContain(`## Review and prep\n\nprepared\n\nSummary of changes.\nTests: pass.\n\nReceipt: ${commentUrl}\nEvidence: `);
+    expect(readFileSync(statePath, 'utf8')).toBe(stateBeforeRender);
+    expect(existsSync(join(dReady, 'review-run-state.json.lock'))).toBe(false);
+    expect(runRender(dReady, 'r-final-early.json', { output: 'final', comment_url: commentUrl, full_receipt: fullRef1, comment_file: comRef1 }).json).toMatchObject({ reason: 'invalid-input' });
+
+    callCmd(dReady, 'finish', {
+      outcome: 'prepared', base: baseSha, wtree: 'e5e5e5e5e5e5e5e5', readiness_confirmed_at: '2026-11-10T18:10:00Z',
+      user_facing_changes: ['Rendered receipts and handoffs from run state.'],
+    });
+    expect(runRender(dReady, 'r-pr-conflict.json', {
+      output: 'final', comment_url: commentUrl, full_receipt: fullRef1, comment_file: comRef1,
+      pr: { number: 999, url: 'https://github.com/kbitz/gstack-extend/pull/999', repo: 'kbitz/gstack-extend', base_ref: 'origin/main', head_repo: 'kbitz/gstack-extend', head_branch: 'main' },
+    }).json.detail.violations).toContainEqual({ path: 'pr', rule: 'conflicts-with-state', expected: 'matches-run-pr' });
+
+    const finalRes = runRender(dReady, 'r-final.json', {
+      output: 'final', comment_url: commentUrl, full_receipt: fullRef1, comment_file: comRef1, save_before_shipping: 'notes/finding.md',
+    });
+    const finalText = readFileSync(finalRes.json.files[0].path, 'utf8');
+    expect(finalText).toContain(`Prepared HEAD: ${headSha}; readiness confirmed at 2026-11-10T18:10:00Z`);
+    expect(finalText).toContain('Save before shipping: notes/finding.md; move them out of\nthis checkout without committing them, since they block release work until then.');
+    expect(finalText).toContain('User-facing change: Rendered receipts and handoffs from run state.');
+    expect(finalText).toContain(`Stage handoff: stage-handoff/v1; stage: review; next: ship-and-land; status: done; head: ${headSha}; plan-sha256: ${sha256('plan-bytes')}`);
+
+    const tampered = `${readFileSync(commentRes.json.files[0].path, 'utf8')}extra\n`;
+    writeFileSync(join(dReady, 'comment-receipt-9.md'), tampered);
+    expect(runRender(dReady, 'r-final-bad.json', {
+      output: 'final', comment_url: commentUrl, full_receipt: fullRef1, comment_file: { path: 'comment-receipt-9.md', sha256: sha256(tampered) },
+    }).json.detail.violations).toContainEqual({ path: 'comment_file', rule: 'receipt-mismatch', expected: 'matches-finished-state' });
+
+    // Stale ready when HEAD advances after checkpoint ready
+    const dStale = newDir(), wtStale = join(baseTmp, 'wt-stale-ready');
+    callCmd(dStale, 'start', mkStart(2));
+    callCmd(dStale, 'checkpoint', { checkpoint_id: uid(63), kind: 'ready', base: baseSha });
+    git(repo, ['worktree', 'add', '--detach', wtStale, headSha]);
+    git(wtStale, ['commit', '--allow-empty', '-m', 'advance-after-ready', '--quiet']);
+    expect(runCli(['render', '--dir', dStale, '--input', writeJson(dStale, 'stale.json', { output: 'full-receipt' })], { cwd: wtStale }).json.detail.violations[0]?.rule).toBe('stale-ready');
+    git(repo, ['worktree', 'remove', '--force', wtStale]);
+
+    // Paused, external-gate, stopped, blocked, needs-context exits
+    const dPause = newDir();
+    writeFileSync(join(dPause, 'summary.md'), 'Paused for manual checks.\n');
+    callCmd(dPause, 'start', mkStart(3));
+    callCmd(dPause, 'record gate', { gate_id: uid(42), name: 'greptile', result: 'not-run', candidate: { commit: headSha, base: baseSha }, details: { value: 'postponed — awaiting manual testing', run: null } });
+    callCmd(dPause, 'checkpoint', { checkpoint_id: uid(64), kind: 'pause', base: baseSha, wtree: 'wt:pause' });
+    const pFull = runRender(dPause, 'p-full.json', { output: 'full-receipt', review_restriction_resolved: true });
+    const pRef = { path: 'full-receipt-1.md', sha256: pFull.json.files[0].sha256 };
+    expect(runRender(dPause, 'p-comment.json', { output: 'comment', full_receipt: pRef, review_restriction_resolved: true }).code).toBe(0);
+    expect(readFileSync(join(dPause, 'comment-paused-1.md'), 'utf8')).toContain(`<!-- review-and-prep:paused:${headSha} -->`);
+    expect(readFileSync(join(dPause, 'comment-paused-1.md'), 'utf8')).toContain('reviewRestrictionResolved: true');
+    expect(runRender(dPause, 'p-body.json', { output: 'body', comment_url: commentUrl, full_receipt: pRef, summary: { path: 'summary.md', sha256: sha256('Paused for manual checks.\n') } }).code).toBe(0);
+    const pFinal = runRender(dPause, 'p-final.json', { output: 'final', required_user_checks: 'M1 check terminal flow' });
+    expect(readFileSync(pFinal.json.files[0].path, 'utf8')).toContain('Run /pair-review for draft PR https://github.com/kbitz/gstack-extend/pull/240');
+
+    const dExt = newDir();
+    callCmd(dExt, 'start', mkStart(4));
+    callCmd(dExt, 'checkpoint', { checkpoint_id: uid(65), kind: 'external-gate', base: baseSha });
+    callCmd(dExt, 'checkpoint', { checkpoint_id: uid(66), kind: 'pause', base: baseSha });
+    const extFinal = runRender(dExt, 'ext-final.json', { output: 'final', auto_choice_lines: ['Auto-chosen (veto by replying on this PR): Rename helper? → keep name'] });
+    const extText = readFileSync(extFinal.json.files[0].path, 'utf8');
+    expect(extText).toContain(`Evidence directory: ${dExt}\nAuto-chosen (veto by replying on this PR): Rename helper? → keep name\nExternal gate: external-gate/v1; head: ${headSha}; tree: ${treeSha}; base: ${baseSha}`);
+    expect(extText).not.toContain('Stage handoff:');
+
+    const dStop = newDir();
+    callCmd(dStop, 'start', mkStart(5));
+    callCmd(dStop, 'finish', { outcome: 'stopped', base: baseSha, stop_reason: 'cycle cap', delta_base: baseSha, stop_count: 1 });
+    expect(runRender(dStop, 's-res-bad.json', { output: 'full-receipt', review_restriction_resolved: true }).json.detail.violations).toContainEqual({
+      path: 'review_restriction_resolved', rule: 'forbidden-for-exit', expected: 'ready-or-paused-only',
+    });
+    const sFull = runRender(dStop, 's-full.json', { output: 'full-receipt' });
+    const stopComment = runRender(dStop, 's-comment.json', { output: 'comment', full_receipt: { path: 'full-receipt-1.md', sha256: sFull.json.files[0].sha256 } });
+    expect(readFileSync(stopComment.json.files[0].path, 'utf8')).toContain(`<!-- review-and-prep:stopped:${headSha} -->`);
+    expect(readFileSync(runRender(dStop, 's-final.json', { output: 'final' }).json.files[0].path, 'utf8')).toContain('Run /review-and-prep continue for PR https://github.com/kbitz/gstack-extend/pull/240');
+
+    const dBlockedOther = newDir();
+    callCmd(dBlockedOther, 'start', mkStart(6));
+    callCmd(dBlockedOther, 'finish', { outcome: 'blocked', base: baseSha, stop_reason: 'merge-conflict' });
+    expect(runRender(dBlockedOther, 'bo-body.json', { output: 'body', comment_url: null, full_receipt: { path: 'full-receipt-1.md', sha256: '0'.repeat(64) }, summary: { path: 's.md', sha256: '0'.repeat(64) } }).json.detail.violations).toContainEqual({
+      path: '$', rule: 'not-renderable', expected: 'renderable-exit-and-output',
+    });
+
+    const dBlocked = newDir();
+    writeFileSync(join(dBlocked, 'summary.md'), 'Provider failed.\n');
+    callCmd(dBlocked, 'start', mkStart(7));
+    callCmd(dBlocked, 'finish', { outcome: 'blocked', base: baseSha, stop_reason: 'provider-failures' });
+    const blkFull = runRender(dBlocked, 'b-full.json', { output: 'full-receipt' });
+    expect(runRender(dBlocked, 'b-body.json', { output: 'body', comment_url: null, full_receipt: { path: 'full-receipt-1.md', sha256: blkFull.json.files[0].sha256 }, summary: { path: 'summary.md', sha256: sha256('Provider failed.\n') } }).code).toBe(0);
+    expect(readFileSync(join(dBlocked, 'pr-body-1.md'), 'utf8')).toContain('## Review and prep\n\nBLOCKED — provider failures\n\nProvider failed.\n\nReceipt: none yet\n');
+    expect(readFileSync(runRender(dBlocked, 'b-final.json', { output: 'final' }).json.files[0].path, 'utf8')).toContain('status: blocked;');
+
+    const dNeeds = newDir();
+    callCmd(dNeeds, 'start', mkStart(8));
+    callCmd(dNeeds, 'finish', { outcome: 'needs-context', base: baseSha, stop_reason: 'missing spec' });
+    expect(readFileSync(runRender(dNeeds, 'n-final.json', { output: 'final' }).json.files[0].path, 'utf8')).toContain('status: needs-context;');
+  });
+
+  // Value: protects=digest-pinned evidence and exclusive output ownership; fails_when=render reopens checked paths, removes an unowned file after open fails, or rounds an existing numeric suffix; why_new=review reproductions; seam=child-local filesystem mocks; no_claim=OS sandboxing
+  test.each(['replace-section', 'failed-open', 'readback-replacement', 'large-suffix'])('render consumes checked bytes and preserves outputs it did not create (%s)', (mode) => {
+      const d = newDir();
+      callCmd(d, 'start', mkStart());
+      callCmd(d, 'record gate', { gate_id: uid(41), name: 'greptile', result: 'not-run', candidate: { commit: headSha, base: baseSha }, details: { value: 'skipped — no root configuration', run: null } });
+      callCmd(d, 'checkpoint', { checkpoint_id: uid(60), kind: 'ready', base: baseSha });
+      writeFileSync(join(d, 'section.md'), 'Digest-pinned section.\n');
+      const input = writeJson(d, 'render.json', { output: 'full-receipt', sections: [{ path: 'section.md', sha256: sha256('Digest-pinned section.\n') }] });
+      if (mode === 'large-suffix') writeFileSync(join(d, 'full-receipt-9007199254740993.md'), 'existing receipt\n');
+      const child = `
+        import { mock } from 'bun:test';
+        const fs = await import('node:fs');
+        const mode = ${JSON.stringify(mode)};
+        const storePath = ${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))};
+        const store = await import(storePath);
+        const checkDirFile = store.checkDirFile, openSync = fs.openSync, readFileSync = fs.readFileSync;
+        if (mode === 'replace-section') mock.module(storePath, () => ({ ...store,
+          checkDirFile(...args) {
+            const result = checkDirFile(...args);
+            if (result.ok && args[1] === 'section.md') fs.writeFileSync(result.realPath, 'Replacement after validation.\\n');
+            return result;
+          }
+        }));
+        if (mode === 'failed-open') mock.module('node:fs', () => ({ ...fs,
+          openSync(path, flags, permissions) {
+            if (flags === 'wx' && String(path).includes('/full-receipt-')) {
+              fs.writeFileSync(path, 'Other writer owns this output.\\n');
+              throw Object.assign(new Error('injected descriptor exhaustion'), { code: 'EMFILE' });
+            }
+            return openSync(path, flags, permissions);
+          }
+        }));
+        if (mode === 'readback-replacement') mock.module('node:fs', () => ({ ...fs,
+          readFileSync(path, ...args) {
+            if (String(path).includes('/full-receipt-')) {
+              fs.renameSync(path, String(path) + '.original');
+              fs.writeFileSync(path, 'Other writer owns this output.\\n');
+            }
+            return readFileSync(path, ...args);
+          }
+        }));
+        const { executeRender } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/render.ts'))});
+        console.log(JSON.stringify(executeRender(${JSON.stringify(d)}, ${JSON.stringify(input)}, ${JSON.stringify(repo)})));
+      `;
+      const r = spawnSync(process.execPath, ['--no-env-file', '--config=/dev/null', '--no-install', '-e', child], { cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 15000 });
+      expect(r.status, r.stderr).toBe(0);
+      const result = JSON.parse(r.stdout);
+      if (mode === 'failed-open' || mode === 'readback-replacement') {
+        expect(result.ok).toBe(false);
+        expect(result.envelope).toMatchObject({ reason: 'unwritable', detail: { errno: mode === 'failed-open' ? 'EMFILE' : 'EIO' } });
+        expect(existsSync(join(d, 'full-receipt-1.md'))).toBe(true);
+        expect(readFileSync(join(d, 'full-receipt-1.md'), 'utf8')).toBe('Other writer owns this output.\n');
+      } else {
+        expect(result.ok).toBe(true);
+        const output = result.renderDoc.files[0].path;
+        expect(readFileSync(output, 'utf8')).toContain('Digest-pinned section.\n');
+        expect(readFileSync(output, 'utf8')).not.toContain('Replacement after validation.');
+        if (mode === 'replace-section') expect(readFileSync(join(d, 'section.md'), 'utf8')).toBe('Replacement after validation.\n');
+        if (mode === 'large-suffix') expect(output).toBe(join(d, 'full-receipt-9007199254740994.md'));
+      }
   });
 });
