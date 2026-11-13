@@ -98,6 +98,13 @@ finding format, absent finding, or mismatched input hash blocks the override.
 Ambiguous rendered filenames also block rather than guessing an approval path.
 The supplied upstream root must be outside the target project.
 
+The evaluator reads both upstream added-line part shapes (`text` from older
+installs and `texts` with one reading per non-binary file from current ones),
+hashing the raw parts as upstream returns them; any other part shape exits 2
+with `unrecognized upstream added-line part shape`. A finding in a part upstream
+marks binary reports `finding is in a binary part and cannot be dispositioned`
+(exit 1) and cannot be satisfied by any entry.
+
 Default `--stage all` requires the full installed check set exactly once.
 Use `--stage preflight` for ship's final preflight record after its full
 test evidence has already qualified, or review-and-prep's external-gate
@@ -162,9 +169,6 @@ Staleness alone is advisory when there is no unmatched finding. Unchanged
 lines remain valid even if moved within their file or absent from this diff.
 Symlink targets are never used for approvals; a replaced regular source is
 stale. Unrelated symlinks do not block a clean upstream secrets result.
-
-The [upstream issue draft](designs/secret-scanner-upstream-issue.md) is text
-for the maintainer to review and file if desired; it has not been submitted.
 
 ## Known-safe run values in PR text
 
@@ -240,6 +244,9 @@ GSTACK_SECRET_DISPOSITIONS_INTEGRATION_ROOT=<trusted-installed-gstack-root> \
   bun test tests/secret-dispositions.test.ts
 ```
 
-These are synthetic fixture approvals, not approvals for the working project
-or proof of attended agent behavior. Workflow instructions require an actual
-in-session decision before any real entry is written.
+The opt-in fixtures were last qualified on installed gstack `1.99.3.0`; the
+installed scanner decides which examples it flags, and the wrapper must match
+every blocking finding it reports. These are synthetic fixture approvals, not
+approvals for the working project or proof of attended agent behavior. Workflow
+instructions require an actual in-session decision before any real entry is
+written.

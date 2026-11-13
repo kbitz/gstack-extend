@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { cpSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { makeEmptyRepo } from './helpers/fixture-repo';
-import { DISPOSITIONS, evaluate, parseEntries, sha256, type Check, type Entry, type Part } from '../src/secret-dispositions/evaluate';
+import { BINARY_PART_ERROR, DISPOSITIONS, evaluate, parseEntries, PART_SHAPE_ERROR, readPart, sha256, type Check, type Entry, type Part } from '../src/secret-dispositions/evaluate';
 import { countsFor, decide, eligibleComponent, exitFor, isDelimitedAfter, knownComponents, maskComponents, offsetOf, type ScanFinding } from '../src/secret-dispositions/scan-text';
 
 const root = resolve(import.meta.dir, '..');
@@ -12,7 +12,7 @@ const temp = mkdtempSync(join(tmpdir(), 'secret-dispositions-'));
 afterAll(() => rmSync(temp, { recursive: true, force: true }));
 // Fictional approval metadata belongs only to these isolated test fixtures.
 const examples = [
-  { file: 'src/mmm_factory/managerusage.py', line: 50, text: 'session = row.get("manager_session") if row and row.get("stage") == "manager" else None', reason: 'This is a Python expression, not a literal credential.' },
+  { file: 'src/acme_app/workerusage.py', line: 50, text: 'session = row.get("worker_session") if row and row.get("stage") == "worker" else None', reason: 'This is a Python expression, not a literal credential.' },
   { file: 'tests/test_factory_manager.py', line: 322, text: 'secret = "SECRET-TOKEN-VALUE"', reason: 'This sentinel is checked to be absent from error output.' },
   { file: 'tests/test_manager_usage.py', line: 21, text: 'SESSION = "5d2c8a10-3b7e-4c11-9a64-8f0e1b2c3d4e"', reason: 'This UUID is a synthetic test identifier.' },
 ];
@@ -237,6 +237,87 @@ describe('whole-file parts', () => {
   });
 });
 
+describe('installed texts part shape and refusals', () => {
+  const textsParts: Part[] = examples.map(({ file, text }) => ({ file, texts: [text] }));
+  const textsCheck = (): Check => ({
+    ...check(),
+    inputs: { added_lines: sha256(JSON.stringify(textsParts)) },
+  });
+
+  test('installed texts shape satisfies the three-example record, whole-file keep, and hashes raw parts', () => {
+    const result = evaluate(textsCheck(), textsParts, entries, sources());
+    expect(result.errors).toEqual([]);
+    expect(result.satisfied).toBe(true);
+    expect(result.matched).toHaveLength(3);
+    expect(result.matched.map(m => m.approval)).toEqual(entries);
+
+    const file = 'app/settings.py', lines = ['# existing', examples[1]!.text, '# existing'];
+    const wholeTexts: Part = { file, texts: [lines.join('\n')], keep: [2] };
+    const wholeRaw: Check = {
+      id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+      inputs: { added_lines: sha256(JSON.stringify([wholeTexts])) },
+      detail: '1 credential finding(s) in added lines (env.kv)',
+      lines: [`MEDIUM env.kv [secret]: sensitive assignment (${file}, line 2)`],
+    };
+    const wholeEntry: Entry = { ...entries[1]!, path: file };
+    const wholeResult = evaluate(wholeRaw, [wholeTexts], [wholeEntry], new Map([[file, lines.join('\n')]]));
+    expect(wholeResult.errors).toEqual([]);
+    expect(wholeResult.satisfied).toBe(true);
+    expect(wholeResult.matched).toHaveLength(1);
+
+    const normalizedHashCheck: Check = { ...textsCheck(), inputs: { added_lines: sha256(JSON.stringify(parts)) } };
+    const hashMismatch = evaluate(normalizedHashCheck, textsParts, entries, sources());
+    expect(hashMismatch.satisfied).toBe(false);
+    expect(hashMismatch.errors).toContain('added-line input hash differs from the raw pregate record');
+  });
+
+  test('readPart and evaluate refuse malformed part shapes and binary findings by name', () => {
+    const invalidParts: unknown[] = [
+      { file: 'a.py', text: 'x', texts: ['x'] },
+      { file: 'a.py' },
+      { file: 'a.py', texts: [] },
+      { file: 'a.py', texts: [123] },
+      { file: 'a.py', texts: ['x', 'y'] },
+      { file: 'a.py', text: 'x', binary: false },
+      { file: 'a.py', text: 'x', keep: [0] },
+      { file: 'a.py', text: 'x', extra: 1 },
+    ];
+    for (const bad of invalidParts) {
+      expect(() => readPart(bad)).toThrow(PART_SHAPE_ERROR);
+      expect(() => evaluate(check(), [bad as Part], entries, sources())).toThrow(PART_SHAPE_ERROR);
+    }
+
+    for (const binaryPart of [
+      { file: examples[1]!.file, text: examples[1]!.text, binary: true as const },
+      { file: examples[1]!.file, texts: [examples[1]!.text, 'second-reading'], binary: true as const },
+    ]) {
+      const ps: Part[] = [binaryPart];
+      const raw: Check = {
+        id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+        inputs: { added_lines: sha256(JSON.stringify(ps)) },
+        detail: '1 credential finding(s) in added lines (env.kv)',
+        lines: [`MEDIUM env.kv [secret]: sensitive assignment (${examples[1]!.file}, added line 1)`],
+      };
+      const refused = evaluate(raw, ps, [entries[1]!], new Map([[examples[1]!.file, examples[1]!.text]]));
+      expect(refused.satisfied).toBe(false);
+      expect(refused.errors).toContain(BINARY_PART_ERROR);
+      expect(refused.matched).toEqual([]);
+    }
+
+    const unflaggedBinary: Part = { file: 'assets/logo.bin', texts: ['reading-1', 'reading-2'], binary: true };
+    const withUnflaggedBinary: Part[] = [...textsParts, unflaggedBinary];
+    const okWithBinary = evaluate(
+      { ...textsCheck(), inputs: { added_lines: sha256(JSON.stringify(withUnflaggedBinary)) } },
+      withUnflaggedBinary,
+      entries,
+      sources(),
+    );
+    expect(okWithBinary.errors).toEqual([]);
+    expect(okWithBinary.satisfied).toBe(true);
+    expect(okWithBinary.matched).toHaveLength(3);
+  });
+});
+
 function write(file: string, content: string) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, content); }
 function git(repo: string, ...args: string[]) {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
@@ -368,6 +449,47 @@ describe('read-only CLI gate', () => {
     expect(r.status).toBe(2); expect(JSON.parse(r.stdout).satisfied).toBe(false);
     expect(JSON.parse(r.stdout).error).toBe('gstack root must be a trusted installation outside the project');
   });
+  test('hermetic doubles for installed texts parts, unknown shapes and binary findings', () => {
+    const f = setup();
+    const textsUpstream = join(temp, `fake-upstream-texts-${crypto.randomUUID()}`);
+    cpSync(upstream, textsUpstream, { recursive: true });
+    const textsParts = examples.map(({ file, text }) => ({ file, texts: [text] }));
+    write(join(textsUpstream, 'lib/pregate/checks/secrets.ts'), `export const addedLines = () => ${JSON.stringify(textsParts)};`);
+    const textsSecret = { ...check(), inputs: { added_lines: sha256(JSON.stringify(textsParts)) } };
+    f.raw.checks = ids.map(id => id === 'secrets' ? textsSecret : { id, status: 'pass' });
+    f.save();
+    const before = readFileSync(f.record, 'utf8');
+    const ok = run(f.repo, textsUpstream, f.record), okOut = JSON.parse(ok.stdout);
+    expect(ok.status).toBe(0);
+    for (let i = 0; i < 3; i++) expect(okOut.receipt).toContain(`${DISPOSITIONS}#/entries/${i}`);
+    expect(readFileSync(f.record, 'utf8')).toBe(before);
+
+    const badUpstream = join(temp, `fake-upstream-bad-shape-${crypto.randomUUID()}`);
+    cpSync(upstream, badUpstream, { recursive: true });
+    const badParts = [{ file: examples[0]!.file, texts: [] }];
+    write(join(badUpstream, 'lib/pregate/checks/secrets.ts'), `export const addedLines = () => ${JSON.stringify(badParts)};`);
+    const badRun = run(f.repo, badUpstream, f.record), badOut = JSON.parse(badRun.stdout);
+    expect(badRun.status).toBe(2);
+    expect(badOut.satisfied).toBe(false);
+    expect(badOut.error).toBe(PART_SHAPE_ERROR);
+
+    const binUpstream = join(temp, `fake-upstream-binary-${crypto.randomUUID()}`);
+    cpSync(upstream, binUpstream, { recursive: true });
+    const binParts = [{ file: examples[1]!.file, texts: [examples[1]!.text, 'reading-2'], binary: true }];
+    write(join(binUpstream, 'lib/pregate/checks/secrets.ts'), `export const addedLines = () => ${JSON.stringify(binParts)};`);
+    const binSecrets = {
+      id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+      inputs: { added_lines: sha256(JSON.stringify(binParts)) },
+      detail: '1 credential finding(s) in added lines (env.kv)',
+      lines: [`MEDIUM env.kv [secret]: sensitive assignment (${examples[1]!.file}, added line 1)`],
+    };
+    f.raw.checks = ids.map(id => id === 'secrets' ? binSecrets : { id, status: 'pass' });
+    f.save();
+    const binRun = run(f.repo, binUpstream, f.record), binOut = JSON.parse(binRun.stdout);
+    expect(binRun.status).toBe(1);
+    expect(binOut.satisfied).toBe(false);
+    expect(binOut.errors).toContain(BINARY_PART_ERROR);
+  });
 });
 
 test('both wrapper instructions require user approval and preserve failed test evidence', () => {
@@ -388,23 +510,30 @@ test('the disposition document states both location forms, their files and the r
   const text = readFileSync(join(root, 'docs/secret-dispositions.md'), 'utf8').replace(/\s+/g, ' ');
   for (const phrase of ['`line N`', '`added line N`', '`added_line`', '`.py`, `.pyi`, `.dart`',
     'finding location does not match upstream added-line selection', 'cannot be satisfied by any entry', '`engine.` finding',
-    'accepted location form']) expect(text).toContain(phrase);
+    'accepted location form', PART_SHAPE_ERROR, BINARY_PART_ERROR]) expect(text).toContain(phrase);
 });
 
 const installed = process.env.GSTACK_SECRET_DISPOSITIONS_INTEGRATION_ROOT;
-test.skipIf(!installed)('actual installed pregate: three examples pass only in wrapper; edit becomes stale and fails', () => {
+// Qualified on installed gstack 1.99.3.0, which flags examples[1] and examples[2] (examples[0] call expression is exempt);
+// on 1.99.3.0, gstack-ship-receipt write also requires --review-targeted when .gstack/secret-dispositions.json is in main...HEAD (#3859).
+test.skipIf(!installed)('actual installed pregate: flagged examples pass only in wrapper; edit becomes stale and fails', () => {
   const f = fixture(), record = join(temp, 'installed-pregate.json');
   const scan = () => spawnSync(join(installed!, 'bin/gstack-pregate'), ['--base', 'main', '--stage', 'preflight', '--out', record],
     { cwd: f.repo, encoding: 'utf8', timeout: 120_000, env: { ...process.env, GSTACK_STATE_ROOT: join(temp, 'gstack-state') } });
   const first = scan();
   expect(first.status).toBe(1);
   const raw = readFileSync(record, 'utf8');
-  expect(JSON.parse(raw).checks.find((c: Check) => c.id === 'secrets').status).toBe('fail');
-  const allowed = run(f.repo, installed!, record, 'preflight');
+  const secrets = JSON.parse(raw).checks.find((c: Check) => c.id === 'secrets') as Check;
+  expect(secrets.status).toBe('fail');
+  const blockingCount = Number(/^(\d+) credential finding\(s\) in added lines \(/.exec(secrets.detail ?? '')?.[1] ?? 0);
+  expect(blockingCount).toBeGreaterThanOrEqual(1);
+  const allowed = run(f.repo, installed!, record, 'preflight'), allowedOut = JSON.parse(allowed.stdout);
   expect(allowed.stderr).toBe('');
-  expect(JSON.parse(allowed.stdout).errors).toEqual([]);
+  expect(allowedOut.errors).toEqual([]);
   expect(allowed.status).toBe(0);
-  expect(JSON.parse(allowed.stdout).matched).toHaveLength(3);
+  expect(allowedOut.matched).toHaveLength(blockingCount);
+  const exampleFiles = new Set(examples.map(e => e.file));
+  for (const m of allowedOut.matched) expect(exampleFiles.has(m.finding.path)).toBe(true);
   expect(readFileSync(record, 'utf8')).toBe(raw);
   const receipt = (...args: string[]) => spawnSync(join(installed!, 'bin/gstack-ship-receipt'),
     ['write', '--base', 'main', '--session-kind', 'spawned', '--json', ...args],
@@ -414,12 +543,13 @@ test.skipIf(!installed)('actual installed pregate: three examples pass only in w
   expect(nativeReceipt.status).toBe(0);
   expect(JSON.parse(nativeReceipt.stdout).pregate).toBeUndefined();
   expect(readFileSync(record, 'utf8')).toBe(raw);
-  write(join(f.repo, examples[0]!.file), `${examples[0]!.text} # changed\n`);
+  const firstMatched = examples.find(e => e.file === allowedOut.matched[0].finding.path)!;
+  write(join(f.repo, firstMatched.file), `${firstMatched.text} # changed\n`);
   expect(scan().status).toBe(1);
   const blocked = run(f.repo, installed!, record, 'preflight'), output = JSON.parse(blocked.stdout);
   expect(blocked.status).toBe(1);
-  expect(output.unmatched).toHaveLength(1);
-  expect(output.stale.map((e: Entry) => e.path)).toEqual([examples[0]!.file]);
+  expect(output.unmatched.map((u: { path: string }) => u.path)).toEqual([firstMatched.file]);
+  expect(output.stale.map((e: Entry) => e.path)).toEqual([firstMatched.file]);
 }, 180_000);
 
 // A generic tracked Python file: upstream hands the whole file to the scanner and reports `line N`.
@@ -526,18 +656,57 @@ describe('scan-text pure core (T1)', () => {
     expect([exitFor([{ severity: 'HIGH' }]), exitFor([{ severity: 'MEDIUM' }]), exitFor([{ severity: 'WARN' }])]).toEqual([3, 2, 0]);
     expect(countsFor([{ severity: 'HIGH' }, { severity: 'MEDIUM' }, { severity: 'LOW' }, { severity: 'WARN' }])).toEqual({ HIGH: 1, MEDIUM: 1, LOW: 1, WARN: 1 });
   });
+
+  test('decide handles repeated finding keys in the multiset comparison', () => {
+    const dir = `/home/u/.gstack/projects/acme/review-and-prep/${tsReal}`, text = `Path: ${dir}`;
+    const comps = knownComponents(text, { evidenceDirs: [dir] }), col = text.indexOf(tsReal) + 1;
+    const valid: ScanFinding = { id: 'pii.cc', severity: 'MEDIUM', category: 'pii', line: 1, col, preview: `${tsReal.slice(0, 4)}********…` };
+    const ineligibleSameKey: ScanFinding = { ...valid, preview: '9999********' };
+
+    const keptOne = decide(text, comps, { findings: [valid, valid] }, { findings: [valid] });
+    expect(keptOne).toEqual({
+      status: 'applied',
+      findings: [valid],
+      known_safe: [{ id: valid.id, line: valid.line, col: valid.col, context: 'evidence-dir' }],
+    });
+
+    const addedCopy = decide(text, comps, { findings: [valid, valid] }, { findings: [valid, valid, valid] });
+    expect([addedCopy.status, addedCopy.reason]).toEqual(['inconclusive', 'second scan added a finding']);
+
+    const mixedKept = decide(text, comps, { findings: [valid, ineligibleSameKey] }, { findings: [ineligibleSameKey] });
+    expect(mixedKept).toEqual({
+      status: 'applied',
+      findings: [ineligibleSameKey],
+      known_safe: [{ id: valid.id, line: valid.line, col: valid.col, context: 'evidence-dir' }],
+    });
+
+    const mixedDropped = decide(text, comps, { findings: [valid, ineligibleSameKey] }, { findings: [] });
+    expect([mixedDropped.status, mixedDropped.reason]).toEqual(['inconclusive', 'non-eligible finding changed in second scan']);
+  });
 });
 
 describe('scan-text CLI with hermetic upstream double (T2 & T3)', () => {
   const fakeUpstream = join(temp, 'fake-redact-upstream'), fakeBin = join(fakeUpstream, 'bin/gstack-redact');
   write(fakeBin, `#!/usr/bin/env bun
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 const stateFile = process.env.FAKE_REDACT_STATE_FILE, mode = process.env.FAKE_REDACT_MODE || '';
+const metaFile = process.env.FAKE_REDACT_SECOND_META_FILE;
 const call = stateFile ? (existsSync(stateFile) ? Number(readFileSync(stateFile, 'utf8')) + 1 : 1) : 1;
 if (stateFile) writeFileSync(stateFile, String(call));
 if ((mode === 'fail-first' && call === 1) || (mode === 'fail-second' && call === 2)) process.exit(1);
 if ((mode === 'bad-json-first' && call === 1) || (mode === 'bad-json-second' && call === 2)) { console.log('not-json'); process.exit(0); }
-const text = readFileSync(process.argv[process.argv.indexOf('--from-file') + 1], 'utf8');
+const targetFile = process.argv[process.argv.indexOf('--from-file') + 1];
+if (metaFile && call === 2) {
+  const dir = dirname(targetFile);
+  writeFileSync(metaFile, JSON.stringify({
+    path: targetFile,
+    dir,
+    fileMode: lstatSync(targetFile).mode & 0o777,
+    dirMode: lstatSync(dir).mode & 0o777,
+  }));
+}
+const text = readFileSync(targetFile, 'utf8');
 const starts = [0]; for (let i = 0; i < text.length; i++) if (text[i] === '\\n') starts.push(i + 1);
 const lineCol = (at) => {
   let lo = 0, hi = starts.length - 1;
@@ -708,6 +877,62 @@ if (mode === 'wrong-exit-second' && call === 2) process.exitCode = 3;
       { FAKE_REDACT_STATE_FILE: join(temp, `state-g-${crypto.randomUUID()}`), FAKE_REDACT_MODE: 'fail-second' });
     expect([failSec.status, readdirSync(workDir), readFileSync(file, 'utf8')]).toEqual([2, ['body.md'], original]);
     expect(() => readFileSync(join(repo, DISPOSITIONS))).toThrow();
+
+    const metaFile = join(temp, `meta-g-${crypto.randomUUID()}.json`);
+    const recorded = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir],
+      { FAKE_REDACT_STATE_FILE: join(temp, `state-g-meta-${crypto.randomUUID()}`), FAKE_REDACT_SECOND_META_FILE: metaFile });
+    expect(recorded.status).toBe(0);
+    const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as { path: string; dir: string; fileMode: number; dirMode: number };
+    expect(meta.dirMode).toBe(0o700);
+    expect(meta.fileMode).toBe(0o600);
+    expect(basename(meta.path)).toBe('body.md');
+    expect(dirname(meta.dir)).toBe(workDir);
+    expect(basename(meta.dir)).toMatch(/^\.scan-text-.+/);
+    expect(existsSync(meta.dir)).toBe(false);
+  });
+
+  test('filesystem and scanner refusals and existing review-and-prep roots report exact errors', () => {
+    const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-refusals-'));
+    const file = join(temp, `refusals-${crypto.randomUUID()}.md`);
+    writeFileSync(file, 'Synthetic input\n');
+
+    const noBinRoot = mkdtempSync(join(temp, 'no-bin-root-'));
+    const noExecRoot = mkdtempSync(join(temp, 'no-exec-root-'));
+    cpSync(fakeUpstream, noExecRoot, { recursive: true });
+    chmodSync(join(noExecRoot, 'bin/gstack-redact'), 0o644);
+    const symlinkLeafRoot = mkdtempSync(join(temp, 'symlink-leaf-root-'));
+    mkdirSync(join(symlinkLeafRoot, 'bin'), { recursive: true });
+    symlinkSync(fakeBin, join(symlinkLeafRoot, 'bin/gstack-redact'));
+    for (const badRoot of [noBinRoot, noExecRoot, symlinkLeafRoot]) {
+      const r = runScanText(repo, homeDir, ['--gstack-root', badRoot, '--from-file', file]);
+      expect([r.status, JSON.parse(r.stdout).error]).toEqual([1, 'gstack-redact must be a regular executable file outside the project']);
+    }
+
+    const missingFile = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', `${file}-missing`]);
+    expect([missingFile.status, JSON.parse(missingFile.stdout).error]).toEqual([1, 'from-file does not exist']);
+
+    const dirInput = mkdtempSync(join(temp, 'dir-input-'));
+    const linkInput = join(temp, `link-input-${crypto.randomUUID()}.md`);
+    symlinkSync(file, linkInput);
+    for (const badInput of [dirInput, linkInput]) {
+      const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', badInput]);
+      expect([r.status, JSON.parse(r.stdout).error]).toEqual([1, 'from-file must be a regular file and not a symlink']);
+    }
+
+    const subDir = join(repo, 'sub');
+    mkdirSync(subDir, { recursive: true });
+    const fromSub = spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', fakeUpstream, '--from-file', file],
+      { cwd: subDir, encoding: 'utf8', timeout: 60_000, env: { ...process.env, HOME: homeDir } });
+    expect([fromSub.status, JSON.parse(fromSub.stdout).error]).toEqual([1, 'run from the repository root']);
+
+    const scratchRoot = join(homeDir, 'scratch/review-and-prep');
+    const projectsRoot = join(homeDir, '.gstack/projects/acme/review-and-prep');
+    mkdirSync(scratchRoot, { recursive: true });
+    mkdirSync(projectsRoot, { recursive: true });
+    for (const rootDir of [scratchRoot, projectsRoot]) {
+      const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', rootDir]);
+      expect([r.status, JSON.parse(r.stdout).error]).toEqual([1, 'evidence-dir must lie below a documented review-and-prep root']);
+    }
   });
 });
 
@@ -756,4 +981,12 @@ test.skipIf(!installed)('(h) actual installed gstack-redact: flags real shapes d
   }
   writeFileSync(bodyFile, `Evidence: (${evDir})\nReceipt: (${prUrl}#issuecomment-${commentNum})\n`);
   expect(spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', installed!, '--from-file', bodyFile, '--evidence-dir', evDir, '--pr-url', prUrl], { cwd: repo, encoding: 'utf8', timeout: 60_000, env }).status).toBe(0);
+
+  const prefix = `${String.fromCodePoint(0x1f512)} ${String.fromCodePoint(0x2014)} `;
+  writeFileSync(bodyFile, `${prefix}${evDir}/full-receipt-1.md\n${prefix}${prUrl}#issuecomment-${commentNum}\n`);
+  expect(spawnSync(join(installed!, 'bin/gstack-redact'), ['--from-file', bodyFile, '--json'], { cwd: repo, encoding: 'utf8', timeout: 60_000, env }).status).toBe(2);
+  const prefixed = spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', installed!, '--from-file', bodyFile, '--evidence-dir', evDir, '--pr-url', prUrl], { cwd: repo, encoding: 'utf8', timeout: 60_000, env });
+  const prefOut = JSON.parse(prefixed.stdout);
+  expect([prefixed.status, prefOut.status, prefOut.findings.length]).toEqual([0, 'applied', 0]);
+  expect(prefOut.known_safe.map((k: { id: string; context: string }) => [k.id, k.context])).toEqual([['pii.cc', 'evidence-dir'], ['pii.phone.e164', 'pr-comment']]);
 }, 180_000);

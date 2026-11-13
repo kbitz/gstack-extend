@@ -1,12 +1,54 @@
 import { createHash } from 'node:crypto';
 
 export const DISPOSITIONS = '.gstack/secret-dispositions.json';
+export const PART_SHAPE_ERROR = 'unrecognized upstream added-line part shape';
+export const BINARY_PART_ERROR = 'finding is in a binary part and cannot be dispositioned';
+const PART_KEYS = new Set(['file', 'text', 'texts', 'keep', 'binary']);
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 export type Entry = { path: string; rule: string; line_sha256: string; reason: string; approved_by: string; approved_at: string };
-/** `keep` is upstream's whole-file marker: the file's added line numbers. Without it, `text` holds only the added lines. */
-export type Part = { file: string; text: string; keep?: number[] };
+/**
+ * `keep` is upstream's whole-file marker: the file's added line numbers. Without it, the reading holds only the added lines.
+ * Upstream added `binary` at 76e2d3f9 (VERSION 1.98.0.0) on `{ file, text, keep?, binary? }` and replaced `text` with
+ * `texts` at ccc3f0fc (VERSION 1.99.0.0; installed 1.99.3.0), where non-binary parts have one reading (`[text]`) and
+ * binary parts carry `binary: true` with `scannableReadings(text)`.
+ */
+export type Part =
+  | { file: string; text: string; keep?: number[]; binary?: true }
+  | { file: string; texts: string[]; keep?: number[]; binary?: true };
 export type Check = { id: string; status: string; code?: string; detail?: string; lines?: string[]; inputs?: Record<string, string> };
 export type Finding = { path: string; rule: string; severity: string; category: string; added_line: number; line_sha256: string; text: string };
+
+export function readPart(part: unknown): { file: string; text: string; keep?: number[]; binary: boolean } {
+  if (!part || typeof part !== 'object' || Array.isArray(part)) throw new Error(PART_SHAPE_ERROR);
+  const record = part as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!PART_KEYS.has(key)) throw new Error(PART_SHAPE_ERROR);
+  }
+  if (typeof record.file !== 'string') throw new Error(PART_SHAPE_ERROR);
+  const hasText = Object.hasOwn(record, 'text');
+  const hasTexts = Object.hasOwn(record, 'texts');
+  if (hasText === hasTexts) throw new Error(PART_SHAPE_ERROR);
+  if (Object.hasOwn(record, 'binary') && record.binary !== true) throw new Error(PART_SHAPE_ERROR);
+  const binary = record.binary === true;
+  let text: string;
+  if (hasText) {
+    if (typeof record.text !== 'string') throw new Error(PART_SHAPE_ERROR);
+    text = record.text;
+  } else {
+    if (!Array.isArray(record.texts) || record.texts.length === 0 || !record.texts.every(t => typeof t === 'string')) {
+      throw new Error(PART_SHAPE_ERROR);
+    }
+    if (!binary && record.texts.length !== 1) throw new Error(PART_SHAPE_ERROR);
+    text = record.texts[0]!;
+  }
+  if (Object.hasOwn(record, 'keep')) {
+    if (!Array.isArray(record.keep) || !record.keep.every(n => typeof n === 'number' && Number.isInteger(n) && n >= 1)) {
+      throw new Error(PART_SHAPE_ERROR);
+    }
+    return { file: record.file, text, keep: record.keep as number[], binary };
+  }
+  return { file: record.file, text, binary };
+}
 
 export function safePath(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && !/[\\\x00-\x1f\x7f]/.test(value)
@@ -53,6 +95,8 @@ export function evaluate(check: Check, parts: Part[], entries: Entry[], sources:
   const unmatched: Finding[] = [];
   const errors: string[] = [];
   if (check.status === 'pass' || check.status === 'warn') return { satisfied: true, matched, unmatched, stale, errors };
+  if (!Array.isArray(parts)) throw new Error(PART_SHAPE_ERROR);
+  const readParts = parts.map(readPart);
   if (check.status !== 'fail' || check.code !== 'PREGATE_SECRETS') errors.push('secrets scan is not a completed credential-finding failure');
   if (check.inputs?.added_lines !== sha256(JSON.stringify(parts))) errors.push('added-line input hash differs from the raw pregate record');
   const count = /^(\d+) credential finding\(s\) in added lines \(([^)]*)\)$/.exec(check.detail ?? '');
@@ -69,9 +113,10 @@ export function evaluate(check: Check, parts: Part[], entries: Entry[], sources:
     // Descriptions and filenames may contain parentheses. Never guess a path
     // from a greedy regex: a suffix collision must not borrow another approval.
     // `keep` never breaks a tie: ambiguity is decided before the location form.
-    const candidates = parts.filter(p => line.endsWith(` (${p.file}, ${kind} ${number})`));
+    const candidates = readParts.filter(p => line.endsWith(` (${p.file}, ${kind} ${number})`));
     if (candidates.length !== 1) { errors.push('finding path is missing or ambiguous'); continue; }
     const part = candidates[0]!, file = part.file;
+    if (part.binary) { errors.push(BINARY_PART_ERROR); continue; }
     // Only an added line can be approved. Upstream's filter lets `engine.` findings through anywhere in the file.
     if (kind === 'line' ? !part.keep?.includes(n) : part.keep !== undefined) {
       errors.push('finding location does not match upstream added-line selection'); continue;
