@@ -20,7 +20,17 @@ export function isDelimitedAfter(text: string, end: number): boolean {
   if (/[A-Za-z0-9_]/.test(next)) return false;
   // Folding or deleting a boundary must not join outside digits to this run.
   if (unstableBoundary(text, end)) return false;
-  if ((next === ' ' || next === '.' || next === '-') && (/[0-9]/.test(text[end + 1] ?? '') || unstableBoundary(text, end + 1))) return false;
+  const separator = next === ' ' || next === '.' || next === '-';
+  if (separator && (/[0-9]/.test(text[end + 1] ?? '') || unstableBoundary(text, end + 1))) return false;
+  // The phone rule also joins digit groups through parentheses.
+  let afterParenthesis = -1;
+  if (next === '(') afterParenthesis = end + 1;
+  else if (separator && text[end + 1] === '(') afterParenthesis = end + 2;
+  else if (next === ')') {
+    afterParenthesis = end + 1;
+    if ([' ', '.', '-'].includes(text[afterParenthesis] ?? '')) afterParenthesis++;
+  }
+  if (afterParenthesis !== -1 && (/[0-9]/.test(text[afterParenthesis] ?? '') || unstableBoundary(text, afterParenthesis))) return false;
   return true;
 }
 

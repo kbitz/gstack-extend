@@ -197,12 +197,15 @@ root through `scan-text`:
   the URL is a component.
 - An occurrence is kept only when delimited after: the text ends there, or the
   next character is not `[A-Za-z0-9_]` and is not a space, `.` or `-` followed
-  by an ASCII digit. Each maximal ASCII digit run inside a kept evidence-dir
+  by an ASCII digit. Phone-style joins are refused when an ASCII digit follows
+  `(` (optionally preceded by one of those separators) or `)` (optionally
+  followed by one of them). A terminal `)` without following digits remains a
+  delimiter. Each maximal ASCII digit run inside a kept evidence-dir
   occurrence is an `evidence-dir` component; the digit run after
   `#issuecomment-` is a `pr-comment` component.
   A boundary that changes under NFKC or is a default-ignorable Unicode character
-  is refused, including after a space, `.` or `-`, so upstream normalization
-  cannot join outside numbers to the bound digits.
+  is refused, including after a space, `.`, `-` or phone-style parenthesis, so
+  upstream normalization cannot join outside numbers to the bound digits.
 - Only `pii.cc` and `pii.phone.e164` findings with severity `MEDIUM` and
   category `pii` whose start offset (`line`, `col`) falls inside a component and
   whose first 4 characters equal `preview.slice(0, 4)` are eligible. `HIGH` and

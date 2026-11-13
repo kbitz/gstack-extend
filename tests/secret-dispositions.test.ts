@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { cpSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { makeEmptyRepo } from './helpers/fixture-repo';
@@ -467,7 +467,7 @@ describe('scan-text pure core (T1)', () => {
   test('normalization boundaries cannot join bound digits to outside numbers', () => {
     const dir = '/evidence/run-2026', prUrl = 'https://github.com/acme/widgets/pull/174';
     const unstable = [0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0xa0, 0xff15, 0x1d7d3].map(n => String.fromCodePoint(n));
-    for (const point of unstable) for (const separator of ['', ' ', '.', '-']) {
+    for (const point of unstable) for (const separator of ['', ' ', '.', '-', '(', ')', ') ', ').', ')-', ' (', '.(', '-(']) {
       expect(knownComponents(`${dir}${separator}${point}${commentNum}`, { evidenceDirs: [dir] })).toEqual([]);
       expect(knownComponents(`${prUrl}#issuecomment-${commentNum}${separator}${point}5`, { prUrl })).toEqual([]);
     }
@@ -478,11 +478,13 @@ describe('scan-text pure core (T1)', () => {
     const tilde = `~/.gstack/projects/acme/review-and-prep/${tsReal}`;
     const prUrl = 'https://github.com/acme/widgets/pull/174';
     const cLink = `${prUrl}#issuecomment-${commentNum}`;
-    for (const s of [dir, `${dir}/full-receipt-1.md`, `${tilde}. Next`, `${dir}-note`, `${dir} ok`]) {
+    for (const s of [dir, `${dir}/full-receipt-1.md`, `${tilde}. Next`, `${dir}-note`, `${dir} ok`, `${dir})`, `${dir}). Next`, `${dir}(note`]) {
       expect(knownComponents(s, { evidenceDirs: [dir, tilde] })).toHaveLength(2);
     }
     expect(knownComponents(cLink, { prUrl })).toEqual([{ start: `${prUrl}#issuecomment-`.length, end: cLink.length, context: 'pr-comment' }]);
-    for (const suffix of ['a', 'Z', '0', '_', ' 5', '.5', '-5']) {
+    // Value: protects=outside digits never clear through phone parentheses; fails_when=the after-rule allows joined spans;
+    // why_new=previous cases covered only single ASCII separators; seam=none; no_claim=installed patterns are checked in (h).
+    for (const suffix of ['a', 'Z', '0', '_', ' 5', '.5', '-5', '(5', ')5', ') 5', ').5', ')-5', ' (5', '.(5', '-(5']) {
       expect(isDelimitedAfter(`${dir}${suffix}`, dir.length)).toBe(false);
       expect(knownComponents(`${dir}${suffix}`, { evidenceDirs: [dir] })).toEqual([]);
       if (suffix !== '0') expect(knownComponents(`${cLink}${suffix}`, { prUrl })).toEqual([]);
@@ -666,7 +668,7 @@ if (mode === 'wrong-exit-second' && call === 2) process.exitCode = 3;
   });
 
   test('canonical evidence paths and aliases retain tilde spelling when HOME is a symlink', () => {
-    const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-canonical-')), alias = `${homeDir}-alias`;
+    const repo = makeEmptyRepo(temp), homeDir = realpathSync(mkdtempSync(join(temp, 'home-canonical-'))), alias = `${homeDir}-alias`;
     const evDir = join(homeDir, '.gstack/projects/acme/review-and-prep', tsReal), file = join(temp, `home-alias-${crypto.randomUUID()}.md`);
     const secondAlias = `${homeDir}-second-alias`;
     mkdirSync(evDir, { recursive: true }); symlinkSync(homeDir, alias); symlinkSync(homeDir, secondAlias);
@@ -736,4 +738,22 @@ test.skipIf(!installed)('(h) actual installed gstack-redact: flags real shapes d
     expect([direct.status, safe.status, JSON.parse(safe.stdout).known_safe]).toEqual([2, 2, []]);
     expect(JSON.parse(safe.stdout).findings).toEqual(JSON.parse(direct.stdout).findings);
   }
+  const openEv = join(homeDir, '.gstack/projects/acme/review-and-prep/run-202'); mkdirSync(openEv, { recursive: true });
+  const localPhone = ['555', '1234'].join('-');
+  // Value: protects=real phone matches spanning bound and outside digits stay unchanged; fails_when=masking clears a joined match;
+  // why_new=unit/double checks cannot establish installed phone grouping; seam=none; no_claim=other upstream scanner versions.
+  const parenthesisCases: [string, string][] = [
+    [boundaryEv, `) ${localPhone}`], [boundaryEv, `).${localPhone}`], [boundaryEv, `)-${localPhone}`],
+    [openEv, `(55)${localPhone}`], [openEv, ` (55)${localPhone}`], [openEv, `.(55)${localPhone}`], [openEv, `-(55)${localPhone}`],
+  ];
+  for (const [dir, suffix] of parenthesisCases) {
+    const digits = dir.endsWith('202') ? '202' : '2026';
+    writeFileSync(bodyFile, `Evidence: (${dir}${suffix}\nReceipt: ${prUrl}#issuecomment-${digits}${suffix}\n`);
+    const direct = spawnSync(join(installed!, 'bin/gstack-redact'), ['--from-file', bodyFile, '--json'], { cwd: repo, encoding: 'utf8', timeout: 60_000, env });
+    const safe = spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', installed!, '--from-file', bodyFile, '--evidence-dir', dir, '--pr-url', prUrl], { cwd: repo, encoding: 'utf8', timeout: 60_000, env });
+    expect([direct.status, safe.status, JSON.parse(safe.stdout).known_safe]).toEqual([2, 2, []]);
+    expect(JSON.parse(safe.stdout).findings).toEqual(JSON.parse(direct.stdout).findings);
+  }
+  writeFileSync(bodyFile, `Evidence: (${evDir})\nReceipt: (${prUrl}#issuecomment-${commentNum})\n`);
+  expect(spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', installed!, '--from-file', bodyFile, '--evidence-dir', evDir, '--pr-url', prUrl], { cwd: repo, encoding: 'utf8', timeout: 60_000, env }).status).toBe(0);
 }, 180_000);
