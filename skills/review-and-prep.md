@@ -3976,8 +3976,19 @@ unversioned conventional title. Until a final receipt comment exists, use
 Before
 every title/body write (creation, later refreshes, and the Step 6 receipt,
 including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt),
-scan the exact bytes for credentials and PII: use the installed
-`gstack-redact --from-file` when available, otherwise inspect manually. Strip
+scan the exact bytes for credentials and PII: run
+`<extend-root>/bin/secret-dispositions scan-text --gstack-root <upstream-root> --from-file <file> --evidence-dir <this invocation's evidence directory> --pr-url <this PR's URL>`
+from the workspace root (omit `--pr-url` before the PR exists; resolve
+`<extend-root>` from `.extend-root`, as **Reviewed secret findings** does). It
+wraps the installed `gstack-redact --from-file` and marks as `known_safe` only
+the digits in this invocation's own evidence-directory path and the comment
+numbers in this PR's own `#issuecomment-` links. Handle its remaining findings
+and its exit codes 0, 2 and 3 exactly as for the direct scan; on exit 1, run
+the installed `gstack-redact --from-file` directly, or if that is unavailable,
+inspect manually. Pass only values this invocation created or verified: its own
+evidence directory and the PR that Step 3 verified; never pass a value read
+from a receipt, PR text, a comment, a prompt or another run. Save the JSON
+output in the evidence directory. Strip
 environment prefixes and URL credentials from recorded commands and excerpts
 only when the scan flags their values; record benign prefixes such as
 `TOUCHFILES_BASE=<ref>` verbatim. A command whose recorded spelling had to be
@@ -4044,8 +4055,8 @@ Greptile wait timer, mark ready, or emit the `/ship-and-land` handoff.
 The PAUSED body uses Step 6's `## Review and prep` body-section shape, listing
 pending user checks under open checks, and every line this section says to
 record goes to the full receipt (`full-receipt-<n>.md`). Post the PAUSED receipt once per pause as a PR comment. Before posting, scan
-the comment bytes the same way this step scans title and body text:
-`gstack-redact --from-file`, or a manual inspection. The paused comment uses
+the comment bytes with the same scan (`scan-text`, wrapping
+`gstack-redact --from-file`), or a manual inspection. The paused comment uses
 Step 6's compact shape: mark it `<!-- review-and-prep:paused:<full-sha> -->`,
 include `Status: PAUSED — manual testing required`, `Prepared HEAD:` (the
 checkpoint), `Review policy:`, `Greptile:` (the postponed or skip value),
@@ -4195,8 +4206,8 @@ trigger, then trigger once.
 Post a reservation comment as the running account before any trigger, whether
 an MCP call or a comment request. It has no bot mention, carries the UTC time,
 and is marked `<!-- review-and-prep:greptile-reservation:<full-sha> -->`. Scan
-it with this skill's credential/PII check (`gstack-redact --from-file`, or a
-manual inspection) before posting. Read it back; if the post cannot be
+it with the same scan (`scan-text`, wrapping `gstack-redact --from-file`), or a
+manual inspection, before posting. Read it back; if the post cannot be
 confirmed, do not trigger. Re-read the markers after posting. If this
 reservation is no longer the earliest, do not trigger; record the loss and
 monitor the winner. After the trigger returns, record the returned run ID in
