@@ -129,6 +129,8 @@ function git(args: string[], input = '', expected = 0) {
 }
 function gitRepo() {
   git(['init', '--quiet', '--initial-branch=main']); git(['config', 'user.name', 'Fixture']); git(['config', 'user.email', 'fixture@example.test']);
+  // Detached Git maintenance can outlive fixture commits and race tree()'s no-write snapshots.
+  git(['config', 'maintenance.auto', 'false']);
   git(['commit', '--quiet', '--allow-empty', '-m', 'fixture']);
 }
 function track(...paths: string[]) { git(['add', '--', ...paths]); git(['commit', '--quiet', '-m', 'fixture files']); }
