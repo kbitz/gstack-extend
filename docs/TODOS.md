@@ -2,6 +2,18 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Test gap: added-line part type guards
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The malformed-part table covers reading/key conflicts and invalid members, but does not independently pin null/primitive/array parts, a missing or non-string file, non-string legacy text, non-array `texts`, non-array `keep`, or a non-array collection passed to `evaluate()`.
+- **Hypothesis (untested):** Extend the existing malformed-part table and add a collection-boundary case requiring `PART_SHAPE_ERROR`; re-verify the guards before writing the tests.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `src/secret-dispositions/evaluate.ts:21-48,98`.
+- **Evidence:** The outside challenge and read-only coverage audit found six uncovered guard paths; source inspection shows the guards reject them. No failure or regression was demonstrated. Existing shape/CLI fixtures passed in the targeted run.
+- **Context:** Filed by /review-and-prep on branch `mmm/1edf4214` at `2c8cf1c` (2026-11-13), before a PR exists.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap).
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
