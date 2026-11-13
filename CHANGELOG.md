@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.0] - 2026-11-13
+
+### Changed
+
+- `/review-and-prep` no longer asks about the digits in its own evidence-directory path or the comment number in its own PR comment links when it scans PR text for credentials and PII, and the same numbers anywhere else are still flagged.
+- `secret-dispositions scan-text` recognizes verified run evidence paths and PR comment links during review text scans while preserving other findings.
+
 ## [0.90.0] - 2026-11-12
 
 ### Added
