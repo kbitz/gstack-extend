@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.0] - 2026-11-12
+
+### Added
+
+- The experimental `bin/review-state` helper gains a read-only `render` command and a `ready` checkpoint kind for building review receipts, PR body sections and handoff lines from a recorded run, and no workflow calls them yet.
+- `review-state render` renders experimental review receipts and handoffs from recorded state.
+- `review-state checkpoint` accepts `ready` checkpoints before a run is marked prepared.
+
+### Upgrade notes
+
+- A recorded review run that contains the new `ready` checkpoint is reported as `newer-schema` by an older `bin/review-state`, which then stops recording that run and leaves its receipts to be written by hand.
+
 ## [0.89.2] - 2026-11-12
 
 ### Fixed
