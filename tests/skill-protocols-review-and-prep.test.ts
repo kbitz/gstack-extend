@@ -2537,7 +2537,15 @@ describe('review-and-prep test-gaps=record', () => {
   const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
   const gapRaw = skillSection(prep, '### Record unproven test gaps');
   const gap = gapRaw.replace(/\s+/g, ' ');
-  const bullet = policy.slice(policy.indexOf('- `test-gaps=record`'), policy.indexOf('- `repair-review=behavior-changing`'));
+  const bullet = policy.slice(policy.indexOf('- `test-gaps=record`'), policy.indexOf('- `blocking=shown`'));
+  const REQUIRED_BULLET_PHRASES = [
+    "Omitted, every gap takes today's handling and nothing is recorded.",
+    "It applies only while that section's upstream anchors still match; otherwise today's behavior runs and the receipt says so.",
+    `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`,
+    '(exit 0 means supported) and omits the value otherwise, keeping its other keys',
+    'An installation without the value reads the whole line as `none supplied`',
+    'The value waives no gate and never authorizes a continuation.',
+  ];
   const paragraph = gapRaw.slice(gapRaw.indexOf('**Activation'), gapRaw.indexOf('\n\n', gapRaw.indexOf('**Activation')));
   const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
   const cap = skillSection(prep, '### When /review stops at its cycle cap').replace(/\s+/g, ' ');
@@ -2547,19 +2555,33 @@ describe('review-and-prep test-gaps=record', () => {
   test('the value is opt-in, checkable, placed before repair-review and absent from the light default', () => {
     expect(prep).toContain('repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`');
     expect(bullet.startsWith('- `test-gaps=record` (its only value) is opt-in.')).toBe(true);
-    expect(bullet).toContain("Omitted, every gap takes today's handling and nothing is recorded.");
-    expect(bullet).toContain("It applies only while that section's upstream anchors still match; otherwise today's behavior runs and the receipt says so.");
-    expect(bullet).toContain(`grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`);
+    for (const phrase of REQUIRED_BULLET_PHRASES) expect(bullet, phrase).toContain(phrase);
     expect(prep).toContain("grep -F 'test-gaps=record'\n");
-    expect(bullet).toContain('(exit 0 means supported) and omits the value otherwise, keeping its other keys');
-    expect(bullet).toContain('An installation without the value reads the whole line as `none supplied`');
-    expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
     expect(policy.indexOf('- `final-gate-repair=tests-docs`')).toBeLessThan(policy.indexOf('- `test-gaps=record`'));
-    expect(policy.indexOf('- `test-gaps=record`')).toBeLessThan(policy.indexOf('- `repair-review=behavior-changing`'));
+    expect(policy.indexOf('- `test-gaps=record`')).toBeLessThan(policy.indexOf('- `blocking=shown`'));
+    expect(policy.indexOf('- `blocking=shown`')).toBeLessThan(policy.indexOf('- `repair-review=behavior-changing`'));
     // The repair-cycles bullet's slice (to the next bullet) holds no copy of this value.
     expect(policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- `run-state=record`'))).not.toContain('test-gaps');
     expect(light).toContain('It never sets `test-gaps=record`: recording a gap instead of writing its test needs a caller that accepts the coverage risk, so it is an explicit caller opt-in.');
     expect(light).toContain('It never sets `repair-review=behavior-changing`');
+  });
+
+  // Value: protects=the test-gaps bullet slice ends at its immediate neighbor (- `blocking=shown`) so shared phrases in blocking=shown cannot mask deletion from test-gaps=record; fails_when=the slice reverts to - `repair-review=behavior-changing`; why_new=T6 review finding; seam=none; no_claim=installed-agent execution
+  test('removing a shared phrase from the test-gaps bullet fails the bounded slice while the old over-wide slice still passes', () => {
+    const neighbor = policy.slice(policy.indexOf('- `blocking=shown`'), policy.indexOf('- `repair-review=behavior-changing`'));
+    const shared = REQUIRED_BULLET_PHRASES.filter((p) => neighbor.includes(p));
+    expect(shared.length).toBeGreaterThan(0);
+    expect(shared).toContain('The value waives no gate and never authorizes a continuation.');
+    for (const target of shared) {
+      const mutatedPolicy =
+        policy.slice(0, policy.indexOf('- `test-gaps=record`')) +
+        bullet.replace(target, '') +
+        policy.slice(policy.indexOf('- `blocking=shown`'));
+      const bounded = mutatedPolicy.slice(mutatedPolicy.indexOf('- `test-gaps=record`'), mutatedPolicy.indexOf('- `blocking=shown`'));
+      const oldOverWide = mutatedPolicy.slice(mutatedPolicy.indexOf('- `test-gaps=record`'), mutatedPolicy.indexOf('- `repair-review=behavior-changing`'));
+      expect(bounded).not.toContain(target);
+      expect(oldOverWide).toContain(target);
+    }
   });
 
   // Value: protects=the section sits between the repair-review section and the baseline section; fails_when=it moves into another section's slice; why_new=new section; seam=none; no_claim=installed-agent execution
@@ -3248,22 +3270,45 @@ describe('review-and-prep documentation-scope=contracts', () => {
     return raw.slice(start, end);
   };
   const policy = slice('### Read an optional review policy', '### Use the light review default').replace(/\s+/g, ' ');
-  const bullet = slice('- `documentation-scope=contracts`', '- `parent-io=lean`').replace(/\s+/g, ' ');
+  const bullet = slice('- `documentation-scope=contracts`', '- `post-audit=classify`').replace(/\s+/g, ' ');
+  const check = `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`;
+  const REQUIRED_BULLET_PHRASES = [
+    '`documentation-scope=contracts` (its only value) is opt-in.',
+    'It bounds the documentation audit\'s read list and its one re-audit as **Bound the documentation audit** defines; omitted, the audit runs as today.',
+    'It waives no gate, keeps the audit\'s attempt bound and never authorizes a continuation.',
+    'It is independent of every other key, including `documentation-audit=final`: a caller may pass either key without the other or both together.',
+    check,
+    '(exit 0 means supported) and omits the value otherwise, keeping its other keys',
+  ];
   const light = slice('### Use the light review default', '## 2. Review and verify locally').replace(/\s+/g, ' ');
   const section = slice('### Bound the documentation audit', '### Pause for an external full-suite gate').replace(/\s+/g, ' ');
 
   // Value: protects=the policy bullet sits between full-suite=external and parent-io=lean, is opt-in with one value, independent of documentation-audit=final, and publishes the grep -F check; fails_when=the bullet moves, drops the capability check or claims a gate waiver; why_new=AC5, AC7, AC8; seam=none; no_claim=installed-agent execution
   test('the policy bullet sits between full-suite=external and parent-io=lean, is opt-in and publishes the capability check', () => {
     expect(policy.indexOf('- `full-suite=external`')).toBeLessThan(policy.indexOf('- `documentation-scope=contracts`'));
-    expect(policy.indexOf('- `documentation-scope=contracts`')).toBeLessThan(policy.indexOf('- `parent-io=lean`'));
-    expect(bullet).toContain('`documentation-scope=contracts` (its only value) is opt-in.');
-    expect(bullet).toContain('It bounds the documentation audit\'s read list and its one re-audit as **Bound the documentation audit** defines; omitted, the audit runs as today.');
-    expect(bullet).toContain('It waives no gate, keeps the audit\'s attempt bound and never authorizes a continuation.');
-    expect(bullet).toContain('It is independent of every other key, including `documentation-audit=final`: a caller may pass either key without the other or both together.');
-    const check = `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`;
-    expect(bullet).toContain(check);
+    expect(policy.indexOf('- `documentation-scope=contracts`')).toBeLessThan(policy.indexOf('- `post-audit=classify`'));
+    expect(policy.indexOf('- `post-audit=classify`')).toBeLessThan(policy.indexOf('- `parent-io=lean`'));
+    for (const phrase of REQUIRED_BULLET_PHRASES) expect(bullet, phrase).toContain(phrase);
     expect(spawnSync('grep', ['-F', 'documentation-scope=contracts', skillPath]).status).toBe(0);
     expect(light).toContain('It never sets `documentation-scope=contracts`: bounding the audit\'s reads needs a caller that accepts the retained-quality risk until the acceptance record supports a default (`SPEC P1`).');
+  });
+
+  // Value: protects=the documentation-scope bullet slice ends at its immediate neighbor (- `post-audit=classify`) so shared phrases in post-audit=classify cannot mask deletion from documentation-scope=contracts; fails_when=the slice reverts to - `parent-io=lean`; why_new=T6 review finding; seam=none; no_claim=installed-agent execution
+  test('removing a shared phrase from the documentation-scope bullet fails the bounded slice while the old over-wide slice still passes', () => {
+    const neighbor = slice('- `post-audit=classify`', '- `parent-io=lean`').replace(/\s+/g, ' ');
+    const shared = REQUIRED_BULLET_PHRASES.filter((p) => neighbor.includes(p));
+    expect(shared.length).toBeGreaterThan(0);
+    expect(shared).toContain('(exit 0 means supported) and omits the value otherwise, keeping its other keys');
+    for (const target of shared) {
+      const mutatedPolicy =
+        policy.slice(0, policy.indexOf('- `documentation-scope=contracts`')) +
+        bullet.replace(target, '') +
+        policy.slice(policy.indexOf('- `post-audit=classify`'));
+      const bounded = mutatedPolicy.slice(mutatedPolicy.indexOf('- `documentation-scope=contracts`'), mutatedPolicy.indexOf('- `post-audit=classify`'));
+      const oldOverWide = mutatedPolicy.slice(mutatedPolicy.indexOf('- `documentation-scope=contracts`'), mutatedPolicy.indexOf('- `parent-io=lean`'));
+      expect(bounded).not.toContain(target);
+      expect(oldOverWide).toContain(target);
+    }
   });
 
   // Value: protects=Bound the documentation audit keeps upstream's inventory, builds the read list from the four inputs with one-step authority links that the always-read docs never seed, and skips history docs on a mention alone; fails_when=the inventory is narrowed, an input is dropped or link expansion can reach the whole inventory again; why_new=AC1, AC7; seam=none; no_claim=installed-agent execution

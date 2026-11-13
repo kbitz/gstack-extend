@@ -1,5 +1,6 @@
 import { isAbsolute, join } from 'node:path';
 import { executeExport, EXPORT_SCHEMA } from './export.ts';
+import { executeRender, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
 import { REASON_TABLE, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
 import { executeCommand, makeEnvelope, readHelperVersion, type StoreResult } from './store.ts';
 
@@ -16,10 +17,12 @@ Usage:
   bin/review-state checkpoint --dir DIR --input FILE
   bin/review-state finish --dir DIR --input FILE
   bin/review-state export --dir DIR
+  bin/review-state render --dir DIR --input FILE
   bin/review-state --version
   bin/review-state --help | -h | <command> --help
 
 export is read-only: no --input, no lock, and no state writes.
+render reads review-run-state.json without locking or modifying it and writes output files in --dir.
 
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)
@@ -42,6 +45,14 @@ Docs: docs/designs/review-run-state.md
 export function renderCommandHelp(cmd: string): string | null {
   if (cmd === 'export') {
     return `review-state export — experimental read-only projection (${EXPORT_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n\nDocs: docs/designs/review-run-state.md\n`;
+  }
+  if (cmd === 'render') {
+    const sections = Object.entries(RENDER_SHAPES).map(([name, shape]) => {
+      const req = shape.required.join(', ');
+      const opt = Object.entries(shape.optional).map(([k, d]) => `${k}=${JSON.stringify(d)}`).join(', ') || 'none';
+      return `${name}:\n  required: ${req}\n  optional: ${opt}`;
+    }).join('\n\n');
+    return `review-state render — experimental state renderer (${RENDER_SCHEMA})\nReads review-run-state.json without locking or modifying it and writes full-receipt, comment, body, or final files inside --dir.\n\nUsage:\n  bin/review-state render --dir DIR --input FILE\n\n${sections}\n\nDocs: docs/designs/review-run-state.md\n`;
   }
   const matching = Object.entries(REQUEST_SHAPES).filter(([k]) => k === cmd || k.startsWith(`${cmd} (`) || (cmd === 'record' && k.startsWith('record ')));
   if (matching.length === 0) return null;
@@ -118,6 +129,16 @@ export function main(argv: string[], io: CliIo): number {
     const res = executeExport(dirArg, io.cwd, env, io.versionPath);
     if (!res.ok) return emitResult(res.envelope, io);
     io.stdout(`${JSON.stringify(res.exportDoc)}\n`);
+    return 0;
+  }
+  if (commandStr === 'render') {
+    if (flagErr || dirArg === undefined || inputArg === undefined) {
+      const msg = flagErr ?? (dirArg === undefined ? '--dir is required' : '--input is required');
+      return emitResult(makeEnvelope('render', 'usage', { message: msg }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
+    }
+    const res = executeRender(dirArg, inputArg, io.cwd, env, io.versionPath);
+    if (!res.ok) return emitResult(res.envelope, io);
+    io.stdout(`${JSON.stringify(res.renderDoc)}\n`);
     return 0;
   }
   const validCommands: readonly CommandName[] = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'];

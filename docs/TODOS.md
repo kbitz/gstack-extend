@@ -548,6 +548,96 @@
 - **Context:** Filed by `/review-and-prep` on 2026-11-11 at `c5c311d`, before draft creation at the external full-suite gate.
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=src/review-state/cli.ts|tests/review-state.test.ts] Test gap: Render-specific flag refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Duplicate, missing and unknown render CLI flags.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/cli.ts:1
+- **Evidence:** coverage-result.json P02; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Remaining render field and exit combinations
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Remaining field bounds, wrong types and exit-specific final combinations.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P06; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Stale audit and latest evidence selection
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Stale coverage/documentation, duplicate-name latest wins and wtree mismatch.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P14; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Delegated fallback receipt selection
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Selected versus latest fallback attempt and fallback metadata.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P16; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Renderer correction folding
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Correction chains, unrelated targets and rejected/duplicate/classified finding exclusion.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P18; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Renderer formatter refusal envelopes
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Missing Greptile and overlong skipped-lane errors.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P20; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Renderer summary rejection and normalization
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Empty, marker and paused-phrase summaries plus CRLF normalization.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P22; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Renderer collision and owned write failures
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** EEXIST retry/exhaustion and own-file write/fsync failure cleanup.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P28; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Renderer Unicode metadata and display paths
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** UTF-8 byte/character counts and home-prefix display boundaries.
+- **Hypothesis (untested):** Extend the current CLI or fixture tables for this behavior; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/render.ts:1
+- **Evidence:** coverage-result.json P29; source/test audit only, no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep for branch `mmm/04e5f191` at `b21bf71` (2026-11-12); PR not created at the external gate.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

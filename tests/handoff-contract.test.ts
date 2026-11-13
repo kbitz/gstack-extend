@@ -26,6 +26,9 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
+import { evalGrammar, FIELD_FMT, getActiveBinding, makeCtx, renderBlock, renderComment, renderDelegationPolicyLine, renderDisclosures, renderFinal, renderStageHandoffLine } from '../src/review-state/render.ts';
+import { validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'handoffs');
@@ -3129,5 +3132,184 @@ describe('(P) run-state=record', () => {
       expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
     }
     expect(run('B-TRUSTED').outcome).toBe(TRUSTED);
+  });
+});
+
+// Track 78A T4: byte compatibility between bin/review-state render and the inline skill templates and fixtures.
+describe('(Q) review-state render byte compatibility', () => {
+  const HOME = '/home/example';
+  const DIR = '/home/example/.gstack/projects/example/review-and-prep/inv-1';
+  const EXT_DIR = '/home/example/.gstack/projects/example-repo/review-and-prep/feature-handoff-demo';
+  const FULL_REF = { path: 'full-receipt-1.md', sha256: '3'.repeat(64) };
+  const COMMENT_URL = 'https://github.com/example-org/example-repo/pull/42#issuecomment-1000001';
+  const USER_CHECKS = "M1 judge whether the export page's new layout reads clearly; M2 sign in with your own account and confirm the report downloads";
+  const AUTO_CHOICE = 'Auto-chosen (veto by replying on this PR): Rename the helper? → keep the name';
+  const greptileVal = `completed on ${VARS.GREP}; findings dispositioned in the receipt, so triage only newer feedback`;
+
+  const rawPrepared = withVars(JSON.parse(readFileSync(join(FIXTURES, 'run-state-prepared.json'), 'utf8')));
+  const mustValidate = (patch: Record<string, unknown> = {}): ReviewRunState => {
+    const res = validateStoredState(structuredClone({ ...rawPrepared, ...patch }), `${DIR}/review-run-state.json`, '0.89.0');
+    expect(res.ok, res.ok ? '' : JSON.stringify(res.detail)).toBe(true);
+    if (!res.ok) throw new Error('invalid fixture state');
+    return res.state;
+  };
+
+  const preparedState = mustValidate();
+  const readyState = mustValidate({ segments: [{ ...rawPrepared.segments[0], ended_at: null, end: null }], finish: null });
+  const pausedState = mustValidate({
+    segments: [{ ...rawPrepared.segments[0], end: 'paused' }],
+    checkpoints: [{ ...rawPrepared.checkpoints[0], kind: 'pause' }],
+    gates: [rawPrepared.gates[0], { ...rawPrepared.gates[1], result: 'not-run', details: { value: 'postponed — awaiting manual testing', run: null } }],
+    finish: null,
+  });
+  const externalGateState = mustValidate({
+    segments: [{ ...rawPrepared.segments[0], end: 'paused' }],
+    checkpoints: [{ ...rawPrepared.checkpoints[0], kind: 'external-gate' }, { ...rawPrepared.checkpoints[0], checkpoint_id: '01950000-0000-7000-8000-000000000061', kind: 'pause' }],
+    finish: null,
+  });
+  const mkFinding = (finding_id: string, severity_source: string, severity_rubric: string, adjudication: string) => ({
+    finding_id, severity_source, severity_rubric, adjudication, resolution: 'open', duplicate_of: null, found_by: [], attribution_reason: 'not-reported', receipt_class: null,
+  });
+  const stoppedState = mustValidate({
+    policy: { value: FIX.defaults.live.E.callerPolicy, source: 'caller prompt', delegation: null },
+    passes: [{ ...rawPrepared.passes[0], voices: [{ ...rawPrepared.passes[0].voices[0], attempts: [{ ...rawPrepared.passes[0].voices[0].attempts[0], delegate: null, findings: [mkFinding('F2', 'high', 'core', 'accepted'), mkFinding('F5', 'medium', 'specialist', 'deferred')] }] }] }],
+    gates: [{ ...rawPrepared.gates[0], result: 'not-run', details: { ...rawPrepared.gates[0].details, skipped_lanes: [] }, evidence: [] }],
+    checkpoints: [{ ...rawPrepared.checkpoints[0], kind: 'stop', base: null }],
+    finish: {
+      outcome: 'stopped', stop_reason: 'cycle cap', head: VARS.HEAD, tree: VARS.TREE, base: VARS.BASE, delta_base: VARS.BASE,
+      stop_count: 1, wtree: 'e5e5e5e5e5e5e5e5', review_restriction_resolved: false, readiness_confirmed_at: null,
+      full_review_evidence: { status: 'available', commit: VARS.BASE, tree: VARS.TREE, source: 'https://github.com/example-org/example-repo/pull/42#issuecomment-1000007' },
+      user_facing_changes: [], evidence: [], finished_at: '2026-01-02T03:04:05Z',
+    },
+  });
+  const blockedState = mustValidate({ finish: { ...rawPrepared.finish, outcome: 'blocked', stop_reason: 'provider-failures', readiness_confirmed_at: null, user_facing_changes: [] } });
+  const needsContextState = mustValidate({ finish: { ...rawPrepared.finish, outcome: 'needs-context', stop_reason: 'missing input', readiness_confirmed_at: null, user_facing_changes: [] } });
+
+  function fillExact(tpl: string, replacements: Array<[string, string]>): string {
+    let out = tpl;
+    for (const [placeholder, val] of replacements) {
+      expect(out.includes(placeholder), `missing placeholder: ${placeholder}`).toBe(true);
+      out = out.replaceAll(placeholder, val);
+    }
+    const leftover = /<(?!!--)[^<>\n]+>/.exec(out);
+    expect(leftover, `leftover placeholder: ${leftover?.[0] ?? ''}`).toBeNull();
+    return out;
+  }
+
+  // Value: protects=table-driven byte identity and consumer parity across live skill templates, published fixtures, classify() and guardFromReceipt(); fails_when=any template label, fixture line or classifier outcome drifts; why_new=Track 78A T4; seam=none; no_claim=installed-agent execution
+  test('table-driven byte compatibility over live skill templates, published fixtures, classify() and guardFromReceipt()', () => {
+    const hbSaveSuffix = '\nSave before shipping: <unrelated paths preparation preserved>; move them out of\nthis checkout without committing them, since they block release work until then.';
+    const hbCommon: Array<[string, string]> = [
+      ['<URL>', 'https://github.com/example-org/example-repo/pull/42'], ['<base-owner/repo>', 'example-org/example-repo'], ['<number>', '42'],
+      ['<head-owner>', 'example-dev'], ['<branch>', 'feature/handoff-demo'], ['<base>', 'main'], ['<full SHA>', VARS.HEAD], ['<UTC>', '2026-01-02T03:04:05Z'],
+      ['<Git tree SHA>', VARS.TREE], ['<full base SHA>', VARS.BASE], ['<path or durable link, or "agreed task in the receipt">', 'docs/plans/example-plan.md'],
+      ['<hash>', VARS.PLAN], ['<comment URL>', COMMENT_URL], ['<author login>', 'example-bot'],
+      ["<completed on <SHA>; findings dispositioned in the receipt, so triage\nonly newer feedback | unverified — no response after 10 minutes; that request\nused the PR's one run | skipped — <recorded reason>; do not run it>", greptileVal],
+    ];
+    const compactBodyTpl = SKILLS['review-and-prep'].split('```text\n<!-- review-and-prep:receipt:<full-sha> -->\n')[1]!.split('\n```')[0]!;
+    const fullCompactTpl = `<!-- review-and-prep:receipt:<full-sha> -->\n${compactBodyTpl}`;
+    const compactMap: Array<[string, string]> = [
+      ['<full-sha>', VARS.HEAD], ['Prepared HEAD: <40 hex>; tree: <40 hex>; base: <40 hex>; wtree: <fingerprint|unknown>', `Prepared HEAD: ${VARS.HEAD}; tree: ${VARS.TREE}; base: ${VARS.BASE}; wtree: e5e5e5e5e5e5e5e5`],
+      ['<verbatim policy value or none supplied>', 'none supplied'], ['<path, link or "agreed task in the receipt">', 'docs/plans/example-plan.md'], ['SHA-256: <64 hex>', `SHA-256: ${VARS.PLAN}`],
+      ['<the H-B Greptile value>', greptileVal], ['<link|none>', 'https://github.com/example-org/example-repo/pull/42#pullrequestreview-1'], ['<none|comma-separated checks>', 'none'],
+      ['Ship gates: head=<40 hex>; tree=<40 hex>; base=<40 hex>', `Ship gates: head=${VARS.HEAD}; tree=${VARS.TREE}; base=${VARS.BASE}`], ['<raw verdict>', 'pass'], ['<verdict>', 'pass'], ['<base|head>', 'base'],
+      ['record: <path>; sha256: <64 hex>', `record: ~/.gstack/projects/example/review-and-prep/inv-1/pregate.json; sha256: ${'1'.repeat(64)}`], ['<status or waiver>', 'pass'], ['<value|n/a>', '100%'], ['<decision>', 'pass'],
+      ['<status or named-risk decision>', 'accepted'], ['<id>', 'doc-1'], ['section: <path>; sha256: <64 hex>', `section: ~/.gstack/projects/example/review-and-prep/inv-1/doc-section.md; sha256: ${'2'.repeat(64)}`],
+      ['<part>', 'testing'], ['<label>', 'provider-a'], ['<model>', 'model-a'], ['outcome=credited|fell-back', 'outcome=credited'], ['<cause|none>', 'none'], ['wall_ms=<n|unknown>', 'wall_ms=1200'],
+      ['cache_read_input_tokens=<n|unknown>', 'cache_read_input_tokens=0'], ['cache_creation_input_tokens=<n|unknown>', 'cache_creation_input_tokens=unknown'], ['input_tokens=<n|unknown>', 'input_tokens=100'],
+      ['output_tokens=<n|unknown>', 'output_tokens=50'], ['findings=<n>', 'findings=0'], ['<sha256>', 'b'.repeat(64)], ['<finding IDs and severities, or "none recorded">', 'none recorded'],
+      ['<~-relative path>; sha256: <64 hex>', `~/.gstack/projects/example/review-and-prep/inv-1/full-receipt-1.md; sha256: ${'3'.repeat(64)}`],
+    ];
+    const stopLabelsTpl = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1]!.split('```markdown\n')[1]!.split('\n```')[0]!;
+
+    for (const [name, filled, actual] of [
+      ['H-B no save', `${fillExact(template('H-B').replace(hbSaveSuffix, ''), hbCommon)}\n`, renderBlock('H-B', preparedState, { commentUrl: COMMENT_URL })],
+      ['H-B save', `${fillExact(template('H-B'), [...hbCommon, ['<unrelated paths preparation preserved>', 'notes/wip.md']])}\n`, renderBlock('H-B', preparedState, { commentUrl: COMMENT_URL, saveBeforeShipping: 'notes/wip.md' })],
+      ['H-C-pause', `${fillExact(template('H-C-pause'), [['<URL>', 'https://github.com/example-org/example-repo/pull/42'], ['<repository, head branch>', 'example-org/example-repo, feature/handoff-demo'], ['<full HEAD SHA>', VARS.HEAD], ['<matrix IDs, concrete actions, expected results>', USER_CHECKS]])}\n`, renderBlock('H-C', pausedState, { requiredUserChecks: USER_CHECKS })],
+      ['H-E', `${fillExact(template('H-E'), [['<URL>', 'https://github.com/example-org/example-repo/pull/42'], ['<owner/repo>', 'example-org/example-repo'], ['<branch>', 'feature/handoff-demo'], ['<full HEAD SHA>', VARS.HEAD], ['<full SHA>', VARS.BASE], ['<the policy line\'s value verbatim, or "none supplied">', FIX.defaults.live.E.callerPolicy], ['<k>', '1'], ['<n>', '1'], ['<finding IDs and severities, or "none recorded">', 'F2 high, F5 medium']])}\n`, renderBlock('H-E', stoppedState)],
+      ['compact receipt', `${fillExact(fullCompactTpl.replace('\nreviewRestrictionResolved: true', ''), compactMap)}\n`, renderComment(readyState, { fullReceipt: FULL_REF }, DIR, HOME)],
+      ['compact resolved', `${fillExact(fullCompactTpl, compactMap)}\n`, renderComment(readyState, { fullReceipt: FULL_REF, reviewRestrictionResolved: true }, DIR, HOME)],
+      ['stopped labels', fillExact(stopLabelsTpl, [['<full HEAD SHA>', VARS.HEAD], ['Delta base: <full SHA>', `Delta base: ${VARS.BASE}`], ['<verbatim policy value or none supplied>', FIX.defaults.live.E.callerPolicy], ['<caller prompt|user decision|none supplied>', 'caller prompt'], ['commit=<full SHA>', `commit=${VARS.BASE}`], ['<Git tree SHA>', VARS.TREE], ['<durable reference>', 'https://github.com/example-org/example-repo/pull/42#issuecomment-1000007']]), evalGrammar('stoppedLabels', stoppedState).join('\n')],
+      ['stage line', fillExact(STAGE_TEMPLATES['review-and-prep']!, [['<ship-and-land|pair-review|review-and-prep|none>', 'ship-and-land'], ['<done|paused|stopped|blocked|needs-context>', 'done'], ['<full HEAD SHA|none>', VARS.HEAD], ['<SHA-256|none>', VARS.PLAN]]), renderStageHandoffLine(preparedState)!],
+      ['external gate', fillExact(PAUSE_TEMPLATE, [['head: <40-hex>', `head: ${VARS.HEAD}`], ['tree: <40-hex>', `tree: ${VARS.TREE}`], ['base: <40-hex>', `base: ${VARS.BASE}`]]), renderFinal(externalGateState, {}, EXT_DIR).trimEnd().split('\n').at(-1)!],
+      ['fixture c-pause.txt', readFileSync(join(FIXTURES, 'c-pause.txt'), 'utf8'), renderBlock('H-C', pausedState, { requiredUserChecks: USER_CHECKS })],
+      ['fixture e-continue.txt', readFileSync(join(FIXTURES, 'e-continue.txt'), 'utf8'), renderBlock('H-E', stoppedState)],
+      ['fixture f-pause.txt', readFileSync(join(FIXTURES, 'f-pause.txt'), 'utf8'), renderFinal(externalGateState, { autoChoiceLines: [AUTO_CHOICE] }, EXT_DIR)],
+      ['fixture disclosures', readFileSync(join(FIXTURES, 'release-disclosures-review.txt'), 'utf8'), renderDisclosures(preparedState)],
+    ] as const) {
+      expect(actual, name).toBe(filled);
+    }
+
+    const bPrepared = readFileSync(join(FIXTURES, 'b-prepared.txt'), 'utf8');
+    const renderedHB = renderBlock('H-B', preparedState, { commentUrl: COMMENT_URL });
+    for (const pfx of ['PR: ', 'Prepared HEAD: ', 'Review handoff: ', 'Plan: ']) {
+      expect(renderedHB.split('\n').find((l) => l.startsWith(pfx)), pfx).toBe(bPrepared.split('\n').find((l) => l.startsWith(pfx)));
+    }
+    expect(squash(renderedHB)).toBe(squash(bPrepared));
+
+    const renderedCompact = renderComment(readyState, { fullReceipt: FULL_REF }, DIR, HOME).trimEnd();
+    const fixtureCompactLines = withVars(FIX.cases['B-COMPACT-RECEIPT'].live!.receiptBody as string).split('\n');
+    expect(renderedCompact.split('\n').map((l) => (l.startsWith('Delegated part: ') ? l.replace('cache_read_input_tokens=0', 'cache_read_input_tokens=unknown') : l))).toEqual(fixtureCompactLines);
+
+    const renderedStopped = renderComment(stoppedState, { fullReceipt: FULL_REF }, DIR, HOME);
+    expect(renderedStopped.split('\n').slice(2, 8)).toEqual(readFileSync(join(FIXTURES, 'e-stopped-receipt.txt'), 'utf8').trimEnd().split('\n').slice(4));
+    expect(guardFromReceipt(renderedStopped)).toEqual(guardFromReceipt(readFileSync(join(FIXTURES, 'e-stopped-receipt.txt'), 'utf8')));
+
+    for (const [label, rendered, live, wantHandoff, wantOutcome] of [
+      ['H-B', renderFinal(preparedState, { commentUrl: COMMENT_URL }, DIR), withVars(FIX.defaults.live.B), 'H-B', TRUSTED],
+      ['H-C-pause', renderFinal(pausedState, { requiredUserChecks: USER_CHECKS }, DIR), withVars({ ...FIX.defaults.live.C, headSha: '$HEAD' }), 'H-C-pause', HOLD],
+      ['H-E', renderFinal(stoppedState, {}, DIR), withVars(FIX.defaults.live.E), 'H-E', FULL],
+      ['H-F', renderFinal(externalGateState, { autoChoiceLines: [AUTO_CHOICE] }, EXT_DIR), withVars(FIX.defaults.live.F), 'H-F', FULL],
+    ] as const) {
+      const v = classify(rendered, FIX.defaults.provenance, live);
+      expect({ handoff: v.handoff, mismatches: v.mismatches, outcome: v.outcome }, label).toEqual({ handoff: wantHandoff, mismatches: [], outcome: wantOutcome });
+    }
+    const vCompact = run('B-COMPACT-RECEIPT', { live: { receiptBody: renderedCompact } });
+    expect({ handoff: vCompact.handoff, mismatches: vCompact.mismatches, outcome: vCompact.outcome }).toEqual({ handoff: 'H-B', mismatches: [], outcome: TRUSTED });
+  });
+
+  // Value: protects=each stable line's grammar (Delegated part 12 segments, delegation: active forms, stale Checks not run and pregate, stopped one-line forms, stage lines and disclosures); fails_when=a stable line format or ordering rule regresses; why_new=Track 78A T4; seam=none; no_claim=installed-agent execution
+  test('each stable line renders in its exact grammar across fresh, stale and exit variants', () => {
+    const delLines = FIELD_FMT.delegatedParts(makeCtx(preparedState));
+    expect(delLines).toHaveLength(1);
+    const segments = delLines[0]!.slice('Delegated part: '.length).split('; ');
+    expect(segments.map((s, idx) => (idx === 0 ? 'part' : s.split('=')[0]))).toEqual(Object.keys(RECEIPT_KEYS));
+
+    expect(renderDelegationPolicyLine({ status: 'active', parts: ['specialist:testing', 'native-adversarial'], config: 'a'.repeat(64), tools: [] })).toBe(`delegation: active (parts=testing,adversarial; config=${'a'.repeat(64)})`);
+    expect(renderDelegationPolicyLine({ status: 'active', parts: ['specialist:testing', 'native-adversarial'], config: 'a'.repeat(64), tools: ['specialist:testing'] })).toBe(`delegation: active (parts=testing,adversarial; config=${'a'.repeat(64)}; tools=testing)`);
+
+    const staleGateState = mustValidate({ gates: [{ ...rawPrepared.gates[0], candidate: { ...rawPrepared.gates[0].candidate, commit: VARS.NEWHEAD } }, rawPrepared.gates[1]] });
+    const staleCtx = makeCtx(staleGateState, { b: getActiveBinding(staleGateState)!, dir: DIR, home: HOME });
+    expect(FIELD_FMT.checksNotRun(staleCtx)).toBe('Checks not run: pregate');
+    expect(FIELD_FMT.shipGates(staleCtx)[1]).toBe('- pregate: not-run');
+
+    expect(FIELD_FMT.stoppedGateOrLanes(makeCtx(stoppedState))).toBe('Skipped pregate lanes: none');
+    const stoppedWithLanes = mustValidate({ ...stoppedState, gates: [{ ...stoppedState.gates[0], details: { ...stoppedState.gates[0]!.details, skipped_lanes: ['unit', 'lint'] } }] });
+    expect(FIELD_FMT.stoppedGateOrLanes(makeCtx(stoppedWithLanes))).toBe('Skipped pregate lanes: unit, lint');
+    expect(FIELD_FMT.stoppedGateOrLanes(makeCtx(mustValidate({ ...stoppedState, gates: [rawPrepared.gates[0]] })))).toBe(`Ship gates: head=${VARS.HEAD}; tree=${VARS.TREE}; base=${VARS.BASE}`);
+
+    const fields = Object.fromEntries(stageDocFields().map((f) => [f.label, f.values]));
+    for (const [st, opts, wantNext, wantStatus] of [
+      [preparedState, { commentUrl: COMMENT_URL }, 'ship-and-land', 'done'],
+      [pausedState, { requiredUserChecks: USER_CHECKS }, 'pair-review', 'paused'],
+      [stoppedState, {}, 'review-and-prep', 'stopped'],
+      [blockedState, {}, 'none', 'blocked'],
+      [needsContextState, {}, 'none', 'needs-context'],
+    ] as const) {
+      const finalOut = renderFinal(st, opts, DIR);
+      expect(finalOut.endsWith('\n')).toBe(true);
+      const last = finalOut.slice(0, -1).split('\n').at(-1)!;
+      expect(last).toBe(renderStageHandoffLine(st)!);
+      expect(last).toBe(`Stage handoff: stage-handoff/v1; stage: review; next: ${wantNext}; status: ${wantStatus}; head: ${VARS.HEAD}; plan-sha256: ${VARS.PLAN}`);
+      expect(fields.next).toContain(wantNext);
+      expect(fields.status).toContain(wantStatus);
+    }
+
+    const preparedFinal = renderFinal(preparedState, { commentUrl: COMMENT_URL }, DIR);
+    expect(preparedFinal.lastIndexOf('\nStage handoff: ')).toBeGreaterThan(preparedFinal.lastIndexOf('\n```\n'));
+    expect(readDisclosures(preparedFinal)).toEqual({
+      releaseNotes: [], upgradeRisks: [],
+      userFacingChanges: ['`bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.', '`--help` lists the new `--format` option.'],
+    });
   });
 });
