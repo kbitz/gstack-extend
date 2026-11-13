@@ -155,6 +155,17 @@ export const isNonNegInt = (v: unknown): v is number => typeof v === 'number' &&
 export const isPosInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
 export const isIsoZ = (v: unknown): v is string => typeof v === 'string' && ISO_Z_RE.test(v) && Number.isFinite(Date.parse(v));
 export const isPart = (v: unknown): v is string => typeof v === 'string' && PART_RE.test(v) && v !== 'specialist:red-team';
+// Keys mirror PARTS in src/review-delegate/delegate.ts (lines 10–12).
+const DELEGATE_PART_LABELS: ReadonlyMap<string, string> = new Map([
+  ['testing', 'specialist:testing'],
+  ['maintainability', 'specialist:maintainability'],
+  ['performance', 'specialist:performance'],
+  ['simplification', 'specialist:simplification'],
+  ['adversarial', 'native-adversarial'],
+  ['red-team', 'red-team'],
+]);
+const toPartLabel = (v: unknown): string | null =>
+  typeof v === 'string' ? (DELEGATE_PART_LABELS.get(v) ?? (isPart(v) ? v : null)) : null;
 export const isStr = (v: unknown, min: number, max: number, noWs = false): v is string =>
   typeof v === 'string' && v.length >= min && v.length <= max && !CTRL_RE.test(v) && (!noWs || !/\s/.test(v));
 export const isVersion = (v: unknown): v is string => isStr(v, 5, 64, true) && VERSION_RE.test(v);
@@ -297,7 +308,23 @@ function firstDiff(stored: unknown, sent: unknown, path = ''): { path: string; s
   return { path: path || '$', stored: truncate80(fmt(stored)), sent: truncate80(fmt(sent)) };
 }
 
-const invalid = (rev: number | null, v: Violation[]): ApplyOutcome => ({ reason: 'invalid-input', rev, detail: { violations: v.slice(0, 20) } });
+const CONTINUATION_SHAPE_MESSAGE =
+  'continuation must be {prior_stops, max, continues} (40-hex iff prior_stops>=1)';
+const CONTINUATION_SHAPE_FIX =
+  'Pass continuation as {"prior_stops": 0, "max": <int>, "continues": null} on an initial run, or {"prior_stops": <k>, "max": <int>, "continues": "<40-hex Stopped at SHA>"} when prior_stops >= 1 (never {"count", "max"} or prior_stops >= 1 without continues).';
+
+const invalid = (rev: number | null, v: Violation[]): ApplyOutcome => {
+  const hasContinuationViolation = v.some((x) => x.path === 'continuation' || x.path.startsWith('continuation.'));
+  return {
+    reason: 'invalid-input',
+    rev,
+    detail: {
+      violations: v.slice(0, 20),
+      ...(hasContinuationViolation ? { message: CONTINUATION_SHAPE_MESSAGE } : {}),
+    },
+    ...(hasContinuationViolation ? { fix: CONTINUATION_SHAPE_FIX } : {}),
+  };
+};
 
 function replayOrConflict(rev: number, id: string, stored: unknown, canon: unknown, head: string, tree: string, recorded_at: string): ApplyOutcome {
   const diff = firstDiff(stored, canon);
@@ -345,11 +372,11 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
           if (!isObj(pol.delegation)) v.push({ path: 'policy.delegation', rule: 'invalid-type', expected: 'object|null' });
           else if (pol.delegation.status === 'active') {
             const d = validateFields(pol.delegation, ['status', 'parts', 'config'], { tools: [] }, { config: R.hex64 }, 'policy.delegation', v);
-            const parts = Array.isArray(d.parts) ? d.parts : null;
-            if (!parts || !parts.length || new Set(parts).size !== parts.length || !parts.every(isPart)) v.push({ path: 'policy.delegation.parts', rule: 'invalid-value', expected: 'nonempty-unique-part-array' });
-            const tools = d.tools;
-            if (!Array.isArray(tools) || new Set(tools).size !== tools.length || !tools.every((t) => isPart(t) && (parts ?? []).includes(t))) v.push({ path: 'policy.delegation.tools', rule: 'invalid-value', expected: 'subset-of-parts' });
-            if (parts && Array.isArray(tools)) delegation = { status: 'active', parts: parts as string[], config: String(d.config ?? ''), tools: tools as string[] };
+            const parts = Array.isArray(d.parts) ? d.parts.map(toPartLabel) : null;
+            if (!parts || !parts.length || new Set(parts).size !== parts.length || !parts.every((p): p is string => p !== null)) v.push({ path: 'policy.delegation.parts', rule: 'invalid-value', expected: 'nonempty-unique-part-array' });
+            const tools = Array.isArray(d.tools) ? d.tools.map(toPartLabel) : null;
+            if (!tools || new Set(tools).size !== tools.length || !tools.every((t): t is string => t !== null && (parts ?? []).includes(t))) v.push({ path: 'policy.delegation.tools', rule: 'invalid-value', expected: 'subset-of-parts' });
+            if (parts && tools) delegation = { status: 'active', parts: parts as string[], config: String(d.config ?? ''), tools: tools as string[] };
           } else if (pol.delegation.status === 'inactive') {
             const d = validateFields(pol.delegation, ['status', 'reason'], {}, { reason: R.str(1, 200) }, 'policy.delegation', v);
             delegation = { status: 'inactive', reason: String(d.reason ?? '') };
