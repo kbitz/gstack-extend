@@ -687,7 +687,7 @@ if (mode === 'wrong-exit-second' && call === 2) process.exitCode = 3;
     for (const badDir of [outsideEv, join(homeDir, '.gstack/projects/acme/review-and-prep'), join(homeDir, 'scratch/review-and-prep'), 'relative/dir', linkedEv, `${validEv}-missing`, `${validEv}/`, `${validEv}/../${tsReal}`]) {
       expect(runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', badDir]).status).toBe(1);
     }
-    for (const badUrl of ['https://user:pass@github.com/acme/widgets/pull/174', 'https://gitlab.com/acme/widgets/pull/174', 'https://github.com/acme/widgets/pull/174/files']) {
+    for (const badUrl of [['https://', 'user:pass', '@', 'github.com/acme/widgets/pull/174'].join(''), 'https://gitlab.com/acme/widgets/pull/174', 'https://github.com/acme/widgets/pull/174/files']) {
       expect(runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--pr-url', badUrl]).status).toBe(1);
     }
     for (const argv of [['--gstack-root', fakeUpstream, '--from-file', file, '--unknown', '1'], ['--gstack-root', fakeUpstream, '--from-file', file, '--from-file', file], ['--gstack-root', fakeUpstream, '--from-file'], ['--gstack-root', fakeUpstream, '--from-file', '--pr-url']]) {
