@@ -185,12 +185,12 @@ root through `scan-text`:
   optional; each flag may appear at most once. With neither optional flag,
   `scan-text` returns upstream's result with status `none`.
 - `--evidence-dir <dir>` must be an existing directory (not a symlink), given as
-  an absolute path with no empty, `.` or `..` segments and no trailing slash,
+  an absolute path with no empty, `.` or `..` segments, control characters or trailing slash,
   whose realpath lies strictly below `<state-root>/projects/<one segment>/review-and-prep/`
   (where `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`;
   empty values count as unset and relative values are ignored) or
   `$HOME/scratch/review-and-prep/`. The scanner matches the exact absolute path
-  and, when under `$HOME`, its `~/` spelling.
+  and, when under `$HOME` (including its canonical spelling), its `~/` spelling.
 - `--pr-url <url>` must match `^https://github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$`.
   Only `<prUrl>#issuecomment-<digits>` occurrences are matched; nothing else in
   the URL is a component.
@@ -199,6 +199,9 @@ root through `scan-text`:
   by an ASCII digit. Each maximal ASCII digit run inside a kept evidence-dir
   occurrence is an `evidence-dir` component; the digit run after
   `#issuecomment-` is a `pr-comment` component.
+  A boundary that changes under NFKC or is a default-ignorable Unicode character
+  is refused, including after a space, `.` or `-`, so upstream normalization
+  cannot join outside numbers to the bound digits.
 - Only `pii.cc` and `pii.phone.e164` findings with severity `MEDIUM` and
   category `pii` whose start offset (`line`, `col`) falls inside a component and
   whose first 4 characters equal `preview.slice(0, 4)` are eligible. `HIGH` and
@@ -215,6 +218,9 @@ root through `scan-text`:
   drops a non-eligible finding.
 - Output JSON: `{version: 1, status, reason?, upstream_exit, findings, counts, repoVisibility, oversize, known_safe: [{id, line, col, context}]}`.
   On usage or first-scan failure, `scan-text` prints `{"version":1,"error":"..."}` and exits `1`.
+  Malformed finding fields, unknown severities, or counts/exit codes inconsistent
+  with the findings also fail the scan: exit `1` on the first scan, or status
+  `inconclusive` with the first scan's findings and exit on the second.
 - Exit codes: `0` clean, `2` `MEDIUM` remaining, `3` `HIGH` remaining (matching
   `gstack-redact`), and `1` for usage errors or an unavailable scanner.
   `scan-text` uses no `.gstack/secret-dispositions.json` entries or approvals

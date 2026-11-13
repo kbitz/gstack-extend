@@ -34,6 +34,10 @@ function runUpstreamRedact(redactBin: string, targetFile: string): { exit: 0 | 2
   try {
     const p = JSON.parse(r.stdout) as Partial<RedactJson>;
     if (!p || typeof p !== 'object' || !Array.isArray(p.findings) || !p.counts || typeof p.counts !== 'object' || typeof p.repoVisibility !== 'string' || typeof p.oversize !== 'boolean') return null;
+    if (p.findings.some(f => !f || typeof f.id !== 'string' || typeof f.category !== 'string' || typeof f.preview !== 'string'
+      || !['HIGH', 'MEDIUM', 'LOW', 'WARN'].includes(f.severity) || !Number.isInteger(f.line) || f.line < 1 || !Number.isInteger(f.col) || f.col < 1)) return null;
+    const counts = countsFor(p.findings);
+    if (Object.keys(p.counts).length !== 4 || (['HIGH', 'MEDIUM', 'LOW', 'WARN'] as const).some(k => p.counts![k] !== counts[k]) || r.status !== exitFor(p.findings)) return null;
     return { exit: r.status, data: p as RedactJson };
   } catch { return null; }
 }
@@ -68,7 +72,11 @@ function validateEvidenceDir(dir: string): string[] {
   }
   if (!allowed) throw new Error('evidence-dir must lie below a documented review-and-prep root');
   const spellings = [dir];
-  if (homeRaw && dir.startsWith(`${homeRaw}/`)) spellings.push(`~/${dir.slice(homeRaw.length + 1)}`);
+  let homeForTilde = homeRaw;
+  if (homeRaw && !dir.startsWith(`${homeRaw}/`)) {
+    try { homeForTilde = realpathSync(homeRaw); } catch {}
+  }
+  if (homeForTilde && dir.startsWith(`${homeForTilde}/`)) spellings.push(`~/${dir.slice(homeForTilde.length + 1)}`);
   return spellings;
 }
 

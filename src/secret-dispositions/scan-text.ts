@@ -7,11 +7,20 @@ export type Decision<F extends ScanFinding = ScanFinding> = { status: DecisionSt
 
 const ELIGIBLE_IDS = new Set(['pii.cc', 'pii.phone.e164']);
 
+function unstableBoundary(text: string, offset: number): boolean {
+  const point = text.codePointAt(offset);
+  if (point === undefined) return false;
+  const char = String.fromCodePoint(point);
+  return char.normalize('NFKC') !== char || /\p{Default_Ignorable_Code_Point}/u.test(char);
+}
+
 export function isDelimitedAfter(text: string, end: number): boolean {
   if (end >= text.length) return true;
   const next = text[end]!;
   if (/[A-Za-z0-9_]/.test(next)) return false;
-  if ((next === ' ' || next === '.' || next === '-') && /[0-9]/.test(text[end + 1] ?? '')) return false;
+  // Folding or deleting a boundary must not join outside digits to this run.
+  if (unstableBoundary(text, end)) return false;
+  if ((next === ' ' || next === '.' || next === '-') && (/[0-9]/.test(text[end + 1] ?? '') || unstableBoundary(text, end + 1))) return false;
   return true;
 }
 
@@ -124,6 +133,6 @@ export function exitFor(findings: readonly { severity: string }[]): 0 | 2 | 3 {
 
 export function countsFor(findings: readonly { severity: string }[]): { HIGH: number; MEDIUM: number; LOW: number; WARN: number } {
   const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, WARN: 0 };
-  for (const f of findings) if (f.severity in counts) counts[f.severity as keyof typeof counts] += 1;
+  for (const f of findings) if (Object.hasOwn(counts, f.severity)) counts[f.severity as keyof typeof counts] += 1;
   return counts;
 }

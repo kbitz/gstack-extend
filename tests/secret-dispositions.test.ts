@@ -464,6 +464,15 @@ const tokenLettersOnly = ['gh', 'p_', 'B'.repeat(36)].join('');
 const sampleEmail = ['reviewer', '@', 'widgets', '.', 'invalid'].join('');
 
 describe('scan-text pure core (T1)', () => {
+  test('normalization boundaries cannot join bound digits to outside numbers', () => {
+    const dir = '/evidence/run-2026', prUrl = 'https://github.com/acme/widgets/pull/174';
+    const unstable = [0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0xa0, 0xff15, 0x1d7d3].map(n => String.fromCodePoint(n));
+    for (const point of unstable) for (const separator of ['', ' ', '.', '-']) {
+      expect(knownComponents(`${dir}${separator}${point}${commentNum}`, { evidenceDirs: [dir] })).toEqual([]);
+      expect(knownComponents(`${prUrl}#issuecomment-${commentNum}${separator}${point}5`, { prUrl })).toEqual([]);
+    }
+  });
+
   test('knownComponents and every branch of the after-rule', () => {
     const dir = `/home/u/.gstack/projects/acme/review-and-prep/${tsReal}`;
     const tilde = `~/.gstack/projects/acme/review-and-prep/${tsReal}`;
@@ -549,10 +558,13 @@ for (const m of text.matchAll(/(?<![\\w.])[0-9]{10,15}(?![\\w.])/g)) add('pii.ph
 for (const m of text.matchAll(new RegExp(['gh', 'p_[A-Za-z0-9]{36}'].join(''), 'g'))) add('github.pat', 'HIGH', 'secret', m.index, m[0]);
 for (const m of text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g)) add('pii.email', 'MEDIUM', 'pii', m.index, m[0]);
 if (mode === 'add-finding-second' && call === 2) add('pii.email', 'MEDIUM', 'pii', 0, 'added@widgets.invalid');
+if (mode === 'unknown-severity') add('engine.future', 'CRITICAL', 'secret', 0, 'future');
 findings.sort((a, b) => a.line - b.line || a.col - b.col || a.id.localeCompare(b.id));
-const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, WARN: 0 }; for (const f of findings) counts[f.severity] += 1;
+const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, WARN: 0 }; for (const f of findings) counts[f.severity === 'CRITICAL' ? 'HIGH' : f.severity] += 1;
+if (mode === 'inconsistent-counts') counts.HIGH += 1;
 console.log(JSON.stringify({ findings, counts, repoVisibility: 'unknown', oversize: false }, null, 2));
 process.exitCode = counts.HIGH > 0 ? 3 : counts.MEDIUM > 0 ? 2 : 0;
+if (mode === 'wrong-exit-second' && call === 2) process.exitCode = 3;
 `);
   chmodSync(fakeBin, 0o755);
 
@@ -620,14 +632,14 @@ process.exitCode = counts.HIGH > 0 ? 3 : counts.MEDIUM > 0 ? 2 : 0;
     const evDir = join(homeDir, '.gstack/projects/acme/review-and-prep', tsReal), file = join(temp, `body-e-${crypto.randomUUID()}.md`);
     mkdirSync(evDir, { recursive: true }); writeFileSync(file, `Evidence: ${evDir}\n`);
     const first = JSON.parse(spawnSync(fakeBin, ['--from-file', file, '--json'], { encoding: 'utf8' }).stdout);
-    for (const mode of ['add-finding-second', 'fail-second', 'bad-json-second']) {
+    for (const mode of ['add-finding-second', 'fail-second', 'bad-json-second', 'wrong-exit-second']) {
       const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir],
         { FAKE_REDACT_STATE_FILE: join(temp, `state-${crypto.randomUUID()}`), FAKE_REDACT_MODE: mode });
       const out = JSON.parse(r.stdout);
       expect([r.status, out.upstream_exit, out.status, out.findings.length, out.known_safe.length]).toEqual([2, 2, 'inconclusive', 1, 0]);
       expect(out.findings).toEqual(first.findings);
     }
-    for (const mode of ['fail-first', 'bad-json-first']) {
+    for (const mode of ['fail-first', 'bad-json-first', 'unknown-severity', 'inconsistent-counts']) {
       const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir],
         { FAKE_REDACT_STATE_FILE: join(temp, `state-${crypto.randomUUID()}`), FAKE_REDACT_MODE: mode });
       expect([r.status, JSON.parse(r.stdout).version, typeof JSON.parse(r.stdout).error]).toEqual([1, 1, 'string']);
@@ -651,6 +663,14 @@ process.exitCode = counts.HIGH > 0 ? 3 : counts.MEDIUM > 0 ? 2 : 0;
     const inProject = join(repo, 'scanner'), aliasRoot = mkdtempSync(join(temp, 'scanner-alias-')), file = join(temp, `alias-${crypto.randomUUID()}.md`);
     cpSync(fakeUpstream, inProject, { recursive: true }); symlinkSync(join(inProject, 'bin'), join(aliasRoot, 'bin')); writeFileSync(file, 'Synthetic input\n');
     expect(runScanText(repo, homeDir, ['--gstack-root', aliasRoot, '--from-file', file]).status).toBe(1);
+  });
+
+  test('canonical evidence paths retain tilde spelling when HOME is a symlink', () => {
+    const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-canonical-')), alias = `${homeDir}-alias`;
+    const evDir = join(homeDir, '.gstack/projects/acme/review-and-prep', tsReal), file = join(temp, `home-alias-${crypto.randomUUID()}.md`);
+    mkdirSync(evDir, { recursive: true }); symlinkSync(homeDir, alias); writeFileSync(file, `Evidence: ~/.gstack/projects/acme/review-and-prep/${tsReal}\n`);
+    const r = runScanText(repo, alias, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir]);
+    expect([r.status, JSON.parse(r.stdout).status]).toEqual([0, 'applied']);
   });
 
   test('(f) validation rejects invalid evidence dirs, PR URLs, flags and in-project gstack-root with exit 1', () => {
@@ -703,5 +723,14 @@ test.skipIf(!installed)('(h) actual installed gstack-redact: flags real shapes d
   const secretEv = join(homeDir, 'scratch/review-and-prep', `run-${tsReal}-${tokenWithDigits}`), secretFile = join(temp, `secret-h-${crypto.randomUUID()}.md`);
   mkdirSync(secretEv, { recursive: true }); writeFileSync(secretFile, `Evidence: ${secretEv}/full-receipt-1.md\n`);
   expect(spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', installed!, '--from-file', secretFile, '--evidence-dir', secretEv], { cwd: repo, encoding: 'utf8', timeout: 60_000, env }).status).toBe(3);
+  const boundaryEv = join(homeDir, '.gstack/projects/acme/review-and-prep/run-2026'); mkdirSync(boundaryEv, { recursive: true });
+  for (const boundary of [String.fromCodePoint(0x200b), '', ' ']) {
+    const phone = ['555', '012', '3456'].join(''), tail = boundary ? `${boundary}${phone}` : phone.replace(/\d/g, d => String.fromCodePoint(0xff10 + Number(d)));
+    writeFileSync(bodyFile, `Evidence: ${boundaryEv}${tail}\n`);
+    const direct = spawnSync(join(installed!, 'bin/gstack-redact'), ['--from-file', bodyFile, '--json'], { cwd: repo, encoding: 'utf8', timeout: 60_000, env });
+    const safe = spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', installed!, '--from-file', bodyFile, '--evidence-dir', boundaryEv], { cwd: repo, encoding: 'utf8', timeout: 60_000, env });
+    expect([direct.status, safe.status, JSON.parse(safe.stdout).known_safe]).toEqual([2, 2, []]);
+    expect(JSON.parse(safe.stdout).findings).toEqual(JSON.parse(direct.stdout).findings);
+  }
 }, 180_000);
 
