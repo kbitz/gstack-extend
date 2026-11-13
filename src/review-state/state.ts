@@ -313,13 +313,15 @@ const CONTINUATION_SHAPE_MESSAGE =
 const CONTINUATION_SHAPE_FIX =
   'Pass continuation as {"prior_stops": 0, "max": <int>, "continues": null} on an initial run, or {"prior_stops": <k>, "max": <int>, "continues": "<40-hex Stopped at SHA>"} when prior_stops >= 1 (never {"count", "max"} or prior_stops >= 1 without continues).';
 
-const invalid = (rev: number | null, v: Violation[]): ApplyOutcome => {
-  const hasContinuationViolation = v.some((x) => x.path === 'continuation' || x.path.startsWith('continuation.'));
+const invalid = (rev: number | null, v: Violation[], continuationShape = false): ApplyOutcome => {
+  const violations = v.slice(0, 20);
+  const hasContinuationViolation = continuationShape && violations.length > 0 &&
+    violations.every((x) => x.path === 'continuation' || x.path.startsWith('continuation.'));
   return {
     reason: 'invalid-input',
     rev,
     detail: {
-      violations: v.slice(0, 20),
+      violations,
       ...(hasContinuationViolation ? { message: CONTINUATION_SHAPE_MESSAGE } : {}),
     },
     ...(hasContinuationViolation ? { fix: CONTINUATION_SHAPE_FIX } : {}),
@@ -396,7 +398,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
         continuation = { prior_stops: Number(c.prior_stops ?? 0), max: Number(c.max ?? 0), continues: (c.continues as string | null) ?? null };
       }
     }
-    if (v.length > 0) return invalid(rev, v);
+    if (v.length > 0) return invalid(rev, v, true);
 
     const canon = { run_id: top.run_id as string, base: top.base as string, wtree: top.wtree as string | null, pr, gh_login: top.gh_login as string | null, plan, policy, continuation, session_id: top.session_id as string | null };
     if (state !== null) {

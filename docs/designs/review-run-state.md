@@ -94,7 +94,7 @@ Commands: `start`, `record pass|correction|gate|audit`, `checkpoint`, `finish` (
 |---|---|---|---|---|
 | <a id="reason-recorded"></a>`recorded` | `recorded` | 0 | `committed` / `no` | `{head, tree, recorded_at, warnings?}`; state updated (`rev` incremented). |
 | <a id="reason-replayed"></a>`replayed` | `replayed` | 0 | `none` / `no` | `{head, tree, recorded_at, head_moved?}`; identical prior input confirmed without writing. |
-| <a id="reason-invalid-input"></a>`invalid-input` | `refused` | 1 | `none` / `after-fix` | `{violations: [{path, rule, expected}]}` (up to 20); fix the payload and rerun with a new or corrected file. |
+| <a id="reason-invalid-input"></a>`invalid-input` | `refused` | 1 | `none` / `after-fix` | `{violations: [{path, rule, expected}], message?}` (up to 20 violations); fix the payload and rerun with a new or corrected file. When every reported violation is a `start` continuation-shape error, `message` and the envelope's `fix` name `{prior_stops, max, continues}`; mixed-input errors, missing commits, and other commands keep generic diagnostics. |
 | <a id="reason-bad-dir"></a>`bad-dir` | `refused` | 1 | `none` / `after-fix` | `{condition: "relative"\|"missing"\|"not-directory"\|"symlink"\|"in-worktree", resolved_path, toplevel}`; create `--dir` with `mkdir -p` outside the work tree or continue inline (D1). |
 | <a id="reason-not-in-worktree"></a>`not-in-worktree` | `refused` | 1 | `none` / `after-fix` | `{cwd}`; run from inside the target Git work tree. |
 | <a id="reason-worktree-mismatch"></a>`worktree-mismatch` | `refused` | 1 | `none` / `never` | `{expected_repo, actual_repo, expected_branch, actual_branch}`; run on the bound repo/branch or use a new `--dir`. |

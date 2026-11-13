@@ -2108,6 +2108,48 @@ describe('bin/review-state', () => {
     expect(existsSync(join(dNonNullOnZero, 'review-run-state.json'))).toBe(false);
   });
 
+  // Value: protects=generic diagnostics and refusal atomicity for start's missing-commit and mixed-input errors; fails_when=continuation shape advice hides a reference error or unrelated violation; why_new=review reproduced diagnostic overreach; seam=CLI and state file
+  test.each([
+    [
+      'a correctly shaped continuation whose commit is missing',
+      () => mkStart(13, { continuation: { prior_stops: 1, max: 1, continues: sha256('missing').slice(0, 40) } }),
+      { path: 'continuation.continues', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+    [
+      'a malformed continuation alongside an invalid delegation part',
+      () => mkStart(14, {
+        continuation: { count: 0, max: 1 },
+        policy: { value: REAL_POLICY_LINE, source: 'caller prompt', delegation: { status: 'active', parts: ['security'], config: sha256('cfg'), tools: [] } },
+      }),
+      { path: 'policy.delegation.parts', rule: 'invalid-value', expected: 'nonempty-unique-part-array' },
+    ],
+  ])('start keeps generic diagnostics for %s', (_label, payload, violation) => {
+    const dir = newDir();
+    const res = callCmd(dir, 'start', payload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toContainEqual(violation);
+    expect(res.json.detail).not.toHaveProperty('message');
+    expect(res.json.fix).toBe('Fix the payload violations and rerun with a new or corrected --input file.');
+    expect(existsSync(join(dir, 'review-run-state.json'))).toBe(false);
+  });
+
+  // Value: protects=non-start commands' generic unknown-key advice and unchanged state; fails_when=a stray continuation key gets start-only shape advice; why_new=red-team finding reproduced in QA captures 002/003; seam=CLI and state file
+  test.each([
+    ['checkpoint', () => ({ checkpoint_id: uid(61), kind: 'before-fix', continuation: {} })],
+    ['finish', () => ({ outcome: 'prepared', base: baseSha, continuation: {} })],
+  ])('%s keeps generic diagnostics for an unknown continuation key', (cmd, payload) => {
+    const { startState } = ensureRefusalSeeds();
+    const { dir, statePath, beforeBytes } = dirFromSeed(startState);
+    const res = callCmd(dir, cmd, payload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toEqual([{ path: 'continuation', rule: 'unknown-key', expected: 'no unknown keys' }]);
+    expect(res.json.detail).not.toHaveProperty('message');
+    expect(res.json.fix).toBe('Fix the payload violations and rerun with a new or corrected --input file.');
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
   // Value: protects=byte-identical stored state and rendered delegation / Delegated part lines between delegate= names and part labels at start; fails_when=names at start change serialized state or rendered receipt lines; why_new=Track 80A T1 Test B; seam=applyCommand, serializeState, and render formatters
   test('delegate= names and part labels at start write byte-identical state and render the same delegation and Delegated part lines', () => {
     const gitInfo = { repo: '/fixture/.git', toplevel: '/fixture', branch: 'topic', head: headSha, tree: treeSha };
