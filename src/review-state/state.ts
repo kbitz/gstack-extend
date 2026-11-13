@@ -129,7 +129,7 @@ export type AuditRecord = { audit_id: string; segment: number | null; name: stri
 export type CheckpointRecord = { checkpoint_id: string; segment: number | null; kind: string; head: string; tree: string; base: string | null; wtree: string | null; session_id: string | null; evidence: EvidenceRef[]; recorded_at: string };
 export type FullReviewEvidence = { status: 'available'; commit: string; tree: string; source: string } | { status: 'unavailable'; reason: string };
 export type FinishRecord = { outcome: string; stop_reason: string | null; head: string; tree: string; base: string; delta_base: string | null; stop_count: number | null; wtree: string | null; review_restriction_resolved: boolean; readiness_confirmed_at: string | null; full_review_evidence: FullReviewEvidence | null; user_facing_changes: string[]; evidence: EvidenceRef[]; finished_at: string };
-export type SegmentRecord = { segment: number; started_at: string; ended_at: string | null; end: 'paused' | 'finished' | null; session_id: string | null; toplevel: string };
+export type SegmentRecord = { segment: number; started_at: string; ended_at: string | null; end: 'paused' | 'finished' | 'interrupted' | null; session_id: string | null; toplevel: string };
 export type ReviewRunState = {
   schema: typeof SCHEMA_VERSION; rev: number; writer: string | null;
   run: { run_id: string; skill: 'review-and-prep'; repo: string; branch: string; pr: PrInfo | null; gh_login: string | null; started_at: string };
@@ -675,7 +675,13 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     }
     const life = checkLifecycle();
     if (life) return life;
-    if (canon.kind === 'resume' && state!.segments[state!.segments.length - 1]!.end !== 'paused') return invalid(state!.rev, [{ path: 'kind', rule: 'invalid-lifecycle', expected: 'paused-run-required-for-resume' }]);
+    const lastSeg = state!.segments[state!.segments.length - 1]!;
+    if (canon.kind === 'resume' && lastSeg.end !== 'paused' && lastSeg.end !== null) {
+      return invalid(state!.rev, [{ path: 'kind', rule: 'invalid-lifecycle', expected: 'paused-or-open-run-required-for-resume' }]);
+    }
+    if (canon.kind === 'resume' && lastSeg.end === null && canon.session_id !== null && canon.session_id === lastSeg.session_id) {
+      return invalid(state!.rev, [{ path: 'session_id', rule: 'same-session-resume', expected: 'different-session-id-or-null-when-resuming-open-run' }]);
+    }
     if (canon.base !== null && !env.commitExists(canon.base)) v.push({ path: 'base', rule: 'commit-not-found', expected: 'existing-git-commit' });
     else if (canon.kind === 'ready' && canon.base !== null && !env.isAncestor(canon.base, git.head)) v.push({ path: 'base', rule: 'not-ancestor', expected: 'ancestor-of-head' });
     canon.evidence.forEach((ev, i) => { const err = env.checkEvidence(ev.path, ev.sha256); if (err) v.push({ path: `evidence[${i}]`, rule: err, expected: 'valid-evidence-file-in-dir' }); });
@@ -684,7 +690,14 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const nextSegments = canon.kind === 'pause'
       ? state!.segments.map((s, i) => i === state!.segments.length - 1 ? { ...s, ended_at: nowIso, end: 'paused' as const } : s)
       : canon.kind === 'resume'
-        ? [...state!.segments, { segment: state!.segments.length + 1, started_at: nowIso, ended_at: null, end: null, session_id: canon.session_id, toplevel: git.toplevel }]
+        ? [
+            ...state!.segments.map((s, i) =>
+              i === state!.segments.length - 1 && s.end === null
+                ? { ...s, ended_at: latestHelperTimestamp(state!, s.started_at), end: 'interrupted' as const }
+                : s,
+            ),
+            { segment: state!.segments.length + 1, started_at: nowIso, ended_at: null, end: null, session_id: canon.session_id, toplevel: git.toplevel },
+          ]
         : state!.segments;
     const cpSegment = nextSegments[nextSegments.length - 1]!.segment;
     const cpRecord: CheckpointRecord = { ...canon, segment: cpSegment, head: git.head, tree: git.tree, recorded_at: nowIso };
@@ -739,6 +752,32 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
 
   const nextSegments = state!.segments.map((s, i) => i === state!.segments.length - 1 ? { ...s, ended_at: nowIso, end: 'finished' as const } : s);
   return recorded({ ...state!, rev: state!.rev + 1, segments: nextSegments, finish: { ...canon, head: git.head, tree: git.tree, finished_at: nowIso } }, { head: git.head, tree: git.tree, recorded_at: nowIso });
+}
+
+function latestHelperTimestamp(state: ReviewRunState, fallback: string): string {
+  let best = fallback;
+  let bestMs = Date.parse(fallback);
+  const consider = (ts: string | null) => {
+    if (ts === null) return;
+    const ms = Date.parse(ts);
+    if (ms > bestMs) {
+      best = ts;
+      bestMs = ms;
+    }
+  };
+  for (const p of state.passes) {
+    consider(p.recorded_at);
+    consider(p.completed_recorded_at);
+    for (const vo of p.voices) {
+      consider(vo.recorded_at);
+      for (const a of vo.attempts) consider(a.recorded_at);
+    }
+  }
+  for (const c of state.corrections) consider(c.recorded_at);
+  for (const g of state.gates) consider(g.recorded_at);
+  for (const a of state.audits) consider(a.recorded_at);
+  for (const cp of state.checkpoints) consider(cp.recorded_at);
+  return best;
 }
 
 function applyAdditiveV1Defaults(raw: Record<string, unknown>): void {
@@ -815,7 +854,7 @@ export function validateStoredState(raw: unknown, statePath: string, helperVersi
     }
     object(root.continuation, STATE_KEYS.continuation, { prior_stops: R.nonNegInt, max: R.nonNegInt, continues: R.hex40N }, 'continuation');
     array(root.segments, 'segments', (x, path) => {
-      object(x, STATE_KEYS.segment, { segment: R.posInt, started_at: R.isoZ, ended_at: R.isoZN, end: R.enumN(['paused', 'finished']), session_id: R.sessionN, toplevel: R.str(1, 500) }, path);
+      object(x, STATE_KEYS.segment, { segment: R.posInt, started_at: R.isoZ, ended_at: R.isoZN, end: R.enumN(['paused', 'finished', 'interrupted']), session_id: R.sessionN, toplevel: R.str(1, 500) }, path);
     });
     if (Array.isArray(root.segments)) {
       if (!root.segments.length) v.push({ path: 'segments', rule: 'missing-segment', expected: 'nonempty-array' });

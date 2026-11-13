@@ -23,11 +23,11 @@ export type ExportSegment = {
   segment: number;
   started_at: string;
   ended_at: string | null;
-  end: 'paused' | 'finished' | null;
+  end: 'paused' | 'finished' | 'interrupted' | null;
   recorded_session_id: string | null;
   session_id: string;
   derived: boolean;
-  outcome: 'success' | 'blocked' | null;
+  outcome: 'success' | 'blocked' | 'unknown' | null;
   run_step_id: string;
 };
 
@@ -50,7 +50,7 @@ export type ExportStageRun = {
   session_id: string;
   started_at: string;
   ended_at: string;
-  outcome: 'success' | 'blocked';
+  outcome: 'success' | 'blocked' | 'unknown';
   branch: string;
 };
 
@@ -74,14 +74,16 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
   const segments: ExportSegment[] = state.segments.map((seg) => {
     const derived = seg.session_id === null;
     const sessionId = seg.session_id ?? `extend-${uuidv5(NAMESPACE, `${runId}:segment:${seg.segment}`)}`;
-    const outcome: 'success' | 'blocked' | null =
+    const outcome: 'success' | 'blocked' | 'unknown' | null =
       seg.end === null
         ? null
-        : seg.end === 'paused'
-          ? 'blocked'
-          : state.finish?.outcome === 'prepared'
-            ? 'success'
-            : 'blocked';
+        : seg.end === 'interrupted'
+          ? 'unknown'
+          : seg.end === 'paused'
+            ? 'blocked'
+            : state.finish?.outcome === 'prepared'
+              ? 'success'
+              : 'blocked';
     const runStepId = uuidv5(NAMESPACE, `${runId}:segment:${seg.segment}:run`);
     return {
       segment: seg.segment,
@@ -346,8 +348,8 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
       }
     }
 
-    // 4. Run end (only when derived === false and seg.end !== null)
-    if (!segInfo.derived && segInfo.end !== null) {
+    // 4. Run end (only when derived === false and seg.end is paused or finished)
+    if (!segInfo.derived && (segInfo.end === 'paused' || segInfo.end === 'finished')) {
       const endOutcome = segInfo.end === 'finished' && state.finish?.outcome === 'prepared' ? 'completed' : 'paused';
       records.push({
         session_id: sessionId,
@@ -365,7 +367,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
   }
 
   const stageRuns: ExportStageRun[] = segments
-    .filter((s): s is ExportSegment & { ended_at: string; outcome: 'success' | 'blocked' } =>
+    .filter((s): s is ExportSegment & { ended_at: string; outcome: 'success' | 'blocked' | 'unknown' } =>
       s.derived && s.end !== null && s.ended_at !== null && s.outcome !== null)
     .map((s) => ({
       segment: s.segment,
@@ -398,6 +400,7 @@ export type LoadedStoredState =
       statePath: string;
       realDir: string;
       realTop: string;
+      actualBranch: string;
       gitEnv: NodeJS.ProcessEnv;
       helperVersion: string | null;
     }
@@ -469,7 +472,7 @@ export function loadStoredState(
     );
   }
 
-  return { ok: true, state: storedState, statePath, realDir, realTop, gitEnv, helperVersion };
+  return { ok: true, state: storedState, statePath, realDir, realTop, actualBranch, gitEnv, helperVersion };
 }
 
 export type ExportCommandResult =

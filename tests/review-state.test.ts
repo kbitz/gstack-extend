@@ -5,7 +5,8 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { join, resolve } from 'node:path';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
-import { RENDER_SCHEMA, RENDER_SHAPES } from '../src/review-state/render.ts';
+import { RENDER_SCHEMA, RENDER_SHAPES, unresolvedFindings } from '../src/review-state/render.ts';
+import { SHOW_SCHEMA } from '../src/review-state/show.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
@@ -1499,5 +1500,325 @@ describe('bin/review-state', () => {
         if (mode === 'replace-section') expect(readFileSync(join(d, 'section.md'), 'utf8')).toBe('Replacement after validation.\n');
         if (mode === 'large-suffix') expect(output).toBe(join(d, 'full-receipt-9007199254740994.md'));
       }
+  });
+
+  // Value: protects=interrupted-session resume transitions, same-session refusal, replay, and export projection; fails_when=an open run refuses checkpoint resume, stamps ended_at from caller times, emits a false run end, or drops derived interrupted stage_runs; why_new=Track 79A part 1 T1; seam=none; no_claim=daemon process crash signals
+  test('checkpoint resume on an open run closes the interrupted segment at its last helper write and exports without run end', () => {
+    const d = newDir();
+    const sid1 = `extend-${uid(901)}`;
+    const sid2 = `extend-${uid(902)}`;
+    expect(callCmd(d, 'start', mkStart(1, { session_id: sid1 })).code).toBe(0);
+    // Caller-supplied started_at is intentionally far in the future to prove ended_at uses helper-stamped recorded_at.
+    expect(callCmd(d, 'record pass', {
+      pass_id: uid(10), state: 'started', scope: 'local', cycle: 1, coverage: 'full',
+      candidate: { commit: headSha, base: baseSha }, required_voices: ['core'], started_at: '2099-01-01T00:00:00Z',
+    }).code).toBe(0);
+    const gateRes = callCmd(d, 'record gate', {
+      gate_id: uid(20), name: 'probe-113a', result: 'passed', candidate: { commit: headSha, base: baseSha },
+    });
+    expect(gateRes.code).toBe(0);
+    const lastHelperTs = gateRes.json.detail.recorded_at as string;
+
+    // Same non-null session_id on an open run is refused as same-session-resume.
+    const sameSid = callCmd(d, 'checkpoint', { checkpoint_id: uid(30), kind: 'resume', session_id: sid1 });
+    expect(sameSid.code).toBe(1);
+    expect(sameSid.json.reason).toBe('invalid-input');
+    expect(sameSid.json.detail.violations).toContainEqual({
+      path: 'session_id',
+      rule: 'same-session-resume',
+      expected: 'different-session-id-or-null-when-resuming-open-run',
+    });
+
+    // Different session_id closes segment 1 as "interrupted" at lastHelperTs and opens segment 2.
+    const resCp = callCmd(d, 'checkpoint', {
+      checkpoint_id: uid(31), kind: 'resume', base: baseSha, wtree: 'wt:resume-1', session_id: sid2,
+    }, { file: 'cp-resume.json' });
+    expect(resCp.code).toBe(0);
+    expect(resCp.json.reason).toBe('recorded');
+
+    // Retrying the identical checkpoint_id replays cleanly (checked before lifecycle / same-session-resume).
+    const replayCp = runCli(['checkpoint', '--dir', d, '--input', join(d, 'cp-resume.json')]);
+    expect(replayCp.code).toBe(0);
+    expect(replayCp.json.reason).toBe('replayed');
+
+    const stored = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stored.segments).toHaveLength(2);
+    expect(stored.segments[0]).toMatchObject({
+      segment: 1,
+      end: 'interrupted',
+      ended_at: lastHelperTs,
+      session_id: sid1,
+    });
+    expect(stored.segments[0]!.ended_at).not.toBe('2099-01-01T00:00:00Z');
+    expect(stored.segments[1]).toMatchObject({
+      segment: 2,
+      end: null,
+      ended_at: null,
+      session_id: sid2,
+    });
+    expect(stored.checkpoints[0]).toMatchObject({
+      checkpoint_id: uid(31),
+      segment: 2,
+      kind: 'resume',
+      session_id: sid2,
+    });
+
+    // Export of recorded interrupted segment 1 emits begin and pass, but no run end.
+    const exp1 = runCli(['export', '--dir', d]);
+    expect(exp1.code).toBe(0);
+    expect(exp1.json.segments[0]).toMatchObject({
+      segment: 1,
+      end: 'interrupted',
+      ended_at: lastHelperTs,
+      derived: false,
+      outcome: 'unknown',
+    });
+    expect(exp1.json.records.filter((r: { session_id: string }) => r.session_id === sid1).map((r: { op: string }) => r.op)).toEqual(['begin', 'pass']);
+    expect(exp1.json.stage_runs).toEqual([]);
+
+    // Resume on a finished run is still refused with "finished".
+    expect(callCmd(d, 'record pass', {
+      pass_id: uid(10), state: 'attempt', voice_id: 'core', attempt_id: uid(11), outcome: 'completed', findings: [],
+    }).code).toBe(0);
+    expect(callCmd(d, 'record pass', {
+      pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(11),
+    }).code).toBe(0);
+    expect(callCmd(d, 'record pass', {
+      pass_id: uid(10), state: 'completed', completed_at: '2026-11-10T18:05:00Z',
+    }).code).toBe(0);
+    expect(callCmd(d, 'finish', { outcome: 'prepared', base: baseSha }).code).toBe(0);
+    const afterFin = callCmd(d, 'checkpoint', { checkpoint_id: uid(32), kind: 'resume', session_id: `extend-${uid(903)}` });
+    expect(afterFin.code).toBe(1);
+    expect(afterFin.json.reason).toBe('finished');
+
+    // Derived (session_id: null) interrupted segment exports a stage_runs entry with outcome: "unknown".
+    const dDerived = newDir();
+    expect(callCmd(dDerived, 'start', mkStart(2, { session_id: null })).code).toBe(0);
+    const g2 = callCmd(dDerived, 'record gate', {
+      gate_id: uid(21), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha },
+    });
+    expect(callCmd(dDerived, 'checkpoint', { checkpoint_id: uid(33), kind: 'resume', session_id: null }).code).toBe(0);
+    const exp2 = runCli(['export', '--dir', dDerived]);
+    expect(exp2.code).toBe(0);
+    expect(exp2.json.stage_runs).toEqual([
+      {
+        segment: 1,
+        session_id: `extend-${uuidv5(NAMESPACE, `${uid(2)}:segment:1`)}`,
+        started_at: exp2.json.segments[0].started_at,
+        ended_at: g2.json.detail.recorded_at,
+        outcome: 'unknown',
+        branch: 'main',
+      },
+    ]);
+
+    // validateStoredState accepts "interrupted" on the current helper, and reports newer-schema if an older enum rejected a newer writer.
+    const validInterrupted = validateStoredState(JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')), join(d, 'review-run-state.json'), '0.86.0');
+    expect(validInterrupted.ok).toBe(true);
+    const futureBadEnum = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8'));
+    futureBadEnum.writer = '99.0.0';
+    futureBadEnum.segments[0].end = 'future-end-kind';
+    expect(validateStoredState(futureBadEnum, join(d, 'review-run-state.json'), '0.87.0')).toMatchObject({
+      ok: false,
+      reason: 'newer-schema',
+      detail: { writer: '99.0.0' },
+    });
+  });
+
+  // Value: protects=read-only show across every checkpoint kind, head relation, freshness, evidence_ok, and refusal modes; fails_when=show mutates state or locks, misreports a checkpoint or head relation, or accepts mismatched worktrees/flags; why_new=Track 79A part 1 T2; seam=none; no_claim=skill prose execution
+  test('show reports resume state across every checkpoint kind and refuses missing, mismatched, corrupt, and invalid inputs without touching state', () => {
+    expect(runCli(['--help']).out).toContain('bin/review-state show --dir DIR [--base SHA] [--wtree TOKEN]');
+    expect(runCli(['show', '--help']).out).toContain(`review-state show — experimental read-only resume inspection (${SHOW_SCHEMA})`);
+
+    // Missing state -> not-started
+    const dEmpty = newDir();
+    const notStarted = runCli(['show', '--dir', dEmpty]);
+    expect(notStarted.code).toBe(1);
+    expect(notStarted.json.reason).toBe('not-started');
+
+    // Flag usage errors on show and other commands
+    const dummyIn = writeJson(dEmpty, 'dummy.json', {});
+    expect(runCli(['show', '--dir', dEmpty, '--input', dummyIn]).json.reason).toBe('usage');
+    expect(runCli(['show', '--dir', dEmpty, '--base', 'not-a-hex40']).json.reason).toBe('usage');
+    expect(runCli(['show', '--dir', dEmpty, '--base', 'f'.repeat(40)]).json.reason).toBe('usage');
+    expect(runCli(['show', '--dir', dEmpty, '--wtree', 'bad wtree token']).json.reason).toBe('usage');
+    expect(runCli(['export', '--dir', dEmpty, '--base', baseSha]).json.reason).toBe('usage');
+    expect(runCli(['export', '--dir', dEmpty, '--wtree', 'wt:ok']).json.reason).toBe('usage');
+
+    // Walk through checkpoints: none -> before-fix -> next-cycle -> external-gate + pause -> resume -> pause -> resume -> ready -> stop
+    const d = newDir();
+    writeFileSync(join(d, 'ev-test.txt'), 'gate evidence\n');
+    const evRef = { path: 'ev-test.txt', sha256: sha256('gate evidence\n') };
+    callCmd(d, 'start', mkStart(10, { wtree: 'wt:v1' }));
+    callCmd(d, 'record pass', {
+      pass_id: uid(100), state: 'started', scope: 'local', cycle: 1, coverage: 'full',
+      candidate: { commit: headSha, base: baseSha, wtree: 'wt:v1' }, required_voices: ['core', 'red-team'], started_at: '2026-11-10T18:00:00Z',
+    });
+    callCmd(d, 'record pass', {
+      pass_id: uid(100), state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(101), outcome: 'completed',
+      findings: [
+        { finding_id: 'F1', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+      ],
+    });
+    callCmd(d, 'record pass', {
+      pass_id: uid(100), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(101),
+    });
+    callCmd(d, 'record pass', {
+      pass_id: uid(100), state: 'voice-complete', voice_id: 'red-team', not_applicable: 'not-applicable',
+    });
+    callCmd(d, 'record gate', {
+      gate_id: uid(200), name: 'tests', result: 'passed',
+      candidate: { commit: headSha, base: baseSha, wtree: 'wt:v1' }, evidence: [evRef],
+    });
+    callCmd(d, 'record gate', {
+      gate_id: uid(201), name: 'greptile', result: 'not-run',
+      candidate: { commit: headSha, base: baseSha }, details: { value: 'skipped — no root configuration; do not run it', run: null },
+    });
+    callCmd(d, 'record audit', {
+      audit_id: uid(300), name: 'coverage', result: 'passed',
+      details: { pct: 95, threshold: 90 }, candidate: { commit: headSha, base: baseSha, wtree: 'wt:v1' }, evidence: [evRef],
+    });
+
+    // 1. No checkpoint yet (open pass)
+    const statePath = join(d, 'review-run-state.json');
+    const bytesBeforeShow = readFileSync(statePath, 'utf8');
+    const sNone = runCli(['show', '--dir', d, '--base', baseSha, '--wtree', 'wt:v1']);
+    expect(sNone.code).toBe(0);
+    expect(readFileSync(statePath, 'utf8')).toBe(bytesBeforeShow);
+    expect(existsSync(join(d, 'review-run-state.json.lock'))).toBe(false);
+    expect(sNone.json).toMatchObject({
+      schema: SHOW_SCHEMA,
+      lifecycle: 'open',
+      exit: null,
+      head: { current: headSha, tree: treeSha, reference: headSha, relation: 'same' },
+      last_checkpoint: null,
+      unresolved: ['F1 P2'],
+    });
+    expect(sNone.json.passes[0].voices).toEqual([
+      { voice_id: 'core', required: true, status: 'selected' },
+      { voice_id: 'red-team', required: true, status: 'not-applicable' },
+    ]);
+    expect(sNone.json.gates[0]).toMatchObject({ name: 'tests', result: 'passed', fresh: true, evidence_ok: true });
+    expect(sNone.json.audits[0]).toMatchObject({ name: 'coverage', result: 'passed', fresh: true, evidence_ok: true });
+    expect(runCli(['show', '--dir', d]).json.gates[0].fresh).toBeNull();
+    expect(runCli(['show', '--dir', d, '--base', baseSha, '--wtree', 'wt:other']).json.gates[0].fresh).toBe(false);
+
+    // Deleting the evidence file flips evidence_ok to false without failing show.
+    unlinkSync(join(d, 'ev-test.txt'));
+    const sMissingEv = runCli(['show', '--dir', d, '--base', baseSha]);
+    expect(sMissingEv.code).toBe(0);
+    expect(sMissingEv.json.gates[0].evidence_ok).toBe(false);
+    expect(sMissingEv.json.audits[0].evidence_ok).toBe(false);
+    writeFileSync(join(d, 'ev-test.txt'), 'gate evidence\n');
+
+    // Complete pass and check checkpoint progression
+    callCmd(d, 'record pass', { pass_id: uid(100), state: 'completed', completed_at: '2026-11-10T18:05:00Z' });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(400), kind: 'before-fix' });
+    expect(runCli(['show', '--dir', d]).json).toMatchObject({
+      lifecycle: 'open',
+      exit: null,
+      last_checkpoint: { kind: 'before-fix', head: headSha },
+    });
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(401), kind: 'next-cycle' });
+    expect(runCli(['show', '--dir', d]).json.last_checkpoint).toMatchObject({ kind: 'next-cycle', head: headSha });
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(402), kind: 'external-gate', base: baseSha, wtree: 'wt:v1' });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(403), kind: 'pause', base: baseSha, wtree: 'wt:v1' });
+    expect(runCli(['show', '--dir', d]).json).toMatchObject({
+      lifecycle: 'paused',
+      exit: 'external-gate',
+      last_checkpoint: { kind: 'pause', head: headSha },
+    });
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(404), kind: 'resume', base: baseSha, session_id: `extend-${uid(910)}` });
+    expect(runCli(['show', '--dir', d]).json).toMatchObject({
+      lifecycle: 'open',
+      exit: null,
+      last_checkpoint: { kind: 'resume', segment: 2 },
+    });
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(405), kind: 'pause', base: baseSha, wtree: 'wt:v1' });
+    expect(runCli(['show', '--dir', d]).json).toMatchObject({
+      lifecycle: 'paused',
+      exit: 'paused',
+      last_checkpoint: { kind: 'pause', segment: 2 },
+    });
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(406), kind: 'resume', base: baseSha, session_id: `extend-${uid(911)}` });
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(407), kind: 'ready', base: baseSha, wtree: 'wt:v1' });
+
+    // Render full-receipt on ready and verify unresolved parity + rendered file list sorting
+    writeFileSync(join(d, 'full-receipt-10.md'), 'ten\n');
+    writeFileSync(join(d, 'full-receipt-2.md'), 'two\n');
+    const rFull = callCmd(d, 'render', { output: 'full-receipt' });
+    expect(rFull.code).toBe(0);
+    const fullText = readFileSync(rFull.json.files[0].path, 'utf8');
+    const parsedState = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(fullText).toContain(`Unresolved: ${unresolvedFindings(parsedState).join(', ')}`);
+
+    const sReady = runCli(['show', '--dir', d, '--base', baseSha]);
+    expect(sReady.code).toBe(0);
+    expect(sReady.json).toMatchObject({
+      lifecycle: 'open',
+      exit: 'ready',
+      last_checkpoint: { kind: 'ready', segment: 3 },
+      unresolved: ['F1 P2'],
+    });
+    expect(sReady.json.rendered.map((f: { path: string }) => f.path)).toEqual([
+      'full-receipt-2.md',
+      'full-receipt-10.md',
+      'full-receipt-11.md',
+    ]);
+
+    callCmd(d, 'checkpoint', { checkpoint_id: uid(408), kind: 'stop' });
+    expect(runCli(['show', '--dir', d]).json).toMatchObject({
+      lifecycle: 'open',
+      exit: null,
+      last_checkpoint: { kind: 'stop', segment: 3 },
+    });
+
+    // Resume from open run at stop checkpoint -> closes segment 3 as interrupted, opens segment 4
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(409), kind: 'resume', session_id: `extend-${uid(912)}` }).code).toBe(0);
+    const sAfterOpenResume = runCli(['show', '--dir', d]);
+    expect(sAfterOpenResume.json.segments[2]).toMatchObject({ segment: 3, end: 'interrupted' });
+    expect(sAfterOpenResume.json.segments[3]).toMatchObject({ segment: 4, end: null });
+
+    // Ahead and diverged HEAD relations + branch and repo mismatch in worktrees
+    const wtAhead = join(baseTmp, 'wt-show-ahead');
+    git(repo, ['worktree', 'add', '-b', 'other-branch', wtAhead, headSha]);
+    // On other-branch, show refuses with worktree-mismatch (branch mismatch) while export succeeds
+    const sBranchMismatch = runCli(['show', '--dir', d], { cwd: wtAhead });
+    expect(sBranchMismatch.code).toBe(1);
+    expect(sBranchMismatch.json.reason).toBe('worktree-mismatch');
+    expect(sBranchMismatch.json.detail).toMatchObject({ expected_branch: 'main', actual_branch: 'other-branch' });
+    expect(runCli(['export', '--dir', d], { cwd: wtAhead }).code).toBe(0);
+    git(repo, ['worktree', 'remove', '--force', wtAhead]);
+
+    // Ahead and diverged on the bound branch using a cloned repo sharing the same git common dir vs separate repo
+    const otherRepo = makeEmptyRepo(baseTmp, 'other-repo-show');
+    expect(runCli(['show', '--dir', d], { cwd: otherRepo }).json.reason).toBe('worktree-mismatch');
+
+    // Create a commit on main in repo -> ahead; then reset to baseSha -> diverged; then restore headSha
+    git(repo, ['commit', '--allow-empty', '-m', 'ahead-commit', '--quiet']);
+    const aheadSha = git(repo, ['rev-parse', 'HEAD']);
+    const sAhead = runCli(['show', '--dir', d, '--base', baseSha]);
+    expect(sAhead.code).toBe(0);
+    expect(sAhead.json.head).toMatchObject({ current: aheadSha, reference: headSha, relation: 'ahead' });
+    expect(sAhead.json.gates[0].fresh).toBe(false);
+
+    git(repo, ['reset', '--hard', baseSha, '--quiet']);
+    const sDiverged = runCli(['show', '--dir', d, '--base', baseSha]);
+    expect(sDiverged.code).toBe(0);
+    expect(sDiverged.json.head).toMatchObject({ current: baseSha, reference: headSha, relation: 'diverged' });
+    git(repo, ['reset', '--hard', headSha, '--quiet']);
+
+    // Corrupt and newer-schema on show
+    const dCorrupt = newDir();
+    writeFileSync(join(dCorrupt, 'review-run-state.json'), '{not-json\n');
+    expect(runCli(['show', '--dir', dCorrupt]).json.reason).toBe('corrupt');
+
+    const dNewer = newDir();
+    writeFileSync(join(dNewer, 'review-run-state.json'), JSON.stringify({ schema: 'review-run-state/v2', writer: '9.9.9' }));
+    expect(runCli(['show', '--dir', dNewer]).json.reason).toBe('newer-schema');
   });
 });

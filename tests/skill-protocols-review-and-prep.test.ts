@@ -1945,6 +1945,103 @@ describe('review-and-prep final-gate repair', () => {
         expect(wLateRefused.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (0123456789ab)');
         expect(existsSync(join(late.evDir, 'cycle-1-baseline.json'))).toBe(false);
       });
+
+      // Value: protects=113A recovery across an interrupted cycle-1 session using show + checkpoint resume + missing probe gate; fails_when=resuming an interrupted run before before-fix requires continuation=full or cannot seal cycle-1-baseline at write-point; why_new=Track 79A part 1 T3/AC8; seam=real review-state helper + fence
+      test(`${sh.shell}: interrupted cycle-1 session recovers via show and checkpoint resume without continuation=full`, () => {
+        const { cwd, evDir, b, runFence, writeInput, baseRecord } = setupRepo(sh);
+        const callState = (cmd: string[], payload: unknown) => {
+          const inFile = join(evDir, `state-in-${++n}.json`);
+          writeFileSync(inFile, JSON.stringify(payload));
+          let out = '';
+          let err = '';
+          const code = reviewStateMain([...cmd, '--dir', evDir, '--input', inFile], {
+            stdout: (s) => { out += s; },
+            stderr: (s) => { err += s; },
+            cwd,
+            env,
+          });
+          expect(code, err || out).toBe(0);
+          return JSON.parse(out.trim());
+        };
+        const callShow = () => {
+          let out = '';
+          let err = '';
+          const code = reviewStateMain(['show', '--dir', evDir, '--base', b], {
+            stdout: (s) => { out += s; },
+            stderr: (s) => { err += s; },
+            cwd,
+            env,
+          });
+          expect(code, err || out).toBe(0);
+          return JSON.parse(out.trim());
+        };
+
+        // Session 1 starts, completes cycle 1's core voice, and gets interrupted before probe-0123456789ab and before-fix.
+        callState(['start'], {
+          run_id: '019315e0-0000-7000-8000-000000000021',
+          base: b,
+          plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+          policy: { value: 'review-and-prep-policy/v1; run-state=record', source: 'caller prompt' },
+          continuation: { prior_stops: 0, max: 0 },
+          session_id: 'extend-019315e0-0000-7000-8000-000000000022',
+        });
+        callState(['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000023',
+          state: 'started',
+          scope: 'local',
+          cycle: 1,
+          coverage: 'full',
+          candidate: { commit: b, base: b },
+          required_voices: ['core'],
+          started_at: '2026-11-12T00:00:00Z',
+        });
+        callState(['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000023',
+          state: 'attempt',
+          voice_id: 'core',
+          attempt_id: '019315e0-0000-7000-8000-000000000024',
+          outcome: 'completed',
+          findings: [],
+        });
+        callState(['record', 'pass'], {
+          pass_id: '019315e0-0000-7000-8000-000000000023',
+          state: 'voice-complete',
+          voice_id: 'core',
+          selected_attempt_id: '019315e0-0000-7000-8000-000000000024',
+        });
+
+        const baselineInput = writeInput(baseRecord());
+        const wInterrupted = runFence('write', 'cycle-1-baseline', baselineInput, evDir, { REVIEW_STATE_DIR: evDir });
+        expect(wInterrupted.status).toBe(3);
+        expect(wInterrupted.stdout.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (0123456789ab)');
+
+        // Session 2 inspects the open interrupted run via show, resumes, records the missing probe gate, and seals cycle-1-baseline at write-point.
+        const sBefore = callShow();
+        expect(sBefore.lifecycle).toBe('open');
+        expect(sBefore.last_checkpoint).toBeNull();
+        expect(sBefore.gates.some((g: { name: string }) => g.name.startsWith('probe-'))).toBe(false);
+
+        callState(['checkpoint'], {
+          checkpoint_id: '019315e0-0000-7000-8000-000000000025',
+          kind: 'resume',
+          base: b,
+          session_id: 'extend-019315e0-0000-7000-8000-000000000026',
+        });
+        callState(['record', 'gate'], {
+          gate_id: '019315e0-0000-7000-8000-000000000027',
+          name: 'probe-0123456789ab',
+          result: 'passed',
+          candidate: { commit: b, base: b },
+        });
+
+        const wRecovered = runFence('write', 'cycle-1-baseline', baselineInput, evDir, { REVIEW_STATE_DIR: evDir });
+        expect(wRecovered.status, wRecovered.stderr).toBe(0);
+        expect(wRecovered.stdout.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+
+        const sAfter = callShow();
+        expect(sAfter.segments[0]).toMatchObject({ segment: 1, end: 'interrupted' });
+        expect(sAfter.segments[1]).toMatchObject({ segment: 2, end: null });
+      });
     }
   });
 });
@@ -4268,5 +4365,58 @@ describe('review-and-prep run-state=record', () => {
     expect(prep).toContain('Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>');
     expect(prep).toContain('delegation: active (parts=<list>; config=<sha256>; tools=<part>[,<part>...])');
     for (const text of [bullet, callsRaw]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+
+  // Value: protects=the Resume section in docs/review-run-state-calls.md, the skill's single-paragraph resume pointer, and D14's part 2 placement in docs/designs/review-run-state.md; fails_when=a checkpoint row, mismatch rule, 113A recovery rule, or D14 placement drifts; why_new=Track 79A part 1 T3/T4; seam=none; no_claim=installed-agent execution
+  test('the calls document defines the Resume procedure for every checkpoint kind and the design doc re-places every inherited D14 item', () => {
+    const fixedStart = callsRaw.indexOf('## Fixed points');
+    const resumeStart = callsRaw.indexOf('## Resume');
+    const deriveStart = callsRaw.indexOf('## Derive and spans');
+    expect(resumeStart).toBeGreaterThan(fixedStart);
+    expect(deriveStart).toBeGreaterThan(resumeStart);
+
+    const fixedSection = callsRaw.slice(fixedStart, resumeStart);
+    expect(fixedSection).toContain('| `### Telemetry start` | `checkpoint resume`, then `derive` | On a resume, follow **Resume** below. |');
+    expect(fixedSection).not.toContain('start a new run');
+
+    const resumeSection = callsRaw.slice(resumeStart, deriveStart).replace(/\s+/g, ' ');
+    for (const phrase of [
+      '"<extend-root>/bin/review-state" show --dir <dir> --base <fetched base>',
+      'never `start` a new run in that `--dir` or silently discard the recorded run',
+      '| none |',
+      '| `before-fix` |',
+      '| `next-cycle` |',
+      '| `stop` |',
+      '| `pause` (without preceding `external-gate`) |',
+      '| `external-gate` + `pause` |',
+      '| `resume` |',
+      '| `ready` |',
+      'Before `before-fix` (the 113A failure mode):',
+      'do not re-run those voices or ask for `continuation=full`',
+    ]) {
+      expect(resumeSection, phrase).toContain(phrase);
+    }
+
+    const expectedSkillPara = 'Under `run-state=record`, a resume or repeat invocation first runs the calls document\'s **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.';
+    expect(flat).toContain(`${expectedSkillPara} With \`full-suite=external\` in the invocation prompt, read **Resume entry**`);
+
+    const designRaw = readFileSync(join(ROOT, 'docs', 'designs', 'review-run-state.md'), 'utf8');
+    const d14Start = designRaw.indexOf('## D14.');
+    const changeLogStart = designRaw.indexOf('## Change log');
+    expect(d14Start).toBeGreaterThan(-1);
+    expect(changeLogStart).toBeGreaterThan(d14Start);
+    const d14 = designRaw.slice(d14Start, changeLogStart).replace(/\s+/g, ' ');
+    for (const item of [
+      'per-record `seq` and `input_sha256` placed in Track 79A (part 2 — default decision)',
+      'Automatic stale-lock reclamation',
+      'Cross-host behavior',
+      'Moving a corrupt state aside:',
+      'Internal-error result',
+      'Hardening',
+    ]) {
+      expect(d14, item).toContain(item);
+    }
+    expect(designRaw).toContain('"paused" \\| "finished" \\| "interrupted" \\| null');
+    expect(designRaw).toContain('show --dir DIR [--base SHA] [--wtree TOKEN]');
   });
 });

@@ -1076,7 +1076,7 @@ checkout after recording state, and rerun it there to recover a missed write.
 `gstack-extend-telemetry derive --dir DIR` invokes `bin/review-state export --dir DIR`
 and writes the run's workflow-metrics records (`begin(kind=run)`, `pass` v2/v3 with
 `found_by` attribution and `delegate` metadata, `correction` for `finding`/`retry`/`fallback`,
-and `end` on closed recorded segments) and any missing `stage-runs` rows for closed
+and `end` on closed recorded segments other than interrupted ones) and any missing `stage-runs` rows for closed
 segments whose `session_id` was `null` (`derived: true`) through the existing
 `workflow_metrics.mutate` and `provenance_row(..., derived=True)` write paths,
 leaving `review-run-state.json` untouched.
@@ -1099,7 +1099,7 @@ leaving `review-run-state.json` untouched.
 - **Stage-runs rows for derived segments:** closed `derived: true` segments append one
   schema-version-4 row (`agent`, `model`, and `effort` `null` with `*_source: "unknown"`,
   `started_at` and `duration_s` from the segment bounds, `outcome` and `branch` from the
-  export) and write a `telemetry-completed` marker so repeated `derive` or `finish` calls
+  export — where an interrupted derived segment writes `outcome: "unknown"` and duration up to its last helper-stamped write) and write a `telemetry-completed` marker so repeated `derive` or `finish` calls
   are idempotent within this checkout while its marker exists. Markers share finish's
   30-day retention; a rerun after pruning can duplicate a row. Export may read the
   same repository from another worktree, but marker binding/deduplication is
