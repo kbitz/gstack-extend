@@ -737,4 +737,3 @@ test.skipIf(!installed)('(h) actual installed gstack-redact: flags real shapes d
     expect(JSON.parse(safe.stdout).findings).toEqual(JSON.parse(direct.stdout).findings);
   }
 }, 180_000);
-
