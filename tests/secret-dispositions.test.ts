@@ -665,12 +665,16 @@ if (mode === 'wrong-exit-second' && call === 2) process.exitCode = 3;
     expect(runScanText(repo, homeDir, ['--gstack-root', aliasRoot, '--from-file', file]).status).toBe(1);
   });
 
-  test('canonical evidence paths retain tilde spelling when HOME is a symlink', () => {
+  test('canonical evidence paths and aliases retain tilde spelling when HOME is a symlink', () => {
     const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-canonical-')), alias = `${homeDir}-alias`;
     const evDir = join(homeDir, '.gstack/projects/acme/review-and-prep', tsReal), file = join(temp, `home-alias-${crypto.randomUUID()}.md`);
-    mkdirSync(evDir, { recursive: true }); symlinkSync(homeDir, alias); writeFileSync(file, `Evidence: ~/.gstack/projects/acme/review-and-prep/${tsReal}\n`);
-    const r = runScanText(repo, alias, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir]);
-    expect([r.status, JSON.parse(r.stdout).status]).toEqual([0, 'applied']);
+    const secondAlias = `${homeDir}-second-alias`;
+    mkdirSync(evDir, { recursive: true }); symlinkSync(homeDir, alias); symlinkSync(homeDir, secondAlias);
+    writeFileSync(file, `Evidence: ~/.gstack/projects/acme/review-and-prep/${tsReal}\nCanonical: ${evDir}\n`);
+    for (const dir of [evDir, join(secondAlias, '.gstack/projects/acme/review-and-prep', tsReal)]) {
+      const r = runScanText(repo, alias, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', dir]);
+      expect([r.status, JSON.parse(r.stdout).status]).toEqual([0, 'applied']);
+    }
   });
 
   test('(f) validation rejects invalid evidence dirs, PR URLs, flags and in-project gstack-root with exit 1', () => {

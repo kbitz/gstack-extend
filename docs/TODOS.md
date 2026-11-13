@@ -2,6 +2,43 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/scan-text.ts|tests/secret-dispositions.test.ts] Test gap: Exercise repeated finding keys in scan-text multiset comparison
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The comparison uses occurrence counts, but current unit cases do not repeat an identical finding key.
+- **Hypothesis (untested):** Exercise one-of-two removal and an added duplicate without assuming a production bug.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/secret-dispositions.test.ts:503`
+- **Evidence:** Testing review read the current unit cases; no defect was demonstrated.
+- **Context:** Filed by /review-and-prep on branch `mmm/4e1309bc` at `225f89c` on 2026-11-13 before PR creation; the review stopped at its cycle cap.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches the tagged files.
+
+### [review:files=src/secret-dispositions/scan-text.ts|tests/secret-dispositions.test.ts] Test gap: Verify installed-scanner offsets after Unicode prefixes
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Installed scanning covers Unicode boundaries after a run value, but not astral or punctuation prefixes before it.
+- **Hypothesis (untested):** Place an astral character and an em dash before a bound path and check the documented UTF-16 mapping against the installed scanner.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/secret-dispositions/scan-text.ts:63`
+- **Evidence:** Adversarial review identified missing coverage; installed lineColAt uses UTF-16 offsets and no defect was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/4e1309bc` at `225f89c` on 2026-11-13 before PR creation; the review stopped at its cycle cap.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches the tagged files.
+
+### [review:files=src/secret-dispositions/cli.ts|tests/secret-dispositions.test.ts] Test gap: Observe masked scan file permissions and basename
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Cleanup is tested, but the double does not observe the directory mode, file mode or basename during the second scan.
+- **Hypothesis (untested):** Record metadata on the second scanner call and verify 0700, 0600 and the original basename alongside cleanup.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/secret-dispositions.test.ts:695`
+- **Evidence:** Testing review read the explicit chmod/write/basename code; no product defect was demonstrated.
+- **Context:** Filed by /review-and-prep on branch `mmm/4e1309bc` at `225f89c` on 2026-11-13 before PR creation; the review stopped at its cycle cap.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches the tagged files.
+
+
 ### [review:files=src/outside-review/prompt.ts|tests/outside-review.test.ts] Test gap: Observe the corrected outside prompt on a real authorized review
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.

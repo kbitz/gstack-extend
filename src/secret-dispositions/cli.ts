@@ -71,13 +71,15 @@ function validateEvidenceDir(dir: string): string[] {
     try { allowed = strictlyBelow(realpathSync(join(homeRaw, 'scratch', 'review-and-prep')), realDir); } catch {}
   }
   if (!allowed) throw new Error('evidence-dir must lie below a documented review-and-prep root');
-  const spellings = [dir];
-  let homeForTilde = homeRaw;
-  if (homeRaw && !dir.startsWith(`${homeRaw}/`)) {
-    try { homeForTilde = realpathSync(homeRaw); } catch {}
+  const spellings = [dir, realDir];
+  if (homeRaw && dir.startsWith(`${homeRaw}/`)) spellings.push(`~/${dir.slice(homeRaw.length + 1)}`);
+  if (homeRaw) {
+    try {
+      const realHome = realpathSync(homeRaw);
+      if (strictlyBelow(realHome, realDir)) spellings.push(`~/${relative(realHome, realDir)}`);
+    } catch {}
   }
-  if (homeForTilde && dir.startsWith(`${homeForTilde}/`)) spellings.push(`~/${dir.slice(homeForTilde.length + 1)}`);
-  return spellings;
+  return [...new Set(spellings)];
 }
 
 function scanText(args: string[]): number {

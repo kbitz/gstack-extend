@@ -189,8 +189,9 @@ root through `scan-text`:
   whose realpath lies strictly below `<state-root>/projects/<one segment>/review-and-prep/`
   (where `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`;
   empty values count as unset and relative values are ignored) or
-  `$HOME/scratch/review-and-prep/`. The scanner matches the exact absolute path
-  and, when under `$HOME` (including its canonical spelling), its `~/` spelling.
+  `$HOME/scratch/review-and-prep/`. The scanner matches the exact supplied and
+  canonical absolute paths and their `~/` spellings when under the corresponding
+  `$HOME` spelling, including when HOME and the path use different aliases.
 - `--pr-url <url>` must match `^https://github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$`.
   Only `<prUrl>#issuecomment-<digits>` occurrences are matched; nothing else in
   the URL is a component.
