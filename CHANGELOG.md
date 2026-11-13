@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.93.0] - 2026-11-13
+
+### Added
+
+- The experimental review-state helper gains a read-only `show` command that summarizes a recorded run for resuming it.
+- `review-state show` inspects recorded review state without modifying it.
+
+### Changed
+
+- Under the experimental `run-state=record` review policy value, `/review-and-prep` resumes a paused or interrupted review from its recorded run state instead of rebuilding its records, and continues without the state when the state is missing or does not match the run.
+- Interrupted review sessions can resume from their recorded checkpoint.
+- Older helper copies reject states containing an `interrupted` segment.
+
+### Upgrade notes
+
+- A recorded review run that was resumed after an interruption is reported as `newer-schema` by an older review-state helper, which then stops recording that run and leaves its receipts to be written by hand.
+
 ## [0.92.0] - 2026-11-13
 
 ### Changed

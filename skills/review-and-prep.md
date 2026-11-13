@@ -711,6 +711,8 @@ or decision rows only when the receipt's last editor is the running account;
 otherwise re-verify the rows or re-confirm the decisions with the user.
 A closed or merged PR requires a new work decision, not reopening automatically.
 
+Under `run-state=record`, a resume or repeat invocation first runs the calls document's **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.
+
 With `full-suite=external` in the invocation prompt, read **Resume entry** in
 **Pause for an external full-suite gate** now before scheduling review or checks;
 its local checkpoint may exist without a PR. This route does not waive any

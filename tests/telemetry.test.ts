@@ -5964,4 +5964,95 @@ describe('Track 77B review-state stage-runs derivation', () => {
       outcomes: expect.objectContaining({ blocked: 1, success: 1 }),
     });
   }, 30_000);
+
+  test('derive --dir DIR writes a schema_version 4 stage-runs row with outcome: "unknown" and duration up to the last helper write for an interrupted session_id: null segment', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const repo = join(fix.home, 'repo-derive-interrupted');
+    mkdirSync(repo, { recursive: true });
+    const gitEnv = { ...fix.env, ...GIT_COMMIT_ENV };
+    expect(spawnSync('git', ['init', '-q', repo], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'symbolic-ref', 'HEAD', 'refs/heads/feat/interrupted'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/widget.git'], { env: gitEnv }).status).toBe(0);
+    writeFileSync(join(repo, 'f.txt'), '1\n');
+    expect(spawnSync('git', ['-C', repo, 'add', 'f.txt'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'commit', '-m', 'c1', '--quiet'], { env: gitEnv }).status).toBe(0);
+    const baseSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+    writeFileSync(join(repo, 'f.txt'), '2\n');
+    expect(spawnSync('git', ['-C', repo, 'add', 'f.txt'], { env: gitEnv }).status).toBe(0);
+    expect(spawnSync('git', ['-C', repo, 'commit', '-m', 'c2', '--quiet'], { env: gitEnv }).status).toBe(0);
+    const headSha = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { env: gitEnv, encoding: 'utf8' }).stdout.trim();
+
+    const dir = join(fix.home, 'ev-derive-interrupted');
+    mkdirSync(dir, { recursive: true });
+    let seq = 0;
+    const callRs = (cmd: string[], payload: unknown) => {
+      const f = join(dir, `in-${++seq}.json`);
+      writeFileSync(f, JSON.stringify(payload));
+      const r = spawnSync(REVIEW_STATE_BIN, [...cmd, '--dir', dir, '--input', f], { env: fix.env, cwd: repo, encoding: 'utf8' });
+      expect(r.status, `${cmd.join(' ')}: ${r.stderr}`).toBe(0);
+      return JSON.parse(r.stdout.trim());
+    };
+
+    const runId = '019315e0-0000-7000-8000-000000000201';
+    const passId = '019315e0-0000-7000-8000-000000000202';
+    callRs(['start'], {
+      run_id: runId,
+      base: baseSha,
+      plan: { ref: 'docs/plan.md', sha256: 'b'.repeat(64) },
+      policy: { value: 'hold scope', source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 3 },
+      session_id: null,
+    });
+    callRs(['record', 'pass'], {
+      pass_id: passId,
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['core'],
+      started_at: '2026-11-11T19:00:00Z',
+    });
+
+    // Pin deterministic timestamps on segment 1 start and pass recorded_at before resuming open segment 1
+    const statePath = join(dir, 'review-run-state.json');
+    const st = JSON.parse(readFileSync(statePath, 'utf8'));
+    st.segments[0].started_at = '2026-11-11T19:00:00Z';
+    st.passes[0].recorded_at = '2026-11-11T19:00:42Z';
+    writeFileSync(statePath, `${JSON.stringify(st, null, 2)}\n`);
+
+    callRs(['checkpoint'], {
+      checkpoint_id: '019315e0-0000-7000-8000-000000000203',
+      kind: 'resume',
+      base: baseSha,
+      session_id: null,
+    });
+
+    const beforeState = readFileSync(statePath, 'utf8');
+    const afterResume = JSON.parse(beforeState);
+    expect(afterResume.segments[0]).toMatchObject({
+      segment: 1,
+      end: 'interrupted',
+      ended_at: '2026-11-11T19:00:42Z',
+    });
+
+    const d = spawnSync(HELPER_BIN, ['derive', '--dir', dir], { env: fix.env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
+    expect([d.status, d.stderr]).toEqual([0, '']);
+    const dJson = JSON.parse(d.stdout);
+    expect(dJson.data.stage_runs).toMatchObject({ written: 1, present: 0 });
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeState);
+
+    const rows = fix.readLedger();
+    expect(rows).toHaveLength(1);
+    expect(validRow(rows[0])).toBe(true);
+    expect(rows[0]).toMatchObject({
+      stage: 'review-and-prep',
+      session_id: dJson.data.sessions[0].session_id,
+      outcome: 'unknown',
+      started_at: '2026-11-11T19:00:00Z',
+      duration_s: 42,
+      branch: 'feat/interrupted',
+      schema_version: 4,
+    });
+  }, 30_000);
 });

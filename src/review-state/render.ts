@@ -110,6 +110,26 @@ export function renderDelegationPolicyLine(d: DelegationPolicy | null): string |
   return `delegation: active (parts=${d.parts.map(wirePart).join(',')}; config=${d.config}${tools})`;
 }
 
+export function unresolvedFindings(state: ReviewRunState): string[] {
+  const open: string[] = [];
+  for (const pass of state.passes) for (const voice of pass.voices) {
+    if (voice.selected_attempt_id === null) continue;
+    const att = voice.attempts.find((a) => a.attempt_id === voice.selected_attempt_id);
+    for (const f of att?.findings ?? []) {
+      let adj = f.adjudication, res = f.resolution, rc = f.receipt_class;
+      for (const cor of state.corrections) {
+        if (cor.target.pass_id === pass.pass_id && cor.target.voice_id === voice.voice_id && cor.target.attempt_id === att!.attempt_id && cor.target.finding_id === f.finding_id) {
+          if (cor.adjudication !== null) adj = cor.adjudication;
+          if (cor.resolution !== null) res = cor.resolution;
+          if (cor.receipt_class !== null) rc = cor.receipt_class;
+        }
+      }
+      if (res === 'open' && adj !== 'rejected' && adj !== 'duplicate' && rc === null) open.push(`${f.finding_id} ${f.severity_source}`);
+    }
+  }
+  return open;
+}
+
 export const FIELD_FMT = {
   markerReceipt: (c: RenderCtx) => `<!-- review-and-prep:receipt:${c.b.head} -->`,
   markerPaused: (c: RenderCtx) => `<!-- review-and-prep:paused:${c.b.head} -->`,
@@ -163,22 +183,7 @@ export const FIELD_FMT = {
     return lines;
   },
   unresolved: (c: RenderCtx) => {
-    const open: string[] = [];
-    for (const pass of c.state.passes) for (const voice of pass.voices) {
-      if (voice.selected_attempt_id === null) continue;
-      const att = voice.attempts.find((a) => a.attempt_id === voice.selected_attempt_id);
-      for (const f of att?.findings ?? []) {
-        let adj = f.adjudication, res = f.resolution, rc = f.receipt_class;
-        for (const cor of c.state.corrections) {
-          if (cor.target.pass_id === pass.pass_id && cor.target.voice_id === voice.voice_id && cor.target.attempt_id === att!.attempt_id && cor.target.finding_id === f.finding_id) {
-            if (cor.adjudication !== null) adj = cor.adjudication;
-            if (cor.resolution !== null) res = cor.resolution;
-            if (cor.receipt_class !== null) rc = cor.receipt_class;
-          }
-        }
-        if (res === 'open' && adj !== 'rejected' && adj !== 'duplicate' && rc === null) open.push(`${f.finding_id} ${f.severity_source}`);
-      }
-    }
+    const open = unresolvedFindings(c.state);
     return `Unresolved: ${open.length > 0 ? open.join(', ') : 'none recorded'}`;
   },
   stoppedAt: (c: RenderCtx) => `Stopped at: ${c.state.finish!.head}`,

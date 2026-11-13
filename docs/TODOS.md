@@ -2,6 +2,84 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/cli.ts|src/review-state/show.ts|tests/review-state.test.ts] Test gap: Show duplicate and valueless option refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The show boundary lacks explicit duplicate/missing --base and --wtree assertions.
+- **Hypothesis (untested):** Extend the existing show invalid-option table with otherwise-valid requests that violate one option rule. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/cli.ts (coverage audit G04).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/show.ts|tests/review-state.test.ts] Test gap: Show applicable open reviewer status
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Show tests assert selected and not-applicable voices, but not an applicable unselected voice.
+- **Hypothesis (untested):** Add an applicable unselected reviewer and assert status open at the CLI boundary. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/show.ts (coverage audit G11).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/show.ts|tests/review-state.test.ts] Test gap: Show repeated gate and audit ordering
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Current show fixtures use unique gate/audit names; overwrite and first-seen ordering are not asserted.
+- **Hypothesis (untested):** Interleave repeated names and verify the latest value wins while first-seen name order remains. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/show.ts (coverage audit G14).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/show.ts|tests/review-state.test.ts] Test gap: Show implicit evidence digest integrity
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Show evidence tests delete explicit evidence but do not tamper pregate record_path or documentation section_path.
+- **Hypothesis (untested):** Tamper each implicit reference independently and require evidence_ok false. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/show.ts (coverage audit G16).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|src/review-state/show.ts|tests/review-state.test.ts] Test gap: Show corrected unresolved dispositions
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Show/renderer parity uses one uncorrected open finding; correction suppression at the show boundary lacks direct assertions.
+- **Hypothesis (untested):** Exercise corrected adjudication, resolution and receipt-class suppression with independent expected blocker lists. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/render.ts (coverage audit G18).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/show.ts|tests/review-state.test.ts] Test gap: Show rendered discovery exclusions and failures
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The rendered listing test covers ordinary files and one prefix, not unsafe/nonregular exclusions, multiple prefixes or enumeration failure.
+- **Hypothesis (untested):** Extend the existing fixture with mixed prefixes and excluded entries; verify declared behavior under a directory enumeration failure. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/show.ts (coverage audit G20).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Interrupted end timestamp across helper record kinds
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The winning helper timestamp in the current resume test is a gate; the other stamped collections and fallback lack independent winners.
+- **Hypothesis (untested):** Vary the latest helper-stamped collection and timestamp precision, ignoring caller timestamps, and verify fallback to segment start when no record is newer. Re-verify the contract before writing the test.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** src/review-state/state.ts (coverage audit G27).
+- **Evidence:** Read-only coverage trace at `13592e3`; no failure reproduced for this gap. Existing plan and handoff checks passed (1465 pass, 3 skip); this entry records uncovered assertions, not a failing product case.
+- **Context:** Filed by /review-and-prep on branch `mmm/288aaf53` at `13592e3` (2026-11-13); PR not created yet.
+- **Revisit when:** the next Track touches the tagged source paths.
+- **Effort:** ? (user triages in /roadmap)
+
+
 ### [review:files=src/secret-dispositions/cli.ts|src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Requalify failed-pregate evaluation after upstream added-line API drift
 
 - **Classification:** non-blocking and filed; owner quote: "2 yes".

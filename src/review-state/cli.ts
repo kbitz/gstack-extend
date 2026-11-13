@@ -1,6 +1,7 @@
 import { isAbsolute, join } from 'node:path';
 import { executeExport, EXPORT_SCHEMA } from './export.ts';
 import { executeRender, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
+import { executeShow, SHOW_SCHEMA } from './show.ts';
 import { REASON_TABLE, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
 import { executeCommand, makeEnvelope, readHelperVersion, type StoreResult } from './store.ts';
 
@@ -16,12 +17,13 @@ Usage:
   bin/review-state record pass|correction|gate|audit --dir DIR --input FILE
   bin/review-state checkpoint --dir DIR --input FILE
   bin/review-state finish --dir DIR --input FILE
+  bin/review-state show --dir DIR [--base SHA] [--wtree TOKEN]
   bin/review-state export --dir DIR
   bin/review-state render --dir DIR --input FILE
   bin/review-state --version
   bin/review-state --help | -h | <command> --help
 
-export is read-only: no --input, no lock, and no state writes.
+show and export are read-only: no --input, no lock, and no state writes.
 render reads review-run-state.json without locking or modifying it and writes output files in --dir.
 
 Environment:
@@ -43,6 +45,9 @@ Docs: docs/designs/review-run-state.md
 }
 
 export function renderCommandHelp(cmd: string): string | null {
+  if (cmd === 'show') {
+    return `review-state show — experimental read-only resume inspection (${SHOW_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state show --dir DIR [--base SHA] [--wtree TOKEN]\n\nshow:\n  required: --dir DIR\n  optional: --base SHA, --wtree TOKEN\n\nDocs: docs/designs/review-run-state.md\n`;
+  }
   if (cmd === 'export') {
     return `review-state export — experimental read-only projection (${EXPORT_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n\nDocs: docs/designs/review-run-state.md\n`;
   }
@@ -104,6 +109,8 @@ export function main(argv: string[], io: CliIo): number {
 
   let dirArg: string | undefined;
   let inputArg: string | undefined;
+  let baseArg: string | undefined;
+  let wtreeArg: string | undefined;
   let flagErr: string | null = null;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
@@ -117,10 +124,34 @@ export function main(argv: string[], io: CliIo): number {
       if (val === undefined) flagErr ??= '--input requires a value';
       else if (inputArg !== undefined) flagErr ??= 'duplicate --input flag';
       else inputArg = val;
+    } else if (arg === '--base') {
+      const val = rest[++i];
+      if (val === undefined) flagErr ??= '--base requires a value';
+      else if (baseArg !== undefined) flagErr ??= 'duplicate --base flag';
+      else baseArg = val;
+    } else if (arg === '--wtree') {
+      const val = rest[++i];
+      if (val === undefined) flagErr ??= '--wtree requires a value';
+      else if (wtreeArg !== undefined) flagErr ??= 'duplicate --wtree flag';
+      else wtreeArg = val;
     } else flagErr ??= `unknown argument ${truncate80(arg)}`;
   }
 
   const statePath = dirArg && isAbsolute(dirArg) ? join(dirArg, 'review-run-state.json') : null;
+  if (commandStr === 'show') {
+    if (flagErr || dirArg === undefined || inputArg !== undefined) {
+      const msg = flagErr ?? (inputArg !== undefined ? 'show does not accept --input' : '--dir is required');
+      return emitResult(makeEnvelope('show', 'usage', { message: msg }, statePath, null, undefined, readHelperVersion(io.versionPath)), io);
+    }
+    const res = executeShow(dirArg, io.cwd, env, io.versionPath, baseArg, wtreeArg);
+    if (!res.ok) return emitResult(res.envelope, io);
+    io.stdout(`${JSON.stringify(res.showDoc)}\n`);
+    return 0;
+  }
+  if (baseArg !== undefined || wtreeArg !== undefined) {
+    const badFlag = baseArg !== undefined ? '--base' : '--wtree';
+    flagErr ??= `${commandStr || 'unknown'} does not accept ${badFlag}`;
+  }
   if (commandStr === 'export') {
     if (flagErr || dirArg === undefined || inputArg !== undefined) {
       const msg = flagErr ?? (inputArg !== undefined ? 'export does not accept --input' : '--dir is required');
