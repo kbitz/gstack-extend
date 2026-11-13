@@ -619,17 +619,38 @@ process.exitCode = counts.HIGH > 0 ? 3 : counts.MEDIUM > 0 ? 2 : 0;
     const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-e-'));
     const evDir = join(homeDir, '.gstack/projects/acme/review-and-prep', tsReal), file = join(temp, `body-e-${crypto.randomUUID()}.md`);
     mkdirSync(evDir, { recursive: true }); writeFileSync(file, `Evidence: ${evDir}\n`);
+    const first = JSON.parse(spawnSync(fakeBin, ['--from-file', file, '--json'], { encoding: 'utf8' }).stdout);
     for (const mode of ['add-finding-second', 'fail-second', 'bad-json-second']) {
       const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir],
         { FAKE_REDACT_STATE_FILE: join(temp, `state-${crypto.randomUUID()}`), FAKE_REDACT_MODE: mode });
       const out = JSON.parse(r.stdout);
       expect([r.status, out.upstream_exit, out.status, out.findings.length, out.known_safe.length]).toEqual([2, 2, 'inconclusive', 1, 0]);
+      expect(out.findings).toEqual(first.findings);
     }
     for (const mode of ['fail-first', 'bad-json-first']) {
       const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir],
         { FAKE_REDACT_STATE_FILE: join(temp, `state-${crypto.randomUUID()}`), FAKE_REDACT_MODE: mode });
       expect([r.status, JSON.parse(r.stdout).version, typeof JSON.parse(r.stdout).error]).toEqual([1, 1, 'string']);
     }
+  });
+
+  test('relative state roots fall through to the next absolute root', () => {
+    const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-relative-')), alternate = join(homeDir, 'alternate');
+    const file = join(temp, `relative-${crypto.randomUUID()}.md`);
+    for (const stateHome of ['', 'relative', alternate]) {
+      const evDir = join(stateHome === alternate ? alternate : join(homeDir, '.gstack'), 'projects/acme/review-and-prep', tsReal);
+      mkdirSync(evDir, { recursive: true }); writeFileSync(file, `Evidence: ${evDir}\n`);
+      const env = { ...process.env, HOME: homeDir, GSTACK_STATE_ROOT: 'relative', GSTACK_HOME: stateHome };
+      const r = spawnSync(join(root, 'bin/secret-dispositions'), ['scan-text', '--gstack-root', fakeUpstream, '--from-file', file, '--evidence-dir', evDir], { cwd: repo, encoding: 'utf8', timeout: 60_000, env });
+      expect([r.status, JSON.parse(r.stdout).status]).toEqual([0, 'applied']);
+    }
+  });
+
+  test('scanner bin-directory aliases into the project are rejected', () => {
+    const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-scanner-alias-'));
+    const inProject = join(repo, 'scanner'), aliasRoot = mkdtempSync(join(temp, 'scanner-alias-')), file = join(temp, `alias-${crypto.randomUUID()}.md`);
+    cpSync(fakeUpstream, inProject, { recursive: true }); symlinkSync(join(inProject, 'bin'), join(aliasRoot, 'bin')); writeFileSync(file, 'Synthetic input\n');
+    expect(runScanText(repo, homeDir, ['--gstack-root', aliasRoot, '--from-file', file]).status).toBe(1);
   });
 
   test('(f) validation rejects invalid evidence dirs, PR URLs, flags and in-project gstack-root with exit 1', () => {

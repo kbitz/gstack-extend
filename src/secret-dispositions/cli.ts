@@ -48,7 +48,7 @@ function validateEvidenceDir(dir: string): string[] {
   const realDir = realpathSync(dir);
   const absEnv = (v: string | undefined) => (v && isAbsolute(v) ? v : undefined);
   const homeRaw = absEnv(process.env.HOME)?.replace(/\/+$/, '');
-  const stateRoot = absEnv(process.env.GSTACK_STATE_ROOT || process.env.GSTACK_HOME || (homeRaw ? join(homeRaw, '.gstack') : ''));
+  const stateRoot = absEnv(process.env.GSTACK_STATE_ROOT) || absEnv(process.env.GSTACK_HOME) || (homeRaw ? join(homeRaw, '.gstack') : undefined);
   const strictlyBelow = (base: string, target: string) => {
     const sub = relative(base, target);
     return Boolean(sub && sub !== '..' && !sub.startsWith('../') && !isAbsolute(sub));
@@ -80,13 +80,16 @@ function scanText(args: string[]): number {
     flags.set(key, value);
   }
   if (!flags.has('--gstack-root') || !flags.has('--from-file')) throw new Error(HELP);
-  const { root } = trustedRoot(flags.get('--gstack-root')!);
-  const redactBin = join(root, 'bin', 'gstack-redact');
+  const { repo, root } = trustedRoot(flags.get('--gstack-root')!);
+  let redactBin = join(root, 'bin', 'gstack-redact');
   try {
     const st = lstatSync(redactBin);
     if (st.isSymbolicLink() || !st.isFile()) throw new Error('not regular');
     accessSync(redactBin, constants.X_OK);
-  } catch { throw new Error('gstack-redact must be a regular executable file'); }
+    const realBin = realpathSync(redactBin), rel = relative(repo, realBin);
+    if (!rel || (!rel.startsWith('../') && !isAbsolute(rel))) throw new Error('in-project scanner');
+    redactBin = realBin;
+  } catch { throw new Error('gstack-redact must be a regular executable file outside the project'); }
   const file = resolve(flags.get('--from-file')!);
   let fileStat;
   try { fileStat = lstatSync(file); } catch { throw new Error('from-file does not exist'); }
