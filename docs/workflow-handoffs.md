@@ -1640,7 +1640,7 @@ Legacy receipts without `Full receipt:` continue to read as before. On another
 machine without the evidence directory, detail-dependent reuse (such as
 rebuilding the documentation section from the full receipt when its durable file
 is absent) is unavailable and `/ship-and-land` takes its `FULL` path.
-Orchestrator readers parse only the kept marker set above.
+Orchestrator readers parse only the kept marker set above. Under the experimental `run-state=record` value, `/review-and-prep` renders these lines from its internal run state with the review-state helper, byte for byte as specified here, and consumers keep reading the published lines, never the state file.
 
 ## Versioning and compatibility
 
