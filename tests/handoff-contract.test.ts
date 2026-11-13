@@ -3282,6 +3282,11 @@ describe('(Q) review-state render byte compatibility', () => {
     const staleCtx = makeCtx(staleGateState, { b: getActiveBinding(staleGateState)!, dir: DIR, home: HOME });
     expect(FIELD_FMT.checksNotRun(staleCtx)).toBe('Checks not run: pregate');
     expect(FIELD_FMT.shipGates(staleCtx)[1]).toBe('- pregate: not-run');
+    const probeBase = { ...rawPrepared.gates[0], gate_id: '01950000-0000-7000-8000-000000000070', name: 'probe-p1', details: {}, evidence: [] };
+    const staleProbe = { ...probeBase, candidate: { ...rawPrepared.gates[0].candidate, commit: VARS.NEWHEAD } };
+    expect(FIELD_FMT.checksNotRun(makeCtx(mustValidate({ gates: [...rawPrepared.gates, staleProbe] })))).toBe('Checks not run: none');
+    expect(FIELD_FMT.checksNotRun(makeCtx(mustValidate({ gates: [...rawPrepared.gates, { ...probeBase, result: 'not-run' }] })))).toBe('Checks not run: none');
+    expect(FIELD_FMT.checksNotRun(makeCtx(mustValidate({ gates: [...staleGateState.gates, staleProbe] })))).toBe('Checks not run: pregate');
 
     expect(FIELD_FMT.stoppedGateOrLanes(makeCtx(stoppedState))).toBe('Skipped pregate lanes: none');
     const stoppedWithLanes = mustValidate({ ...stoppedState, gates: [{ ...stoppedState.gates[0], details: { ...stoppedState.gates[0]!.details, skipped_lanes: ['unit', 'lint'] } }] });

@@ -126,7 +126,7 @@ export const FIELD_FMT = {
   greptile: (c: RenderCtx) => { const g = getGreptileGate(c.state); return `Greptile: ${String(g.details.value)}; run: ${g.details.run ? String(g.details.run) : 'none'}`; },
   checksNotRun: (c: RenderCtx) => {
     const order: string[] = [], latest = new Map<string, ReviewRunState['gates'][number]>();
-    for (const g of c.state.gates) if (g.name !== 'greptile') { if (!latest.has(g.name)) order.push(g.name); latest.set(g.name, g); }
+    for (const g of c.state.gates) if (g.name !== 'greptile' && !g.name.startsWith('probe-')) { if (!latest.has(g.name)) order.push(g.name); latest.set(g.name, g); }
     const notRun = order.filter((n) => { const g = latest.get(n)!; return g.result === 'not-run' || !isFreshForBinding(g.candidate, c.b); });
     return `Checks not run: ${notRun.length > 0 ? notRun.join(', ') : 'none'}`;
   },
