@@ -4251,6 +4251,14 @@ describe('review-and-prep run-state=record', () => {
       'Sections and the body summary are files in the evidence directory holding only model-written parts (D9\'s full-receipt row list; the body\'s what-changed, `Review default:`, `Auto-chosen` lines, `Tests:` line and risks), never a line the renderer writes, and the summary has no `## ` line or `<!-- review-and-prep:` marker.',
       'Before posting a rendered comment, read it (the credential and PII scan already reads those bytes); a line that contradicts the run, such as an `Unresolved:` finding already fixed or a check listed as not run that ran, means a record is missing: record it and render the full receipt and comment again, or write that output inline when the state cannot hold the fact.',
       'Render only while state recording is active: after the Degraded path stops recording, or on a helper-missing activation, every output is inline as today.',
+      '`checkpoint external-gate` and `checkpoint pause` also carry `wtree`; after both checkpoints and `derive`, render `final` with `auto_choice_lines`, and end the turn with that file\'s bytes after the model\'s own prose.',
+      'When Greptile applies, `record gate` `greptile` with `postponed — awaiting manual testing`; `checkpoint pause` with the current base and `wtree`; then render `full-receipt`, `comment` (post it), `body` with the paused comment\'s permalink, and `final` with `required_user_checks`.',
+      'After the dedicated evidence comment and the policy decision, run `checkpoint stop`, `finish` `stopped` (`delta_base`, `stop_count` = k, `full_review_evidence.source` the evidence comment\'s permalink, or `status: "unavailable"`), then render `full-receipt`, `comment` (post it), `body`, `final`.',
+      'A recheck failure returns to fixing, and a later pass records a new `ready`.',
+      'Any other blocked or needs-context exit records `finish` with that outcome and renders `final` (its stage line); its body stays inline.',
+      'Supply `pr` and `gh_login` (start\'s shapes) in a `final` input when `start` recorded them as `null`.',
+      'Greptile-exit and configuration pauses keep today\'s inline text.',
+      'Measure the spliced body with Step 3\'s `PR_BODY_SIZE` check as today.',
     ]) {
       expect(calls, phrase).toContain(phrase);
     }
