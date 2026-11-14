@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.94.0] - 2026-11-14
+
+### Added
+
+- Each review-state command's help now shows an example request.
+- Command help includes request, render, show and export examples.
+
+### Changed
+
+- The experimental review-state helper now removes temporary files left by interrupted writes, syncs its directory after each write, and refuses a write whose evidence file changed while it waited for its lock.
+- `bin/review-state` rechecks evidence under its write lock and refuses changed evidence.
+- `bin/review-state` reserves `review-run-state.json.tmp-<pid>-<hex>` names and rejects matching input files and new evidence paths or targets.
+- Recorded writes clean stale temporary files, sync the state directory and aggregate nonfatal issues in `detail.warnings`.
+
+### Upgrade notes
+
+- Under the experimental `run-state=record` review policy value, a review-state write whose evidence file changes while the helper waits for its lock is now refused with rule `evidence-changed`, so that review stops recording its run state and writes its receipts as before.
+
 ## [0.93.2] - 2026-11-14
 
 ### Fixed
