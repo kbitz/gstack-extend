@@ -297,6 +297,18 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString(), helperVersion);
     if (outcome.reason !== 'recorded') return reply(outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
 
+    const protectedPaths = new Set([inCheck.realInput]);
+    for (const [cmd, records] of [
+      ['record gate', outcome.state.gates], ['record audit', outcome.state.audits],
+      ['checkpoint', outcome.state.checkpoints], ['finish', outcome.state.finish ? [outcome.state.finish] : []],
+    ] as const) {
+      for (const record of records) for (const ev of collectEvidenceItems(cmd, record)) {
+        const evPath = resolve(realDir, ev.path);
+        protectedPaths.add(evPath);
+        try { protectedPaths.add(realpathSync(evPath)); } catch { /* Missing prior evidence does not invalidate stored state. */ }
+      }
+    }
+
     const warnings: string[] = [];
     let dirNames: string[] | null = null;
     try {
@@ -310,6 +322,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       for (const name of dirNames) {
         if (!TMP_FILE_RE.test(name)) continue;
         const candidateTmp = join(realDir, name);
+        if (protectedPaths.has(candidateTmp)) continue;
         let st;
         try { st = lstatSync(candidateTmp); } catch { continue; }
         if (st.isSymbolicLink() || !st.isFile()) continue;

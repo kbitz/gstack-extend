@@ -3021,4 +3021,28 @@ describe('bin/review-state', () => {
     expect(res.ok).toBe(true);
     expect(res.showDoc.rendered).toEqual([]);
   });
+
+  // Value: protects=input replay and retained evidence; fails_when=sweep deletes live files; why_new=orphan tests never name live refs; seam=CLI.
+  test.each(['explicit', 'pregate', 'documentation', 'checkpoint', 'finish'] as const)('sweep preserves current input and current/prior evidence (%s)', (kind) => {
+    const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
+    const evidenceName = 'review-run-state.json.tmp-42-beef', inputName = 'review-run-state.json.tmp-43-cafe';
+    writeFileSync(join(dir, evidenceName), 'retained evidence\n');
+    symlinkSync(evidenceName, join(dir, 'evidence-link'));
+    const ev = { path: 'evidence-link', sha256: sha256('retained evidence\n') }, candidate = { commit: headSha, base: baseSha };
+    let cmd = 'record gate', payload: Record<string, unknown> = { gate_id: uid(601), name: 'tests', result: 'passed', candidate, evidence: [ev] };
+    if (kind === 'pregate') payload = { gate_id: uid(601), name: 'pregate', result: 'passed', candidate, details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: ev.path, record_sha256: ev.sha256, skipped_lanes: [] } };
+    if (kind === 'documentation') { cmd = 'record audit'; payload = { audit_id: uid(601), name: 'documentation', result: 'passed', candidate, details: { report_id: 'doc-1', section_path: ev.path, section_sha256: ev.sha256 } }; }
+    if (kind === 'checkpoint') { cmd = 'checkpoint'; payload = { checkpoint_id: uid(601), kind: 'stop', evidence: [ev] }; }
+    if (kind === 'finish') { cmd = 'finish'; payload = { outcome: 'blocked', stop_reason: 'fixture', base: baseSha, evidence: [ev] }; }
+    expect(callCmd(dir, cmd, payload, { file: inputName }).json.reason).toBe('recorded');
+    expect(readFileSync(join(dir, inputName), 'utf8')).toBe(JSON.stringify(payload));
+    expect(readFileSync(join(dir, evidenceName), 'utf8')).toBe('retained evidence\n');
+    expect(runCli([...cmd.split(' '), '--dir', dir, '--input', join(dir, inputName)]).json.reason).toBe('replayed');
+    if (kind !== 'finish') {
+      writeFileSync(join(dir, 'review-run-state.json.tmp-44-dead'), 'orphan');
+      const next = callCmd(dir, 'checkpoint', { checkpoint_id: uid(602), kind: 'stop' });
+      expect(next.json.detail.warnings).toEqual(['removed 2 leftover temporary file(s)']);
+      expect(readFileSync(join(dir, evidenceName), 'utf8')).toBe('retained evidence\n');
+    }
+  });
 });
