@@ -1,8 +1,8 @@
 import { isAbsolute, join } from 'node:path';
 import { executeExport, EXPORT_SCHEMA } from './export.ts';
-import { executeRender, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
+import { executeRender, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
 import { executeShow, SHOW_SCHEMA } from './show.ts';
-import { REASON_TABLE, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
+import { REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
 import { executeCommand, makeEnvelope, readHelperVersion, type StoreResult } from './store.ts';
 
 export type CliIo = { stdout(text: string): void; stderr(text: string): void; cwd: string; env?: NodeJS.ProcessEnv; versionPath?: string };
@@ -46,16 +46,17 @@ Docs: docs/designs/review-run-state.md
 
 export function renderCommandHelp(cmd: string): string | null {
   if (cmd === 'show') {
-    return `review-state show — experimental read-only resume inspection (${SHOW_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state show --dir DIR [--base SHA] [--wtree TOKEN]\n\nshow:\n  required: --dir DIR\n  optional: --base SHA, --wtree TOKEN\n\nDocs: docs/designs/review-run-state.md\n`;
+    return `review-state show — experimental read-only resume inspection (${SHOW_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state show --dir DIR [--base SHA] [--wtree TOKEN]\n\nshow:\n  required: --dir DIR\n  optional: --base SHA, --wtree TOKEN\n  Example: bin/review-state show --dir /abs/path/to/evidence-dir --base 89abcdef0123456789abcdef0123456789abcdef --wtree wt:clean\n\nDocs: docs/designs/review-run-state.md\n`;
   }
   if (cmd === 'export') {
-    return `review-state export — experimental read-only projection (${EXPORT_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n\nDocs: docs/designs/review-run-state.md\n`;
+    return `review-state export — experimental read-only projection (${EXPORT_SCHEMA})\nNo lock or state writes.\n\nUsage:\n  bin/review-state export --dir DIR\n\nexport:\n  required: --dir DIR\n  optional: none\n  Example: bin/review-state export --dir /abs/path/to/evidence-dir\n\nDocs: docs/designs/review-run-state.md\n`;
   }
   if (cmd === 'render') {
     const sections = Object.entries(RENDER_SHAPES).map(([name, shape]) => {
       const req = shape.required.join(', ');
       const opt = Object.entries(shape.optional).map(([k, d]) => `${k}=${JSON.stringify(d)}`).join(', ') || 'none';
-      return `${name}:\n  required: ${req}\n  optional: ${opt}`;
+      const ex = JSON.stringify(RENDER_EXAMPLES[name as keyof typeof RENDER_SHAPES]);
+      return `${name}:\n  required: ${req}\n  optional: ${opt}\n  Example: ${ex}`;
     }).join('\n\n');
     return `review-state render — experimental state renderer (${RENDER_SCHEMA})\nReads review-run-state.json without locking or modifying it and writes full-receipt, comment, body, or final files inside --dir.\n\nUsage:\n  bin/review-state render --dir DIR --input FILE\n\n${sections}\n\nDocs: docs/designs/review-run-state.md\n`;
   }
@@ -64,7 +65,8 @@ export function renderCommandHelp(cmd: string): string | null {
   const sections = matching.map(([name, shape]) => {
     const req = shape.required.join(', ');
     const opt = Object.entries(shape.optional).map(([k, d]) => `${k}=${JSON.stringify(d)}`).join(', ') || 'none';
-    return `${name}:\n  required: ${req}\n  optional: ${opt}`;
+    const ex = JSON.stringify(REQUEST_EXAMPLES[name as keyof typeof REQUEST_SHAPES]);
+    return `${name}:\n  required: ${req}\n  optional: ${opt}\n  Example: ${ex}`;
   }).join('\n\n');
   return `review-state ${cmd} — experimental request shape (${SCHEMA_VERSION})\n\nUsage:\n  bin/review-state ${cmd} --dir DIR --input FILE\n\n${sections}\n\nDocs: docs/designs/review-run-state.md\n`;
 }

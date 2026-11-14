@@ -44,6 +44,23 @@ export const REQUEST_SHAPES = {
   finish: { required: ['outcome', 'base'], optional: { stop_reason: null, delta_base: null, stop_count: null, wtree: null, review_restriction_resolved: false, readiness_confirmed_at: null, full_review_evidence: null, user_facing_changes: [], evidence: [] } },
 } as const satisfies Record<string, { required: readonly string[]; optional: Record<string, unknown> }>;
 
+const EX_COMMIT = '0123456789abcdef0123456789abcdef01234567';
+const EX_BASE = '89abcdef0123456789abcdef0123456789abcdef';
+const EX_SHA256 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+export const REQUEST_EXAMPLES = {
+  start: { run_id: '019315e0-0000-7000-8000-000000000001', base: EX_BASE, plan: { ref: 'docs/plan.md', sha256: EX_SHA256 }, policy: { value: null, source: 'none supplied' }, continuation: { prior_stops: 0, max: 1, continues: null } },
+  'record pass (started)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'started', scope: 'local', cycle: 1, coverage: 'full', candidate: { commit: EX_COMMIT, base: EX_BASE }, required_voices: ['core'], started_at: '2026-11-10T18:00:00Z' },
+  'record pass (attempt)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'attempt', voice_id: 'core', part: 'core', attempt_id: '019315e0-0000-7000-8000-000000000003', outcome: 'completed', findings: [{ finding_id: 'F-1', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] }] },
+  'record pass (voice-complete)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'voice-complete', voice_id: 'core', selected_attempt_id: '019315e0-0000-7000-8000-000000000003' },
+  'record pass (completed)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'completed', completed_at: '2026-11-10T18:05:00Z' },
+  'record correction': { correction_id: '019315e0-0000-7000-8000-000000000004', target: { pass_id: '019315e0-0000-7000-8000-000000000002', voice_id: 'core', attempt_id: '019315e0-0000-7000-8000-000000000003', finding_id: 'F-1' }, resolution: 'fixed', fixed_in: EX_COMMIT },
+  'record gate': { gate_id: '019315e0-0000-7000-8000-000000000005', name: 'tests', result: 'passed', candidate: { commit: EX_COMMIT, base: EX_BASE }, evidence: [{ path: 'tests.log', sha256: EX_SHA256 }] },
+  'record audit': { audit_id: '019315e0-0000-7000-8000-000000000006', name: 'coverage', result: 'passed', details: { pct: 92, threshold: 80 }, candidate: { commit: EX_COMMIT, base: EX_BASE } },
+  checkpoint: { checkpoint_id: '019315e0-0000-7000-8000-000000000007', kind: 'ready', base: EX_BASE },
+  finish: { outcome: 'prepared', base: EX_BASE, readiness_confirmed_at: '2026-11-10T18:10:00Z' },
+} as const satisfies Record<keyof typeof REQUEST_SHAPES, Record<string, unknown>>;
+
 export const STATE_KEYS = {
   root: ['schema', 'rev', 'writer', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish'],
   run: ['run_id', 'skill', 'repo', 'branch', 'pr', 'gh_login', 'started_at'],

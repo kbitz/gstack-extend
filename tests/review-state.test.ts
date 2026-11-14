@@ -2,13 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { PARTS } from '../src/review-delegate/delegate.ts';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
-import { FIELD_FMT, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
+import { FIELD_FMT, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
-import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
+import { ADDITIVE_V1_DEFAULTS, applyCommand, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, WTREE_RE, type CommandName, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
@@ -628,7 +628,8 @@ describe('bin/review-state', () => {
       const d = newDir();
       const startFile = writeJson(d, 'start.json', mkStart(1));
       if (mode === 'lock-state') expect(runCli(['start', '--dir', d, '--input', startFile]).code).toBe(0);
-      if (mode === 'lock-tmp') writeFileSync(join(d, 'review-run-state.json.tmp-999-abcd'), '{"partial":');
+      const plantedTmp = join(d, 'review-run-state.json.tmp-999-abcd');
+      if (mode !== 'lock-only') writeFileSync(plantedTmp, '{"partial":');
       const lockPath = join(d, 'review-run-state.json.lock');
       writeFileSync(lockPath, mode === 'lock-only' ? '' : JSON.stringify({ pid: 424242, host: 'test-host', started_at: '2026-11-10T18:00:00Z' }));
 
@@ -642,7 +643,21 @@ describe('bin/review-state', () => {
       const recStart = runCli(['start', '--dir', d, '--input', startFile]);
       expect(recStart.code).toBe(0);
       expect(recStart.json.reason).toBe(mode === 'lock-state' ? 'replayed' : 'recorded');
-      expect(callCmd(d, 'record pass', mkPassStarted(10)).json).toMatchObject({ reason: 'recorded', rev: 2 });
+      if (mode === 'lock-tmp') {
+        expect(existsSync(plantedTmp)).toBe(false);
+        expect(recStart.json.detail.warnings).toEqual(['removed 1 leftover temporary file(s)']);
+      } else {
+        expect(recStart.json.detail.warnings).toBeUndefined();
+      }
+      if (mode === 'lock-state') expect(existsSync(plantedTmp)).toBe(true);
+      const recPass = callCmd(d, 'record pass', mkPassStarted(10));
+      expect(recPass.json).toMatchObject({ reason: 'recorded', rev: 2 });
+      if (mode === 'lock-state') {
+        expect(existsSync(plantedTmp)).toBe(false);
+        expect(recPass.json.detail.warnings).toEqual(['removed 1 leftover temporary file(s)']);
+      } else {
+        expect(recPass.json.detail.warnings).toBeUndefined();
+      }
     }
   });
 
@@ -2639,5 +2654,405 @@ describe('bin/review-state', () => {
       ended_at: t3,
       end: 'interrupted',
     });
+  });
+
+  test.each(['grow', 'same-size', 'delete', 'pinned-detail', 'none'] as const)('rechecks evidence under lock and refuses evidence-changed (%s)', (mode) => {
+    const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
+    writeFileSync(join(dir, 'ev.txt'), 'abc\n');
+    writeFileSync(join(dir, 'rec.json'), '{"ok":true}\n');
+    const payload = mode === 'pinned-detail'
+      ? { gate_id: uid(501), name: 'pregate', result: 'passed', candidate: { commit: headSha, base: baseSha }, details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: 'rec.json', record_sha256: sha256('{"ok":true}\n'), skipped_lanes: [] } }
+      : { gate_id: uid(501), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: 'ev.txt', sha256: sha256('abc\n') }] };
+    const input = writeJson(dir, 'gate.json', payload);
+    const lockPath = join(dir, 'review-run-state.json.lock');
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const dir = ${JSON.stringify(dir)}, lock = ${JSON.stringify(lockPath)}, mode = ${JSON.stringify(mode)};
+      let once = true;
+      mock.module('node:fs', () => ({...fs, openSync(p, flags, ...rest) {
+        if (once && String(p) === lock && flags === 'wx') {
+          once = false;
+          if (mode === 'grow') fs.writeFileSync(dir + '/ev.txt', 'longer-content\\n');
+          if (mode === 'same-size') { const t = new Date(Date.now() + 60000); fs.writeFileSync(dir + '/ev.txt', 'xyz\\n'); fs.utimesSync(dir + '/ev.txt', t, t); }
+          if (mode === 'delete') fs.unlinkSync(dir + '/ev.txt');
+          if (mode === 'pinned-detail') fs.writeFileSync(dir + '/rec.json', '{"ok":false,"more":1}\\n');
+        }
+        return fs.openSync(p, flags, ...rest);
+      }}));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify(executeCommand('record gate', dir, ${JSON.stringify(input)}, ${JSON.stringify(repo)})));`;
+    const r = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    const res = JSON.parse(r.stdout);
+    if (mode === 'none') {
+      expect(res).toMatchObject({ reason: 'recorded', rev: 2 });
+    } else {
+      expect(res.reason).toBe('invalid-input');
+      expect(res.detail.violations).toEqual([{ path: 'evidence[0]', rule: 'evidence-changed', expected: 'valid-evidence-file-in-dir' }]);
+      expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+      expect(existsSync(lockPath)).toBe(false);
+      expect(readdirSync(dir).filter((n) => n.startsWith('review-run-state.json.tmp-'))).toEqual([]);
+    }
+  });
+
+  test('leftover temporary-file sweep skips refused commands and removes only regular matching files on recorded writes', () => {
+    const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
+    expect(callCmd(dir, 'record pass', mkPassStarted(10)).json.reason).toBe('recorded');
+    const matching = 'review-run-state.json.tmp-42-beef';
+    const nonMatching = ['review-run-state.json.tmp-12-ABCD', 'review-run-state.json.tmp-x-ab', 'review-run-state.json.tmp-1-ab.bak'];
+    writeFileSync(join(dir, matching), 'stale');
+    for (const f of nonMatching) writeFileSync(join(dir, f), 'keep');
+    mkdirSync(join(dir, 'review-run-state.json.tmp-7-ab'));
+
+    expect(callCmd(dir, 'record pass', mkPassStarted(10, { cycle: 2 })).json.reason).toBe('conflict');
+    expect(existsSync(join(dir, matching))).toBe(true);
+    expect(callCmd(dir, 'record pass', {}).json.reason).toBe('invalid-input');
+    expect(existsSync(join(dir, matching))).toBe(true);
+
+    const rec = callCmd(dir, 'checkpoint', { checkpoint_id: uid(510), kind: 'stop' });
+    expect(rec.json).toMatchObject({ reason: 'recorded', detail: { warnings: ['removed 1 leftover temporary file(s)'] } });
+    expect(existsSync(join(dir, matching))).toBe(false);
+    for (const kept of [...nonMatching, 'review-run-state.json.tmp-7-ab']) {
+      expect(existsSync(join(dir, kept))).toBe(true);
+    }
+  });
+
+  test.each(['unlink-eacces', 'dir-fsync-order', 'dir-fsync-eio'] as const)('sweep unlink failure and post-rename directory fsync ordering and failure (%s)', (mode) => {
+    const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
+    const planted = join(dir, 'review-run-state.json.tmp-55-cafe');
+    if (mode === 'unlink-eacces') writeFileSync(planted, 'stale');
+    const input = writeJson(dir, 'pass.json', mkPassStarted(10));
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const realDir = fs.realpathSync(${JSON.stringify(dir)}), planted = ${JSON.stringify(planted)}, mode = ${JSON.stringify(mode)};
+      const dirFds = new Set(), events = [];
+      mock.module('node:fs', () => ({...fs,
+        openSync(p, ...rest) { const fd = fs.openSync(p, ...rest); if (String(p) === realDir) dirFds.add(fd); return fd; },
+        renameSync(a, b) { fs.renameSync(a, b); events.push('rename'); },
+        fsyncSync(fd) {
+          if (dirFds.has(fd)) {
+            events.push('dir-fsync');
+            if (mode === 'dir-fsync-eio') throw Object.assign(new Error('eio'), { code: 'EIO', syscall: 'fsync' });
+          }
+          return fs.fsyncSync(fd);
+        },
+        unlinkSync(p) {
+          if (mode === 'unlink-eacces' && String(p) === planted) throw Object.assign(new Error('eacces'), { code: 'EACCES', syscall: 'unlink' });
+          return fs.unlinkSync(p);
+        },
+      }));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify({ res: executeCommand('record pass', realDir, ${JSON.stringify(input)}, ${JSON.stringify(repo)}), events }));`;
+    const r = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    const { res, events } = JSON.parse(r.stdout);
+    expect(res).toMatchObject({ reason: 'recorded', rev: 2 });
+    expect(existsSync(join(dir, 'review-run-state.json.lock'))).toBe(false);
+    if (mode === 'unlink-eacces') expect(res.detail.warnings).toEqual(['failed to remove leftover temporary file: EACCES']);
+    if (mode === 'dir-fsync-order') {
+      expect(res.detail.warnings).toBeUndefined();
+      expect(events).toEqual(['rename', 'dir-fsync']);
+    }
+    if (mode === 'dir-fsync-eio') expect(res.detail.warnings).toEqual(['failed to sync directory: EIO']);
+  });
+
+  test('command --help prints valid JSON examples for every shape, valid CLI examples for show/export, and REQUEST_EXAMPLES record in sequence', () => {
+    const checkShapeHelp = (argv: string[], key: string, shape: { required: readonly string[]; optional: Record<string, unknown> }, expectedEx: unknown) => {
+      const out = runCli(argv).out;
+      const sec = out.split('\n\n').find((b) => b.startsWith(`${key}:\n`));
+      expect(sec, key).toBeDefined();
+      const exLines = sec!.split('\n').filter((l) => l.startsWith('  Example: '));
+      expect(exLines.length, key).toBe(1);
+      const parsed = JSON.parse(exLines[0]!.slice('  Example: '.length));
+      const allowed = new Set([...shape.required, ...Object.keys(shape.optional)]);
+      for (const req of shape.required) expect(req in parsed, `${key}.${req}`).toBe(true);
+      for (const k of Object.keys(parsed)) expect(allowed.has(k), `${key}.${k}`).toBe(true);
+      expect(parsed).toEqual(expectedEx);
+    };
+
+    for (const [key, shape] of Object.entries(REQUEST_SHAPES)) {
+      const cmd = key.startsWith('record pass') ? ['record', 'pass'] : key.split(' ');
+      checkShapeHelp([...cmd, '--help'], key, shape, REQUEST_EXAMPLES[key as keyof typeof REQUEST_SHAPES]);
+    }
+    for (const [key, shape] of Object.entries(RENDER_SHAPES)) {
+      checkShapeHelp(['render', '--help'], key, shape, RENDER_EXAMPLES[key as keyof typeof RENDER_SHAPES]);
+    }
+    expect(runCli(['record', '--help']).out.match(/^ {2}Example: /gm)?.length).toBe(7);
+    expect(runCli(['render', '--help']).out.match(/^ {2}Example: /gm)?.length).toBe(4);
+
+    for (const [cmd, allowedFlags] of [['show', new Set(['--dir', '--base', '--wtree'])], ['export', new Set(['--dir'])]] as const) {
+      const exLines = runCli([cmd, '--help']).out.split('\n').filter((l) => l.startsWith('  Example: '));
+      expect(exLines.length).toBe(1);
+      const prefix = `  Example: bin/review-state ${cmd} `;
+      expect(exLines[0]!.startsWith(prefix)).toBe(true);
+      const tokens = exLines[0]!.slice(prefix.length).split(' ');
+      expect(tokens.length % 2).toBe(0);
+      const seen = new Map<string, string>();
+      for (let i = 0; i < tokens.length; i += 2) {
+        expect(allowedFlags.has(tokens[i]!)).toBe(true);
+        expect(seen.has(tokens[i]!)).toBe(false);
+        seen.set(tokens[i]!, tokens[i + 1]!);
+      }
+      expect(isAbsolute(seen.get('--dir') ?? '')).toBe(true);
+      if (seen.has('--base')) expect(HEX40_RE.test(seen.get('--base')!)).toBe(true);
+      if (seen.has('--wtree')) expect(WTREE_RE.test(seen.get('--wtree')!)).toBe(true);
+    }
+
+    const stubGit: GitInfo = {
+      toplevel: '/repo', repo: '/repo/.git', branch: 'main',
+      head: '0123456789abcdef0123456789abcdef01234567', tree: 'fedcba9876543210fedcba9876543210fedcba98',
+    };
+    const stubEnv: EnvChecker = {
+      commitExists: () => true, commitTree: () => stubGit.tree, isAncestor: () => true, checkEvidence: () => null,
+    };
+    let state: ReviewRunState | null = null;
+    for (const [key, example] of Object.entries(REQUEST_EXAMPLES)) {
+      const cmd = (key.startsWith('record pass') ? 'record pass' : key) as CommandName;
+      const out = applyCommand(state, cmd, example, stubGit, stubEnv, '2026-11-10T18:10:00Z', '0.93.2');
+      expect(out.reason, key).toBe('recorded');
+      if (out.reason === 'recorded') state = out.state;
+    }
+    expect(validateStoredState(JSON.parse(serializeState(state!)), '/tmp/review-run-state.json', '0.93.2').ok).toBe(true);
+  });
+
+  test.each(['tmp-write', 'tmp-fsync', 'rename', 'lock-remove'] as const)('store write/fsync/rename faults roll back cleanly and lock-remove fault records with warning (%s)', (mode) => {
+    const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
+    const input = writeJson(dir, 'pass.json', mkPassStarted(10));
+    const lockPath = join(dir, 'review-run-state.json.lock');
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const mode = ${JSON.stringify(mode)}, lock = ${JSON.stringify(lockPath)};
+      const tmpFds = new Set(); let capturedTmp = '';
+      mock.module('node:fs', () => ({...fs,
+        openSync(p, ...rest) {
+          const fd = fs.openSync(p, ...rest);
+          if (String(p).includes('review-run-state.json.tmp-')) { tmpFds.add(fd); capturedTmp = String(p); }
+          return fd;
+        },
+        writeSync(fd, ...rest) {
+          if (mode === 'tmp-write' && tmpFds.has(fd)) throw Object.assign(new Error('enospc'), { code: 'ENOSPC', syscall: 'write' });
+          return fs.writeSync(fd, ...rest);
+        },
+        fsyncSync(fd) {
+          if (mode === 'tmp-fsync' && tmpFds.has(fd)) throw Object.assign(new Error('eio'), { code: 'EIO', syscall: 'fsync' });
+          return fs.fsyncSync(fd);
+        },
+        renameSync(a, b) {
+          if (mode === 'rename' && String(a).includes('review-run-state.json.tmp-')) throw Object.assign(new Error('exdev'), { code: 'EXDEV', syscall: 'rename' });
+          return fs.renameSync(a, b);
+        },
+        unlinkSync(p) {
+          if (mode === 'lock-remove' && String(p) === lock) throw Object.assign(new Error('eacces'), { code: 'EACCES', syscall: 'unlink' });
+          return fs.unlinkSync(p);
+        },
+      }));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify({ res: executeCommand('record pass', ${JSON.stringify(dir)}, ${JSON.stringify(input)}, ${JSON.stringify(repo)}), capturedTmp }));`;
+    const r = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    const { res, capturedTmp } = JSON.parse(r.stdout);
+    if (mode === 'lock-remove') {
+      expect(res).toMatchObject({ reason: 'recorded', rev: 2, detail: { warnings: ['failed to remove lock: EACCES'] } });
+      expect(existsSync(lockPath)).toBe(true);
+      unlinkSync(lockPath);
+    } else {
+      const expected = mode === 'tmp-write' ? { errno: 'ENOSPC', syscall: 'write' } : mode === 'tmp-fsync' ? { errno: 'EIO', syscall: 'fsync' } : { errno: 'EXDEV', syscall: 'rename' };
+      expect(res.exitCode).toBe(3);
+      expect(res.reason).toBe('unwritable');
+      expect(res.detail).toEqual({ ...expected, path: capturedTmp.slice(0, 80) });
+      expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+      expect(existsSync(lockPath)).toBe(false);
+      expect(readdirSync(dir).filter((n) => n.startsWith('review-run-state.json.tmp-'))).toEqual([]);
+      expect(runCli(['record', 'pass', '--dir', dir, '--input', input]).json).toMatchObject({ reason: 'recorded', rev: 2 });
+    }
+  });
+
+  test('VERSION guard rejects a directory and a 129-byte file while accepting a 128-byte file', () => {
+    const vDir = join(baseTmp, 'ver-dir');
+    mkdirSync(vDir, { recursive: true });
+    const v129 = join(baseTmp, 'ver-129');
+    writeFileSync(v129, `1.2.3${' '.repeat(123)}\n`);
+    const v128 = join(baseTmp, 'ver-128');
+    writeFileSync(v128, `1.2.3${' '.repeat(122)}\n`);
+    expect(statSync(v129).size).toBe(129);
+    expect(statSync(v128).size).toBe(128);
+
+    expect(readHelperVersion(vDir)).toBeNull();
+    expect(readHelperVersion(v129)).toBeNull();
+    expect(readHelperVersion(v128)).toBe('1.2.3');
+    expect(runCli(['--version'], { versionPath: vDir }).out).toBe('review-state unknown\n');
+    expect(runCli(['--version'], { versionPath: v129 }).out).toBe('review-state unknown\n');
+
+    const d = newDir();
+    const res = callCmd(d, 'start', mkStart(1), { versionPath: v129 });
+    expect(res.json.helper_version).toBeNull();
+    expect((JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState).writer).toBeNull();
+  });
+
+  test.each([
+    ['start', (d: string, f: string) => ['start', '--dir', d, '--dir', d, '--input', f], 'duplicate --dir flag', true],
+    ['start', (d: string, f: string) => ['start', '--dir', d, '--input', f, '--input', f], 'duplicate --input flag', true],
+    ['start', (_d: string, f: string) => ['start', '--input', f, '--dir'], '--dir requires a value', false],
+    ['start', (d: string) => ['start', '--dir', d, '--input'], '--input requires a value', true],
+    ['start', (d: string, f: string) => ['start', '--dir', d, '--input', f, '--force'], 'unknown argument --force', true],
+    ['start', (d: string, f: string) => ['start', '--dir', d, '--input', f, '--base', 'a'.repeat(40)], 'start does not accept --base', true],
+    ['start', (d: string, f: string) => ['start', '--dir', d, '--input', f, '--wtree', 'wt:x'], 'start does not accept --wtree', true],
+    ['start', (d: string) => ['start', '--dir', d], '--input is required', true],
+    ['render', (d: string, f: string) => ['render', '--dir', d, '--dir', d, '--input', f], 'duplicate --dir flag', true],
+    ['render', (d: string, f: string) => ['render', '--dir', d, '--input', f, '--input', f], 'duplicate --input flag', true],
+    ['render', (d: string) => ['render', '--dir', d, '--input'], '--input requires a value', true],
+    ['render', (d: string, f: string) => ['render', '--dir', d, '--input', f, '--force'], 'unknown argument --force', true],
+    ['render', (d: string, f: string) => ['render', '--dir', d, '--input', f, '--base', 'a'.repeat(40)], 'render does not accept --base', true],
+    ['render', (d: string, f: string) => ['render', '--dir', d, '--input', f, '--wtree', 'wt:x'], 'render does not accept --wtree', true],
+    ['show', (d: string) => ['show', '--dir', d, '--dir', d], 'duplicate --dir flag', true],
+    ['show', (d: string) => ['show', '--dir', d, '--base', 'a'.repeat(40), '--base', 'a'.repeat(40)], 'duplicate --base flag', true],
+    ['show', (d: string) => ['show', '--dir', d, '--wtree', 'wt:a', '--wtree', 'wt:b'], 'duplicate --wtree flag', true],
+    ['show', (d: string) => ['show', '--dir', d, '--base'], '--base requires a value', true],
+    ['show', (d: string) => ['show', '--dir', d, '--wtree'], '--wtree requires a value', true],
+    ['show', (d: string) => ['show', '--dir', d, '--force'], 'unknown argument --force', true],
+    ['show', () => ['show'], '--dir is required', false],
+  ] as const)('CLI flag refusal for %s (%#)', (command, mkArgv, message, hasDir) => {
+    const d = newDir();
+    const f = writeJson(d, 'in.json', {});
+    const beforeFiles = readdirSync(d);
+    const usageFix = REASON_TABLE.find((r) => r.reason === 'usage')!.fix;
+    const res = runCli(mkArgv(d, f));
+    expect(res.code).toBe(2);
+    expect(res.json).toEqual({
+      v: 1,
+      command,
+      status: 'usage',
+      reason: 'usage',
+      detail: { message },
+      fix: usageFix,
+      state_path: hasDir ? join(d, 'review-run-state.json') : null,
+      rev: null,
+      helper_version: readHelperVersion(),
+      side_effects: 'none',
+      retry: 'after-fix',
+      retry_after_ms: null,
+    });
+    expect(res.err).toBe(`ERROR USAGE: ${message}\nFIX: ${usageFix}\n`);
+    expect(readdirSync(d)).toEqual(beforeFiles);
+  });
+
+  test('show projects open voices, correction chains, latest-by-first-seen gates/audits, tampered implicit evidence, and rendered file filtering/sorting', () => {
+    const d = newDir();
+    writeFileSync(join(d, 'pregate-record.json'), '{"verdict":"pass"}\n');
+    writeFileSync(join(d, 'doc-section.md'), 'doc ok\n');
+    callCmd(d, 'start', mkStart(1));
+    callCmd(d, 'record pass', mkPassStarted(10, { required_voices: ['core', 'specialist-sec', 'qa'] }));
+    callCmd(d, 'record pass', {
+      pass_id: uid(10), state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(20), outcome: 'completed',
+      findings: [
+        { finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-2', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-3', severity_source: 'P3', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-4', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-5', severity_source: 'P3', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+      ],
+    });
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(20) });
+    callCmd(d, 'record pass', { pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security', attempt_id: uid(21), outcome: 'failed' });
+
+    const tgt = (fid: string) => ({ pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: fid });
+    callCmd(d, 'record correction', { correction_id: uid(31), target: tgt('F-1'), resolution: 'fixed', fixed_in: headSha });
+    callCmd(d, 'record correction', { correction_id: uid(32), target: tgt('F-2'), adjudication: 'rejected', resolution: 'unknown' });
+    callCmd(d, 'record correction', { correction_id: uid(33), target: tgt('F-3'), receipt_class: 'test-gap-recorded' });
+    callCmd(d, 'record correction', { correction_id: uid(34), target: tgt('F-4'), resolution: 'fixed', fixed_in: headSha });
+    callCmd(d, 'record correction', { correction_id: uid(35), target: tgt('F-4'), resolution: 'open', supersedes: uid(34) });
+
+    const cand = { commit: headSha, base: baseSha };
+    callCmd(d, 'record gate', { gate_id: uid(41), name: 'tests', result: 'passed', candidate: cand });
+    callCmd(d, 'record gate', {
+      gate_id: uid(42), name: 'pregate', result: 'passed', candidate: cand,
+      details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: 'pregate-record.json', record_sha256: sha256('{"verdict":"pass"}\n'), skipped_lanes: [] },
+    });
+    callCmd(d, 'record gate', { gate_id: uid(43), name: 'tests', result: 'failed', candidate: cand });
+
+    callCmd(d, 'record audit', { audit_id: uid(51), name: 'coverage', result: 'passed', details: { pct: 95, threshold: 90 }, candidate: cand });
+    callCmd(d, 'record audit', {
+      audit_id: uid(52), name: 'documentation', result: 'passed',
+      details: { report_id: 'doc-1', section_path: 'doc-section.md', section_sha256: sha256('doc ok\n') }, candidate: cand,
+    });
+    callCmd(d, 'record audit', { audit_id: uid(53), name: 'coverage', result: 'failed', details: { pct: 50, threshold: 90 }, candidate: cand });
+
+    writeFileSync(join(d, 'pregate-record.json'), '{"verdict":"tampered"}\n');
+    writeFileSync(join(d, 'doc-section.md'), 'tampered doc\n');
+
+    const included = ['comment-receipt-1.md', 'comment-paused-2.md', 'comment-stopped-1.md', 'final-3.md', 'pr-body-1.md', 'full-receipt-2.md', 'full-receipt-10.md'];
+    for (const f of included) writeFileSync(join(d, f), `body:${f}\n`);
+    for (const f of ['full-receipt-0.md', 'final-01.md', 'notes.md', 'pr-body-1.md.bak']) writeFileSync(join(d, f), 'excluded\n');
+    mkdirSync(join(d, 'final-9.md'));
+    const outsideFile = join(baseTmp, 'outside-rendered.md');
+    writeFileSync(outsideFile, 'outside\n');
+    symlinkSync(outsideFile, join(d, 'comment-receipt-5.md'));
+
+    const s = runCli(['show', '--dir', d]).json;
+    expect(s.passes[0].voices).toEqual([
+      { voice_id: 'core', required: true, status: 'selected' },
+      { voice_id: 'specialist-sec', required: true, status: 'open' },
+      { voice_id: 'qa', required: true, status: 'open' },
+    ]);
+    expect(s.unresolved).toEqual(['F-4 P2', 'F-5 P3']);
+    expect(s.gates.map((g: { name: string; result: string; evidence_ok: boolean }) => [g.name, g.result, g.evidence_ok])).toEqual([
+      ['tests', 'failed', true],
+      ['pregate', 'passed', false],
+    ]);
+    expect(s.audits.map((a: { name: string; result: string; evidence_ok: boolean }) => [a.name, a.result, a.evidence_ok])).toEqual([
+      ['coverage', 'failed', true],
+      ['documentation', 'passed', false],
+    ]);
+    const expectedOrder = ['comment-paused-2.md', 'comment-receipt-1.md', 'comment-stopped-1.md', 'final-3.md', 'full-receipt-2.md', 'full-receipt-10.md', 'pr-body-1.md'];
+    expect(s.rendered).toEqual(expectedOrder.map((path) => ({ path, sha256: sha256(`body:${path}\n`) })));
+  });
+
+  test('show returns empty rendered list when directory enumeration throws EIO', () => {
+    const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
+    writeFileSync(join(dir, 'full-receipt-1.md'), 'receipt\n');
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const realDir = fs.realpathSync(${JSON.stringify(dir)});
+      mock.module('node:fs', () => ({...fs, readdirSync(p, ...rest) {
+        if (String(p) === realDir) throw Object.assign(new Error('eio'), { code: 'EIO', syscall: 'scandir' });
+        return fs.readdirSync(p, ...rest);
+      }}));
+      const { executeShow } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/show.ts'))});
+      console.log(JSON.stringify(executeShow(realDir, ${JSON.stringify(repo)})));`;
+    const r = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    const res = JSON.parse(r.stdout);
+    expect(res.ok).toBe(true);
+    expect(res.showDoc.rendered).toEqual([]);
+  });
+
+  // Value: protects=legacy evidence retention; fails_when=sweep deletes a referenced target; why_new=orphan tests never name live refs; seam=CLI.
+  test.each(['explicit', 'pregate', 'documentation', 'checkpoint', 'finish'] as const)('sweep preserves legacy recorded evidence (%s)', (kind) => {
+    const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
+    const evidenceName = 'review-run-state.json.tmp-42-beef';
+    writeFileSync(join(dir, 'evidence.txt'), 'retained evidence\n');
+    symlinkSync('evidence.txt', join(dir, 'evidence-link'));
+    const ev = { path: 'evidence-link', sha256: sha256('retained evidence\n') }, candidate = { commit: headSha, base: baseSha };
+    let cmd = 'record gate', payload: Record<string, unknown> = { gate_id: uid(601), name: 'tests', result: 'passed', candidate, evidence: [ev] };
+    if (kind === 'pregate') payload = { gate_id: uid(601), name: 'pregate', result: 'passed', candidate, details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: ev.path, record_sha256: ev.sha256, skipped_lanes: [] } };
+    if (kind === 'documentation') { cmd = 'record audit'; payload = { audit_id: uid(601), name: 'documentation', result: 'passed', candidate, details: { report_id: 'doc-1', section_path: ev.path, section_sha256: ev.sha256 } }; }
+    if (kind === 'checkpoint') { cmd = 'checkpoint'; payload = { checkpoint_id: uid(601), kind: 'stop', evidence: [ev] }; }
+    if (kind === 'finish') { cmd = 'finish'; payload = { outcome: 'blocked', stop_reason: 'fixture', base: baseSha, evidence: [ev] }; }
+    expect(callCmd(dir, cmd, payload, { file: 'live-input.json' }).json.reason).toBe('recorded');
+    unlinkSync(join(dir, 'evidence-link')); symlinkSync(evidenceName, join(dir, 'evidence-link'));
+    writeFileSync(join(dir, evidenceName), 'retained evidence\n');
+    expect(runCli([...cmd.split(' '), '--dir', dir, '--input', join(dir, 'live-input.json')]).json.reason).toBe('replayed');
+    if (kind !== 'finish') {
+      writeFileSync(join(dir, 'review-run-state.json.tmp-44-dead'), 'orphan');
+      expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(602), kind: 'stop' }).json.detail.warnings).toEqual(['removed 1 leftover temporary file(s)']);
+      expect(readFileSync(join(dir, evidenceName), 'utf8')).toBe('retained evidence\n');
+    }
+  });
+  test('helper temporary names refuse new input and evidence without deleting either file', () => {
+    const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
+    const name = 'review-run-state.json.tmp-43-cafe', path = join(dir, name);
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(603), kind: 'stop' }, { file: name }).code).toBe(2);
+    writeFileSync(path, 'evidence'); symlinkSync(name, join(dir, 'alias'));
+    for (const evPath of [name, 'alias']) {
+      const r = callCmd(dir, 'record gate', { gate_id: uid(604), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: evPath, sha256: sha256('evidence') }] });
+      expect(r.json.detail.violations).toEqual([{ path: 'evidence[0]', rule: 'evidence-reserved-path', expected: 'valid-evidence-file-in-dir' }]);
+      expect(readFileSync(path, 'utf8')).toBe('evidence'); expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+    }
   });
 });

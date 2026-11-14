@@ -2,6 +2,36 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: evidence recheck resolved target identity
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Equal-size, equal-mtime symlink retarget and regular-file replacement lack direct recheck regression cases.
+- **Hypothesis (untested):** Extend the lock-acquisition mutation table after re-verifying the guard.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/store.ts:289
+- **Evidence:** Testing specialist and coverage gap 06; no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/361563a7 at 6d2fc37, 2026-11-14, before a PR exists. Revisit when the next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: sweep identity and failure branches
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Hard links, legacy finish evidence, listing/unknown-stat failures, symlink/disappearing candidates, combined warnings and exact input/uppercase namespace refusals lack strong permanent assertions.
+- **Hypothesis (untested):** Extend existing sweep/refusal tables; retain namespace cases only if the owner approves that restriction.
+- **Upstream severity:** CRITICAL (adversarial test-gap claim); INFORMATIONAL (testing)
+- **Found in:** src/review-state/store.ts:300-350
+- **Evidence:** Coverage gaps 09/16/17/19/20/21/27 and weak 07; live hard-link/refusal probes passed, no defect reproduced.
+- **Context:** /review-and-prep, branch mmm/361563a7 at 6d2fc37, 2026-11-14, before a PR exists. Revisit when the next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: render help examples through real validation
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Render example tests check keys and equality but do not execute nested validation with matching files and lifecycle.
+- **Hypothesis (untested):** Feed each example through executeRender using valid evidence fixtures after re-verifying the validator.
+- **Upstream severity:** CRITICAL (adversarial test-gap claim)
+- **Found in:** src/review-state/render.ts:31
+- **Evidence:** Coverage gap 30 and adversarial test-gap claim; the suspected summary-type defect was disproved, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/361563a7 at 6d2fc37, 2026-11-14, before a PR exists. Revisit when the next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: root continuation type diagnostic advice
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
