@@ -3022,27 +3022,37 @@ describe('bin/review-state', () => {
     expect(res.showDoc.rendered).toEqual([]);
   });
 
-  // Value: protects=input replay and retained evidence; fails_when=sweep deletes live files; why_new=orphan tests never name live refs; seam=CLI.
-  test.each(['explicit', 'pregate', 'documentation', 'checkpoint', 'finish'] as const)('sweep preserves current input and current/prior evidence (%s)', (kind) => {
+  // Value: protects=legacy evidence retention; fails_when=sweep deletes a referenced target; why_new=orphan tests never name live refs; seam=CLI.
+  test.each(['explicit', 'pregate', 'documentation', 'checkpoint', 'finish'] as const)('sweep preserves legacy recorded evidence (%s)', (kind) => {
     const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
-    const evidenceName = 'review-run-state.json.tmp-42-beef', inputName = 'review-run-state.json.tmp-43-cafe';
-    writeFileSync(join(dir, evidenceName), 'retained evidence\n');
-    symlinkSync(evidenceName, join(dir, 'evidence-link'));
+    const evidenceName = 'review-run-state.json.tmp-42-beef';
+    writeFileSync(join(dir, 'evidence.txt'), 'retained evidence\n');
+    symlinkSync('evidence.txt', join(dir, 'evidence-link'));
     const ev = { path: 'evidence-link', sha256: sha256('retained evidence\n') }, candidate = { commit: headSha, base: baseSha };
     let cmd = 'record gate', payload: Record<string, unknown> = { gate_id: uid(601), name: 'tests', result: 'passed', candidate, evidence: [ev] };
     if (kind === 'pregate') payload = { gate_id: uid(601), name: 'pregate', result: 'passed', candidate, details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: ev.path, record_sha256: ev.sha256, skipped_lanes: [] } };
     if (kind === 'documentation') { cmd = 'record audit'; payload = { audit_id: uid(601), name: 'documentation', result: 'passed', candidate, details: { report_id: 'doc-1', section_path: ev.path, section_sha256: ev.sha256 } }; }
     if (kind === 'checkpoint') { cmd = 'checkpoint'; payload = { checkpoint_id: uid(601), kind: 'stop', evidence: [ev] }; }
     if (kind === 'finish') { cmd = 'finish'; payload = { outcome: 'blocked', stop_reason: 'fixture', base: baseSha, evidence: [ev] }; }
-    expect(callCmd(dir, cmd, payload, { file: inputName }).json.reason).toBe('recorded');
-    expect(readFileSync(join(dir, inputName), 'utf8')).toBe(JSON.stringify(payload));
-    expect(readFileSync(join(dir, evidenceName), 'utf8')).toBe('retained evidence\n');
-    expect(runCli([...cmd.split(' '), '--dir', dir, '--input', join(dir, inputName)]).json.reason).toBe('replayed');
+    expect(callCmd(dir, cmd, payload, { file: 'live-input.json' }).json.reason).toBe('recorded');
+    unlinkSync(join(dir, 'evidence-link')); symlinkSync(evidenceName, join(dir, 'evidence-link'));
+    writeFileSync(join(dir, evidenceName), 'retained evidence\n');
+    expect(runCli([...cmd.split(' '), '--dir', dir, '--input', join(dir, 'live-input.json')]).json.reason).toBe('replayed');
     if (kind !== 'finish') {
       writeFileSync(join(dir, 'review-run-state.json.tmp-44-dead'), 'orphan');
-      const next = callCmd(dir, 'checkpoint', { checkpoint_id: uid(602), kind: 'stop' });
-      expect(next.json.detail.warnings).toEqual(['removed 2 leftover temporary file(s)']);
+      expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(602), kind: 'stop' }).json.detail.warnings).toEqual(['removed 1 leftover temporary file(s)']);
       expect(readFileSync(join(dir, evidenceName), 'utf8')).toBe('retained evidence\n');
+    }
+  });
+  test('helper temporary names refuse new input and evidence without deleting either file', () => {
+    const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
+    const name = 'review-run-state.json.tmp-43-cafe', path = join(dir, name);
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(603), kind: 'stop' }, { file: name }).code).toBe(2);
+    writeFileSync(path, 'evidence'); symlinkSync(name, join(dir, 'alias'));
+    for (const evPath of [name, 'alias']) {
+      const r = callCmd(dir, 'record gate', { gate_id: uid(604), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: evPath, sha256: sha256('evidence') }] });
+      expect(r.json.detail.violations).toEqual([{ path: 'evidence[0]', rule: 'evidence-reserved-path', expected: 'valid-evidence-file-in-dir' }]);
+      expect(readFileSync(path, 'utf8')).toBe('evidence'); expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
     }
   });
 });

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { applyCommand, collectEvidenceItems, isVersion, REASONS, serializeState, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
 
 export const DEFAULT_VERSION_PATH = resolve(import.meta.dir, '..', '..', 'VERSION');
@@ -153,6 +153,7 @@ export function readInputJson(
   let realInput: string;
   try { realInput = realpathSync(inputArg); } catch { return reply('usage', { message: '--input path could not be resolved' }); }
   if (!realInput.startsWith(`${realDir}/`)) return reply('usage', { message: '--input file must reside inside --dir' });
+  if (TMP_FILE_RE.test(basename(realInput).toLowerCase())) return reply('usage', { message: '--input must not use helper temporary-file names' });
 
   let rawInput: unknown;
   try { rawInput = JSON.parse(readFileSync(realInput, 'utf8')); } catch { return reply('invalid-input', { violations: [{ path: '$', rule: 'invalid-json', expected: 'valid-json-object' }] }); }
@@ -223,6 +224,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     const key = `${item.path}:${item.sha256}`;
     const check = checkDirFile(realDir, item.path, item.sha256);
     if (!check.ok) evidenceErrors.set(key, check.error);
+    else if ([item.path, check.realPath].some((p) => TMP_FILE_RE.test(basename(p).toLowerCase()))) evidenceErrors.set(key, 'evidence-reserved-path');
     else evidenceSnapshots.set(key, { relPath: item.path, realPath: check.realPath, size: check.size, mtimeMs: check.mtimeMs });
   }
 
@@ -297,22 +299,23 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString(), helperVersion);
     if (outcome.reason !== 'recorded') return reply(outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
 
-    const protectedPaths = new Set([inCheck.realInput]);
+    const protectedFiles = new Set<string>();
+    let sweepSafe = true;
     for (const [cmd, records] of [
       ['record gate', outcome.state.gates], ['record audit', outcome.state.audits],
       ['checkpoint', outcome.state.checkpoints], ['finish', outcome.state.finish ? [outcome.state.finish] : []],
     ] as const) {
       for (const record of records) for (const ev of collectEvidenceItems(cmd, record)) {
-        const evPath = resolve(realDir, ev.path);
-        protectedPaths.add(evPath);
-        try { protectedPaths.add(realpathSync(evPath)); } catch { /* Missing prior evidence does not invalidate stored state. */ }
+        try { const st = statSync(resolve(realDir, ev.path)); protectedFiles.add(`${st.dev}:${st.ino}`); }
+        catch (err) { if (!['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')) sweepSafe = false; }
       }
     }
 
     const warnings: string[] = [];
     let dirNames: string[] | null = null;
     try {
-      dirNames = readdirSync(realDir);
+      if (sweepSafe) dirNames = readdirSync(realDir);
+      else warnings.push('skipped leftover temporary-file sweep: recorded evidence could not be resolved');
     } catch (err) {
       warnings.push(`failed to list leftover temporary files: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);
     }
@@ -322,10 +325,10 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       for (const name of dirNames) {
         if (!TMP_FILE_RE.test(name)) continue;
         const candidateTmp = join(realDir, name);
-        if (protectedPaths.has(candidateTmp)) continue;
         let st;
         try { st = lstatSync(candidateTmp); } catch { continue; }
         if (st.isSymbolicLink() || !st.isFile()) continue;
+        if (protectedFiles.has(`${st.dev}:${st.ino}`)) continue;
         try {
           unlinkSync(candidateTmp);
           removedCount++;
