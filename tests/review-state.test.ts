@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { PARTS } from '../src/review-delegate/delegate.ts';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
-import { RENDER_SCHEMA, RENDER_SHAPES, unresolvedFindings } from '../src/review-state/render.ts';
+import { FIELD_FMT, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, REASON_TABLE, serializeState, STATE_KEYS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
@@ -91,6 +92,59 @@ const mkPassStarted = (n = 10, extra: Record<string, unknown> = {}) => ({
   started_at: '2026-11-10T18:00:00Z',
   ...extra,
 });
+
+const REAL_POLICY_LINE = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; documentation-audit=final; full-suite=external; final-gate-repair=tests-docs; parent-io=lean; delegate=maintainability,adversarial,red-team; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=1';
+
+let startSeedStatePath = '';
+let attemptSeedStatePath = '';
+let correctionSeedStatePath = '';
+let unrelatedCommitSha = '';
+
+function ensureRefusalSeeds(): { startState: string; attemptState: string; correctionState: string; unrelatedSha: string } {
+  if (!startSeedStatePath) {
+    const dStart = newDir();
+    if (callCmd(dStart, 'start', mkStart(1)).code !== 0) throw new Error('start seed failed');
+    startSeedStatePath = join(dStart, 'review-run-state.json');
+
+    const dAtt = newDir();
+    copyFileSync(startSeedStatePath, join(dAtt, 'review-run-state.json'));
+    if (callCmd(dAtt, 'record pass', mkPassStarted(10)).code !== 0) throw new Error('pass seed failed');
+    if (callCmd(dAtt, 'record pass', {
+      pass_id: uid(10), state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(20), outcome: 'completed',
+      findings: [{ finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] }],
+    }).code !== 0) throw new Error('core attempt seed failed');
+    if (callCmd(dAtt, 'record pass', {
+      pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security', attempt_id: uid(21), outcome: 'failed',
+    }).code !== 0) throw new Error('specialist attempt seed failed');
+    attemptSeedStatePath = join(dAtt, 'review-run-state.json');
+
+    const dCorr = newDir();
+    copyFileSync(attemptSeedStatePath, join(dCorr, 'review-run-state.json'));
+    if (callCmd(dCorr, 'record correction', {
+      correction_id: uid(30),
+      target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+      resolution: 'fixed',
+      fixed_in: headSha,
+    }).code !== 0) throw new Error('correction seed failed');
+    correctionSeedStatePath = join(dCorr, 'review-run-state.json');
+
+    unrelatedCommitSha = git(repo, ['commit-tree', treeSha, '-m', 'unrelated']);
+  }
+  return {
+    startState: startSeedStatePath,
+    attemptState: attemptSeedStatePath,
+    correctionState: correctionSeedStatePath,
+    unrelatedSha: unrelatedCommitSha,
+  };
+}
+
+function dirFromSeed(seedStatePath: string): { dir: string; statePath: string; beforeBytes: string } {
+  const dir = newDir();
+  const statePath = join(dir, 'review-run-state.json');
+  copyFileSync(seedStatePath, statePath);
+  const beforeBytes = readFileSync(statePath, 'utf8');
+  return { dir, statePath, beforeBytes };
+}
 
 beforeAll(() => {
   baseTmp = makeBaseTmp('review-state-test-');
@@ -1884,5 +1938,706 @@ describe('bin/review-state', () => {
         expect(after.segments.at(-1).end).toBeNull();
       }
     }
+  });
+
+  // Value: protects=start mapping of policy-line delegate= part names to stored part labels, replay across both spellings, and refusal of unknown parts or receipt-line strings; fails_when=start rejects delegate= names, stores unmapped names, breaks label replay, or accepts unknown parts; why_new=Track 80A T1 Test A; seam=CLI and stored state
+  test('start accepts the orchestrator\'s delegate= part names, stores part labels, replays across both spellings and refuses unknown parts', () => {
+    const partsMatch = /(?:^|; )delegate=([^;]+)/.exec(REAL_POLICY_LINE);
+    expect(partsMatch).not.toBeNull();
+    const parts = partsMatch![1]!.split(',');
+    expect(parts).toEqual(['maintainability', 'adversarial', 'red-team']);
+
+    const d = newDir();
+    const startNames = mkStart(1, {
+      policy: {
+        value: REAL_POLICY_LINE,
+        source: 'caller prompt',
+        delegation: { status: 'active', parts, config: sha256('cfg'), tools: [] },
+      },
+    });
+    expect(callCmd(d, 'start', startNames).json).toMatchObject({ reason: 'recorded', rev: 1 });
+    const stored = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stored.policy.delegation).toEqual({
+      status: 'active',
+      parts: ['specialist:maintainability', 'native-adversarial', 'red-team'],
+      config: sha256('cfg'),
+      tools: [],
+    });
+    expect(callCmd(d, 'start', startNames).json).toMatchObject({ reason: 'replayed', rev: 1 });
+
+    const startLabels = mkStart(1, {
+      policy: {
+        value: REAL_POLICY_LINE,
+        source: 'caller prompt',
+        delegation: {
+          status: 'active',
+          parts: ['specialist:maintainability', 'native-adversarial', 'red-team'],
+          config: sha256('cfg'),
+          tools: [],
+        },
+      },
+    });
+    expect(callCmd(d, 'start', startLabels).json).toMatchObject({ reason: 'replayed', rev: 1 });
+
+    const dTools = newDir();
+    const startWithTools = mkStart(2, {
+      policy: {
+        value: REAL_POLICY_LINE,
+        source: 'caller prompt',
+        delegation: { status: 'active', parts, config: sha256('cfg'), tools: ['adversarial', 'red-team'] },
+      },
+    });
+    expect(callCmd(dTools, 'start', startWithTools).json).toMatchObject({ reason: 'recorded', rev: 1 });
+    const storedTools = JSON.parse(readFileSync(join(dTools, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(storedTools.policy.delegation).toEqual({
+      status: 'active',
+      parts: ['specialist:maintainability', 'native-adversarial', 'red-team'],
+      config: sha256('cfg'),
+      tools: ['native-adversarial', 'red-team'],
+    });
+
+    for (const [delegation, violation] of [
+      [
+        { status: 'active', parts: ['maintainability', 'security'], config: sha256('cfg'), tools: [] },
+        { path: 'policy.delegation.parts', rule: 'invalid-value', expected: 'nonempty-unique-part-array' },
+      ],
+      [
+        { status: 'active', parts: ['maintainability', 'specialist:maintainability'], config: sha256('cfg'), tools: [] },
+        { path: 'policy.delegation.parts', rule: 'invalid-value', expected: 'nonempty-unique-part-array' },
+      ],
+      [
+        { status: 'active', parts, config: sha256('cfg'), tools: ['testing'] },
+        { path: 'policy.delegation.tools', rule: 'invalid-value', expected: 'subset-of-parts' },
+      ],
+      [
+        `delegation: active (parts=maintainability,adversarial,red-team; config=${sha256('cfg')})`,
+        { path: 'policy.delegation', rule: 'invalid-type', expected: 'object|null' },
+      ],
+    ] as const) {
+      const dRef = newDir();
+      const res = callCmd(dRef, 'start', mkStart(3, {
+        policy: { value: REAL_POLICY_LINE, source: 'caller prompt', delegation },
+      }));
+      expect(res.code).toBe(1);
+      expect(res.json.reason).toBe('invalid-input');
+      expect(res.json.detail.violations).toContainEqual(violation);
+      expect(existsSync(join(dRef, 'review-run-state.json'))).toBe(false);
+    }
+
+    const dParity = newDir();
+    expect(callCmd(dParity, 'start', mkStart(4, {
+      policy: {
+        value: REAL_POLICY_LINE,
+        source: 'caller prompt',
+        delegation: { status: 'active', parts: [...PARTS], config: sha256('cfg'), tools: [] },
+      },
+    })).json).toMatchObject({ reason: 'recorded', rev: 1 });
+    const storedParity = JSON.parse(readFileSync(join(dParity, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(storedParity.policy.delegation).toEqual({
+      status: 'active',
+      parts: [
+        'specialist:testing',
+        'specialist:maintainability',
+        'specialist:performance',
+        'specialist:simplification',
+        'native-adversarial',
+        'red-team',
+      ],
+      config: sha256('cfg'),
+      tools: [],
+    });
+    if (storedParity.policy.delegation?.status !== 'active') throw new Error('expected active delegation');
+    expect(storedParity.policy.delegation.parts.map(wirePart)).toEqual([...PARTS]);
+  });
+
+  // Value: protects=strict refusal of the two observed malformed start continuation shapes ({count, max} and prior_stops >= 1 without continues) with exact violations and a specific expected-shape message/fix; fails_when=start accepts {count, max} or missing continues on a continuation, or drops the specific expected-shape message; why_new=Track 80A owner-approved continuation scope addition; seam=CLI and state file
+  test('start refuses observed malformed continuation shapes ({count, max} and prior_stops: 1 without continues) with exact violations and expected-shape message', () => {
+    const dCountMax = newDir();
+    const resCountMax = callCmd(dCountMax, 'start', mkStart(10, {
+      continuation: { count: 0, max: 1 },
+    }));
+    expect(resCountMax.code).toBe(1);
+    expect(resCountMax.json.reason).toBe('invalid-input');
+    expect(resCountMax.json.detail.violations).toContainEqual({
+      path: 'continuation.prior_stops',
+      rule: 'missing-key',
+      expected: 'prior_stops',
+    });
+    expect(resCountMax.json.detail.violations).toContainEqual({
+      path: 'continuation.count',
+      rule: 'unknown-key',
+      expected: 'no unknown keys',
+    });
+    expect(resCountMax.json.detail.message).toBe(
+      'continuation must be {prior_stops, max, continues} (40-hex iff prior_stops>=1)',
+    );
+    expect(resCountMax.json.fix).toContain('{"prior_stops": 0, "max": <int>, "continues": null}');
+    expect(resCountMax.json.fix).toContain('{"prior_stops": <k>, "max": <int>, "continues": "<40-hex Stopped at SHA>"}');
+    expect(resCountMax.err).toContain('ERROR INVALID_INPUT: continuation must be {prior_stops, max, continues} (40-hex iff prior_stops>=1)');
+    expect(existsSync(join(dCountMax, 'review-run-state.json'))).toBe(false);
+
+    const dMissingContinues = newDir();
+    const resMissingContinues = callCmd(dMissingContinues, 'start', mkStart(11, {
+      continuation: { prior_stops: 1, max: 1 },
+    }));
+    expect(resMissingContinues.code).toBe(1);
+    expect(resMissingContinues.json.reason).toBe('invalid-input');
+    expect(resMissingContinues.json.detail.violations).toContainEqual({
+      path: 'continuation.continues',
+      rule: 'invalid-value',
+      expected: 'required-when-prior_stops>=1',
+    });
+    expect(resMissingContinues.json.detail.message).toBe(
+      'continuation must be {prior_stops, max, continues} (40-hex iff prior_stops>=1)',
+    );
+    expect(resMissingContinues.json.fix).toContain('never {"count", "max"} or prior_stops >= 1 without continues');
+    expect(resMissingContinues.err).toContain('ERROR INVALID_INPUT: continuation must be {prior_stops, max, continues} (40-hex iff prior_stops>=1)');
+    expect(existsSync(join(dMissingContinues, 'review-run-state.json'))).toBe(false);
+
+    const dNonNullOnZero = newDir();
+    const resNonNullOnZero = callCmd(dNonNullOnZero, 'start', mkStart(12, {
+      continuation: { prior_stops: 0, max: 1, continues: baseSha },
+    }));
+    expect(resNonNullOnZero.code).toBe(1);
+    expect(resNonNullOnZero.json.reason).toBe('invalid-input');
+    expect(resNonNullOnZero.json.detail.violations).toContainEqual({
+      path: 'continuation.continues',
+      rule: 'invalid-value',
+      expected: 'null-when-prior_stops===0',
+    });
+    expect(existsSync(join(dNonNullOnZero, 'review-run-state.json'))).toBe(false);
+  });
+
+  // Value: protects=generic diagnostics and refusal atomicity for start's missing-commit and mixed-input errors; fails_when=continuation shape advice hides a reference error or unrelated violation; why_new=review reproduced diagnostic overreach; seam=CLI and state file
+  test.each([
+    [
+      'a correctly shaped continuation whose commit is missing',
+      () => mkStart(13, { continuation: { prior_stops: 1, max: 1, continues: sha256('missing').slice(0, 40) } }),
+      { path: 'continuation.continues', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+    [
+      'a malformed continuation alongside an invalid delegation part',
+      () => mkStart(14, {
+        continuation: { count: 0, max: 1 },
+        policy: { value: REAL_POLICY_LINE, source: 'caller prompt', delegation: { status: 'active', parts: ['security'], config: sha256('cfg'), tools: [] } },
+      }),
+      { path: 'policy.delegation.parts', rule: 'invalid-value', expected: 'nonempty-unique-part-array' },
+    ],
+  ])('start keeps generic diagnostics for %s', (_label, payload, violation) => {
+    const dir = newDir();
+    const res = callCmd(dir, 'start', payload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toContainEqual(violation);
+    expect(res.json.detail).not.toHaveProperty('message');
+    expect(res.json.fix).toBe('Fix the payload violations and rerun with a new or corrected --input file.');
+    expect(existsSync(join(dir, 'review-run-state.json'))).toBe(false);
+  });
+
+  // Value: protects=non-start commands' generic unknown-key advice and unchanged state; fails_when=a stray continuation key gets start-only shape advice; why_new=red-team finding reproduced in QA captures 002/003; seam=CLI and state file
+  test.each([
+    ['checkpoint', () => ({ checkpoint_id: uid(61), kind: 'before-fix', continuation: {} })],
+    ['finish', () => ({ outcome: 'prepared', base: baseSha, continuation: {} })],
+  ])('%s keeps generic diagnostics for an unknown continuation key', (cmd, payload) => {
+    const { startState } = ensureRefusalSeeds();
+    const { dir, statePath, beforeBytes } = dirFromSeed(startState);
+    const res = callCmd(dir, cmd, payload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toEqual([{ path: 'continuation', rule: 'unknown-key', expected: 'no unknown keys' }]);
+    expect(res.json.detail).not.toHaveProperty('message');
+    expect(res.json.fix).toBe('Fix the payload violations and rerun with a new or corrected --input file.');
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
+  // Value: protects=byte-identical stored state and rendered delegation / Delegated part lines between delegate= names and part labels at start; fails_when=names at start change serialized state or rendered receipt lines; why_new=Track 80A T1 Test B; seam=applyCommand, serializeState, and render formatters
+  test('delegate= names and part labels at start write byte-identical state and render the same delegation and Delegated part lines', () => {
+    const gitInfo = { repo: '/fixture/.git', toplevel: '/fixture', branch: 'topic', head: headSha, tree: treeSha };
+    const env = { commitExists: () => true, commitTree: () => treeSha, isAncestor: () => true, checkEvidence: () => null };
+    const partsFromLine = /(?:^|; )delegate=([^;]+)/.exec(REAL_POLICY_LINE)![1]!.split(',');
+
+    const runSequence = (parts: string[], tools: string[]): ReviewRunState => {
+      let state: ReviewRunState | null = null;
+      const step = (cmd: Parameters<typeof applyCommand>[1], input: unknown, ts: string) => {
+        const res = applyCommand(state, cmd, input, gitInfo, env, ts, '0.92.0');
+        if (res.reason !== 'recorded') throw new Error(`${cmd} failed: ${JSON.stringify(res)}`);
+        state = res.state;
+      };
+      step('start', mkStart(1, {
+        policy: {
+          value: REAL_POLICY_LINE,
+          source: 'caller prompt',
+          delegation: { status: 'active', parts, config: sha256('cfg'), tools },
+        },
+      }), '2026-11-10T18:00:00Z');
+      step('record pass', mkPassStarted(10, {
+        required_voices: ['maintainability', 'native-adversarial', 'red-team'],
+      }), '2026-11-10T18:01:00Z');
+      step('record pass', {
+        pass_id: uid(10), state: 'attempt', voice_id: 'maintainability', part: 'specialist:maintainability',
+        attempt_id: uid(20), outcome: 'completed',
+        delegate: {
+          provider: 'claude', model: 'sonnet', outcome: 'credited', fallback_reason: null, replay: false,
+          wall_ms: 150, input_tokens: 100, output_tokens: 40, cache_read_input_tokens: 20, cache_creation_input_tokens: 5, call_id: sha256('call-maint'),
+        },
+        findings: [{
+          finding_id: 'F-MAINT', severity_source: 'P2', severity_rubric: 'specialist',
+          adjudication: 'accepted', resolution: 'open', found_by: ['specialist:maintainability'],
+        }],
+      }, '2026-11-10T18:02:00Z');
+      step('record pass', {
+        pass_id: uid(10), state: 'attempt', voice_id: 'native-adversarial', part: 'native-adversarial',
+        attempt_id: uid(21), outcome: 'completed',
+        delegate: {
+          provider: 'codex', model: 'gpt-5', outcome: 'credited', fallback_reason: null, replay: false,
+          wall_ms: 210, input_tokens: 200, output_tokens: 60, cache_read_input_tokens: 30, cache_creation_input_tokens: null, call_id: sha256('call-adv'),
+        },
+        findings: [{
+          finding_id: 'F-ADV', severity_source: 'P1', severity_rubric: 'adversarial',
+          adjudication: 'accepted', resolution: 'open', found_by: ['native-adversarial'],
+        }],
+      }, '2026-11-10T18:03:00Z');
+      step('record pass', {
+        pass_id: uid(10), state: 'attempt', voice_id: 'red-team', part: 'red-team',
+        attempt_id: uid(22), outcome: 'failed',
+        delegate: {
+          provider: 'codex', model: 'gpt-5', outcome: 'fell-back', fallback_reason: 'timeout', replay: false,
+          wall_ms: 300, input_tokens: 80, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('call-rt'),
+        },
+      }, '2026-11-10T18:04:00Z');
+      step('record pass', {
+        pass_id: uid(10), state: 'voice-complete', voice_id: 'maintainability', selected_attempt_id: uid(20),
+      }, '2026-11-10T18:05:00Z');
+      step('record pass', {
+        pass_id: uid(10), state: 'voice-complete', voice_id: 'native-adversarial', selected_attempt_id: uid(21),
+      }, '2026-11-10T18:06:00Z');
+      return state!;
+    };
+
+    const a = runSequence(partsFromLine, ['adversarial', 'red-team']);
+    const b = runSequence(['specialist:maintainability', 'native-adversarial', 'red-team'], ['native-adversarial', 'red-team']);
+    expect(serializeState(a)).toBe(serializeState(b));
+    expect(renderDelegationPolicyLine(a.policy.delegation)).toBe(
+      `delegation: active (parts=maintainability,adversarial,red-team; config=${sha256('cfg')}; tools=adversarial,red-team)`,
+    );
+    const linesA = FIELD_FMT.delegatedParts({ state: a } as unknown as RenderCtx);
+    const linesB = FIELD_FMT.delegatedParts({ state: b } as unknown as RenderCtx);
+    expect(linesA).toEqual(linesB);
+    expect(linesA).toHaveLength(3);
+    expect(linesA.map((l) => l.split('; ')[0])).toEqual([
+      'Delegated part: maintainability',
+      'Delegated part: adversarial',
+      'Delegated part: red-team',
+    ]);
+    for (const line of linesA) expect(line.split('; ')).toHaveLength(12);
+  });
+
+  // Value: protects=attempt and finding cross-field validator rules and refusal atomicity; fails_when=an invalid attempt, delegate, or finding records or mutates state; why_new=Track 80A T3 attempt/finding gaps; seam=CLI and state file
+  test.each([
+    [
+      'predecessor_attempt_id from another voice',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed', predecessor_attempt_id: uid(20), findings: [],
+      }),
+      { path: 'predecessor_attempt_id', rule: 'invalid-reference', expected: 'prior-attempt-on-voice' },
+    ],
+    [
+      'duplicate attempt_id across voices',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(20), outcome: 'completed', findings: [],
+      }),
+      { path: 'attempt_id', rule: 'duplicate-value', expected: 'unique-attempt-id' },
+    ],
+    [
+      'finding_id already recorded in run',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [{ finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:security'] }],
+      }),
+      { path: 'findings[0].finding_id', rule: 'duplicate-value', expected: 'unique-finding-id-in-run' },
+    ],
+    [
+      'duplicate finding_id within the same attempt',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [
+          { finding_id: 'F-2', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:security'] },
+          { finding_id: 'F-2', severity_source: 'P2', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:security'] },
+        ],
+      }),
+      { path: 'findings[1].finding_id', rule: 'duplicate-value', expected: 'unique-within-attempt' },
+    ],
+    [
+      'attempt part disagreeing with voice part',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:testing',
+        attempt_id: uid(22), outcome: 'completed', findings: [],
+      }),
+      { path: 'part', rule: 'invalid-value', expected: 'matching-voice-part:specialist:security' },
+    ],
+    [
+      'failed attempt with credited delegate',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'failed',
+        delegate: { provider: 'codex', model: 'gpt-5', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 10, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('del') },
+      }),
+      { path: 'delegate.outcome', rule: 'invalid-value', expected: 'credited-requires-completed-and-null-fallback_reason' },
+    ],
+    [
+      'completed attempt with fell-back delegate',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        delegate: { provider: 'codex', model: 'gpt-5', outcome: 'fell-back', fallback_reason: 'timeout', replay: false, wall_ms: 10, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('del') },
+        findings: [],
+      }),
+      { path: 'delegate.outcome', rule: 'invalid-value', expected: 'fell-back-requires-failed-and-fallback_reason' },
+    ],
+    [
+      'delegated attempt with no part',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: null,
+        attempt_id: uid(22), outcome: 'completed',
+        delegate: { provider: 'codex', model: 'gpt-5', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 10, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('del') },
+        findings: [],
+      }),
+      { path: 'part', rule: 'invalid-value', expected: 'part-label-required-for-delegated-attempt' },
+    ],
+    [
+      'finding with non-empty found_by and attribution_reason',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [{ finding_id: 'F-2', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'], attribution_reason: 'not-reported' }],
+      }),
+      { path: 'findings[0].attribution_reason', rule: 'invalid-value', expected: 'null-when-found_by-nonempty' },
+    ],
+    [
+      'finding with empty found_by and no attribution_reason',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [{ finding_id: 'F-2', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: [] }],
+      }),
+      { path: 'findings[0].attribution_reason', rule: 'invalid-enum', expected: 'not-reported|unlisted-part|unsupported' },
+    ],
+    [
+      'rejected finding with resolution open',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [{ finding_id: 'F-2', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'rejected', resolution: 'open', found_by: ['specialist:security'] }],
+      }),
+      { path: 'findings[0].resolution', rule: 'invalid-value', expected: 'unknown-for-rejected-or-duplicate' },
+    ],
+    [
+      'duplicate finding without duplicate_of',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [{ finding_id: 'F-2', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'duplicate', resolution: 'unknown', found_by: ['specialist:security'] }],
+      }),
+      { path: 'findings[0].duplicate_of', rule: 'invalid-value', expected: 'required-for-duplicate' },
+    ],
+    [
+      'finding with duplicate_of equal to its own finding_id',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'completed',
+        findings: [{ finding_id: 'F-2', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'duplicate', resolution: 'unknown', duplicate_of: 'F-2', found_by: ['specialist:security'] }],
+      }),
+      { path: 'findings[0].duplicate_of', rule: 'invalid-value', expected: 'another-finding' },
+    ],
+    [
+      'failed attempt sending findings array',
+      () => ({
+        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+        attempt_id: uid(22), outcome: 'failed', findings: [],
+      }),
+      { path: 'findings', rule: 'invalid-value', expected: 'null-when-outcome-not-completed' },
+    ],
+  ])('refuses invalid attempt/finding input (%s) without mutating state', (_label, buildPayload, expectedViolation) => {
+    const { attemptState } = ensureRefusalSeeds();
+    const { dir, statePath, beforeBytes } = dirFromSeed(attemptState);
+    const res = callCmd(dir, 'record pass', buildPayload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toContainEqual(expectedViolation);
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
+  // Value: protects=voice-complete selection xor and completed-attempt-on-voice rules; fails_when=voice-complete accepts both/neither field or selects a missing, failed, or other-voice attempt; why_new=Track 80A T3 voice-selection gaps; seam=CLI and state file
+  test.each([
+    [
+      'core with both selected_attempt_id and not_applicable',
+      () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(20), not_applicable: 'not-applicable' }),
+      { path: 'selected_attempt_id', rule: 'invalid-value', expected: 'exactly-one-of-selected_attempt_id-or-not_applicable' },
+    ],
+    [
+      'core with neither selected_attempt_id nor not_applicable',
+      () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'core' }),
+      { path: 'selected_attempt_id', rule: 'invalid-value', expected: 'exactly-one-of-selected_attempt_id-or-not_applicable' },
+    ],
+    [
+      'core selecting a missing attempt_id',
+      () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(29) }),
+      { path: 'selected_attempt_id', rule: 'invalid-reference', expected: 'completed-attempt-on-voice' },
+    ],
+    [
+      'specialist-sec selecting its failed attempt',
+      () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'specialist-sec', selected_attempt_id: uid(21) }),
+      { path: 'selected_attempt_id', rule: 'invalid-reference', expected: 'completed-attempt-on-voice' },
+    ],
+    [
+      'specialist-sec selecting core\'s completed attempt',
+      () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'specialist-sec', selected_attempt_id: uid(20) }),
+      { path: 'selected_attempt_id', rule: 'invalid-reference', expected: 'completed-attempt-on-voice' },
+    ],
+  ])('refuses invalid voice-complete input (%s) without mutating state', (_label, buildPayload, expectedViolation) => {
+    const { attemptState } = ensureRefusalSeeds();
+    const { dir, statePath, beforeBytes } = dirFromSeed(attemptState);
+    const res = callCmd(dir, 'record pass', buildPayload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toContainEqual(expectedViolation);
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
+  // Value: protects=correction target lookup, linear supersedes chain, effective rejected resolution, and fixed_in commit existence; fails_when=a broken correction chain or invalid resolution/commit records; why_new=Track 80A T3 correction-chain gaps; seam=CLI and state file
+  test.each([
+    [
+      'target finding F-9 does not exist',
+      () => ({
+        correction_id: uid(31),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-9' },
+        resolution: 'fixed',
+      }),
+      { path: 'target', rule: 'invalid-reference', expected: 'existing-finding' },
+    ],
+    [
+      'supersedes omitted after prior correction',
+      () => ({
+        correction_id: uid(31),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+        resolution: 'open',
+      }),
+      { path: 'supersedes', rule: 'invalid-reference', expected: uid(30) },
+    ],
+    [
+      'supersedes naming unknown correction uid(39)',
+      () => ({
+        correction_id: uid(31),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+        resolution: 'open',
+        supersedes: uid(39),
+      }),
+      { path: 'supersedes', rule: 'invalid-reference', expected: uid(30) },
+    ],
+    [
+      'adjudication rejected inheriting prior fixed resolution',
+      () => ({
+        correction_id: uid(31),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+        adjudication: 'rejected',
+        supersedes: uid(30),
+      }),
+      { path: 'resolution', rule: 'invalid-value', expected: 'unknown-for-rejected-or-duplicate' },
+    ],
+    [
+      'fixed_in commit missing from Git',
+      () => ({
+        correction_id: uid(31),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+        fixed_in: sha256('missing').slice(0, 40),
+        supersedes: uid(30),
+      }),
+      { path: 'fixed_in', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+    [
+      'adjudication rejected with resolution fixed in the same payload',
+      () => ({
+        correction_id: uid(31),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+        adjudication: 'rejected',
+        resolution: 'fixed',
+        supersedes: uid(30),
+      }),
+      { path: 'resolution', rule: 'invalid-value', expected: 'unknown-when-rejected' },
+    ],
+  ])('refuses invalid correction input (%s) without mutating state', (_label, buildPayload, expectedViolation) => {
+    const { correctionState } = ensureRefusalSeeds();
+    const { dir, statePath, beforeBytes } = dirFromSeed(correctionState);
+    const res = callCmd(dir, 'record correction', buildPayload());
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toContainEqual(expectedViolation);
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
+  // Value: protects=finish ancestry/commit existence and checkpoint session_id/base rules; fails_when=finish or checkpoint accepts non-ancestor or missing commits or misplaced session_id/base; why_new=Track 80A T4 finish/checkpoint gaps; seam=CLI and state file
+  test.each([
+    [
+      'finish prepared with unrelated non-ancestor base',
+      'finish',
+      (unrelatedSha: string) => ({ outcome: 'prepared', base: unrelatedSha }),
+      { path: 'base', rule: 'not-ancestor', expected: 'ancestor-of-head' },
+    ],
+    [
+      'finish with missing base commit',
+      'finish',
+      () => ({ outcome: 'prepared', base: sha256('missing').slice(0, 40) }),
+      { path: 'base', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+    [
+      'finish stopped with missing delta_base commit',
+      'finish',
+      () => ({ outcome: 'stopped', base: baseSha, stop_reason: 'cap', stop_count: 1, delta_base: sha256('missing').slice(0, 40) }),
+      { path: 'delta_base', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+    [
+      'finish prepared with missing full_review_evidence.commit',
+      'finish',
+      () => ({
+        outcome: 'prepared',
+        base: baseSha,
+        full_review_evidence: { status: 'available', commit: sha256('missing').slice(0, 40), tree: treeSha, source: 'ev://x' },
+      }),
+      { path: 'full_review_evidence.commit', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+    [
+      'checkpoint before-fix with non-null session_id',
+      'checkpoint',
+      () => ({ checkpoint_id: uid(60), kind: 'before-fix', session_id: `extend-${uid(950)}` }),
+      { path: 'session_id', rule: 'invalid-value', expected: 'null-when-kind-not-resume' },
+    ],
+    [
+      'checkpoint pause without base',
+      'checkpoint',
+      () => ({ checkpoint_id: uid(60), kind: 'pause' }),
+      { path: 'base', rule: 'invalid-value', expected: 'required-hex40-for-external-gate-and-pause' },
+    ],
+    [
+      'checkpoint before-fix with missing base commit',
+      'checkpoint',
+      () => ({ checkpoint_id: uid(60), kind: 'before-fix', base: sha256('missing').slice(0, 40) }),
+      { path: 'base', rule: 'commit-not-found', expected: 'existing-git-commit' },
+    ],
+  ])('refuses invalid finish/checkpoint input (%s) without mutating state', (_label, cmd, buildPayload, expectedViolation) => {
+    const { startState, unrelatedSha } = ensureRefusalSeeds();
+    const { dir, statePath, beforeBytes } = dirFromSeed(startState);
+    const res = callCmd(dir, cmd, buildPayload(unrelatedSha));
+    expect(res.code).toBe(1);
+    expect(res.json.reason).toBe('invalid-input');
+    expect(res.json.detail.violations).toContainEqual(expectedViolation);
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
+  // Value: protects=latestHelperTimestamp across all eight helper-stamped record kinds, millisecond precision over lexical order, and segment started_at fallback; fails_when=a record kind is skipped, string comparison beats Date.parse, or an earlier segment's timestamp leaks into a later segment; why_new=Track 80A T4 G27; seam=applyCommand
+  test('interrupted end timestamp picks the latest helper-stamped record across pass started/completed, attempt, voice-complete, correction, gate, audit and checkpoint with millisecond precision and segment started_at fallback', () => {
+    const gitInfo = { repo: '/fixture/.git', toplevel: '/fixture', branch: 'topic', head: headSha, tree: treeSha };
+    const env = { commitExists: () => true, commitTree: () => treeSha, isAncestor: () => true, checkEvidence: () => null };
+    const T_START = '2026-11-10T17:00:00Z';
+    const T_BASE = '2026-11-10T18:00:00Z';
+    const T_WIN = '2026-11-10T18:00:00.001Z';
+    const T_RESUME = '2026-11-10T19:00:00Z';
+    const T_CALLER = '2099-01-01T00:00:00Z';
+
+    const kinds = [
+      'pass-started',
+      'attempt',
+      'voice-complete',
+      'correction',
+      'gate',
+      'audit',
+      'checkpoint',
+      'pass-completed',
+    ] as const;
+
+    for (const winner of kinds) {
+      let state: ReviewRunState | null = null;
+      const apply = (cmd: Parameters<typeof applyCommand>[1], input: unknown, ts: string) => {
+        const res = applyCommand(state, cmd, input, gitInfo, env, ts);
+        if (res.reason !== 'recorded') throw new Error(`${cmd} failed for ${winner}: ${JSON.stringify(res)}`);
+        state = res.state;
+      };
+      const tsFor = (k: (typeof kinds)[number]) => (k === winner ? T_WIN : T_BASE);
+
+      apply('start', mkStart(1, { session_id: `extend-${uid(901)}` }), T_START);
+      apply('record pass', mkPassStarted(10, { required_voices: ['core'], started_at: T_CALLER }), tsFor('pass-started'));
+      apply('record pass', {
+        pass_id: uid(10), state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(20), outcome: 'completed',
+        dispatched_at: T_CALLER, returned_at: T_CALLER,
+        findings: [{ finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] }],
+      }, tsFor('attempt'));
+      apply('record pass', {
+        pass_id: uid(10), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(20),
+      }, tsFor('voice-complete'));
+      apply('record correction', {
+        correction_id: uid(30),
+        target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' },
+        resolution: 'fixed',
+      }, tsFor('correction'));
+      apply('record gate', {
+        gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha },
+      }, tsFor('gate'));
+      apply('record audit', {
+        audit_id: uid(50), name: 'coverage', result: 'passed', details: { pct: 95, threshold: 80 }, candidate: { commit: headSha, base: baseSha },
+      }, tsFor('audit'));
+      apply('checkpoint', {
+        checkpoint_id: uid(60), kind: 'before-fix',
+      }, tsFor('checkpoint'));
+      apply('record pass', {
+        pass_id: uid(10), state: 'completed', completed_at: T_CALLER,
+      }, tsFor('pass-completed'));
+      apply('checkpoint', {
+        checkpoint_id: uid(61), kind: 'resume', session_id: `extend-${uid(902)}`,
+      }, T_RESUME);
+
+      expect(state!.segments[0], winner).toMatchObject({
+        end: 'interrupted',
+        ended_at: T_WIN,
+      });
+    }
+
+    // Fallback 1: start, then resume -> ended_at equals segment's started_at.
+    const s1 = applyCommand(null, 'start', mkStart(1, { session_id: `extend-${uid(901)}` }), gitInfo, env, T_START);
+    if (s1.reason !== 'recorded') throw new Error('start failed');
+    const r1 = applyCommand(s1.state, 'checkpoint', { checkpoint_id: uid(70), kind: 'resume', session_id: `extend-${uid(902)}` }, gitInfo, env, T_RESUME);
+    if (r1.reason !== 'recorded') throw new Error('resume failed');
+    expect(r1.state.segments[0]).toMatchObject({
+      started_at: T_START,
+      ended_at: T_START,
+      end: 'interrupted',
+    });
+
+    // Fallback 2: start (T0), gate (T1), pause (T2), resume (T3), then resume (T4, third session) -> segment 2 ended_at equals T3.
+    const t0 = '2026-11-10T17:00:00Z';
+    const t1 = '2026-11-10T17:10:00Z';
+    const t2 = '2026-11-10T17:20:00Z';
+    const t3 = '2026-11-10T17:30:00Z';
+    const t4 = '2026-11-10T17:40:00Z';
+    let st: ReviewRunState | null = null;
+    for (const [cmd, input, ts] of [
+      ['start', mkStart(2, { session_id: `extend-${uid(911)}` }), t0],
+      ['record gate', { gate_id: uid(80), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha } }, t1],
+      ['checkpoint', { checkpoint_id: uid(81), kind: 'pause', base: baseSha }, t2],
+      ['checkpoint', { checkpoint_id: uid(82), kind: 'resume', session_id: `extend-${uid(912)}` }, t3],
+      ['checkpoint', { checkpoint_id: uid(83), kind: 'resume', session_id: `extend-${uid(913)}` }, t4],
+    ] as const) {
+      const res = applyCommand(st, cmd, input, gitInfo, env, ts);
+      if (res.reason !== 'recorded') throw new Error(`${cmd} failed`);
+      st = res.state;
+    }
+    expect(st!.segments[1]).toMatchObject({
+      segment: 2,
+      started_at: t3,
+      ended_at: t3,
+      end: 'interrupted',
+    });
   });
 });

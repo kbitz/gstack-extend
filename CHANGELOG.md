@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.93.2] - 2026-11-14
+
+### Fixed
+
+- Opted-in reviews that delegate parts now keep their run state, because `bin/review-state start` accepts the `delegate=` part names in `policy.delegation` and stores them as its part labels.
+- Delegated reviews can record run state using the six policy part names.
+- Malformed continuation objects receive specific shape advice.
+
+### Upgrade notes
+
+- A review that fell back to inline output before this update stays inline when it resumes, so only reviews started after updating record their run state.
+
 ## [0.93.1] - 2026-11-13
 
 ### Fixed

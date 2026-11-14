@@ -2,6 +2,73 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: root continuation type diagnostic advice
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The continuation diagnostic tests use object inputs and dotted violation paths; they do not directly pin the shape advice for null, scalar or array continuation values at the root `continuation` path.
+- **Hypothesis (untested):** Extend the existing continuation diagnostic table with those values, asserting the exact type violation, specific message/fix and absent state file after re-verifying the validator.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `src/review-state/state.ts:319,391`.
+- **Evidence:** The integrated-head read-only coverage audit found this healthy boundary; the root-path predicate handles it. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on PR #253 after merging base `36a66ad` (2026-11-14).
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap).
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: start delegation parts array shape
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** `start` has no direct refusal test for missing, non-array or empty active-delegation `parts`.
+- **Hypothesis (untested):** Extend the CLI refusal table with these shapes; pin exact violations and absent state bytes after re-verifying the current validator.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts:377
+- **Evidence:** Track 80A coverage audit G1; source and existing tests read, no failure reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2fba785c` at `5fb7593` (2026-11-13); PR not yet created.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: start delegation non-string part entries
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Unknown-string refusal does not independently cover non-string `parts` entries becoming invalid labels.
+- **Hypothesis (untested):** Add non-string entries to the CLI refusal table with exact violation and no-write assertions; re-verify the contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts:169
+- **Evidence:** Track 80A coverage audit G2; existing real-policy/label tests pass, no failure reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2fba785c` at `5fb7593` (2026-11-13); PR not yet created.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: omitted delegation tools default and replay
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Active-delegation fixtures explicitly supply `tools`; omission's default to `[]` and replay parity lack a direct test.
+- **Hypothesis (untested):** Compare an omitted-tools start with explicit `tools: []`, checking stored labels and replay after re-verifying defaults.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts:376
+- **Evidence:** Track 80A coverage audit G3; source defaults to an empty array, no failure reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2fba785c` at `5fb7593` (2026-11-13); PR not yet created.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: malformed or unknown delegation tools
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The current tools refusal uses a recognized name outside `parts`; non-array, non-string and unknown-name inputs lack direct coverage.
+- **Hypothesis (untested):** Extend tools refusal rows with those inputs, exact `subset-of-parts` violations and absent state bytes; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts:379
+- **Evidence:** Track 80A coverage audit G4; current mapper and subset check inspected, no failure reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2fba785c` at `5fb7593` (2026-11-13); PR not yet created.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: normalized delegation tools uniqueness
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Parts alias-collision coverage does not protect tools' independent normalized-uniqueness check.
+- **Hypothesis (untested):** Refuse repeated tools and name/label alias pairs with exact violations and no write, after re-verifying the current rule.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts:380
+- **Evidence:** Track 80A coverage audit G5; uniqueness applies after normalization, no failure reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/2fba785c` at `5fb7593` (2026-11-13); PR not yet created.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Test gap: added-line part type guards
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.

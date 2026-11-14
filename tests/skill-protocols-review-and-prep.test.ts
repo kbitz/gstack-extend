@@ -4367,6 +4367,25 @@ describe('review-and-prep run-state=record', () => {
     for (const text of [bullet, callsRaw]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 
+  // Value: protects=the policy.delegation object shape, delegate=-to-label storage rule, attempt/found_by part-label requirement, and start continuation object shape in docs/review-run-state-calls.md; fails_when=the calls doc drops the object-not-line rule, the six-part label mapping, the attempt/found_by label rule, or the continuation {prior_stops, max, continues} specification; why_new=Track 80A T2 + owner-approved continuation scope addition; seam=none; no_claim=installed-agent execution
+  test('the calls document states start policy.delegation object shape, delegate= label mapping, attempt/found_by part-label rule, and continuation object shape', () => {
+    expect(calls).toContain(
+      '`start`\'s `policy.delegation` is a JSON object, never the text of the receipt\'s `delegation:` line: `null` when the policy has no `delegate=` value; `{"status": "inactive", "reason": "<reason>"}` when **Delegate named specialist parts** recorded `delegation: inactive — <reason>`; otherwise `{"status": "active", "parts": [...], "config": "<sha256>", "tools": [...]}`, listing `parts` and `tools` as that section\'s `delegation: active (…)` line names them (for example `"parts": ["maintainability", "adversarial", "red-team"]`, and `"tools": []` when the line has no `tools=`).',
+    );
+    expect(calls).toContain(
+      'The helper stores each `delegate=` part name as its part label (`specialist:<name>` for `testing`, `maintainability`, `performance` and `simplification`, `native-adversarial` for `adversarial`, and `red-team` for `red-team`), stores any other part label (`PART_RE`) as sent, and refuses anything else with `invalid-input` at `policy.delegation.parts` or `policy.delegation.tools`.',
+    );
+    expect(calls).toContain(
+      'A delegated attempt\'s `part` and each finding\'s `found_by` always use the part labels, never the `delegate=` names.',
+    );
+    expect(calls).toContain(
+      '`start`\'s `continuation` is a JSON object `{"prior_stops": <int >= 0>, "max": <int >= 0>, "continues": <40-hex|null>}` (`continues` defaults to `null` when omitted, and keys such as `count` are refused as unknown): on an initial (non-continuation) invocation, `{"prior_stops": 0, "max": <max-continuations>, "continues": null}` (`continues` must be `null` or omitted when `prior_stops === 0`); on a `/review-and-prep continue` invocation, `prior_stops` is `k` (`>= 1`, the live count of distinct corroborated stopped-record SHAs on the PR), `max` is the effective `max-continuations` (`n`), and `continues` is required and names the 40-hex commit SHA from the newest corroborated stopped record\'s `Stopped at: <full HEAD SHA>` line that this run continues.',
+    );
+    expect(calls).toContain(
+      'The helper refuses `{"count", "max"}` or `prior_stops >= 1` without a 40-hex `continues` with `invalid-input` at `continuation.*`.',
+    );
+  });
+
   // Value: protects=the Resume section in docs/review-run-state-calls.md, the skill's single-paragraph resume pointer, and D14's part 2 placement in docs/designs/review-run-state.md; fails_when=a checkpoint row, mismatch rule, 113A recovery rule, or D14 placement drifts; why_new=Track 79A part 1 T3/T4; seam=none; no_claim=installed-agent execution
   test('the calls document defines the Resume procedure for every checkpoint kind and the design doc re-places every inherited D14 item', () => {
     const fixedStart = callsRaw.indexOf('## Fixed points');
