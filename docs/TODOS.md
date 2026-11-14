@@ -2,6 +2,18 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: root continuation type diagnostic advice
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The continuation diagnostic tests use object inputs and dotted violation paths; they do not directly pin the shape advice for null, scalar or array continuation values at the root `continuation` path.
+- **Hypothesis (untested):** Extend the existing continuation diagnostic table with those values, asserting the exact type violation, specific message/fix and absent state file after re-verifying the validator.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `src/review-state/state.ts:319,391`.
+- **Evidence:** The integrated-head read-only coverage audit found this healthy boundary; the root-path predicate handles it. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on PR #253 after merging base `36a66ad` (2026-11-14).
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap).
+
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: start delegation parts array shape
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** `start` has no direct refusal test for missing, non-array or empty active-delegation `parts`.
