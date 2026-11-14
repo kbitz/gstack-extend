@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.93.1] - 2026-11-13
+
+### Fixed
+
+- `bin/secret-dispositions` again evaluates a failing secrets check from current installed gstack, whose added-line parts carry `texts`, so a reviewed false positive can satisfy the gate instead of the evaluator stopping with unavailable evidence, while a finding in a file git treats as binary is refused by name.
+- `bin/secret-dispositions` accepts both `text` and `texts` parts and explicitly refuses findings in binary parts.
+
 ## [0.93.0] - 2026-11-13
 
 ### Added
