@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { applyCommand, collectEvidenceItems, isVersion, REASONS, serializeState, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
@@ -159,24 +159,27 @@ export function readInputJson(
   return { ok: true, rawInput, realInput };
 }
 
-export type DirFileError = 'evidence-outside-dir' | 'evidence-not-regular-file' | 'evidence-digest-mismatch' | 'evidence-missing';
+const TMP_FILE_RE = /^review-run-state\.json\.tmp-\d+-[0-9a-f]+$/;
+
+export type DirFileError = 'evidence-outside-dir' | 'evidence-not-regular-file' | 'evidence-digest-mismatch' | 'evidence-missing' | 'evidence-changed';
 
 export function checkDirFile(
   realDir: string,
   relPath: string,
   sha256?: string,
-): { ok: true; realPath: string; bytes: Buffer; sha256: string } | { ok: false; error: DirFileError } {
+): { ok: true; realPath: string; bytes: Buffer; sha256: string; size: number; mtimeMs: number } | { ok: false; error: DirFileError } {
   const candidatePath = resolve(realDir, relPath);
   if (!candidatePath.startsWith(`${realDir}/`)) return { ok: false, error: 'evidence-outside-dir' };
   try {
     const lst = lstatSync(candidatePath);
     const realEv = realpathSync(candidatePath);
     if (!realEv.startsWith(`${realDir}/`)) return { ok: false, error: 'evidence-outside-dir' };
-    if (!(lst.isSymbolicLink() ? statSync(realEv) : lst).isFile()) return { ok: false, error: 'evidence-not-regular-file' };
+    const st = lst.isSymbolicLink() ? statSync(realEv) : lst;
+    if (!st.isFile()) return { ok: false, error: 'evidence-not-regular-file' };
     const bytes = readFileSync(realEv);
     const actualSha = createHash('sha256').update(bytes).digest('hex');
     if (sha256 !== undefined && actualSha !== sha256) return { ok: false, error: 'evidence-digest-mismatch' };
-    return { ok: true, realPath: realEv, bytes, sha256: actualSha };
+    return { ok: true, realPath: realEv, bytes, sha256: actualSha, size: st.size, mtimeMs: st.mtimeMs };
   } catch {
     return { ok: false, error: 'evidence-missing' };
   }
@@ -215,10 +218,12 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   const { rawInput } = inCheck;
 
   const evidenceErrors = new Map<string, string>();
+  const evidenceSnapshots = new Map<string, { relPath: string; realPath: string; size: number; mtimeMs: number }>();
   for (const item of collectEvidenceItems(command, rawInput)) {
     const key = `${item.path}:${item.sha256}`;
     const check = checkDirFile(realDir, item.path, item.sha256);
     if (!check.ok) evidenceErrors.set(key, check.error);
+    else evidenceSnapshots.set(key, { relPath: item.path, realPath: check.realPath, size: check.size, mtimeMs: check.mtimeMs });
   }
 
   const envChecker: EnvChecker = {
@@ -277,8 +282,47 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       return reply('worktree-mismatch', { expected_repo: truncate80(storedState.run.repo), actual_repo: truncate80(gitInfo.repo), expected_branch: truncate80(storedState.run.branch), actual_branch: truncate80(gitInfo.branch) }, statePath, storedState.rev);
     }
 
+    for (const [key, snap] of evidenceSnapshots) {
+      try {
+        const curReal = realpathSync(resolve(realDir, snap.relPath));
+        const curSt = statSync(curReal);
+        if (curReal !== snap.realPath || !curSt.isFile() || curSt.size !== snap.size || curSt.mtimeMs !== snap.mtimeMs) {
+          evidenceErrors.set(key, 'evidence-changed');
+        }
+      } catch {
+        evidenceErrors.set(key, 'evidence-changed');
+      }
+    }
+
     const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString(), helperVersion);
     if (outcome.reason !== 'recorded') return reply(outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
+
+    const warnings: string[] = [];
+    let dirNames: string[] | null = null;
+    try {
+      dirNames = readdirSync(realDir);
+    } catch (err) {
+      warnings.push(`failed to list leftover temporary files: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);
+    }
+    if (dirNames !== null) {
+      let removedCount = 0;
+      const unlinkWarnings: string[] = [];
+      for (const name of dirNames) {
+        if (!TMP_FILE_RE.test(name)) continue;
+        const candidateTmp = join(realDir, name);
+        let st;
+        try { st = lstatSync(candidateTmp); } catch { continue; }
+        if (st.isSymbolicLink() || !st.isFile()) continue;
+        try {
+          unlinkSync(candidateTmp);
+          removedCount++;
+        } catch (err) {
+          unlinkWarnings.push(`failed to remove leftover temporary file: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);
+        }
+      }
+      if (removedCount > 0) warnings.push(`removed ${removedCount} leftover temporary file(s)`);
+      warnings.push(...unlinkWarnings);
+    }
 
     const serialized = Buffer.from(serializeState(outcome.state), 'utf8');
     tmpPath = join(realDir, `review-run-state.json.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
@@ -293,8 +337,15 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'write', path: truncate80(tmpPath) }, statePath, storedState?.rev ?? null);
     }
 
-    const detail = { ...outcome.detail };
-    try { unlinkSync(lockPath); } catch (err) { detail.warnings = [`failed to remove lock: ${(err as NodeJS.ErrnoException).code ?? 'error'}`]; }
+    try {
+      const dirFd = openSync(realDir, 'r');
+      try { fsyncSync(dirFd); } finally { closeSync(dirFd); }
+    } catch (err) {
+      warnings.push(`failed to sync directory: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);
+    }
+
+    try { unlinkSync(lockPath); } catch (err) { warnings.push(`failed to remove lock: ${(err as NodeJS.ErrnoException).code ?? 'error'}`); }
+    const detail = warnings.length > 0 ? { ...outcome.detail, warnings } : { ...outcome.detail };
     return reply('recorded', detail, statePath, outcome.state.rev);
   } finally {
     if (!committed) { if (tmpPath) unlinkQuiet(tmpPath); unlinkQuiet(lockPath); }

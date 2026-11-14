@@ -26,6 +26,15 @@ export const RENDER_SHAPES = {
   },
 } as const satisfies Record<string, { required: readonly string[]; optional: Record<string, unknown> }>;
 
+const EX_RENDER_SHA256 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+export const RENDER_EXAMPLES = {
+  'render (full-receipt)': { output: 'full-receipt', sections: [{ path: 'sections.md', sha256: EX_RENDER_SHA256 }] },
+  'render (comment)': { output: 'comment', full_receipt: { path: 'full-receipt-1.md', sha256: EX_RENDER_SHA256 } },
+  'render (body)': { output: 'body', full_receipt: { path: 'full-receipt-1.md', sha256: EX_RENDER_SHA256 }, summary: { path: 'summary.md', sha256: EX_RENDER_SHA256 }, comment_url: 'https://github.com/example/project/pull/1#issuecomment-1' },
+  'render (final)': { output: 'final', full_receipt: { path: 'full-receipt-1.md', sha256: EX_RENDER_SHA256 }, comment_file: { path: 'comment-receipt-1.md', sha256: EX_RENDER_SHA256 }, comment_url: 'https://github.com/example/project/pull/1#issuecomment-1' },
+} as const satisfies Record<keyof typeof RENDER_SHAPES, Record<string, unknown>>;
+
 const DELEGABLE_SPECIALISTS = new Set(['specialist:testing', 'specialist:maintainability', 'specialist:performance', 'specialist:simplification']);
 export const wirePart = (p: string): string => DELEGABLE_SPECIALISTS.has(p) ? p.slice('specialist:'.length) : p === 'native-adversarial' ? 'adversarial' : p;
 export const normalizeDir = (dir: string): string => (dir.length > 1 ? dir.replace(/\/+$/, '') : dir);
