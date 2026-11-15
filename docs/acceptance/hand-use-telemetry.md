@@ -168,6 +168,10 @@ installed harness binaries (`claude 2.1.325`, `grok 1.0.77`,
 below without raw marker values, session identifiers, account identifiers, or
 prompt text.
 
+The new session-ID-only Grok detection path is fixture-qualified only; no real
+post-fix by-hand readback is claimed here. No additional harness or launch path
+qualified for `user-directed`; the existing Claude readbacks above still stand.
+
 | Harness and version | Launch paths inspected | Environment markers present (name and shape) | Session log path pattern and structural keys | Harness detection status | By-hand classification status |
 |---|---|---|---|---|---|
 | `claude 2.1.325` | Terminal CLI (`claude`), Paseo SDK (`paseo 0.15.2` `ClaudeAgentClient` with `claude-code-entrypoint-env` plugin) | `CLAUDECODE="1"`, `CLAUDE_CODE_SESSION_ID` (`valid_session` UUID shape), `CLAUDE_CODE_ENTRYPOINT` (`"cli"` in terminal, `"Paseo"` in Paseo, `"sdk-ts"`/`"sdk-cli"` in SDK workers) | `$CLAUDE_CONFIG_DIR/projects/<slug>/<session>.jsonl`: per-turn `assistant` records with `timestamp`, `isSidechain`, `message.model`, `message.effort`, `message.stop_reason`, `message.content[].type`/`name`/`id`, and `user` records | Qualified (`agent="claude"`, `model` and `effort` detected) | Qualified (`CLAUDE_CODE_ENTRYPOINT=cli` → `user-directed`/`cli`; `CLAUDE_CODE_ENTRYPOINT=Paseo` → `user-directed`/`paseo-entrypoint`) |

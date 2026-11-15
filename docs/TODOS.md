@@ -2,6 +2,30 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: standalone Grok marker with an inner harness
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** Permanent nested-harness fixtures combine Claude and Codex markers, but not an inherited session-only Grok marker with an inner harness and competing or absent logs.
+- **Hypothesis (untested):** Extend the existing nested-marker fixture after re-verifying nearest-ancestor and latest-turn selection.
+- **Upstream severity:** INFORMATIONAL (outside review and coverage audit).
+- **Found in:** tests/telemetry.test.ts:1637.
+- **Evidence:** Read-only coverage audit; isolated synthetic nearest-ancestor and latest-turn probes passed. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/21134ed5` at `60a0df4` (2026-11-15), before a PR exists.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap).
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: invalid Grok session name with an active sibling log
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The invalid-marker fixture checks fingerprint creation without checking detection against a fresh sibling log; the missing-log fixture uses a valid session name.
+- **Hypothesis (untested):** Extend the existing Grok log fixture with a nonempty invalid session name and one fresh sibling, asserting detected Grok with null model and effort.
+- **Upstream severity:** INFORMATIONAL (coverage audit).
+- **Found in:** bin/lib/telemetry.py:1221 and tests/telemetry.test.ts:1867.
+- **Evidence:** Read-only coverage audit; an isolated invalid-name probe passed without using a sibling log. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/21134ed5` at `60a0df4` (2026-11-15), before a PR exists.
+- **Revisit when:** The next Track touches either tagged file.
+- **Effort:** ? (user triages in /roadmap).
+
 ### [review:files=bin/lib/telemetry.py|tests/telemetry-contract.test.ts] Grok sessions launched by hand are not detected
 
 - **Defect:** Grok sessions launched by hand (Paseo, owner's `kb-xps`, `0.94.1`) record `agent=null` and `run_mode_source=no-harness`; harness detection misses Grok.
