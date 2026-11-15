@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.94.1] - 2026-11-14
+
+### Changed
+
+- `bin/review-state record pass` now supplies omitted pass timestamps and preserves them on replay.
+- Attempt findings accept upstream `CRITICAL` and `INFORMATIONAL` severity labels.
+- Opted-in run-state refusals include bounded, escaped details from the first validation violation.
+
+### Fixed
+
+- Opted-in `/review-and-prep` runs that send `run-state=record` now keep recording when a pass leaves out its start or completion time or a finding carries upstream's critical or informational severity label, and a refused record's `Run state:` receipt line names the field the helper rejected.
+
 ## [0.94.0] - 2026-11-14
 
 ### Added
