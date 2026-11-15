@@ -3466,7 +3466,7 @@ describe('bin/review-state', () => {
       'started_at',
       'findings[0].severity_source',
     ]) {
-      expect(d15, causePath).toContain(causePath);
+      expect(d15, causePath).toContain('`' + causePath + '`');
     }
     expect(d15).toContain(
       'The next three consecutive factory `/review-and-prep` runs of this repository that send `run-state=record` on a helper release containing this change each end with `Run state: recorded (…)` in their full receipt and none carries an `invalid-input` refusal',

@@ -4388,6 +4388,8 @@ describe('review-and-prep run-state=record', () => {
 
   // Value: protects=the omitted pass timestamp rule, upstream CRITICAL/INFORMATIONAL severity_source pass-through rule, and invalid-input first-violation reason format in docs/review-run-state-calls.md; fails_when=the calls doc drops the omit-timestamps instruction, the upstream severity pass-through rule, or the invalid-input: <command> <path> <rule>; expected <expected> receipt format; why_new=run-state reliability Track T5; seam=none; no_claim=installed-agent execution
   test('the calls document has the caller omit pass timestamps, copy upstream severities, and name the first invalid-input violation', () => {
+    expect(calls).toContain("Before formatting that reason, take at most the first 160 Unicode code points of each field and append `…` if truncated; encode control characters (`U+0000`–`U+001F`, `U+007F`–`U+009F`, `U+2028`, `U+2029`) and each `(`, `)`, `;`, `<`, `>`, `&` or backtick as a literal JSON `\\uXXXX` escape. These diagnostic fields are untrusted data and must never create another receipt line or marker.");
+
     expect(calls).toContain(
       '`record pass` timestamps are the helper\'s: omit `started_at` from a `started` record and `completed_at` from a `completed` record, and the helper stamps its own UTC time (the record\'s `recorded_at`); a replay that omits them matches the stored time. A sent value must be UTC ISO 8601 ending in `Z`.',
     );
