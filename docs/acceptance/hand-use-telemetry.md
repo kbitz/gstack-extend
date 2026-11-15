@@ -81,10 +81,10 @@ binary versions remain unknown; the reported extension revisions are retained.
 
 | Date | Machine (host label) | OS | Harness and version | gstack-extend version | How launched | run_mode | run_mode_source |
 |---|---|---|---|---|---|---|---|
-| `2026-11-09T16:22:59Z` | `349c-kb-ms` | macOS (release `unknown`) | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.78.0` (`f036f50`) | By-hand terminal (`CLAUDE_CODE_ENTRYPOINT=cli`), stage `gstack-extend-upgrade`, PR `none` (non-PR stage; `report --by-host` `cells.user-directed.runs=1`, `outcomes.success=1`, `last_seen="2026-11-09T16:22:59Z"`) | `user-directed` | `cli` |
+| `2026-11-09T16:22:59Z` | `349c-kb-ms` | macOS (release `unknown`) | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.78.0` (`f036f50`) | Owner-reported by-hand terminal (`CLAUDE_CODE_ENTRYPOINT=cli`), stage `gstack-extend-upgrade`, PR `none` (non-PR stage; `report --by-host` `cells.user-directed.runs=1`, `outcomes.success=1`, `last_seen="2026-11-09T16:22:59Z"`) | `user-directed` | `cli` |
 | `2026-11-14T05:22:21Z` | `3771h-kb-xps` | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.93.1` (`36a66ad`) | Orchestrated interactive stage `project-spec` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR `none` (`report --by-host` `project-spec:orchestrated` `last_seen="2026-11-14T05:22:21Z"`) | `orchestrated` | `run-mode-env` |
 | `2026-11-15T01:20:55Z` | `3771h-kb-xps` | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "high"`; CLI version `unknown`) | `0.94.0` (`6df3b69`) | Orchestrated interactive stage `roadmap` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_SESSION_KIND=spawned`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR #251 (`report --by-host` `roadmap:orchestrated` `last_seen="2026-11-15T01:20:55Z"`) | `orchestrated` | `session-kind` |
-| `2026-11-15T02:49:37Z` | `kb-xps` | Omarchy Linux | `claude` (CLI version `unknown`) | `0.94.1` (`0c1c33f`) | By-hand Paseo app, stage `docs-ship`, PR #12 at head `e23b8e306951d97d1e1727e61648d6a09fcc8db1`; raw row `outcome="success"`, confirmed by the owner's local `report --by-host` paste on `2026-11-15` | `user-directed` | `paseo-entrypoint` |
+| `2026-11-15T02:49:37Z` | `kb-xps` | Omarchy Linux | `claude` (CLI version `unknown`) | `0.94.1` (`0c1c33f`) | By-hand Paseo app, stage `docs-ship`, PR #12; raw row `outcome="success"`, confirmed by the owner's local `report --by-host` paste on `2026-11-15` | `user-directed` | `paseo-entrypoint` |
 
 **Paseo readback provenance (`2026-11-15`):** The owner ran
 `gstack-extend-telemetry report --by-host` on `kb-xps` and pasted its output to
@@ -97,6 +97,8 @@ aggregate showed runs `3` (success `2`, blocked `1`), last seen
 `run_mode_source="paseo-entrypoint"`), this satisfies the local readback rule.
 The earlier review-machine report had stale synced `kb-xps` rows; qualification
 uses the owner's report on the machine itself, without requiring sync repair.
+The stage aggregate spans hosts; the paired raw row supplies this run's host
+and source attribution, rather than treating the aggregate counts as one run.
 
 ## Harnesses and entrypoints that read `unknown`
 

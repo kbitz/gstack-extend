@@ -115,7 +115,7 @@ not model acceptance.
 
 | ID | Status | Date | Host / Model | Delegate CLI / Model | Target Commit | Seeded Defect | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `PM1` | pending | `2026-11-15` (checked) | — | `claude-code` / qualified version and actual model | one head for both arms | optional, clearly labeled | Checked `2026-11-15`: no paired diff-only + tools-mode installed-agent run (`delegation: active (...; tools=...)` or non-empty `policy.delegation.tools`) is present in local review receipts or `review-run-state.json` records; external tools-mode run requested from the orchestrator manager on `2026-11-15` (Track 109B) is not yet delivered. Complete items 1–5 below once delivered. |
+| `PM1` | pending | `2026-11-15` (checked) | — | `claude-code` / qualified version and actual model | one head for both arms | optional, clearly labeled | Checked `2026-11-15`: no paired diff-only + tools-mode installed-agent run (`delegation: active (...; tools=...)` or non-empty `policy.delegation.tools`) is present in local review receipts or `review-run-state.json` records; external tools-mode run requested from the orchestrator manager on `2026-11-15` (the orchestrator's Track 109B) is not yet delivered. Complete items 1–5 below once delivered. |
 
 Run one orchestrated `/review-and-prep` twice on the **same head**: diff-only
 attacker delegation (also Track 72B PM2) and tools-mode adversarial delegation,

@@ -2708,6 +2708,7 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).not.toMatch(/extend-[0-9a-f]{8}-[0-9a-f]{4}-/i);
     expect(record).not.toMatch(/\/(?:home|Users)\/|~\//);
     expect(record).not.toMatch(/[0-9a-f]{64}\.jsonl|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i);
+    expect(record).not.toMatch(/\b[0-9a-f]{40}\b/i);
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
@@ -2723,12 +2724,12 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       const readbacks = rows.filter(cells => cells.length === 8
         && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(cells[0])
         && cells[0] >= '2026-11-09T15:58:00Z'
-        && cells[1] !== '' && cells[2] !== '' && /^claude\b/.test(cells[3])
+        && cells[1] !== '' && cells[2] !== '' && cells[3] !== ''
         && /\d+\.\d+\.\d+.*\([0-9a-f]{7,40}\)/.test(cells[4])
         && cells[5].includes('report --by-host')
         && !/\b(candidate|pending|unverified|awaiting)\b/i.test(cells[5]));
-      return readbacks.some(c => c[6] === 'user-directed' && c[7] === 'paseo-entrypoint')
-        && readbacks.some(c => c[6] === 'user-directed' && c[7] === 'cli')
+      return readbacks.some(c => /^claude\b/.test(c[3]) && c[6] === 'user-directed' && c[7] === 'paseo-entrypoint')
+        && readbacks.some(c => /^claude\b/.test(c[3]) && c[6] === 'user-directed' && c[7] === 'cli')
         && readbacks.some(c => c[6] === 'orchestrated'
           && ['run-mode-env', 'session-kind', 'work-item'].includes(c[7])
           && /\bstage (plan-track|roadmap|project-spec)\b/.test(c[5]));
@@ -2753,6 +2754,8 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     for (const source of ['run-mode-env', 'session-kind', 'work-item']) {
       expect(hasRequiredReadbacks([cli, paseo, row('orchestrated', source, 'project-spec')])).toBe(true);
     }
+    expect(hasRequiredReadbacks([cli, paseo, interactive.map((c, i) => i === 3 ? 'codex (CLI version unknown)' : c)])).toBe(true);
+    expect(hasRequiredReadbacks([cli.map((c, i) => i === 3 ? 'codex (CLI version unknown)' : c), paseo, interactive])).toBe(false);
     if (!hasRequiredReadbacks(recordedRows)) {
       expect(record).toMatch(/^Status: pending/m);
       expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
