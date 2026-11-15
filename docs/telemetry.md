@@ -164,6 +164,14 @@ are hashed with the values, so equal IDs from different harnesses do not collide
 No valid marker stores null. Debug mode names the markers that contributed and
 never prints their values.
 
+**Upgrade during an open stage:** This release starts including a valid
+`GROK_SESSION_ID` even without `GROK_AGENT=1`. If another harness marker was
+already part of the start fingerprint, upgrading before finish changes that
+fingerprint; an implicit finish of a non-resumable stage then refuses the old
+handoff as belonging to another session. Finish open stages before upgrading,
+or use the existing explicit `--session-id` finish with that stage's original
+telemetry session ID. Existing rows are not rewritten.
+
 A valid explicit `--session-id` keeps its previous behavior and is never
 age-bounded. An explicit `--start` alone does not bypass adoption. With a valid
 explicit `--session-id`, an explicit `--start` still supplies the time, and a

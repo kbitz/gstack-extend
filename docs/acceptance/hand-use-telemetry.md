@@ -112,8 +112,8 @@ were identified in the `2026-11-15` provider-parity audit:
    `bin/lib/telemetry.py` gated `GROK_SESSION_ID` on `GROK_AGENT=1` in both
    `detect()` and `harness_fingerprint()`, whereas `CODEX_THREAD_ID`,
    `CURSOR_CONVERSATION_ID`, and `CLAUDE_CODE_SESSION_ID` each stood on their
-   own. `detect()`, `harness_fingerprint()`, `grok_logs()`, `grok_turns()`, and
-   `route_for()` now treat any valid `GROK_SESSION_ID` (`valid_session`) as a
+   own. `detect()`, `harness_fingerprint()`, `grok_logs()`, and `grok_turns()`
+   now treat any valid `GROK_SESSION_ID` (`valid_session`) as a
    Grok session marker without requiring `GROK_AGENT=1` (while keeping a
    non-`"1"` `GROK_AGENT` profile name inert on its own). Any Grok launch path
    that exports `GROK_SESSION_ID` (including hook runners and MCP child servers,

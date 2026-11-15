@@ -1329,7 +1329,7 @@ def route_for(agent):
     entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if agent == "claude" else os.environ.get("CURSOR_INVOKED_AS", "") if agent == "cursor" else ""
     if agent == "claude" and entry.startswith("sdk-"):
         route = ROUTE_SDK
-    elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("CURSOR_AGENT") or os.environ.get("GROK_AGENT") == "1" or valid_session(os.environ.get("GROK_SESSION_ID")))) or (agent == "claude" and (os.environ.get("CURSOR_AGENT") or os.environ.get("CODEX_THREAD_ID"))) or (agent == "cursor" and (os.environ.get("CLAUDECODE") or os.environ.get("CODEX_THREAD_ID"))):
+    elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("CURSOR_AGENT") or os.environ.get("GROK_AGENT"))) or (agent == "claude" and (os.environ.get("CURSOR_AGENT") or os.environ.get("CODEX_THREAD_ID"))) or (agent == "cursor" and (os.environ.get("CLAUDECODE") or os.environ.get("CODEX_THREAD_ID"))):
         route = ROUTE_CLI
     else:
         route = ROUTE_UNKNOWN
