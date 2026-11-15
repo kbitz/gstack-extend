@@ -4397,7 +4397,7 @@ describe('review-and-prep run-state=record', () => {
       'Each finding\'s `severity_source` is its severity as the reporting part gave it: upstream\'s `CRITICAL` and `INFORMATIONAL` labels are sent as written and stored as `critical` and `info`; any other value is one of `P0`, `P1`, `P2`, `P3`, `critical`, `high`, `medium`, `low`, `info` or `unknown`.',
     );
     expect(calls).toContain(
-      'For `invalid-input`, `<reason>` is `invalid-input: <command> <path> <rule>; expected <expected>`, taken from the refusal\'s first `detail.violations` entry (for example `invalid-input: start continuation.continues invalid-value; expected required-when-prior_stops>=1`), so the receipt names the exact violated path and expected shape; every other refusal keeps its reason code.',
+      'For `invalid-input`, `<reason>` is `invalid-input: <command> <path> <rule>; expected <expected>`, taken from the refusal\'s first `detail.violations` entry (for example `invalid-input: start continuation.continues invalid-value; expected required-when-prior_stops\\u003E=1`), so the receipt names the exact violated path and expected shape; every other refusal keeps its reason code.',
     );
   });
 
