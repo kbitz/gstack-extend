@@ -2525,6 +2525,18 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'harness-unqualified',
       },
       {
+        name: 'Grok session id without GROK_AGENT=1 yields harness-unqualified',
+        env: { GROK_SESSION_ID: 'grok-session-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
+        expectedMode: 'unknown',
+        expectedSource: 'harness-unqualified',
+      },
+      {
+        name: 'Cursor under Paseo yields harness-unqualified',
+        env: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
+        expectedMode: 'unknown',
+        expectedSource: 'harness-unqualified',
+      },
+      {
         name: 'no harness yields no-harness',
         env: {},
         expectedMode: 'unknown',
@@ -2699,6 +2711,8 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       '## Readback procedure',
       '## Recorded runs',
       '## Harnesses and entrypoints that read `unknown`',
+      '## Per-harness launch inventory',
+      '## Drafted upstream requests',
     ]) {
       expect(record).toContain(h);
     }
@@ -2712,6 +2726,9 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
+    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `cursor` |']) {
+      expect(runModeSection).toContain(h);
+    }
     // Value: protects=qualification needs three real readbacks, not candidate labels; fails_when=incomplete evidence clears pending or complete evidence stays pending; why_new=Track 80D now has all three readbacks; seam=none
     const recordedRunsSection = section(record, '## Recorded runs');
     const recordedRows = recordedRunsSection.split('\n')
