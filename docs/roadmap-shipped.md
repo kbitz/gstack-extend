@@ -562,3 +562,26 @@ _tombstone: 76, 77, 78, 79_
 ### Track 77H: Stop the review's secret scan from flagging its own evidence paths and PR comment links ✓ Shipped (v0.91.0)
 - 2026-11-13: merged [PR #248](https://github.com/kbitz/gstack-extend/pull/248) (commit `c1a2326`, 13:15Z). It was never on the roadmap and carried no Track ID; it implemented the owner-approved card of this title ("Yes to all", 2026-11-12). This regeneration numbers it.
 - `bin/secret-dispositions scan-text` clears exact run-bound evidence paths and current-PR comment values while keeping every other scanner finding, fails closed on invalid input, and `/review-and-prep` routes its PR-text scans through it. The owner chose a full continuation ("2 yes"): demonstrated blockers fixed, the rest filed. Of its seventeen filed items this regeneration places six on Track 80B, defers one and kills ten.
+
+## Individual Track history
+_tombstone: 80, 81_
+
+### Track 80B: Requalify secret dispositions on the installed upstream and retire the consumer-named draft ✓ Shipped (v0.93.1)
+- 2026-11-14: merged [PR #252](https://github.com/kbitz/gstack-extend/pull/252) (commit `36a66ad`, 05:20Z); verified land-time Track 80B (its approved plan is titled with the card), original Group 80.
+- Its receipt reconciles all 32 plan rows as verified, with no deferral: `bin/secret-dispositions` reads both upstream added-line shapes, keeps fail-closed matching and refuses a binary finding by name; the five recorded test gaps have tests; the draft upstream issue and its pointer are deleted and the fixture no longer names the consumer project. The opt-in installed-scanner fixture uses the card's recorded-version alternative: one assertion still fails on the installed scanner, a limitation stated in `docs/secret-dispositions.md`.
+
+### Track 80A: Let opted-in reviews with delegated parts record their run state ✓ Shipped (v0.93.2)
+- 2026-11-14: merged [PR #253](https://github.com/kbitz/gstack-extend/pull/253) (commit `50c641f`, 14:13Z); verified land-time Track 80A (its approved plan is titled with the card), original Group 80.
+- Its receipt verifies 61 completion rows with none partial or deferred: `start` accepts the `delegate=` part names and stores the helper's part labels with the stored format unchanged, refuses an unknown part, gives `continuation` refusals a specific message, and the release notes disclose the fix.
+
+### Track 81A: Harden the review-state helper and show an example in each command's help ✓ Shipped (v0.94.0)
+- 2026-11-14: merged [PR #254](https://github.com/kbitz/gstack-extend/pull/254) (commit `6df3b69`, 22:09Z); verified land-time Track 81A (its receipt binds the plan to Track 81A's outcomes), original Group 81.
+- Its receipt verifies all 16 plan rows and one approved repair: the temporary-file sweep, the directory sync after rename, the evidence recheck under the lock (refusing `evidence-changed`), an `Example:` line for every request and render shape and for `show` and `export --help`, the D14 items marked done and D9's locators corrected; the owner approved reserving the helper's temporary names ("Yes", 2026-11-14).
+
+### Track 80E: Make orchestrated run-state recording succeed reliably ✓ Shipped (v0.94.1)
+- 2026-11-15: merged [PR #255](https://github.com/kbitz/gstack-extend/pull/255) (commit `0c1c33f`, 02:33Z). It was never on the roadmap and carried no Track ID; it implemented the orchestrator's owner-approved item of this title. This regeneration numbers it.
+- Its receipt verifies the plan: D15 classifies six observed refusal causes, `record pass` stamps an omitted start or completion time, upstream `CRITICAL` and `INFORMATIONAL` labels are accepted on input, and a refused record's `Run state:` line names the bounded, escaped violation. Its three-consecutive-recordings success target is measured after release; Track 82A restates it.
+
+### Track 80F: Recognize standalone Grok session markers ✓ Shipped (v0.94.3)
+- 2026-11-15: merged [PR #257](https://github.com/kbitz/gstack-extend/pull/257) (commit `957ea05`, 16:28Z). It was never on the roadmap and carried no Track ID; it implemented the orchestrator's owner-approved item "Harness detection and by-hand classification at parity across providers". This regeneration numbers it.
+- Its receipt verifies 28 completion rows: a valid standalone `GROK_SESSION_ID` now detects Grok for harness detection and start/finish pairing; Codex, Cursor and Grok each have a documented qualification status in the hand-use record; no non-Claude by-hand run is newly classified `user-directed`; terminals that carry neither Grok marker (Paseo's ACP terminals) stay undetected, with a drafted upstream request.
