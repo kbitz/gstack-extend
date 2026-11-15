@@ -33,10 +33,10 @@ export const REASONS = Object.fromEntries(REASON_TABLE.map((e) => [e.reason, e])
 
 export const REQUEST_SHAPES = {
   start: { required: ['run_id', 'base', 'plan', 'policy', 'continuation'], optional: { wtree: null, pr: null, gh_login: null, session_id: null } },
-  'record pass (started)': { required: ['pass_id', 'state', 'scope', 'cycle', 'coverage', 'candidate', 'required_voices', 'started_at'], optional: { delta_from: null } },
+  'record pass (started)': { required: ['pass_id', 'state', 'scope', 'cycle', 'coverage', 'candidate', 'required_voices'], optional: { delta_from: null, started_at: null } },
   'record pass (attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null } },
   'record pass (voice-complete)': { required: ['pass_id', 'state', 'voice_id'], optional: { selected_attempt_id: null, not_applicable: null } },
-  'record pass (completed)': { required: ['pass_id', 'state', 'completed_at'], optional: {} },
+  'record pass (completed)': { required: ['pass_id', 'state'], optional: { completed_at: null } },
   'record correction': { required: ['correction_id', 'target'], optional: { adjudication: null, resolution: null, receipt_class: null, fixed_in: null, supersedes: null } },
   'record gate': { required: ['gate_id', 'name', 'result', 'candidate'], optional: { reason: null, details: {}, evidence: [] } },
   'record audit': { required: ['audit_id', 'name', 'result', 'details', 'candidate'], optional: { evidence: [] } },
@@ -180,6 +180,11 @@ const DELEGATE_PART_LABELS: ReadonlyMap<string, string> = new Map([
   ['simplification', 'specialist:simplification'],
   ['adversarial', 'native-adversarial'],
   ['red-team', 'red-team'],
+]);
+// Keys mirror upstream severity labels in src/review-delegate/delegate.ts (line 246).
+const UPSTREAM_SEVERITY_LABELS: ReadonlyMap<string, string> = new Map([
+  ['CRITICAL', 'critical'],
+  ['INFORMATIONAL', 'info'],
 ]);
 const toPartLabel = (v: unknown): string | null =>
   typeof v === 'string' ? (DELEGATE_PART_LABELS.get(v) ?? (isPart(v) ? v : null)) : null;
@@ -456,7 +461,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     }
 
     if (pState === 'started') {
-      const c = checkShape(rawInput, 'record pass (started)', { pass_id: R.uuid, scope: R.enum(ENUMS.passScope), cycle: R.posInt, coverage: R.enum(ENUMS.passCoverage), delta_from: R.hex40N, started_at: R.isoZ }, v);
+      const c = checkShape(rawInput, 'record pass (started)', { pass_id: R.uuid, scope: R.enum(ENUMS.passScope), cycle: R.posInt, coverage: R.enum(ENUMS.passCoverage), delta_from: R.hex40N, started_at: R.isoZN }, v);
       if ((c.coverage === 'delta' && c.delta_from === null) || (c.coverage === 'full' && c.delta_from !== null)) {
         v.push({ path: 'delta_from', rule: 'invalid-value', expected: c.coverage === 'delta' ? 'required-when-delta' : 'null-when-full' });
       }
@@ -466,11 +471,11 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       }
       if (v.length > 0) return invalid(rev, v);
 
-      const canon = { pass_id: c.pass_id as string, state: 'started' as const, scope: c.scope as string, cycle: c.cycle as number, coverage: c.coverage as string, delta_from: c.delta_from as string | null, candidate: cand, required_voices: rawInput.required_voices as string[], started_at: c.started_at as string };
+      const canon = { pass_id: c.pass_id as string, state: 'started' as const, scope: c.scope as string, cycle: c.cycle as number, coverage: c.coverage as string, delta_from: c.delta_from as string | null, candidate: cand, required_voices: rawInput.required_voices as string[], started_at: c.started_at as string | null };
       const existing = state?.passes.find((p) => p.pass_id === canon.pass_id);
       if (existing && state) {
         const stored = { pass_id: existing.pass_id, state: 'started' as const, scope: existing.scope, cycle: existing.cycle, coverage: existing.coverage, delta_from: existing.delta_from, candidate: { commit: existing.candidate.commit, base: existing.candidate.base, wtree: existing.candidate.wtree }, required_voices: existing.required_voices, started_at: existing.started_at };
-        return replayOrConflict(state.rev, canon.pass_id, stored, canon, existing.candidate.commit, existing.candidate.tree, existing.recorded_at);
+        return replayOrConflict(state.rev, canon.pass_id, stored, { ...canon, started_at: canon.started_at ?? existing.started_at }, existing.candidate.commit, existing.candidate.tree, existing.recorded_at);
       }
       const life = checkLifecycle();
       if (life) return life;
@@ -481,7 +486,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       const pass: PassRecord = {
         pass_id: canon.pass_id, segment: activeSegment, scope: canon.scope, cycle: canon.cycle, coverage: canon.coverage, delta_from: canon.delta_from,
         candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree },
-        required_voices: canon.required_voices, started_at: canon.started_at, completed_at: null, state: 'open',
+        required_voices: canon.required_voices, started_at: canon.started_at ?? nowIso, completed_at: null, state: 'open',
         voices: canon.required_voices.map((vid) => ({ voice_id: vid, part: null, required: true, not_applicable: null, selected_attempt_id: null, attempts: [], recorded_at: null })),
         recorded_at: nowIso, completed_recorded_at: null,
       };
@@ -514,7 +519,9 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
           rawInput.findings.forEach((f, idx) => {
             const fp = `findings[${idx}]`;
             if (!isObj(f)) { v.push({ path: fp, rule: 'invalid-type', expected: 'object' }); return; }
-            const fc = validateFields(f, ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'found_by'], { duplicate_of: null, attribution_reason: null, receipt_class: null }, {
+            const mappedSev = typeof f.severity_source === 'string' ? UPSTREAM_SEVERITY_LABELS.get(f.severity_source) : undefined;
+            const fInput = mappedSev !== undefined ? { ...f, severity_source: mappedSev } : f;
+            const fc = validateFields(fInput, ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'found_by'], { duplicate_of: null, attribution_reason: null, receipt_class: null }, {
               finding_id: R.safeId, severity_source: R.enum(ENUMS.severity), severity_rubric: R.enum(ENUMS.rubric),
               adjudication: R.enum(ENUMS.adjudication), resolution: R.enum(ENUMS.resolution), duplicate_of: R.safeIdN,
               attribution_reason: R.enumN(ENUMS.attrReason), receipt_class: R.enumN(ENUMS.receiptClass),
@@ -591,17 +598,17 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
     }
 
-    const c = checkShape(rawInput, 'record pass (completed)', { pass_id: R.uuid, completed_at: R.isoZ }, v);
+    const c = checkShape(rawInput, 'record pass (completed)', { pass_id: R.uuid, completed_at: R.isoZN }, v);
     if (v.length > 0) return invalid(rev, v);
-    const canon = { pass_id: c.pass_id as string, state: 'completed' as const, completed_at: c.completed_at as string };
+    const canon = { pass_id: c.pass_id as string, state: 'completed' as const, completed_at: c.completed_at as string | null };
     const pass = state?.passes.find((p) => p.pass_id === canon.pass_id);
     if (pass && pass.state === 'completed' && state) {
-      return replayOrConflict(state.rev, canon.pass_id, { pass_id: pass.pass_id, state: 'completed' as const, completed_at: pass.completed_at }, canon, pass.candidate.commit, pass.candidate.tree, pass.completed_recorded_at!);
+      return replayOrConflict(state.rev, canon.pass_id, { pass_id: pass.pass_id, state: 'completed' as const, completed_at: pass.completed_at }, { ...canon, completed_at: canon.completed_at ?? pass.completed_at }, pass.candidate.commit, pass.candidate.tree, pass.completed_recorded_at!);
     }
     const life = checkLifecycle();
     if (life) return life;
     if (!pass) return invalid(state!.rev, [{ path: 'pass_id', rule: 'invalid-reference', expected: 'existing-pass' }]);
-    return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, completed_at: canon.completed_at, state: 'completed' as const, completed_recorded_at: nowIso } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
+    return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, completed_at: canon.completed_at ?? nowIso, state: 'completed' as const, completed_recorded_at: nowIso } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
   }
 
   if (command === 'record correction') {
