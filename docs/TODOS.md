@@ -2,6 +2,37 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Optional candidate tree malformed and null boundaries
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Add table rows for null and malformed optional tree values across pass/gate/audit; no defect demonstrated.
+- **Hypothesis (untested):** Re-verify behavior first, then extend the existing contract fixture or retained agent-eval evidence.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts
+- **Evidence:** Read-only coverage audit, 21 of 24 paths covered; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep before PR creation at `112c39c` (2026-11-15). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Malformed optional runner diagnostics
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Exercise wrong types for dispatched, timestamps, parse, verdict and findings, plus omission/null timestamp consistency; no defect demonstrated.
+- **Hypothesis (untested):** Re-verify behavior first, then extend the existing contract fixture or retained agent-eval evidence.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/state.ts
+- **Evidence:** Read-only coverage audit, 21 of 24 paths covered; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep before PR creation at `112c39c` (2026-11-15). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/implement.md|src/review-state/state.ts] Test gap: Installed-agent handoff and delegated recording evaluation
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Evaluate zero-count and long-checklist handoffs in an installed agent and retain the documented next-three-run recording measurement; static grammar tests and fixtures do not establish agent compliance.
+- **Hypothesis (untested):** Re-verify behavior first, then extend the existing contract fixture or retained agent-eval evidence.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/implement.md
+- **Evidence:** Read-only coverage audit, 21 of 24 paths covered; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep before PR creation at `112c39c` (2026-11-15). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
