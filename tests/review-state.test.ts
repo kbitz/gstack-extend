@@ -3,12 +3,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
-import { PARTS } from '../src/review-delegate/delegate.ts';
+import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
 import { FIELD_FMT, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
-import { ADDITIVE_V1_DEFAULTS, applyCommand, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, WTREE_RE, type CommandName, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
+import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, WTREE_RE, type CommandName, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
@@ -2775,7 +2775,7 @@ describe('bin/review-state', () => {
     for (const [key, shape] of Object.entries(RENDER_SHAPES)) {
       checkShapeHelp(['render', '--help'], key, shape, RENDER_EXAMPLES[key as keyof typeof RENDER_SHAPES]);
     }
-    expect(runCli(['record', '--help']).out.match(/^ {2}Example: /gm)?.length).toBe(7);
+    expect(runCli(['record', '--help']).out.match(/^ {2}Example: /gm)?.length).toBe(8);
     expect(runCli(['render', '--help']).out.match(/^ {2}Example: /gm)?.length).toBe(4);
 
     for (const [cmd, allowedFlags] of [['show', new Set(['--dir', '--base', '--wtree'])], ['export', new Set(['--dir'])]] as const) {
@@ -3450,8 +3450,285 @@ describe('bin/review-state', () => {
     }
   });
 
-  // Value: protects=D15 classification table and three-consecutive-run success target in docs/designs/review-run-state.md; fails_when=D15 drops any of the six observed cause paths or the three-consecutive-run target; why_new=reliability Track T6; seam=design doc contract
-  test('design doc D15 records all six observed cause paths and the three-consecutive-run success target', () => {
+  // Value: protects=C7 (runner parts[] entry accepted as delegate while 10-key delegate without call_id is refused, plus PART_KEYS parity) and C8 (candidate.tree accepted when equal to commit tree and refused with tree-mismatch otherwise across pass started, gate, and audit); fails_when=a runner parts[] entry is refused or stored with extra keys, a delegate without call_id records, PART_KEYS drifts from STATE_KEYS.delegate U DELEGATE_RUNNER_EXTRA_KEYS, or candidate.tree fails to record/replay or accepts a mismatched tree; why_new=0.94.x C7/C8 regressions (T1, T2); seam=CLI, state serialization, and render formatters
+  test('replays the 0.94.x delegated-run refusals (C7, C8)', () => {
+    // Criterion 8: every key in PART_KEYS is in STATE_KEYS.delegate or DELEGATE_RUNNER_EXTRA_KEYS.
+    const storedDelegateSet = new Set<string>(STATE_KEYS.delegate);
+    const extraDelegateSet = new Set<string>(DELEGATE_RUNNER_EXTRA_KEYS);
+    for (const k of DELEGATE_RUNNER_EXTRA_KEYS) expect(storedDelegateSet.has(k), k).toBe(false);
+    for (const k of PART_KEYS) {
+      expect(storedDelegateSet.has(k) || extraDelegateSet.has(k), `PART_KEYS.${k}`).toBe(true);
+    }
+    expect(new Set([...STATE_KEYS.delegate, ...DELEGATE_RUNNER_EXTRA_KEYS])).toEqual(new Set(PART_KEYS));
+
+    // C8 minimal shape: start with active delegation, then record pass started with candidate.tree and 12 required_voices.
+    const c8Start = mkStart(801, {
+      policy: {
+        value: REAL_POLICY_LINE,
+        source: 'caller prompt',
+        delegation: {
+          status: 'active',
+          parts: ['maintainability', 'adversarial', 'red-team'],
+          config: sha256('c8-cfg'),
+          tools: [],
+        },
+      },
+      continuation: { prior_stops: 0, max: 1, continues: null },
+      pr: null,
+    });
+    const c8Voices = [
+      'core',
+      'specialist:testing',
+      'specialist:maintainability',
+      'specialist:security',
+      'specialist:performance',
+      'specialist:simplification',
+      'specialist:state-machines',
+      'red-team',
+      'native-adversarial',
+      'outside:challenge',
+      'outside:structured',
+      'qa',
+    ];
+    expect(c8Voices).toHaveLength(12);
+
+    const dTree = newDir();
+    const dNoTree = newDir();
+    expect(callCmd(dTree, 'start', c8Start).json.reason).toBe('recorded');
+    expect(callCmd(dNoTree, 'start', c8Start).json.reason).toBe('recorded');
+
+    const passWithTree = {
+      pass_id: uid(810),
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      delta_from: null,
+      candidate: { commit: headSha, tree: treeSha, base: baseSha },
+      required_voices: c8Voices,
+      started_at: '2026-11-15T07:50:19Z',
+    };
+    const passWithoutTree = {
+      ...passWithTree,
+      candidate: { commit: headSha, base: baseSha },
+    };
+    expect(callCmd(dTree, 'record pass', passWithTree, { file: 'c8-pass-tree.json' }).json.reason).toBe('recorded');
+    expect(callCmd(dNoTree, 'record pass', passWithoutTree).json.reason).toBe('recorded');
+
+    const normTimes = (raw: string): string => {
+      const s = JSON.parse(raw) as ReviewRunState;
+      const t = '2026-11-15T07:50:00Z';
+      s.run.started_at = t;
+      s.segments[0]!.started_at = t;
+      s.passes[0]!.recorded_at = t;
+      for (const vo of s.passes[0]!.voices) {
+        if (vo.recorded_at !== null) vo.recorded_at = t;
+        for (const a of vo.attempts) a.recorded_at = t;
+      }
+      return serializeState(s);
+    };
+    const treeStatePath = join(dTree, 'review-run-state.json');
+    const noTreeStatePath = join(dNoTree, 'review-run-state.json');
+    expect(normTimes(readFileSync(treeStatePath, 'utf8'))).toBe(normTimes(readFileSync(noTreeStatePath, 'utf8')));
+
+    // Replay with equal tree -> replayed; replay with wrong tree -> invalid-input (tree-mismatch), state unchanged.
+    const beforePassReplayBytes = readFileSync(treeStatePath, 'utf8');
+    expect(runCli(['record', 'pass', '--dir', dTree, '--input', join(dTree, 'c8-pass-tree.json')]).json.reason).toBe('replayed');
+    const rReplayWrongTree = callCmd(dTree, 'record pass', {
+      ...passWithTree,
+      candidate: { commit: headSha, tree: baseSha, base: baseSha },
+    });
+    expect(rReplayWrongTree.json.reason).toBe('invalid-input');
+    expect(rReplayWrongTree.json.detail.violations).toEqual([
+      { path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' },
+    ]);
+    expect(readFileSync(treeStatePath, 'utf8')).toBe(beforePassReplayBytes);
+
+    // New pass with wrong 40-hex tree -> invalid-input (tree-mismatch), state bytes unchanged.
+    const rNewWrongTree = callCmd(dTree, 'record pass', {
+      ...passWithTree,
+      pass_id: uid(811),
+      candidate: { commit: headSha, tree: baseSha, base: baseSha },
+    });
+    expect(rNewWrongTree.json.reason).toBe('invalid-input');
+    expect(rNewWrongTree.json.detail.violations).toEqual([
+      { path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' },
+    ]);
+    expect(readFileSync(treeStatePath, 'utf8')).toBe(beforePassReplayBytes);
+
+    // record gate and record audit with equal candidate.tree -> recorded; with wrong tree -> tree-mismatch.
+    const gateOk = {
+      gate_id: uid(812),
+      name: 'tests',
+      result: 'passed',
+      candidate: { commit: headSha, tree: treeSha, base: baseSha },
+    };
+    expect(callCmd(dTree, 'record gate', gateOk).json.reason).toBe('recorded');
+    expect(callCmd(dTree, 'record gate', gateOk).json.reason).toBe('replayed');
+    expect(callCmd(dTree, 'record gate', { ...gateOk, candidate: { commit: headSha, tree: baseSha, base: baseSha } }).json.detail.violations).toEqual([
+      { path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' },
+    ]);
+    expect(callCmd(dTree, 'record gate', { ...gateOk, gate_id: uid(813), candidate: { commit: headSha, tree: baseSha, base: baseSha } }).json.detail.violations).toEqual([
+      { path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' },
+    ]);
+
+    const auditOk = {
+      audit_id: uid(814),
+      name: 'coverage',
+      result: 'passed',
+      details: { pct: 95, threshold: 90 },
+      candidate: { commit: headSha, tree: treeSha, base: baseSha },
+    };
+    expect(callCmd(dTree, 'record audit', auditOk).json.reason).toBe('recorded');
+    expect(callCmd(dTree, 'record audit', auditOk).json.reason).toBe('replayed');
+    expect(callCmd(dTree, 'record audit', { ...auditOk, candidate: { commit: headSha, tree: baseSha, base: baseSha } }).json.detail.violations).toEqual([
+      { path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' },
+    ]);
+    expect(callCmd(dTree, 'record audit', { ...auditOk, audit_id: uid(815), candidate: { commit: headSha, tree: baseSha, base: baseSha } }).json.detail.violations).toEqual([
+      { path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' },
+    ]);
+
+    // C7 minimal shape: observed attempt shape (delegate with 10 keys, missing call_id) -> refused at delegate.call_id.
+    const dRow = newDir();
+    const d11 = newDir();
+    for (const dir of [dRow, d11]) {
+      expect(callCmd(dir, 'start', c8Start).json.reason).toBe('recorded');
+      expect(callCmd(dir, 'record pass', {
+        pass_id: uid(820),
+        state: 'started',
+        scope: 'local',
+        cycle: 1,
+        coverage: 'full',
+        candidate: { commit: headSha, base: baseSha },
+        required_voices: ['core', 'maintainability', 'native-adversarial', 'red-team'],
+        started_at: '2026-11-15T13:58:00Z',
+      }).json.reason).toBe('recorded');
+    }
+
+    const rowStatePath = join(dRow, 'review-run-state.json');
+    const beforeAttemptBytes = readFileSync(rowStatePath, 'utf8');
+    const tenKeyDelegate = {
+      provider: 'antigravity-1',
+      model: 'gemini-4-argon-high',
+      outcome: 'credited',
+      fallback_reason: null,
+      replay: false,
+      wall_ms: 28644,
+      input_tokens: 26808,
+      output_tokens: 2005,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+    };
+    const baseMaintAttempt = {
+      pass_id: uid(820),
+      state: 'attempt',
+      voice_id: 'maintainability',
+      part: 'specialist:maintainability',
+      attempt_id: uid(821),
+      outcome: 'completed',
+      findings: [],
+      dispatched_at: '2026-11-15T13:58:49.618Z',
+      returned_at: '2026-11-15T13:59:18.262Z',
+    };
+    const rMissingCallId = callCmd(dRow, 'record pass', {
+      ...baseMaintAttempt,
+      delegate: tenKeyDelegate,
+    });
+    expect(rMissingCallId.json.reason).toBe('invalid-input');
+    expect(rMissingCallId.json.detail.violations[0]).toEqual({
+      path: 'delegate.call_id',
+      rule: 'missing-key',
+      expected: 'call_id',
+    });
+    expect(readFileSync(rowStatePath, 'utf8')).toBe(beforeAttemptBytes);
+
+    // Whole runner parts[] entry (all 18 PART_KEYS) -> recorded, projected to 11 keys, replays, and matches 11-key state and rendered line.
+    const callId = sha256('c7-maint-call');
+    const runnerEntry = {
+      part: 'maintainability',
+      provider: 'antigravity-1',
+      model: 'gemini-4-argon-high',
+      call_id: callId,
+      replay: false,
+      dispatched: true,
+      dispatched_at: '2026-11-15T13:58:49.618Z',
+      returned_at: '2026-11-15T13:59:18.262Z',
+      wall_ms: 28644,
+      input_tokens: 26808,
+      output_tokens: 2005,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+      parse: 'valid',
+      verdict: 'clean',
+      outcome: 'credited',
+      fallback_reason: null,
+      findings: [],
+    };
+    expect(Object.keys(runnerEntry)).toEqual([...PART_KEYS]);
+    const elevenKeyDelegate = { ...tenKeyDelegate, call_id: callId };
+
+    expect(callCmd(dRow, 'record pass', { ...baseMaintAttempt, delegate: runnerEntry }, { file: 'c7-row.json' }).json.reason).toBe('recorded');
+    expect(runCli(['record', 'pass', '--dir', dRow, '--input', join(dRow, 'c7-row.json')]).json.reason).toBe('replayed');
+    expect(callCmd(dRow, 'record pass', { ...baseMaintAttempt, delegate: elevenKeyDelegate }).json.reason).toBe('replayed');
+
+    expect(callCmd(d11, 'record pass', { ...baseMaintAttempt, delegate: elevenKeyDelegate }).json.reason).toBe('recorded');
+    for (const dir of [dRow, d11]) {
+      expect(callCmd(dir, 'record pass', {
+        pass_id: uid(820),
+        state: 'voice-complete',
+        voice_id: 'maintainability',
+        selected_attempt_id: uid(821),
+      }).json.reason).toBe('recorded');
+    }
+
+    const stRow = JSON.parse(readFileSync(rowStatePath, 'utf8')) as ReviewRunState;
+    const st11 = JSON.parse(readFileSync(join(d11, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const storedDelegate = stRow.passes[0]!.voices.find((v) => v.voice_id === 'maintainability')!.attempts[0]!.delegate!;
+    expect(Object.keys(storedDelegate)).toEqual([...STATE_KEYS.delegate]);
+    expect(storedDelegate).toEqual(elevenKeyDelegate);
+    expect(normTimes(serializeState(stRow))).toBe(normTimes(serializeState(st11)));
+    const linesRow = FIELD_FMT.delegatedParts({ state: stRow } as unknown as RenderCtx);
+    const lines11 = FIELD_FMT.delegatedParts({ state: st11 } as unknown as RenderCtx);
+    expect(linesRow).toEqual(lines11);
+    expect(linesRow).toEqual([
+      `Delegated part: maintainability; provider=antigravity-1; model=gemini-4-argon-high; outcome=credited; reason=none; wall_ms=28644; input_tokens=26808; output_tokens=2005; cache_read_input_tokens=0; cache_creation_input_tokens=unknown; findings=0; call=${callId}`,
+    ]);
+
+    // Meaning checks on runner extras: mismatched part, mismatched dispatched_at/returned_at, and unknown key.
+    const beforeMeaningBytes = readFileSync(rowStatePath, 'utf8');
+    for (const [override, expectedViolation] of [
+      [
+        { part: 'adversarial' },
+        { path: 'delegate.part', rule: 'invalid-value', expected: 'matching-attempt-part' },
+      ],
+      [
+        { dispatched_at: '2026-11-15T13:58:00.000Z' },
+        { path: 'delegate.dispatched_at', rule: 'invalid-value', expected: 'equal-to-attempt-dispatched_at' },
+      ],
+      [
+        { returned_at: '2026-11-15T13:59:59.000Z' },
+        { path: 'delegate.returned_at', rule: 'invalid-value', expected: 'equal-to-attempt-returned_at' },
+      ],
+      [
+        { extra_runner_field: true },
+        { path: 'delegate.extra_runner_field', rule: 'unknown-key', expected: 'no unknown keys' },
+      ],
+    ] as const) {
+      const rBad = callCmd(dRow, 'record pass', {
+        ...baseMaintAttempt,
+        voice_id: 'native-adversarial',
+        part: 'specialist:maintainability',
+        attempt_id: uid(822),
+        delegate: { ...runnerEntry, ...override },
+      });
+      expect(rBad.json.reason).toBe('invalid-input');
+      expect(rBad.json.detail.violations).toContainEqual(expectedViolation);
+      expect(readFileSync(rowStatePath, 'utf8')).toBe(beforeMeaningBytes);
+    }
+  });
+
+  // Value: protects=D15 classification table and three-consecutive-run success target in docs/designs/review-run-state.md; fails_when=D15 drops any of the eight observed cause paths or the original/restated three-consecutive-run target; why_new=reliability Track T6 + C7/C8 T3; seam=design doc contract
+  test('design doc D15 records all eight observed cause paths and the restated three-consecutive-run success target', () => {
     const design = readFileSync(DESIGN_PATH, 'utf8');
     const d15Start = design.indexOf('## D15.');
     const changeLogStart = design.indexOf('## Change log');
@@ -3465,11 +3742,16 @@ describe('bin/review-state', () => {
       'continuation.continues',
       'started_at',
       'findings[0].severity_source',
+      'delegate.call_id',
+      'candidate.tree',
     ]) {
       expect(d15, causePath).toContain('`' + causePath + '`');
     }
     expect(d15).toContain(
       'The next three consecutive factory `/review-and-prep` runs of this repository that send `run-state=record` on a helper release containing this change each end with `Run state: recorded (…)` in their full receipt and none carries an `invalid-input` refusal',
+    );
+    expect(d15).toContain(
+      "the next three consecutive factory-orchestrated `/review-and-prep` runs that send `run-state=record` with an active `delegate=` value, on a helper release containing C7's and C8's fixes, each end with `Run state: recorded (…)` in their full receipt, record their delegated parts' attempts, and carry no `invalid-input` refusal",
     );
   });
 });

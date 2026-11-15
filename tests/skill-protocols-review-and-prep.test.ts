@@ -4401,6 +4401,19 @@ describe('review-and-prep run-state=record', () => {
     );
   });
 
+  // Value: protects=the delegate parts[] entry instruction, call_id requirement, no-call fallback rule, and candidate.tree rule in docs/review-run-state-calls.md; fails_when=the calls doc drops the unchanged parts[] entry rule, the call_id requirement, the null wall_ms/token fallback instruction, or the candidate.tree tree-mismatch rule; why_new=0.94.x C7/C8 T3; seam=none; no_claim=installed-agent execution
+  test('the calls document specifies sending the delegate runner parts[] entry with call_id, the no-call fallback rule, and optional candidate.tree', () => {
+    expect(calls).toContain(
+      "A delegated attempt's `delegate` is the `review-delegate run` output's `parts[]` entry for that part, sent unchanged. The helper stores its `provider`, `model`, `outcome`, `fallback_reason`, `replay`, `wall_ms`, four token counts and `call_id`. It checks that the entry's `part` names the attempt's `part` and that its `dispatched_at` and `returned_at` agree with the attempt's when both are set, and it does not store `dispatched`, `parse`, `verdict` or `findings`. An object holding only the eleven stored keys is also accepted, but never without `call_id`, which names the saved call and the `Delegated part:` line's `call=` segment.",
+    );
+    expect(calls).toContain(
+      'An entry with null `wall_ms` or token counts (a part the runner fell back on without making a call) cannot be stored yet. Record that attempt as `failed` without `delegate`, and write any output that would then contradict the run inline, as **Receipts and handoffs** says.',
+    );
+    expect(calls).toContain(
+      'A `candidate` may also carry `tree`, the commit\'s Git tree. The helper stores the tree it resolves from `commit` and refuses a sent `tree` that differs (`candidate.tree` `tree-mismatch`).',
+    );
+  });
+
   // Value: protects=the Resume section in docs/review-run-state-calls.md, the skill's single-paragraph resume pointer, and D14's part 2 placement in docs/designs/review-run-state.md; fails_when=a checkpoint row, mismatch rule, 113A recovery rule, or D14 placement drifts; why_new=Track 79A part 1 T3/T4; seam=none; no_claim=installed-agent execution
   test('the calls document defines the Resume procedure for every checkpoint kind and the design doc re-places every inherited D14 item', () => {
     const fixedStart = callsRaw.indexOf('## Fixed points');

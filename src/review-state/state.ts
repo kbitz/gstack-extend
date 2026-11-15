@@ -35,6 +35,7 @@ export const REQUEST_SHAPES = {
   start: { required: ['run_id', 'base', 'plan', 'policy', 'continuation'], optional: { wtree: null, pr: null, gh_login: null, session_id: null } },
   'record pass (started)': { required: ['pass_id', 'state', 'scope', 'cycle', 'coverage', 'candidate', 'required_voices'], optional: { delta_from: null, started_at: null } },
   'record pass (attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null } },
+  'record pass (delegated attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null } },
   'record pass (voice-complete)': { required: ['pass_id', 'state', 'voice_id'], optional: { selected_attempt_id: null, not_applicable: null } },
   'record pass (completed)': { required: ['pass_id', 'state'], optional: { completed_at: null } },
   'record correction': { required: ['correction_id', 'target'], optional: { adjudication: null, resolution: null, receipt_class: null, fixed_in: null, supersedes: null } },
@@ -52,6 +53,7 @@ export const REQUEST_EXAMPLES = {
   start: { run_id: '019315e0-0000-7000-8000-000000000001', base: EX_BASE, plan: { ref: 'docs/plan.md', sha256: EX_SHA256 }, policy: { value: null, source: 'none supplied' }, continuation: { prior_stops: 0, max: 1, continues: null } },
   'record pass (started)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'started', scope: 'local', cycle: 1, coverage: 'full', candidate: { commit: EX_COMMIT, base: EX_BASE }, required_voices: ['core'], started_at: '2026-11-10T18:00:00Z' },
   'record pass (attempt)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'attempt', voice_id: 'core', part: 'core', attempt_id: '019315e0-0000-7000-8000-000000000003', outcome: 'completed', findings: [{ finding_id: 'F-1', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] }] },
+  'record pass (delegated attempt)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'attempt', voice_id: 'maintainability', part: 'specialist:maintainability', attempt_id: '019315e0-0000-7000-8000-000000000008', outcome: 'completed', delegate: { part: 'maintainability', provider: 'claude', model: 'claude-sonnet-4-6', call_id: EX_SHA256, replay: false, dispatched: true, dispatched_at: '2026-11-10T18:01:00Z', returned_at: '2026-11-10T18:02:00Z', wall_ms: 1200, input_tokens: 400, output_tokens: 120, cache_read_input_tokens: 0, cache_creation_input_tokens: null, parse: 'valid', verdict: 'clean', outcome: 'credited', fallback_reason: null, findings: [] }, findings: [] },
   'record pass (voice-complete)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'voice-complete', voice_id: 'core', selected_attempt_id: '019315e0-0000-7000-8000-000000000003' },
   'record pass (completed)': { pass_id: '019315e0-0000-7000-8000-000000000002', state: 'completed', completed_at: '2026-11-10T18:05:00Z' },
   'record correction': { correction_id: '019315e0-0000-7000-8000-000000000004', target: { pass_id: '019315e0-0000-7000-8000-000000000002', voice_id: 'core', attempt_id: '019315e0-0000-7000-8000-000000000003', finding_id: 'F-1' }, resolution: 'fixed', fixed_in: EX_COMMIT },
@@ -84,6 +86,8 @@ export const STATE_KEYS = {
   finish: ['outcome', 'stop_reason', 'head', 'tree', 'base', 'delta_base', 'stop_count', 'wtree', 'review_restriction_resolved', 'readiness_confirmed_at', 'full_review_evidence', 'user_facing_changes', 'evidence', 'finished_at'],
   evidence: ['path', 'sha256'],
 } as const;
+
+export const DELEGATE_RUNNER_EXTRA_KEYS = ['part', 'dispatched', 'dispatched_at', 'returned_at', 'parse', 'verdict', 'findings'] as const;
 
 export const ADDITIVE_V1_DEFAULTS = {
   root: { writer: null },
@@ -172,6 +176,7 @@ export const isNonNegInt = (v: unknown): v is number => typeof v === 'number' &&
 export const isPosInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
 export const isIsoZ = (v: unknown): v is string => typeof v === 'string' && ISO_Z_RE.test(v) && Number.isFinite(Date.parse(v));
 export const isPart = (v: unknown): v is string => typeof v === 'string' && PART_RE.test(v) && v !== 'specialist:red-team';
+export const isVoice = (v: unknown): v is string => typeof v === 'string' && (VOICE_RE.test(v) || isPart(v));
 // Keys mirror PARTS in src/review-delegate/delegate.ts (lines 10–12).
 const DELEGATE_PART_LABELS: ReadonlyMap<string, string> = new Map([
   ['testing', 'specialist:testing'],
@@ -232,7 +237,7 @@ export const R = {
   uuidN: { check: nullable(reCheck(UUID_RE)), expected: 'uuid|null' },
   sessionN: { check: nullable(reCheck(SESSION_RE)), expected: 'extend-<uuid>|null' },
   versionN: { check: nullable(isVersion), expected: 'version|null' },
-  voice: { check: reCheck(VOICE_RE), expected: 'voice-id' },
+  voice: { check: isVoice, expected: 'voice-id' },
   safeId: { check: reCheck(SAFE_ID_RE), expected: 'safe-id' },
   safeIdN: { check: nullable(reCheck(SAFE_ID_RE)), expected: 'safe-id|null' },
   wtreeN: { check: nullable(reCheck(WTREE_RE)), expected: 'wtree-token|null' },
@@ -293,10 +298,16 @@ function validateEvidenceList(raw: unknown, base: string, v: Violation[]): Evide
   });
 }
 
-function validateCandidateInput(raw: unknown, base: string, v: Violation[]): { commit: string; base: string | null; wtree: string | null } {
-  if (!isObj(raw)) { v.push({ path: base, rule: 'invalid-type', expected: 'object' }); return { commit: '', base: null, wtree: null }; }
-  const c = validateFields(raw, ['commit'], { base: null, wtree: null }, { commit: R.hex40, base: R.hex40N, wtree: R.wtreeN }, base, v);
-  return { commit: String(c.commit ?? ''), base: (c.base as string | null) ?? null, wtree: (c.wtree as string | null) ?? null };
+function validateCandidateInput(raw: unknown, base: string, v: Violation[]): { candidate: { commit: string; base: string | null; wtree: string | null }; tree: string | null } {
+  if (!isObj(raw)) {
+    v.push({ path: base, rule: 'invalid-type', expected: 'object' });
+    return { candidate: { commit: '', base: null, wtree: null }, tree: null };
+  }
+  const c = validateFields(raw, ['commit'], { tree: null, base: null, wtree: null }, { commit: R.hex40, tree: R.hex40N, base: R.hex40N, wtree: R.wtreeN }, base, v);
+  return {
+    candidate: { commit: String(c.commit ?? ''), base: (c.base as string | null) ?? null, wtree: (c.wtree as string | null) ?? null },
+    tree: (c.tree as string | null) ?? null,
+  };
 }
 
 export function collectEvidenceItems(command: CommandName, raw: unknown): EvidenceRef[] {
@@ -465,7 +476,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       if ((c.coverage === 'delta' && c.delta_from === null) || (c.coverage === 'full' && c.delta_from !== null)) {
         v.push({ path: 'delta_from', rule: 'invalid-value', expected: c.coverage === 'delta' ? 'required-when-delta' : 'null-when-full' });
       }
-      const cand = 'candidate' in rawInput ? validateCandidateInput(rawInput.candidate, 'candidate', v) : { commit: '', base: null, wtree: null };
+      const { candidate: cand, tree: candTree } = 'candidate' in rawInput ? validateCandidateInput(rawInput.candidate, 'candidate', v) : { candidate: { commit: '', base: null, wtree: null }, tree: null };
       if ('required_voices' in rawInput && (!Array.isArray(rawInput.required_voices) || !rawInput.required_voices.length || new Set(rawInput.required_voices).size !== rawInput.required_voices.length || !rawInput.required_voices.every(R.voice.check))) {
         v.push({ path: 'required_voices', rule: 'invalid-value', expected: 'nonempty-unique-voice-id-array' });
       }
@@ -474,12 +485,16 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       const canon = { pass_id: c.pass_id as string, state: 'started' as const, scope: c.scope as string, cycle: c.cycle as number, coverage: c.coverage as string, delta_from: c.delta_from as string | null, candidate: cand, required_voices: rawInput.required_voices as string[], started_at: c.started_at as string | null };
       const existing = state?.passes.find((p) => p.pass_id === canon.pass_id);
       if (existing && state) {
+        if (candTree !== null && candTree !== existing.candidate.tree) {
+          return invalid(state.rev, [{ path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' }]);
+        }
         const stored = { pass_id: existing.pass_id, state: 'started' as const, scope: existing.scope, cycle: existing.cycle, coverage: existing.coverage, delta_from: existing.delta_from, candidate: { commit: existing.candidate.commit, base: existing.candidate.base, wtree: existing.candidate.wtree }, required_voices: existing.required_voices, started_at: existing.started_at };
         return replayOrConflict(state.rev, canon.pass_id, stored, { ...canon, started_at: canon.started_at ?? existing.started_at }, existing.candidate.commit, existing.candidate.tree, existing.recorded_at);
       }
       const life = checkLifecycle();
       if (life) return life;
       const cTree = checkCandAndEv(canon.candidate, [], env, v);
+      if (cTree && candTree !== null && candTree !== cTree) v.push({ path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' });
       if (canon.delta_from !== null && !env.commitExists(canon.delta_from)) v.push({ path: 'delta_from', rule: 'commit-not-found', expected: 'existing-git-commit' });
       if (v.length > 0) return invalid(rev, v);
 
@@ -499,15 +514,30 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       if (rawInput.delegate !== undefined && rawInput.delegate !== null) {
         if (!isObj(rawInput.delegate)) v.push({ path: 'delegate', rule: 'invalid-type', expected: 'object|null' });
         else {
-          const d = validateFields(rawInput.delegate, STATE_KEYS.delegate, {}, {
+          const d = validateFields(rawInput.delegate, STATE_KEYS.delegate, {
+            part: null, dispatched: null, dispatched_at: null, returned_at: null, parse: null, verdict: null, findings: null,
+          }, {
             provider: R.provider, model: R.safeId, outcome: R.enum(ENUMS.delegateOutcome), fallback_reason: R.enumN(ENUMS.fallbackReason),
             replay: R.bool, wall_ms: R.nonNegInt, input_tokens: R.nonNegInt, output_tokens: R.nonNegInt, cache_read_input_tokens: R.nonNegInt,
             cache_creation_input_tokens: R.nonNegIntN, call_id: R.hex64,
+            dispatched: R.bool, dispatched_at: R.isoZN, returned_at: R.isoZN,
+            parse: R.str(1, 64, true), verdict: R.str(1, 64, true),
+            findings: { check: Array.isArray, expected: 'array', rule: 'invalid-type' },
           }, 'delegate', v);
+          if ('part' in rawInput.delegate) {
+            const dPart = toPartLabel(rawInput.delegate.part);
+            if (dPart === null || dPart !== c.part) v.push({ path: 'delegate.part', rule: 'invalid-value', expected: 'matching-attempt-part' });
+          }
+          if (isIsoZ(d.dispatched_at) && isIsoZ(c.dispatched_at) && d.dispatched_at !== c.dispatched_at) {
+            v.push({ path: 'delegate.dispatched_at', rule: 'invalid-value', expected: 'equal-to-attempt-dispatched_at' });
+          }
+          if (isIsoZ(d.returned_at) && isIsoZ(c.returned_at) && d.returned_at !== c.returned_at) {
+            v.push({ path: 'delegate.returned_at', rule: 'invalid-value', expected: 'equal-to-attempt-returned_at' });
+          }
           if (d.outcome === 'credited' && (c.outcome !== 'completed' || d.fallback_reason !== null)) v.push({ path: 'delegate.outcome', rule: 'invalid-value', expected: 'credited-requires-completed-and-null-fallback_reason' });
           if (d.outcome === 'fell-back' && (c.outcome !== 'failed' || d.fallback_reason === null)) v.push({ path: 'delegate.outcome', rule: 'invalid-value', expected: 'fell-back-requires-failed-and-fallback_reason' });
           if (!isPart(c.part)) v.push({ path: 'part', rule: 'invalid-value', expected: 'part-label-required-for-delegated-attempt' });
-          delegate = d as unknown as DelegateRecord;
+          delegate = Object.fromEntries(STATE_KEYS.delegate.map((k) => [k, d[k]])) as unknown as DelegateRecord;
         }
       }
       let findings: FindingRecord[] | null = null;
@@ -647,7 +677,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
   if (command === 'record gate') {
     const gName = rawInput.name;
     const c = checkShape(rawInput, 'record gate', { gate_id: R.uuid, name: R.safeId, result: R.enum(ENUMS.gateResult), reason: R.strN(1, 500) }, v, gName === 'pregate' || gName === 'greptile' ? ['details'] : []);
-    const cand = 'candidate' in rawInput ? validateCandidateInput(rawInput.candidate, 'candidate', v) : { commit: '', base: null, wtree: null };
+    const { candidate: cand, tree: candTree } = 'candidate' in rawInput ? validateCandidateInput(rawInput.candidate, 'candidate', v) : { candidate: { commit: '', base: null, wtree: null }, tree: null };
     const evidence = validateEvidenceList(rawInput.evidence, 'evidence', v);
     let details: Record<string, unknown> = {};
     if (c.details !== undefined) {
@@ -666,12 +696,16 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const canon = { gate_id: c.gate_id as string, name: c.name as string, result: c.result as string, reason: c.reason as string | null, candidate: cand, details, evidence };
     const existing = state?.gates.find((g) => g.gate_id === canon.gate_id);
     if (existing && state) {
+      if (candTree !== null && candTree !== existing.candidate.tree) {
+        return invalid(state.rev, [{ path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' }]);
+      }
       const stored = { gate_id: existing.gate_id, name: existing.name, result: existing.result, reason: existing.reason, candidate: { commit: existing.candidate.commit, base: existing.candidate.base, wtree: existing.candidate.wtree }, details: existing.details, evidence: existing.evidence };
       return replayOrConflict(state.rev, canon.gate_id, stored, canon, existing.candidate.commit, existing.candidate.tree, existing.recorded_at);
     }
     const life = checkLifecycle();
     if (life) return life;
     const cTree = checkCandAndEv(canon.candidate, collectEvidenceItems(command, canon), env, v);
+    if (cTree && candTree !== null && candTree !== cTree) v.push({ path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' });
     if (v.length > 0) return invalid(state!.rev, v);
 
     const gateRecord: GateRecord = { ...canon, segment: activeSegment, candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree }, recorded_at: nowIso };
@@ -680,7 +714,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
 
   if (command === 'record audit') {
     const c = checkShape(rawInput, 'record audit', { audit_id: R.uuid, name: R.enum(ENUMS.auditName), result: R.str(1, 200) }, v);
-    const cand = 'candidate' in rawInput ? validateCandidateInput(rawInput.candidate, 'candidate', v) : { commit: '', base: null, wtree: null };
+    const { candidate: cand, tree: candTree } = 'candidate' in rawInput ? validateCandidateInput(rawInput.candidate, 'candidate', v) : { candidate: { commit: '', base: null, wtree: null }, tree: null };
     const evidence = validateEvidenceList(rawInput.evidence, 'evidence', v);
     let details: Record<string, unknown> = {};
     if ('details' in rawInput) {
@@ -700,12 +734,16 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     const canon = { audit_id: c.audit_id as string, name: c.name as string, result: c.result as string, details, candidate: cand, evidence };
     const existing = state?.audits.find((a) => a.audit_id === canon.audit_id);
     if (existing && state) {
+      if (candTree !== null && candTree !== existing.candidate.tree) {
+        return invalid(state.rev, [{ path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' }]);
+      }
       const stored = { audit_id: existing.audit_id, name: existing.name, result: existing.result, details: existing.details, candidate: { commit: existing.candidate.commit, base: existing.candidate.base, wtree: existing.candidate.wtree }, evidence: existing.evidence };
       return replayOrConflict(state.rev, canon.audit_id, stored, canon, existing.candidate.commit, existing.candidate.tree, existing.recorded_at);
     }
     const life = checkLifecycle();
     if (life) return life;
     const cTree = checkCandAndEv(canon.candidate, collectEvidenceItems(command, canon), env, v);
+    if (cTree && candTree !== null && candTree !== cTree) v.push({ path: 'candidate.tree', rule: 'tree-mismatch', expected: 'tree-of-candidate.commit' });
     if (v.length > 0) return invalid(state!.rev, v);
 
     const auditRecord: AuditRecord = { ...canon, segment: activeSegment, candidate: { commit: canon.candidate.commit, tree: cTree!, base: canon.candidate.base, wtree: canon.candidate.wtree }, recorded_at: nowIso };
