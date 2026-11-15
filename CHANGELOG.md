@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.94.3] - 2026-11-15
+
+### Changed
+
+- By-hand skill runs in a supported harness that exposes a trustworthy launch signal now record that harness and count as hand use in local telemetry reports instead of reading as unattributed.
+- Grok sessions with a valid `GROK_SESSION_ID` now support harness detection and session pairing without `GROK_AGENT=1`.
+
+### Upgrade notes
+
+- Local telemetry counts by harness and run mode will shift after upgrading because runs that previously read as unattributed are now attributed, while existing ledger rows are not rewritten.
+
 ## [0.94.2] - 2026-11-15
 
 ### Changed

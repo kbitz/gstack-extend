@@ -104,7 +104,7 @@ MARKER_OUTPUTS = ("provenance", "usage")
 WORK_ITEM_ENV = "GSTACK_EXTEND_WORK_ITEM"
 REQUESTED_MODEL_ENV, REQUESTED_EFFORT_ENV = "GSTACK_EXTEND_MODEL", "GSTACK_EXTEND_EFFORT"
 REQUESTED_ENV = (("model", REQUESTED_MODEL_ENV), ("effort", REQUESTED_EFFORT_ENV))
-# GROK_SESSION_ID counts only when GROK_AGENT=1, matching detect().
+# Each marker counts on its own when valid_session(value) holds, matching detect().
 SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
               "or set GSTACK_DIR to a gstack checkout")
@@ -298,8 +298,6 @@ def harness_fingerprint():
     """(hex digest or None, marker names that contributed). Values are hashed and never traced."""
     pairs = []
     for name in SESSION_MARKERS:
-        if name == "GROK_SESSION_ID" and os.environ.get("GROK_AGENT") != "1":
-            continue
         value = os.environ.get(name)
         if valid_session(value):
             pairs.append([name, value])
@@ -1212,20 +1210,22 @@ def grok_logs(root, cwd=None, grok_home=None, session_id=None):
     places = {quote(cwd or os.getcwd(), safe="")} | ({quote(root, safe="")} if root else set())
     named = session_id if session_id is not None else os.environ.get("GROK_SESSION_ID", "")
     # The shell exports the session id. Use that file only; sibling sessions (subagents) are not this run.
-    if re.fullmatch(r"[A-Za-z0-9-]{1,128}", named):
+    if valid_session(named):
         named_logs = []
         for place in places:
             log = sessions / place / named / "events.jsonl"
             if log.is_file():
                 named_logs.append(log)
         return named_logs
+    if named:
+        return []
     return [log for place in places for log in (sessions / place).glob("*/events.jsonl") if log.is_file()]
 
 
 def grok_turns(root, begin):
     # Without a session id, only a single events log touched since the stage began is attributable.
     # Several (a concurrent session or subagent) leave the model unverifiable.
-    named = bool(re.fullmatch(r"[A-Za-z0-9-]{1,128}", os.environ.get("GROK_SESSION_ID", "")))
+    named = bool(valid_session(os.environ.get("GROK_SESSION_ID", "")))
     logs = grok_logs(root)
     active = logs if named else [log for log in logs if log.stat().st_mtime >= begin]
     if len(active) != 1:
@@ -1352,7 +1352,7 @@ def detect(begin, end, root):
         readers.append(("cursor", True, lambda: cursor_turns(root, begin)))
     if os.environ.get("CODEX_THREAD_ID"):
         readers.append(("codex", True, lambda: codex_turns(os.environ["CODEX_THREAD_ID"])))
-    if os.environ.get("GROK_AGENT") == "1":  # Grok's shell forces this; a user-set profile name is not a marker
+    if os.environ.get("GROK_AGENT") == "1" or valid_session(os.environ.get("GROK_SESSION_ID")):  # Grok's shell forces "1"; a user-set profile name is not a marker
         readers.append(("grok", True, lambda: grok_turns(root, begin)))
     if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
         readers.append(("claude", False, lambda: claude_turns(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))))

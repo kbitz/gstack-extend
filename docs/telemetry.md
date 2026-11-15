@@ -159,10 +159,18 @@ one ([Work item and launcher quick-start](#work-item-and-launcher-quick-start)).
 the SHA-256 hex digest of the compact JSON list of `[name, value]` pairs, sorted
 by name, for each marker whose value passes `valid_session`. The markers are
 `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_CONVERSATION_ID`, and
-`GROK_SESSION_ID` only when `GROK_AGENT=1` (the same gate `detect()` uses). Names
+`GROK_SESSION_ID` (the same session-marker gate `detect()` uses). Names
 are hashed with the values, so equal IDs from different harnesses do not collide.
 No valid marker stores null. Debug mode names the markers that contributed and
 never prints their values.
+
+**Upgrade during an open stage:** This release starts including a valid
+`GROK_SESSION_ID` even without `GROK_AGENT=1`. If another harness marker was
+already part of the start fingerprint, upgrading before finish changes that
+fingerprint; an implicit finish of a non-resumable stage then refuses the old
+handoff as belonging to another session. Finish open stages before upgrading,
+or use the existing explicit `--session-id` finish with that stage's original
+telemetry session ID. Existing rows are not rewritten.
 
 A valid explicit `--session-id` keeps its previous behavior and is never
 age-bounded. An explicit `--start` alone does not bypass adoption. With a valid
@@ -1832,7 +1840,14 @@ entrypoint) without setting `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
 row got its mode. Historical v3 rows that recorded `run_mode_source` `Paseo`,
 `sdk-cli`, `sdk-ts`, `acp`, or `none` remain valid under the v3 schema branch.
 The classifier never inspects parent process command lines or orchestrator
-directories. Hand-use capture is qualified for the owner's observed Claude `cli` and `paseo-entrypoint` launch types plus an orchestrated interactive run; see [the hand-use record](acceptance/hand-use-telemetry.md) for dated readbacks and non-Claude limitations. This is not fleet-wide SPEC O6 acceptance.
+directories. Hand-use capture is qualified for the owner's observed Claude `cli` and `paseo-entrypoint` launch types plus an orchestrated interactive run; see [the hand-use record](acceptance/hand-use-telemetry.md) for dated readbacks, the per-harness launch inventory, and upstream requests. This is not fleet-wide SPEC O6 acceptance.
+
+| Harness | Harness detection status | Detection markers and session logs | By-hand classification status | By-hand signal or reason `run_mode` stays `unknown` |
+|---|---|---|---|---|
+| `claude` | Qualified (terminal CLI and Paseo) | `CLAUDECODE=1` or `CLAUDE_CODE_SESSION_ID`; model and effort from `~/.claude/projects/*/<session>.jsonl` (`CLAUDE_CONFIG_DIR` honored) | Qualified (`cli` and `paseo-entrypoint`) | `CLAUDE_CODE_ENTRYPOINT=cli` → `user-directed` / `cli`; `CLAUDE_CODE_ENTRYPOINT=Paseo` (injected by Paseo's `claude-code-entrypoint-env` plugin) → `user-directed` / `paseo-entrypoint`; missing/empty → `unknown` / `entrypoint-unavailable`; other values → `unknown` / `entrypoint-unqualified` |
+| `grok` | Detection supported when valid `GROK_SESSION_ID` or `GROK_AGENT=1` is present (session-ID-only path fixture-qualified; no real post-fix by-hand readback); unmarked under ACP `terminal/create` (`paseo 0.15.2` + `grok 1.0.77`) | `GROK_SESSION_ID` (valid session ID, including hook/MCP and session-id-only launches) or `GROK_AGENT=1` (terminal shell; non-`"1"` profile names are ignored); model and effort from `~/.grok/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}`. Under `grok acp`, `xai-grok-shell-terminal`'s `terminal/create` RPC delegates command execution to Paseo's sibling terminal without forwarding `GROK_SESSION_ID` or `GROK_AGENT=1` (`run_mode_source="no-harness"` when unmarked) | Unqualified (`unknown` / `harness-unqualified` when detected) | Neither Grok's environment nor `~/.grok/sessions/<encoded-cwd>/<session>/{summary.json,events.jsonl}` records an entrypoint distinguishing interactive by-hand use from ACP or orchestrated runs, and Paseo only injects a provider entrypoint for Claude |
+| `codex` | Qualified (terminal CLI, `codex exec`, and Paseo app-server) | `CODEX_THREAD_ID`; model and effort from `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (`CODEX_HOME` honored) | Unqualified (`unknown` / `harness-unqualified`) | Neither `CODEX_*` environment variables nor rollout `session_meta.payload` (`originator` / `source` only record shapes such as `("codex_cli_rs", "vscode")` or `("codex_exec", "exec")`, while Paseo's app-server client passes hardcoded `clientInfo.name="codex_app_server_daemon"`) distinguishes a by-hand launch from an orchestrated worker |
+| `cursor` | Qualified when `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` is exported | `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` (`CURSOR_INVOKED_AS` for `route="cli"`); transcripts under `~/.cursor/projects/*/agent-transcripts/` break cross-harness ties while model and effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified`) | Neither `CURSOR_AGENT`, `CURSOR_CONVERSATION_ID`, `CURSOR_INVOKED_AS`, nor Cursor's agent transcripts expose an entrypoint distinguishing interactive by-hand sessions from ACP or headless worker launches |
 
 <a id="hand-run-usability-signals"></a>
 
@@ -2082,13 +2097,17 @@ until finish flags or requested variables supply them:
   `~/.codex/sessions/year/month/day/rollout-*-<thread>.jsonl` (CODEX_HOME honored)
   opens each turn with a `turn_context` carrying model and effort. The turn open
   when the stage began counts, since a skill usually runs inside one turn.
-- **Grok Build** sets GROK_AGENT=1 and GROK_SESSION_ID. The wrapper reads that
-  session's `events.jsonl` under `~/.grok/sessions/<encoded directory>/`
+- **Grok Build** sets `GROK_SESSION_ID` (a valid session identifier) or `GROK_AGENT=1`
+  (Grok's shell forces `"1"`; a user-set profile name in `GROK_AGENT` is not a marker).
+  The wrapper reads that session's `events.jsonl` under `~/.grok/sessions/<encoded directory>/`
   (GROK_HOME honored): model from `turn_started`, or from summary.json when the
   log has no turn, and effort from summary.json. A session id that is missing or
-  not a single file leaves model and effort null. With no session id, only one
+  not a single file leaves model and effort null and never falls back to a sibling
+  session's log. With no session id (`GROK_AGENT=1` alone), only one
   events log changed since the stage began is attributable; zero or several
-  leave model and effort null.
+  leave model and effort null. Under ACP (`grok acp`) when the host advertises
+  client terminal capability, `xai-grok-shell-terminal`'s `terminal/create` request
+  does not forward `GROK_SESSION_ID` or `GROK_AGENT=1`, leaving child commands unmarked.
 - **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. An explicit
   `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker records
   `route: "cli"`; otherwise `route` is `"unknown"`.

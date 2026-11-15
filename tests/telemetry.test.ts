@@ -1674,6 +1674,9 @@ describe('execution provenance', () => {
       .toMatchObject({ agent: 'grok', model: null, effort: null });
     // A profile name in GROK_AGENT is user configuration; Grok's shell sets exactly "1".
     expect(provenanceRun(fix, { GROK_AGENT: 'my-profile' }, undefined, [], work).row.agent).toBeNull();
+    // A valid GROK_SESSION_ID detects Grok without GROK_AGENT=1, even if GROK_AGENT holds a user profile name.
+    expect(provenanceRun(fix, { GROK_AGENT: 'my-profile', GROK_SESSION_ID: 'grok_session_1' }, () => session('grok_session_1', 'grok-4.7'), [], work).row)
+      .toMatchObject({ agent: 'grok', agent_source: 'detected', model: 'grok-4.7', model_source: 'detected', effort: 'high', effort_source: 'detected' });
   }, 30_000);
 
   test('explicit flags override detection; values from another harness are dropped; bad values are ignored', () => {
@@ -1878,7 +1881,7 @@ describe('execution provenance', () => {
       writeFileSync(join(place, 'new', 'summary.json'), JSON.stringify({ current_model_id: 'grok-4.7', reasoning_effort: 'high' }));
     }, [], work).row;
     expect(fresh).toMatchObject({ agent: 'grok', model: 'grok-4.7', effort: 'high' });
-    // GROK_SESSION_ID names one session even when a sibling log is also fresh.
+    // GROK_SESSION_ID names one session even when a sibling log is also fresh or GROK_AGENT=1 is absent.
     const picked = provenanceRun(fix, { GROK_AGENT: '1', GROK_SESSION_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }, () => {
       writeJsonl(join(place, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'events.jsonl'),
         [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }]);
@@ -1888,6 +1891,32 @@ describe('execution provenance', () => {
         [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-other' }]);
     }, [], work).row;
     expect(picked).toMatchObject({ agent: 'grok', model: 'grok-4.7', effort: 'high' });
+    // Without GROK_AGENT=1 (e.g. under Paseo), GROK_SESSION_ID still detects Grok, picks its own session log,
+    // and never falls back to a sibling log when the named session has no log.
+    const paseoGrok = provenanceRun(fix, { GROK_SESSION_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', PASEO_AGENT_ID: 'paseo-grok-1' }, undefined, [], work).row;
+    expect(paseoGrok).toMatchObject({
+      agent: 'grok',
+      agent_source: 'detected',
+      model: 'grok-4.7',
+      model_source: 'detected',
+      effort: 'high',
+      effort_source: 'detected',
+      run_mode: 'unknown',
+      run_mode_source: 'harness-unqualified',
+    });
+    expect(validRow(paseoGrok)).toBe(true);
+    const missingNamed = provenanceRun(fix, { GROK_SESSION_ID: 'missing_session_id', PASEO_AGENT_ID: 'paseo-grok-2' }, undefined, [], work).row;
+    expect(missingNamed).toMatchObject({
+      agent: 'grok',
+      agent_source: 'detected',
+      model: null,
+      model_source: 'unknown',
+      effort: null,
+      effort_source: 'unknown',
+      run_mode: 'unknown',
+      run_mode_source: 'harness-unqualified',
+    });
+    expect(validRow(missingNamed)).toBe(true);
   }, 30_000);
 
   test('an unreadable provenance config records nothing', () => {
@@ -2613,7 +2642,16 @@ describe('handoff adoption', () => {
 
     const grok = makeTelemetryFixture('community', 'stub');
     runHelper({ ...grok.env, GROK_SESSION_ID: 'grok-session-1' }, ['start', '--skill', 'extend:roadmap']);
-    expect(readHandoff(grok).harness).toBeNull();
+    expect(readHandoff(grok).harness).toBe(sessionFingerprint([['GROK_SESSION_ID', 'grok-session-1']]));
+    const foreignGrok = runHelper({ ...grok.env, ...DEBUG, GROK_SESSION_ID: 'grok-session-2' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(foreignGrok.stderr, 'handoff from another session');
+    expect(runHelper({ ...grok.env, GROK_SESSION_ID: 'grok-session-1' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(grok.readLedger()).toHaveLength(1);
+    expect(grok.readLedger()[0]).toMatchObject({ agent: 'grok', agent_source: 'detected', run_mode: 'unknown', run_mode_source: 'harness-unqualified' });
+
+    const invalidGrok = makeTelemetryFixture('community', 'stub');
+    runHelper({ ...invalidGrok.env, GROK_SESSION_ID: '../bad' }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(invalidGrok).harness).toBeNull();
     const counted = makeTelemetryFixture('community', 'stub');
     runHelper({ ...counted.env, GROK_AGENT: '1', GROK_SESSION_ID: 'grok-session-1' }, ['start', '--skill', 'extend:roadmap']);
     expect(readHandoff(counted).harness).toBe(sessionFingerprint([['GROK_SESSION_ID', 'grok-session-1']]));
@@ -4916,6 +4954,24 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       {
         name: 'grok markers only gives harness-unqualified',
         finishEnv: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-1' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'grok session id only under Paseo gives harness-unqualified',
+        finishEnv: { GROK_SESSION_ID: 'grok-rm-paseo', PASEO_AGENT_ID: 'paseo-grok-rm' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'codex markers under Paseo gives harness-unqualified',
+        finishEnv: { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349', PASEO_AGENT_ID: 'paseo-codex-rm' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'cursor markers under Paseo gives harness-unqualified',
+        finishEnv: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-rm-1', PASEO_AGENT_ID: 'paseo-cursor-rm' },
         mode: 'unknown',
         source: 'harness-unqualified',
       },
