@@ -3727,6 +3727,68 @@ describe('bin/review-state', () => {
     }
   });
 
+  // Value: protects=accepted part-label voice IDs survive metrics projection, including fallback and finding corrections;
+  // fails_when=export forwards colon labels to the strict metrics writer or changes historical IDs;
+  // why_new=C8 replay stopped at state recording; seam=real Python metrics validator; no_claim=installed-agent acceptance
+  test('projects part-label voice IDs into valid metrics without changing stored labels or legacy IDs', () => {
+    const d = newDir();
+    const start = mkStart(850);
+    expect(callCmd(d, 'start', start).json.reason).toBe('recorded');
+    const passId = uid(851);
+    expect(callCmd(d, 'record pass', {
+      pass_id: passId, state: 'started', scope: 'local', cycle: 1, coverage: 'full',
+      candidate: { commit: headSha, tree: treeSha, base: baseSha },
+      required_voices: ['core', 'specialist:maintainability', 'outside:challenge'],
+    }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', {
+      pass_id: passId, state: 'attempt', voice_id: 'specialist:maintainability',
+      part: 'specialist:maintainability', attempt_id: uid(852), outcome: 'failed',
+      delegate: { provider: 'reviewer', model: 'model', outcome: 'fell-back', fallback_reason: 'failed',
+        replay: false, wall_ms: 1, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
+        cache_creation_input_tokens: null, call_id: sha256('fallback') },
+    }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', {
+      pass_id: passId, state: 'attempt', voice_id: 'specialist:maintainability',
+      part: 'specialist:maintainability', attempt_id: uid(853), predecessor_attempt_id: uid(852),
+      outcome: 'completed', findings: [{ finding_id: 'label-F1', severity_source: 'P2',
+        severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open',
+        found_by: ['specialist:maintainability'] }],
+    }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', { pass_id: passId, state: 'voice-complete',
+      voice_id: 'specialist:maintainability', selected_attempt_id: uid(853) }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', { pass_id: passId, state: 'voice-complete',
+      voice_id: 'outside:challenge', not_applicable: 'not-applicable' }).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record correction', { correction_id: uid(854),
+      target: { pass_id: passId, voice_id: 'specialist:maintainability', attempt_id: uid(853), finding_id: 'label-F1' },
+      resolution: 'fixed', fixed_in: headSha }).json.reason).toBe('recorded');
+    const statePath = join(d, 'review-run-state.json');
+    const originalBytes = readFileSync(statePath, 'utf8');
+    const st = JSON.parse(originalBytes) as ReviewRunState;
+    const projected = projectState(st);
+    const validator = spawnSync('python3', ['-B', '-I', '-c', [
+      'import importlib.util,json,sys',
+      's=importlib.util.spec_from_file_location("workflow_metrics",sys.argv[1])',
+      'm=importlib.util.module_from_spec(s);s.loader.exec_module(m)',
+      'for event in json.load(sys.stdin)["records"]: m.validate_request(event["op"],event["request"])',
+    ].join('\n'), join(REPO_ROOT, 'bin', 'lib', 'workflow_metrics.py')], {
+      input: JSON.stringify(projected), encoding: 'utf8', timeout: 10_000,
+    });
+    expect(validator.status, validator.stderr).toBe(0);
+    const metricId = uuidv5(NAMESPACE, `${start.run_id}:voice:specialist:maintainability`);
+    const passStart = projected.records.find((r) => r.op === 'pass' && r.request.state === 'started')!;
+    expect(passStart.request.required_voice_ids).toEqual([
+      'core', metricId, uuidv5(NAMESPACE, `${start.run_id}:voice:outside:challenge`),
+    ]);
+    for (const r of projected.records.filter((r) => r.request.voice_id && r.request.voice_id !== 'core')) {
+      expect([metricId, uuidv5(NAMESPACE, `${start.run_id}:voice:outside:challenge`)]).toContain(r.request.voice_id);
+    }
+    expect(projected.records.some((r) => r.request.correction_kind === 'finding')).toBe(true);
+    expect(projected.records.some((r) => r.request.correction_kind === 'fallback')).toBe(true);
+    expect(projectState(st)).toEqual(projected);
+    expect(st.passes[0]!.required_voices).toContain('specialist:maintainability');
+    expect(readFileSync(statePath, 'utf8')).toBe(originalBytes);
+  });
+
   // Value: protects=D15 classification table and three-consecutive-run success target in docs/designs/review-run-state.md; fails_when=D15 drops any of the eight observed cause paths or the original/restated three-consecutive-run target; why_new=reliability Track T6 + C7/C8 T3; seam=design doc contract
   test('design doc D15 records all eight observed cause paths and the restated three-consecutive-run success target', () => {
     const design = readFileSync(DESIGN_PATH, 'utf8');

@@ -147,6 +147,7 @@
       "tests/telemetry-contract.test.ts"
     ],
     "bin/lib/workflow_metrics.py": [
+      "tests/review-state.test.ts",
       "tests/skill-protocols.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry.test.ts",

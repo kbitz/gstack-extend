@@ -663,13 +663,15 @@ next agent must read the actual plan and current diff, rebuild
 checklist is context, not a prepared-PR receipt, a VERIFIED matrix, or
 permission to skip review.
 
-Before emitting the prompt or writing a handoff file, write the exact bytes to
-a temp file outside the repo. Then confirm
+Before emitting the prompt, write its exact bytes to a temp file outside the
+repo. Run the Coverage check on that prompt file, never on a rows-only checklist
+file. Then confirm
 `grep -cE '^Coverage: [0-9]+ DEFERRED BY USER, [0-9]+ BLOCKED; ' <that file>`
 prints `1`. Any other result means the prompt lost or reshaped its Coverage
-line: rebuild it from the template before emitting. Scan with
-`gstack-redact --from-file` when available; otherwise inspect manually. Emit
-only the scanned text. Strip environment prefixes and URL credentials from
+line: rebuild it from the template before emitting. Before writing a separate
+handoff or checklist file, write its exact bytes to a temp file too. Scan both
+prompt and file text with `gstack-redact --from-file` when available; otherwise
+inspect manually. Emit or save only the scanned text. Strip environment prefixes and URL credentials from
 recorded commands and excerpts only when the scan flags their values. If redact
 is unavailable, inspect manually before emitting.
 

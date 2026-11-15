@@ -198,6 +198,20 @@ describe('implement drift-locks', () => {
     expect([Number(publishedHaMatch![1]), Number(publishedHaMatch![2])]).toEqual([0, 0]);
   });
 
+  // Value: protects=long checklists keep rows while the prompt alone must pass the Coverage gate;
+  // fails_when=the pre-write Coverage check applies to rows-only checklist bytes;
+  // why_new=the count test covered prompt variants only; seam=published prompt grammar; no_claim=live agent compliance
+  test('keeps the Coverage gate on the prompt when a separate long checklist holds only rows', () => {
+    const preEmit = normalized.slice(normalized.indexOf('Before emitting the prompt'), normalized.indexOf('For a long checklist'));
+    expect(preEmit).toContain('Run the Coverage check on that prompt file, never on a rows-only checklist file.');
+    expect(preEmit).toContain('Scan both prompt and file text');
+    const ere = /`grep -cE '([^']+)' <that file>`/.exec(content)![1]!;
+    const rows = 'AC1: BUILT (src/example.ts)\nAC2: BUILT (tests/example.test.ts)\n';
+    const prompt = 'Coverage: 0 DEFERRED BY USER, 0 BLOCKED; ~/scratch/checklist.md\n';
+    expect(new RegExp(ere, 'm').test(prompt)).toBe(true);
+    expect(new RegExp(ere, 'm').test(rows)).toBe(false);
+  });
+
   // Value: protects=the complete external H-A handoff remains byte-compatible; fails_when=any template wording or field changes; why_new=existing consumer tests pin labels and selected anchors only; seam=none; no_claim=live consumer acceptance
   test('preserves the complete H-A handoff template verbatim', () => {
     const handoffs = [...content.matchAll(/^```text\n(Run \/review-and-prep[\s\S]*?)\n```/gm)];
