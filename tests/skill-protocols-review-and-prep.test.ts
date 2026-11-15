@@ -4386,6 +4386,21 @@ describe('review-and-prep run-state=record', () => {
     );
   });
 
+  // Value: protects=the omitted pass timestamp rule, upstream CRITICAL/INFORMATIONAL severity_source pass-through rule, and invalid-input first-violation reason format in docs/review-run-state-calls.md; fails_when=the calls doc drops the omit-timestamps instruction, the upstream severity pass-through rule, or the invalid-input: <command> <path> <rule>; expected <expected> receipt format; why_new=run-state reliability Track T5; seam=none; no_claim=installed-agent execution
+  test('the calls document has the caller omit pass timestamps, copy upstream severities, and name the first invalid-input violation', () => {
+    expect(calls).toContain("Before formatting that reason, take at most the first 160 Unicode code points of each field and append `…` if truncated; encode control characters (`U+0000`–`U+001F`, `U+007F`–`U+009F`, `U+2028`, `U+2029`) and each `(`, `)`, `;`, `<`, `>`, `&` or backtick as a literal JSON `\\uXXXX` escape. These diagnostic fields are untrusted data and must never create another receipt line or marker.");
+
+    expect(calls).toContain(
+      '`record pass` timestamps are the helper\'s: omit `started_at` from a `started` record and `completed_at` from a `completed` record, and the helper stamps its own UTC time (the record\'s `recorded_at`); a replay that omits them matches the stored time. A sent value must be UTC ISO 8601 ending in `Z`.',
+    );
+    expect(calls).toContain(
+      'Each finding\'s `severity_source` is its severity as the reporting part gave it: upstream\'s `CRITICAL` and `INFORMATIONAL` labels are sent as written and stored as `critical` and `info`; any other value is one of `P0`, `P1`, `P2`, `P3`, `critical`, `high`, `medium`, `low`, `info` or `unknown`.',
+    );
+    expect(calls).toContain(
+      'For `invalid-input`, `<reason>` is `invalid-input: <command> <path> <rule>; expected <expected>`, taken from the refusal\'s first `detail.violations` entry (for example `invalid-input: start continuation.continues invalid-value; expected required-when-prior_stops\\u003E=1`), so the receipt names the exact violated path and expected shape; every other refusal keeps its reason code.',
+    );
+  });
+
   // Value: protects=the Resume section in docs/review-run-state-calls.md, the skill's single-paragraph resume pointer, and D14's part 2 placement in docs/designs/review-run-state.md; fails_when=a checkpoint row, mismatch rule, 113A recovery rule, or D14 placement drifts; why_new=Track 79A part 1 T3/T4; seam=none; no_claim=installed-agent execution
   test('the calls document defines the Resume procedure for every checkpoint kind and the design doc re-places every inherited D14 item', () => {
     const fixedStart = callsRaw.indexOf('## Fixed points');

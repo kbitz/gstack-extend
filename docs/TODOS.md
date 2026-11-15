@@ -2,6 +2,18 @@
 
 ## Unprocessed
 
+### [review:files=docs/designs/review-run-state.md|docs/review-run-state-calls.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: diagnostic escaping contract drift
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`.
+- **Description:** The diagnostic escaping rule is repeated in the design and calls documents, but the protocol assertion pins only the calls document. The design copy could drift independently.
+- **Hypothesis (untested):** Extend the existing protocol test to pin the bound and escaping rule in both documents after re-verifying the contract.
+- **Upstream severity:** INFORMATIONAL (adversarial; coverage audit agrees).
+- **Found in:** docs/designs/review-run-state.md:10 and tests/skill-protocols-review-and-prep.test.ts:4391.
+- **Evidence:** Read-only coverage audit found 18 of 19 paths covered; both documents currently agree. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on branch `mmm/a103285c` at `9df2a4c` (2026-11-15), before a PR exists.
+- **Revisit when:** The next Track touches any tagged file.
+- **Effort:** ? (user triages in /roadmap).
+
 ### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: evidence recheck resolved target identity
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Equal-size, equal-mtime symlink retarget and regular-file replacement lack direct recheck regression cases.

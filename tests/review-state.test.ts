@@ -238,7 +238,7 @@ describe('bin/review-state', () => {
       ['record pass', () => mkPassStarted(), 'pass_id', 'scope'],
       ['record pass', () => ({ pass_id: uid(10), state: 'attempt', voice_id: 'core', attempt_id: uid(20), outcome: 'failed' }), 'attempt_id', 'outcome'],
       ['record pass', () => ({ pass_id: uid(10), state: 'voice-complete', voice_id: 'core', not_applicable: 'not-applicable' }), 'voice_id', 'not_applicable'],
-      ['record pass', () => ({ pass_id: uid(10), state: 'completed', completed_at: '2026-11-10T18:00:00Z' }), 'completed_at', 'state'],
+      ['record pass', () => ({ pass_id: uid(10), state: 'completed', completed_at: '2026-11-10T18:00:00Z' }), 'pass_id', 'state'],
       ['record correction', () => ({ correction_id: uid(30), target: { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F' }, resolution: 'fixed' }), 'correction_id', 'resolution'],
       ['record gate', () => ({ gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } }), 'gate_id', 'result'],
       ['record audit', () => ({ audit_id: uid(50), name: 'coverage', result: 'passed', candidate: { commit: headSha }, details: { pct: 100, threshold: 80 } }), 'audit_id', 'name'],
@@ -3054,5 +3054,422 @@ describe('bin/review-state', () => {
       expect(r.json.detail.violations).toEqual([{ path: 'evidence[0]', rule: 'evidence-reserved-path', expected: 'valid-evidence-file-in-dir' }]);
       expect(readFileSync(path, 'utf8')).toBe('evidence'); expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
     }
+  });
+
+  // Value: protects=regression coverage across all six observed invalid-input causes (C1–C6) from the seven opted-in factory runs; fails_when=a fixed legitimate payload (C1, C5, C6) is refused or fails to replay, or a rightly refused caller error (C2, C3, C4) records or drops its violation/message; why_new=reliability Track T3(a) end-to-end evidence replay table; seam=CLI and state file
+  test('replays each observed run-state invalid-input payload from the reliability Track evidence', () => {
+    const planObj = { ref: 'docs/plan.md', sha256: sha256('plan-bytes') };
+    const cases: Array<{
+      id: string;
+      cmd: 'start' | 'record pass';
+      setup?: (dir: string) => void;
+      payload: Record<string, unknown>;
+      expectReason: 'recorded' | 'invalid-input';
+      verify: (dir: string, res: ReturnType<typeof callCmd>, inputFile: string) => void;
+    }> = [
+      {
+        id: 'C1-78a',
+        cmd: 'start',
+        payload: {
+          run_id: uid(701),
+          base: baseSha,
+          plan: planObj,
+          policy: {
+            value: REAL_POLICY_LINE,
+            source: 'caller prompt',
+            delegation: {
+              status: 'active',
+              parts: ['maintainability', 'adversarial', 'red-team'],
+              config: sha256('78a-cfg'),
+              tools: [],
+            },
+          },
+          continuation: { prior_stops: 0, max: 1, continues: null },
+          session_id: `extend-${uid(978)}`,
+          pr: null,
+          gh_login: 'kbitz',
+        },
+        expectReason: 'recorded',
+        verify: (dir) => {
+          const stored = JSON.parse(readFileSync(join(dir, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+          expect(stored.policy.delegation).toEqual({
+            status: 'active',
+            parts: ['specialist:maintainability', 'native-adversarial', 'red-team'],
+            config: sha256('78a-cfg'),
+            tools: [],
+          });
+        },
+      },
+      {
+        id: 'C1-80b',
+        cmd: 'start',
+        payload: {
+          run_id: uid(702),
+          base: baseSha,
+          plan: planObj,
+          policy: {
+            value: REAL_POLICY_LINE,
+            source: 'caller prompt',
+            delegation: {
+              status: 'active',
+              parts: ['adversarial', 'red-team'],
+              config: sha256('80b-cfg'),
+              tools: [],
+            },
+          },
+          continuation: { prior_stops: 0, max: 1, continues: null },
+          session_id: `extend-${uid(980)}`,
+          pr: null,
+          gh_login: 'kbitz',
+        },
+        expectReason: 'recorded',
+        verify: (dir) => {
+          const stored = JSON.parse(readFileSync(join(dir, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+          expect(stored.policy.delegation).toEqual({
+            status: 'active',
+            parts: ['native-adversarial', 'red-team'],
+            config: sha256('80b-cfg'),
+            tools: [],
+          });
+        },
+      },
+      {
+        id: 'C2+C3-79a',
+        cmd: 'start',
+        payload: {
+          run_id: uid(703),
+          base: baseSha,
+          plan: planObj,
+          policy: {
+            value: REAL_POLICY_LINE,
+            source: 'caller prompt',
+            delegation: `delegation: active (parts=maintainability,adversarial,red-team; config=${sha256('79a-cfg')})`,
+          },
+          continuation: { count: 0, max: 1 },
+          session_id: null,
+          pr: null,
+          gh_login: 'kbitz',
+        },
+        expectReason: 'invalid-input',
+        verify: (dir, res) => {
+          expect(res.json.detail.violations).toContainEqual({
+            path: 'policy.delegation',
+            rule: 'invalid-type',
+            expected: 'object|null',
+          });
+          expect(res.json.detail.violations).toContainEqual({
+            path: 'continuation.prior_stops',
+            rule: 'missing-key',
+            expected: 'prior_stops',
+          });
+          expect(res.json.detail.violations).toContainEqual({
+            path: 'continuation.count',
+            rule: 'unknown-key',
+            expected: 'no unknown keys',
+          });
+          expect(res.json.detail.message).toBeUndefined();
+          expect(existsSync(join(dir, 'review-run-state.json'))).toBe(false);
+        },
+      },
+      {
+        id: 'C4-secret-scanner',
+        cmd: 'start',
+        payload: {
+          run_id: uid(704),
+          base: baseSha,
+          wtree: sha256('4e1309bc-wtree').slice(0, 40),
+          pr: {
+            url: 'https://github.com/kbitz/gstack-extend/pull/248',
+            repo: 'kbitz/gstack-extend',
+            number: 248,
+            head_repo: 'kbitz/gstack-extend',
+            head_branch: 'feature/4e1309bc',
+            base_ref: 'main',
+          },
+          plan: planObj,
+          policy: {
+            value: 'review-and-prep-policy/v1; in-cap=full; continuation=full; documentation-audit=final; full-suite=external; final-gate-repair=tests-docs; parent-io=lean; delegate=maintainability,adversarial,red-team; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=1',
+            source: 'user decision',
+            delegation: {
+              status: 'active',
+              parts: ['specialist:maintainability', 'native-adversarial', 'red-team'],
+              config: sha256('4e1309bc-cfg'),
+              tools: [],
+            },
+          },
+          continuation: { prior_stops: 1, max: 1 },
+          gh_login: 'kbitz',
+          session_id: `extend-${uid(948)}`,
+        },
+        expectReason: 'invalid-input',
+        verify: (dir, res) => {
+          expect(res.json.detail.violations).toContainEqual({
+            path: 'continuation.continues',
+            rule: 'invalid-value',
+            expected: 'required-when-prior_stops>=1',
+          });
+          expect(res.json.detail.message).toContain('{prior_stops, max, continues}');
+          expect(existsSync(join(dir, 'review-run-state.json'))).toBe(false);
+        },
+      },
+      {
+        id: 'C5-81a',
+        cmd: 'record pass',
+        setup: (dir) => {
+          expect(callCmd(dir, 'start', mkStart(705)).json.reason).toBe('recorded');
+        },
+        payload: {
+          pass_id: uid(810),
+          state: 'started',
+          scope: 'local',
+          cycle: 1,
+          coverage: 'full',
+          candidate: { commit: headSha, base: baseSha },
+          required_voices: [
+            'core',
+            'testing',
+            'maintainability',
+            'security',
+            'simplification',
+            'red-team',
+            'adversarial',
+            'outside-challenge',
+            'outside-structured',
+            'qa',
+          ],
+        },
+        expectReason: 'recorded',
+        verify: (dir, res, inputFile) => {
+          const stored = JSON.parse(readFileSync(join(dir, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+          expect(stored.passes[0]!.started_at).toBe(res.json.detail.recorded_at);
+          expect(runCli(['record', 'pass', '--dir', dir, '--input', inputFile]).json.reason).toBe('replayed');
+        },
+      },
+      {
+        id: 'C6-80a-base',
+        cmd: 'record pass',
+        setup: (dir) => {
+          expect(callCmd(dir, 'start', mkStart(706)).json.reason).toBe('recorded');
+          expect(callCmd(dir, 'record pass', mkPassStarted(806, {
+            required_voices: ['core', 'native-adversarial'],
+          })).json.reason).toBe('recorded');
+        },
+        payload: {
+          pass_id: uid(806),
+          state: 'attempt',
+          voice_id: 'native-adversarial',
+          part: 'native-adversarial',
+          attempt_id: uid(807),
+          outcome: 'completed',
+          dispatched_at: '2026-11-14T05:34:07.339Z',
+          returned_at: '2026-11-14T05:37:07.311Z',
+          delegate: {
+            provider: 'claude-1',
+            model: 'claude-opus-5-5',
+            outcome: 'credited',
+            fallback_reason: null,
+            replay: false,
+            wall_ms: 179972,
+            input_tokens: 2,
+            output_tokens: 18509,
+            cache_read_input_tokens: 658,
+            cache_creation_input_tokens: 38743,
+            call_id: sha256('80a-base-adv-call'),
+          },
+          findings: [
+            {
+              finding_id: 'adv-alias-specialist',
+              severity_source: 'INFORMATIONAL',
+              severity_rubric: 'adversarial',
+              adjudication: 'rejected',
+              resolution: 'unknown',
+              found_by: ['native-adversarial'],
+            },
+          ],
+        },
+        expectReason: 'recorded',
+        verify: (dir, _res, inputFile) => {
+          const stored = JSON.parse(readFileSync(join(dir, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+          const voice = stored.passes[0]!.voices.find((vo) => vo.voice_id === 'native-adversarial')!;
+          expect(voice.attempts[0]!.findings![0]!.severity_source).toBe('info');
+          expect(runCli(['record', 'pass', '--dir', dir, '--input', inputFile]).json.reason).toBe('replayed');
+        },
+      },
+    ];
+
+    for (const row of cases) {
+      const dir = newDir();
+      row.setup?.(dir);
+      const fileName = `${row.id}.json`;
+      const res = callCmd(dir, row.cmd, row.payload, { file: fileName });
+      expect(res.json.reason, row.id).toBe(row.expectReason);
+      row.verify(dir, res, join(dir, fileName));
+    }
+  });
+
+  // Value: protects=helper timestamp stamping and replay semantics when started_at or completed_at is omitted or null; fails_when=omitted or null timestamps fail to record, fail to match on replay, fail to conflict when an omitted pass is re-sent with a different explicit timestamp, or accept malformed timestamps; why_new=reliability Track T1/T3(b); seam=CLI and state file
+  test('record pass stamps omitted started_at and completed_at and replays without them', () => {
+    const d = newDir();
+    expect(callCmd(d, 'start', mkStart(710)).json.reason).toBe('recorded');
+
+    // Omitted started_at and explicit null both stamp recorded_at and replay cleanly.
+    const startedOmitted = {
+      pass_id: uid(711),
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['core'],
+    };
+    const rStart = callCmd(d, 'record pass', startedOmitted, { file: 'pass-started-omitted.json' });
+    expect(rStart.json.reason).toBe('recorded');
+    const stateAfterStart = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stateAfterStart.passes[0]!.started_at).toBe(rStart.json.detail.recorded_at);
+    expect(callCmd(d, 'record pass', { ...startedOmitted, started_at: null }).json.reason).toBe('replayed');
+
+    // Omitted-then-explicit different timestamp conflicts at started_at.
+    const rStartConflict = callCmd(d, 'record pass', { ...startedOmitted, started_at: '2020-01-01T00:00:00Z' });
+    expect(rStartConflict.json.reason).toBe('conflict');
+    expect(rStartConflict.json.detail).toMatchObject({
+      id: uid(711),
+      path: 'started_at',
+      stored: rStart.json.detail.recorded_at,
+      sent: '2020-01-01T00:00:00Z',
+    });
+
+    // completed without completed_at records with stored completed_at === detail.recorded_at; explicit null replays.
+    const completedOmitted = { pass_id: uid(711), state: 'completed' };
+    const rComp = callCmd(d, 'record pass', completedOmitted, { file: 'pass-completed-omitted.json' });
+    expect(rComp.json.reason).toBe('recorded');
+    const stateAfterComp = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stateAfterComp.passes[0]!.completed_at).toBe(rComp.json.detail.recorded_at);
+    expect(runCli(['record', 'pass', '--dir', d, '--input', join(d, 'pass-completed-omitted.json')]).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', { ...completedOmitted, completed_at: null }).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', { ...completedOmitted, completed_at: '2020-01-01T00:05:00Z' }).json).toMatchObject({
+      reason: 'conflict',
+      detail: { id: uid(711), path: 'completed_at', stored: rComp.json.detail.recorded_at, sent: '2020-01-01T00:05:00Z' },
+    });
+
+    // Explicit-then-omitted (and explicit null) replays for both started_at and completed_at.
+    const explicitStart = mkPassStarted(712, { started_at: '2026-11-10T18:00:00Z' });
+    expect(callCmd(d, 'record pass', explicitStart).json.reason).toBe('recorded');
+    const { started_at: _omitS, ...explicitStartWithoutTs } = explicitStart;
+    expect(callCmd(d, 'record pass', explicitStartWithoutTs).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', { ...explicitStartWithoutTs, started_at: null }).json.reason).toBe('replayed');
+
+    const explicitComp = { pass_id: uid(712), state: 'completed', completed_at: '2026-11-10T18:05:00Z' };
+    expect(callCmd(d, 'record pass', explicitComp).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', { pass_id: uid(712), state: 'completed' }).json.reason).toBe('replayed');
+    expect(callCmd(d, 'record pass', { pass_id: uid(712), state: 'completed', completed_at: null }).json.reason).toBe('replayed');
+
+    // Non-ISO or array started_at / completed_at is refused with iso8601-utc-z|null, leaving state bytes unchanged.
+    const openPass = mkPassStarted(713);
+    expect(callCmd(d, 'record pass', openPass).json.reason).toBe('recorded');
+    const beforeBytes = readFileSync(join(d, 'review-run-state.json'), 'utf8');
+    for (const bad of ['not-iso', '2026-11-10T18:00:00+00:00', []]) {
+      const rBadStart = callCmd(d, 'record pass', { ...mkPassStarted(714), started_at: bad });
+      expect(rBadStart.json.reason).toBe('invalid-input');
+      expect(rBadStart.json.detail.violations).toEqual([
+        { path: 'started_at', rule: 'invalid-value', expected: 'iso8601-utc-z|null' },
+      ]);
+      expect(readFileSync(join(d, 'review-run-state.json'), 'utf8')).toBe(beforeBytes);
+
+      const rBadComp = callCmd(d, 'record pass', { pass_id: uid(713), state: 'completed', completed_at: bad });
+      expect(rBadComp.json.reason).toBe('invalid-input');
+      expect(rBadComp.json.detail.violations).toEqual([
+        { path: 'completed_at', rule: 'invalid-value', expected: 'iso8601-utc-z|null' },
+      ]);
+      expect(readFileSync(join(d, 'review-run-state.json'), 'utf8')).toBe(beforeBytes);
+    }
+  });
+
+  // Value: protects=input-only alias mapping of upstream CRITICAL and INFORMATIONAL on findings[].severity_source while keeping ENUMS.severity and validateStoredState strict; fails_when=CRITICAL or INFORMATIONAL fails to map to critical/info, other non-enum spellings are accepted, or validateStoredState accepts unmapped uppercase labels on disk; why_new=reliability Track T2/T3(c); seam=CLI and validateStoredState
+  test('attempt findings accept upstream CRITICAL and INFORMATIONAL severity labels only', () => {
+    const d = newDir();
+    expect(callCmd(d, 'start', mkStart(720)).json.reason).toBe('recorded');
+    expect(callCmd(d, 'record pass', mkPassStarted(721)).json.reason).toBe('recorded');
+
+    const baseAttempt = {
+      pass_id: uid(721),
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: uid(722),
+      outcome: 'completed',
+      findings: [
+        {
+          finding_id: 'F-crit',
+          severity_source: 'CRITICAL',
+          severity_rubric: 'core',
+          adjudication: 'accepted',
+          resolution: 'open',
+          found_by: ['core'],
+        },
+        {
+          finding_id: 'F-info',
+          severity_source: 'INFORMATIONAL',
+          severity_rubric: 'core',
+          adjudication: 'rejected',
+          resolution: 'unknown',
+          found_by: ['core'],
+        },
+      ],
+    };
+    expect(callCmd(d, 'record pass', baseAttempt, { file: 'attempt-upstream-sev.json' }).json.reason).toBe('recorded');
+    expect(runCli(['record', 'pass', '--dir', d, '--input', join(d, 'attempt-upstream-sev.json')]).json.reason).toBe('replayed');
+
+    const statePath = join(d, 'review-run-state.json');
+    const stored = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(stored.passes[0]!.voices[0]!.attempts[0]!.findings!.map((f) => f.severity_source)).toEqual(['critical', 'info']);
+    expect(validateStoredState(stored, statePath).ok).toBe(true);
+
+    // Stored-state reader stays strict: CRITICAL or INFORMATIONAL in stored JSON is rejected.
+    for (const rawSev of ['CRITICAL', 'INFORMATIONAL']) {
+      const mutated = structuredClone(stored) as any;
+      mutated.passes[0].voices[0].attempts[0].findings[0].severity_source = rawSev;
+      expect(validateStoredState(mutated, statePath)).toMatchObject({ ok: false, reason: 'corrupt' });
+    }
+
+    // Other spellings outside ENUMS.severity are refused with the unchanged enum text.
+    const beforeBytes = readFileSync(statePath, 'utf8');
+    for (const badSev of ['High', 'informational', 'INFO', 'CRITICAL ']) {
+      const rBad = callCmd(d, 'record pass', {
+        ...baseAttempt,
+        attempt_id: uid(723),
+        findings: [{ ...baseAttempt.findings[0]!, finding_id: 'F-bad', severity_source: badSev }],
+      });
+      expect(rBad.json.reason).toBe('invalid-input');
+      expect(rBad.json.detail.violations).toEqual([
+        {
+          path: 'findings[0].severity_source',
+          rule: 'invalid-enum',
+          expected: 'P0|P1|P2|P3|critical|high|medium|low|info|unknown',
+        },
+      ]);
+      expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+    }
+  });
+
+  // Value: protects=D15 classification table and three-consecutive-run success target in docs/designs/review-run-state.md; fails_when=D15 drops any of the six observed cause paths or the three-consecutive-run target; why_new=reliability Track T6; seam=design doc contract
+  test('design doc D15 records all six observed cause paths and the three-consecutive-run success target', () => {
+    const design = readFileSync(DESIGN_PATH, 'utf8');
+    const d15Start = design.indexOf('## D15.');
+    const changeLogStart = design.indexOf('## Change log');
+    expect(d15Start).toBeGreaterThan(-1);
+    expect(changeLogStart).toBeGreaterThan(d15Start);
+    const d15 = design.slice(d15Start, changeLogStart).replace(/\s+/g, ' ');
+    for (const causePath of [
+      'policy.delegation.parts',
+      'policy.delegation',
+      'continuation',
+      'continuation.continues',
+      'started_at',
+      'findings[0].severity_source',
+    ]) {
+      expect(d15, causePath).toContain('`' + causePath + '`');
+    }
+    expect(d15).toContain(
+      'The next three consecutive factory `/review-and-prep` runs of this repository that send `run-state=record` on a helper release containing this change each end with `Run state: recorded (…)` in their full receipt and none carries an `invalid-input` refusal',
+    );
   });
 });
