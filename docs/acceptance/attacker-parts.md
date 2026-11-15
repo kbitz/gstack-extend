@@ -8,10 +8,10 @@ prose, fixtures and tests of two optional `Review policy:` additions —
 `delegate=` (see
 [the policy grammar](../workflow-handoffs.md#grammar-h-e-continue) and
 [delegated review](../delegated-review.md)) — and of the `bin/upstream-check`
-anchors behind them (`review-and-prep.attacker`). No installed-agent run backs
-it yet: a static prose test is not installed-agent acceptance
-([SPEC](../SPEC.md)). It establishes no saving and awards no checkpoint
-([SPEC](../SPEC.md) selected target acceptance and P1).
+anchors behind them (`review-and-prep.attacker`). Installed-agent observations
+are partial, with PM1 and PM2 still pending below; a static prose test is not
+installed-agent acceptance ([SPEC](../SPEC.md)). It establishes no saving and
+awards no checkpoint ([SPEC](../SPEC.md) selected target acceptance and P1).
 
 ## Opt-in decision
 

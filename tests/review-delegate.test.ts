@@ -1007,9 +1007,10 @@ describe('documentation', () => {
     expect(Object.keys(checked.config.parts).sort()).toEqual([...PARTS].sort());
   });
 
-  test('the attacker-parts acceptance record names pending PM1 and PM2 rows and claims no installed-agent run yet', () => {
+  // Value: protects=partial installed observations never claim closed attacker qualification; fails_when=pending rows or historical identity disappear; why_new=Track 80D records partial real runs; seam=none
+  test('the attacker-parts acceptance record distinguishes partial observations from pending PM1 and PM2 qualification', () => {
     const record = readFileSync(join(REPO, 'docs', 'acceptance', 'attacker-parts.md'), 'utf8');
-    expect(record).toContain('No installed-agent run backs\nit yet');
+    expect(record).toContain('Installed-agent observations\nare partial, with PM1 and PM2 still pending');
     expect(record).toContain('| `PM1` | pending |');
     expect(record).toContain('| `PM2` | pending |');
     expect(record).toContain('297f50c7e1d46aab1404f5f2e8a9584af76ad6b2');
