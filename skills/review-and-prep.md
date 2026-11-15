@@ -793,6 +793,16 @@ Coverage Audit section and its Documentation audit section. Read each when its
 gate starts. A gate whose section or command this installation lacks is
 recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.
 
+### Evidence directory
+
+`<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.
+
+Create this invocation's evidence directory — a unique branch-and-invocation subdirectory under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active), before Step 1 ends (`start` when `run-state=record` is active) and before Step 2's first review, probe, baseline or gate file is written; never overwrite another invocation's directory. On a resume, reuse the paused or interrupted invocation's existing evidence directory from the corroborated `Full receipt:` path, `Evidence directory:` line or newest matching invocation directory under the evidence root (`docs/review-run-state-calls.md`, `## Resume`).
+
+The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation's `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.
+
+Under `run-state=record`, this invocation's evidence directory is `--dir`, and every `evidence` path, `pregate.details.record_path` and `documentation.details.section_path` is relative to it and resolves inside it.
+
 ### Establish the approved implementation scope
 
 Read `docs/SPEC.md` when present as a product spec (it has an `## Authority`
@@ -1540,7 +1550,7 @@ has none**. The sibling rule "every named part runs through its delegate" never
 removes the red team's gate.
 
 **Run.** Make one runner call per review stage that runs named parts:
-`"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <the parts this stage runs> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<evidence-directory>/delegate-calls"`
+`"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <the parts this stage runs> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<delegate calls directory>"`
 on that cycle's frozen scope: the merge base (or B) to S, from the snapshot
 procedure in **Scope a re-review to its delta**, as **Bound Claude Code outside
 calls** uses them. Specialist parts run at Step 4.5, as today. `red-team` runs
@@ -1552,8 +1562,8 @@ a second paid call stay stable. Create the calls directory with mode 0700 when
 it is missing, and write the file through a temporary file in that directory
 renamed into place, so a crash never leaves a partial list to reuse. `adversarial` runs at
 Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
-directory is branch-scoped under the evidence root
-and kept across invocations of the branch; never choose a fresh one to retry.
+directory is `<evidence root>/<branch>-delegate-calls/` (**Evidence directory**),
+branch-scoped under the evidence root and kept across invocations and resumes of the branch; never choose a fresh one to retry.
 Use an owned execution session and poll it rather than killing it at a short
 shell-tool timeout; the longest configured provider timeout bounds it. Exit 0
 means every part was credited, 4 means a part fell back, and 1 means a refusal
@@ -1654,7 +1664,11 @@ record one line in the receipt under the same current-result and history rule:
 Record each part in `voices.jsonl` and the receipt as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's
 `delegate` values. A fallback is the failed delegate attempt, then a host
-attempt that names it as its predecessor, then a `fallback` correction.
+attempt that names it as its predecessor, then a `fallback` correction. Under
+`run-state=record`, the caller records the failed delegated attempt with its
+runner entry and the host attempt with `predecessor_attempt_id` naming it,
+`derive` writes the `fallback` correction, and no `record correction` is sent
+for it.
 
 ### Run a red team where /review has none
 
@@ -2510,9 +2524,11 @@ paragraph's inventory already covers this one). A missing anchor writes
   Never infer a baseline from HEAD or the stop commit.
 
 Write and check `cycle-1-baseline` and `cycle-1-fix-review` with this helper
-(`<action>` is `write` or `check`; `<kind>` is `cycle-1-baseline` or
-`cycle-1-fix-review`; `<record-file-or-boundary>` is the assembled JSON file
-for `write`, or `before-fix`, `next-cycle` or `stop` for `check`):
+(`<evidence-directory>` is this invocation's directory from **Evidence
+directory**, which already exists; `<action>` is `write` or `check`; `<kind>` is
+`cycle-1-baseline` or `cycle-1-fix-review`; `<record-file-or-boundary>` is the
+assembled JSON file for `write`, or `before-fix`, `next-cycle` or `stop` for
+`check`):
 
 ```bash
 bun --no-env-file --config=/dev/null --no-install -e '
@@ -3145,9 +3161,11 @@ reuse these records.
 A later change, such as a Greptile fix or a base merge, reruns each gate whose
 inputs it touched under that gate's own freshness rule before Step 6. Copy the
 final pregate record, the audit's post-child snapshot and its documentation
-section to an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise
-`~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
-receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
+section into this invocation's evidence directory (**Evidence directory**), not
+the evidence root, and record each copy's path and SHA-256 in the receipt.
+Under `run-state=record`, `record gate` `pregate`'s `details.record_path` and
+`record audit` `documentation`'s `details.section_path` are those copies' paths
+relative to it. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
 
 ### Classify changes after the documentation audit's last attempt
 
@@ -3889,10 +3907,8 @@ Capture evidence as the work runs so a new session can reuse it:
 - Keep long evidence in files, not chat. Write the completion matrix,
   per-review evidence, gate records and the full receipt (`full-receipt-<n>.md`,
   with `n = 1, 2, …` per receipt write in the invocation, created exclusively
-  and never rewritten) to the evidence
-  directory (a unique branch/invocation subdirectory under an existing
-  `<state-root>/projects/<slug>/review-and-prep/`, otherwise
-  `~/scratch/review-and-prep/`) as they are produced, assemble the
+  and never rewritten) to this invocation's evidence directory (**Evidence
+  directory**) as they are produced, assemble the
   full receipt from them, and read them back by targeted excerpt. Chat carries
   short status lines; output a nested skill requires is unchanged.
   The receipt names each evidence file's path and SHA-256, including the

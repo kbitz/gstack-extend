@@ -145,7 +145,9 @@ A delegated part is one bounded call:
   exits 1, and the review stops before any commit. Nothing is reverted.
 
 The call directory (`--calls`) is branch-scoped, private, outside the repository
-and kept across invocations of the branch. Each call writes a claim before it
+and kept across invocations of the branch (`/review-and-prep` uses
+`<evidence root>/<branch>-delegate-calls/`, as `skills/review-and-prep.md`
+**Evidence directory** defines). Each call writes a claim before it
 spawns and a result after the shared work-tree check; a saved result replays
 with no spawn. A result discarded for `worktree-changed` stays discarded on
 every replay and still exits 1. A claim

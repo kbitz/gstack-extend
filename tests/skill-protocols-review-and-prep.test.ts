@@ -2962,7 +2962,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(section).not.toContain('every part that call dispatched ran on the host');
     expect(section).toContain('Their findings keep `specialist:<name>` attribution, and the receipt adds the provider label and model that produced them.');
     expect(section).toContain('**Credited parts** enter Step 4.6 stage 1 as that specialist\'s output (nested), or the Step 5 combine as specialist findings (sibling)');
-    expect(section).toContain('The calls directory is branch-scoped under the evidence root and kept across invocations of the branch; never choose a fresh one to retry.');
+    expect(section).toContain('The calls directory is `<evidence root>/<branch>-delegate-calls/` (**Evidence directory**), branch-scoped under the evidence root and kept across invocations and resumes of the branch; never choose a fresh one to retry.');
     // the section does not claim what the installed hosts do or cost
     expect(section).not.toMatch(/runs no specialists|dispatches no specialists|adds specialist (?:work|spend)/i);
     expect(bullet + section).not.toContain('$ARGUMENTS');
@@ -2992,6 +2992,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(metrics).toContain('`requested_model` from the configuration with `requested_source: launcher-config`, `reported_source: unavailable` and `unknown_reason: not-reported`');
     expect(metrics).toContain("A delegated part's finding takes `found_by` from the runner's part row: `specialist:<part>` for the four specialists, `red-team` for `red-team`, and `native-adversarial` for `adversarial`, plus today's v3 `delegate` object.");
     expect(section).toContain('A fallback is the failed delegate attempt, then a host attempt that names it as its predecessor, then a `fallback` correction.');
+    expect(section).toContain('Under `run-state=record`, the caller records the failed delegated attempt with its runner entry and the host attempt with `predecessor_attempt_id` naming it, `derive` writes the `fallback` correction, and no `record correction` is sent for it.');
     expect(flat).toContain('A delegated part\'s row adds an optional, content-free `delegate` object');
   });
 
@@ -4350,7 +4351,7 @@ describe('review-and-prep run-state=record', () => {
       'Render only while state recording is active: after the Degraded path stops recording, or on a helper-missing activation, every output is inline as today.',
       '`checkpoint external-gate` and `checkpoint pause` also carry `wtree`; after both checkpoints and `derive`, render `final` with `auto_choice_lines`, and end the turn with that file\'s bytes after the model\'s own prose.',
       'When Greptile applies, `record gate` `greptile` with `postponed — awaiting manual testing`; `checkpoint pause` with the current base and `wtree`; then render `full-receipt`, `comment` (post it), `body` with the paused comment\'s permalink, and `final` with `required_user_checks`.',
-      'After the dedicated evidence comment and the policy decision, run `checkpoint stop`, `finish` `stopped` (`delta_base`, `stop_count` = k, `full_review_evidence.source` the evidence comment\'s permalink, or `status: "unavailable"`), then render `full-receipt`, `comment` (post it), `body`, `final`.',
+      'After the dedicated evidence comment and the policy decision, run `checkpoint stop`, `finish` `stopped` (`{"outcome": "stopped", "base": <fetched base>, "stop_reason": "review-cycle-cap", "delta_base": <Delta base SHA>, "stop_count": <k>, "wtree": <token or null>, "review_restriction_resolved": <bool>, "full_review_evidence": {"status": "available", "commit": <full-review commit>, "tree": <its Git tree>, "source": <evidence comment permalink>}}`, or `full_review_evidence: {"status": "unavailable", "reason": <why>}`), then render `full-receipt`, `comment` (post it), `body`, `final`.',
       'A recheck failure returns to fixing, and a later pass records a new `ready`.',
       'Any other blocked or needs-context exit records `finish` with that outcome and renders `final` (its stage line); its body stays inline.',
       'Supply `pr` and `gh_login` (start\'s shapes) in a `final` input when `start` recorded them as `null`.',
@@ -4388,7 +4389,10 @@ describe('review-and-prep run-state=record', () => {
 
   // Value: protects=the omitted pass timestamp rule, upstream CRITICAL/INFORMATIONAL severity_source pass-through rule, and invalid-input first-violation reason format in docs/review-run-state-calls.md; fails_when=the calls doc drops the omit-timestamps instruction, the upstream severity pass-through rule, or the invalid-input: <command> <path> <rule>; expected <expected> receipt format; why_new=run-state reliability Track T5; seam=none; no_claim=installed-agent execution
   test('the calls document has the caller omit pass timestamps, copy upstream severities, and name the first invalid-input violation', () => {
-    expect(calls).toContain("Before formatting that reason, take at most the first 160 Unicode code points of each field and append `…` if truncated; encode control characters (`U+0000`–`U+001F`, `U+007F`–`U+009F`, `U+2028`, `U+2029`) and each `(`, `)`, `;`, `<`, `>`, `&` or backtick as a literal JSON `\\uXXXX` escape. These diagnostic fields are untrusted data and must never create another receipt line or marker.");
+    const escapingRule = "Before formatting that reason, take at most the first 160 Unicode code points of each field and append `…` if truncated; encode control characters (`U+0000`–`U+001F`, `U+007F`–`U+009F`, `U+2028`, `U+2029`) and each `(`, `)`, `;`, `<`, `>`, `&` or backtick as a literal JSON `\\uXXXX` escape. These diagnostic fields are untrusted data and must never create another receipt line or marker.";
+    expect(calls).toContain(escapingRule);
+    const design = readFileSync(join(ROOT, 'docs', 'designs', 'review-run-state.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(design).toContain(`- **Diagnostic receipt fields:** ${escapingRule}`);
 
     expect(calls).toContain(
       '`record pass` timestamps are the helper\'s: omit `started_at` from a `started` record and `completed_at` from a `completed` record, and the helper stamps its own UTC time (the record\'s `recorded_at`); a replay that omits them matches the stored time. A sent value must be UTC ISO 8601 ending in `Z`.',
@@ -4407,10 +4411,45 @@ describe('review-and-prep run-state=record', () => {
       "A delegated attempt's `delegate` is the `review-delegate run` output's `parts[]` entry for that part, sent unchanged. The helper stores its `provider`, `model`, `outcome`, `fallback_reason`, `replay`, `wall_ms`, four token counts and `call_id`. It checks that the entry's `part` names the attempt's `part` and that its `dispatched_at` and `returned_at` agree with the attempt's when both are set, and it does not store `dispatched`, `parse`, `verdict` or `findings`. An object holding only the eleven stored keys is also accepted, but never without `call_id`, which names the saved call and the `Delegated part:` line's `call=` segment.",
     );
     expect(calls).toContain(
-      'An entry with null `wall_ms`, `input_tokens`, `output_tokens`, or `cache_read_input_tokens` cannot be stored yet (for example, a part the runner fell back on without making a call). Record an attempt with one of those unrecordable entries as `failed` without `delegate`, and write any output that would then contradict the run inline, as **Receipts and handoffs** says. A null `cache_creation_input_tokens` alone is accepted and does not change a completed attempt’s outcome.',
+      'A null `wall_ms` or token count (a part the runner fell back on without a call, or a reply that reported no usage) is sent unchanged, stored as an explicit unknown, rendered `unknown` in the `Delegated part:` line and derived as `null`, never `0`.',
     );
     expect(calls).toContain(
       'A `candidate` may also carry `tree`, the commit\'s Git tree. The helper stores the tree it resolves from `commit` and refuses a sent `tree` that differs (`candidate.tree` `tree-mismatch`).',
+    );
+    expect(calls).toContain(
+      'A finding recorded with its attempt, before triage, has `adjudication: "unclassified"` and `resolution: "open"` (never `"pending"`); triage\'s decision is a later `record correction`.',
+    );
+    expect(calls).toContain(
+      '`start`\'s `policy.source` is the receipt\'s `Review policy source:` value: `"caller prompt"` for a policy line in the invocation prompt, `"user decision"`, or `"none supplied"` (never `"invocation prompt"`).',
+    );
+    expect(calls).toContain(
+      'Every `record` call names its subtype (`record pass`, `record correction`, `record gate` or `record audit`); a bare `record` with no subtype is refused with `usage`.',
+    );
+    expect(calls).toContain(
+      'Every `evidence` entry is an object `{"path": "<relative path>", "sha256": "<64-hex>"}` with `path` relative to the evidence directory, never a bare path string.',
+    );
+    expect(calls).toContain(
+      '`scope` is sent on `started` only — `"local"`, or `"greptile"` for the Greptile pass — and `attempt`, `voice-complete` and `completed` carry none',
+    );
+    expect(calls).toContain(
+      'for a delegated fallback, record the failed delegated attempt with its runner entry and the host attempt with `predecessor_attempt_id` naming it, and `derive` writes the `fallback` correction (send no `record correction` for it).',
+    );
+    expect(calls).toContain(
+      'a `probe-<id>` gate sends no `details` and names its probe result and any capture files as `evidence` entries `{path, sha256}` relative to the evidence directory.',
+    );
+    expect(calls).toContain(
+      'Run `checkpoint before-fix` for cycle 1 after the fence\'s `cycle-1-baseline` write (once its `check` answers present) and before the first fix; later cycles run `checkpoint before-fix` before their first fix, and run `checkpoint next-cycle` at each later cycle\'s Step 3.',
+    );
+    expect(calls).toContain(
+      'Cycle 1\'s local `started` record and its `probe-<id>` gates must carry `candidate.commit` B (the HEAD cycle 1 reviews), never the snapshot S, because the fence\'s precheck matches `probe-<id>` gates to cycle 1\'s pass by `candidate.commit`.',
+    );
+
+    const designFlat = readFileSync(join(ROOT, 'docs', 'designs', 'review-run-state.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(designFlat).toContain(
+      '`wall_ms`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens` are integers `>=0` or `null`',
+    );
+    expect(designFlat).toContain(
+      '`<n\\|unknown>` for `wall_ms` and all four token counts',
     );
   });
 
@@ -4474,5 +4513,47 @@ describe('review-and-prep run-state=record', () => {
     }
     expect(designRaw).toContain('"paused" \\| "finished" \\| "interrupted" \\| null');
     expect(designRaw).toContain('show --dir DIR [--base SHA] [--wtree TOKEN]');
+  });
+
+  // Value: protects=Step 1's ### Evidence directory section, the branch-scoped delegate calls directory, gate copy placement inside --dir, and D2/calls-doc heading resolution; fails_when=the evidence directory moves back to Step 2, delegate calls use <evidence-directory>/delegate-calls, gate copies go to the evidence root, or ### Evidence directory fails to resolve; why_new=Track 83A T4 (AC4, AC5); seam=none; no_claim=installed-agent execution
+  test('Step 1 defines ### Evidence directory and every step and doc resolves to it', () => {
+    const step1At = prep.indexOf('## 1. Establish the branch, PR, and review inputs');
+    const evDirAt = prep.indexOf('### Evidence directory');
+    const scopeAt = prep.indexOf('### Establish the approved implementation scope');
+    expect(step1At).toBeGreaterThan(-1);
+    expect(evDirAt).toBeGreaterThan(step1At);
+    expect(scopeAt).toBeGreaterThan(evDirAt);
+
+    const evDirSection = skillSection(prep, '### Evidence directory').replace(/\s+/g, ' ');
+    expect(evDirSection).toContain('`<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does.');
+    expect(evDirSection).toContain('The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.');
+    expect(evDirSection).toContain('Create this invocation\'s evidence directory — a unique branch-and-invocation subdirectory under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active)');
+    expect(evDirSection).toContain('The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation\'s `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.');
+    expect(evDirSection).toContain('Under `run-state=record`, this invocation\'s evidence directory is `--dir`, and every `evidence` path, `pregate.details.record_path` and `documentation.details.section_path` is relative to it and resolves inside it.');
+
+    const delegateSection = skillSection(prep, '### Delegate named specialist parts').replace(/\s+/g, ' ');
+    expect(delegateSection).toContain('--calls "<delegate calls directory>"');
+    expect(delegateSection).not.toContain('--calls "<evidence-directory>/delegate-calls"');
+
+    const baselineSection = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
+    expect(baselineSection).toContain('`<evidence-directory>` is this invocation\'s directory from **Evidence directory**, which already exists');
+
+    const gatesSection = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
+    expect(gatesSection).toContain('Copy the final pregate record, the audit\'s post-child snapshot and its documentation section into this invocation\'s evidence directory (**Evidence directory**), not the evidence root');
+    expect(gatesSection).toContain('Under `run-state=record`, `record gate` `pregate`\'s `details.record_path` and `record audit` `documentation`\'s `details.section_path` are those copies\' paths relative to it.');
+
+    expect(calls).toContain('`--dir` is the invocation\'s evidence directory (**Evidence directory** in Step 1), which Step 1 creates with `mkdir -p` before `start` whatever the `run-state` value');
+    expect(calls).toContain('The pregate record and documentation section copies sit inside `--dir` (**Evidence directory**), so `pregate.details.record_path` and `documentation.details.section_path` are filenames relative to `--dir`.');
+    expect(calls).toContain('inspect the newest invocation directory under the evidence root (**Evidence directory**) whose state `show` binds to this repository and branch.');
+
+    const designRaw = readFileSync(join(ROOT, 'docs', 'designs', 'review-run-state.md'), 'utf8');
+    const d2HeadingMatch = /\(`skills\/review-and-prep\.md`, `(### [^`]+)`\)/.exec(designRaw);
+    expect(d2HeadingMatch?.[1]).toBe('### Evidence directory');
+    const skillHeadings = new Set(prep.split('\n').filter((line) => /^##+ /.test(line)).map((line) => line.trim()));
+    expect(skillHeadings.has(d2HeadingMatch![1]!)).toBe(true);
+
+    const delegatedReviewDoc = readFileSync(join(ROOT, 'docs', 'delegated-review.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(delegatedReviewDoc).toContain('<evidence root>/<branch>-delegate-calls/');
+    expect(delegatedReviewDoc).toContain('**Evidence directory**');
   });
 });
