@@ -140,6 +140,78 @@ describe('implement drift-locks', () => {
     expect(coverage.startsWith('<n> DEFERRED BY USER, <n> BLOCKED; ')).toBe(true);
   });
 
+  // Value: protects=the unconditional Coverage count line rule, fill-in template instruction, Step 3 count tie-in, and pre-emit grep -cE check in skills/implement.md; fails_when=Adapt this shape returns, the unconditional Coverage rule or pre-emit ERE drifts, or the ERE accepts reshaped/word-count handoffs or rejects zero-filled handoffs; why_new=0.94.x T4 coverage count line lock; seam=ERE extracted from skill text and evaluated against H-A template variants; no_claim=installed-agent runtime compliance
+  test('enforces the unconditional Coverage count line with a fill-in instruction and pre-emit grep check', () => {
+    expect(content).not.toContain('Adapt this shape');
+    for (const phrase of [
+      'Count the items and each disposition. The DEFERRED BY USER and BLOCKED counts open the Coverage line in Step 4.',
+      'The Coverage line is required in every successful handoff, whatever the checklist\'s length and wherever its rows live. It starts `Coverage: ` followed by both counts as digits in that order, zeros included, as in `Coverage: 0 DEFERRED BY USER, 0 BLOCKED; ` when nothing was deferred or blocked, then the rows or the durable checklist path. A checklist file holds rows, never the counts, and `none`, `no` or `zero` in place of a digit is not a count.',
+      "Then confirm `grep -cE '^Coverage: [0-9]+ DEFERRED BY USER, [0-9]+ BLOCKED; ' <that file>` prints `1`. Any other result means the prompt lost or reshaped its Coverage line: rebuild it from the template before emitting.",
+      'Fill in this template, never a report in another shape: keep its first line, every label in its order and the fixed lines exactly as written, and replace each `<…>` placeholder with concrete information:',
+    ]) expect(normalized).toContain(phrase);
+
+    const ereMatch = /`grep -cE '([^']+)' <that file>`/.exec(content);
+    expect(ereMatch).not.toBeNull();
+    const ere = ereMatch![1]!;
+    const countMatches = (text: string): number => [...text.matchAll(new RegExp(ere, 'gm'))].length;
+
+    const template = [...content.matchAll(/^```text\n(Run \/review-and-prep[\s\S]*?)\n```/gm)][0]![1]!;
+
+    const zeroFilled = template.replace(
+      'Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>',
+      'Coverage: 0 DEFERRED BY USER, 0 BLOCKED; AC1 BUILT (src/review-state/state.ts); AC2 BUILT (tests/review-state.test.ts)',
+    );
+    const twoZeroFilled = template.replace(
+      'Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>',
+      'Coverage: 2 DEFERRED BY USER, 0 BLOCKED; AC1 BUILT (src/a.ts); AC2–AC3 DEFERRED BY USER (user scope decision)',
+    );
+    const checklistPathFilled = template.replace(
+      'Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>',
+      'Coverage: 0 DEFERRED BY USER, 0 BLOCKED; ~/scratch/implement-checklist.md',
+    );
+    expect(countMatches(zeroFilled)).toBe(1);
+    expect(countMatches(twoZeroFilled)).toBe(1);
+    expect(countMatches(checklistPathFilled)).toBe(1);
+
+    const noWordFilled = template.replace(
+      'Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>',
+      'Coverage: no DEFERRED BY USER, no BLOCKED; AC1 BUILT (src/a.ts)',
+    );
+    const pathFirstFilled = template.replace(
+      'Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>',
+      'Coverage: ~/scratch/implement-checklist.md (0 DEFERRED BY USER, 0 BLOCKED)',
+    );
+    const reshapedNoCoverage = [
+      'Run /review-and-prep for the implementation below.',
+      '',
+      'Plan SHA-256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      'Changed files: src/example.ts, tests/example.test.ts',
+      'Targeted verification runs: bun test tests/example.test.ts (pass)',
+      'Acceptance criteria status: AC1–AC4 BUILT',
+    ].join('\n');
+    expect(countMatches(noWordFilled)).toBe(0);
+    expect(countMatches(pathFirstFilled)).toBe(0);
+    expect(countMatches(reshapedNoCoverage)).toBe(0);
+
+    const publishedHaMatch = /^Coverage: (\d+) DEFERRED BY USER, (\d+) BLOCKED;/m.exec(zeroFilled);
+    expect(publishedHaMatch).not.toBeNull();
+    expect([Number(publishedHaMatch![1]), Number(publishedHaMatch![2])]).toEqual([0, 0]);
+  });
+
+  // Value: protects=long checklists keep rows while the prompt alone must pass the Coverage gate;
+  // fails_when=the pre-write Coverage check applies to rows-only checklist bytes;
+  // why_new=the count test covered prompt variants only; seam=published prompt grammar; no_claim=live agent compliance
+  test('keeps the Coverage gate on the prompt when a separate long checklist holds only rows', () => {
+    const preEmit = normalized.slice(normalized.indexOf('Before emitting the prompt'), normalized.indexOf('For a long checklist'));
+    expect(preEmit).toContain('Run the Coverage check on that prompt file, never on a rows-only checklist file.');
+    expect(preEmit).toContain('Scan both prompt and file text');
+    const ere = /`grep -cE '([^']+)' <that file>`/.exec(content)![1]!;
+    const rows = 'AC1: BUILT (src/example.ts)\nAC2: BUILT (tests/example.test.ts)\n';
+    const prompt = 'Coverage: 0 DEFERRED BY USER, 0 BLOCKED; ~/scratch/checklist.md\n';
+    expect(new RegExp(ere, 'm').test(prompt)).toBe(true);
+    expect(new RegExp(ere, 'm').test(rows)).toBe(false);
+  });
+
   // Value: protects=the complete external H-A handoff remains byte-compatible; fails_when=any template wording or field changes; why_new=existing consumer tests pin labels and selected anchors only; seam=none; no_claim=live consumer acceptance
   test('preserves the complete H-A handoff template verbatim', () => {
     const handoffs = [...content.matchAll(/^```text\n(Run \/review-and-prep[\s\S]*?)\n```/gm)];

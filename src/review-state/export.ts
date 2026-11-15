@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { truncate80, validateStoredState, type ReasonCode, type ReviewRunState } from './state.ts';
+import { truncate80, validateStoredState, VOICE_RE, type ReasonCode, type ReviewRunState } from './state.ts';
 import { makeEnvelope, readHelperVersion, runGit, validateStateDir, type StoreResult } from './store.ts';
 
 export const NAMESPACE = '9aa572eb-215f-452f-99e8-2bfdf0329cf3';
@@ -70,6 +70,8 @@ export type ReviewStateExport = {
 
 export function projectState(state: ReviewRunState, helperVersion: string | null = null): ReviewStateExport {
   const runId = state.run.run_id;
+  const metricVoiceId = (voiceId: string): string =>
+    VOICE_RE.test(voiceId) ? voiceId : uuidv5(NAMESPACE, `${runId}:voice:${voiceId}`);
 
   const segments: ExportSegment[] = state.segments.map((seg) => {
     const derived = seg.session_id === null;
@@ -187,7 +189,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
           pass_id: pass.pass_id,
           scope: pass.scope,
           state: 'started',
-          required_voice_ids: [...pass.required_voices],
+          required_voice_ids: pass.required_voices.map(metricVoiceId),
           context: {
             candidate_head: pass.candidate.commit,
             candidate_tree: pass.candidate.tree,
@@ -207,7 +209,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
             pass_id: pass.pass_id,
             scope: pass.scope,
             state: 'attempt',
-            voice_id: voice.voice_id,
+            voice_id: metricVoiceId(voice.voice_id),
             attempt_id: att.attempt_id,
             predecessor_attempt_id: att.predecessor_attempt_id,
             attempt_outcome: att.outcome,
@@ -259,7 +261,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
               pass_id: pass.pass_id,
               scope: pass.scope,
               state: 'voice-complete',
-              voice_id: voice.voice_id,
+              voice_id: metricVoiceId(voice.voice_id),
               voice_status: 'completed',
               selected_attempt_id: voice.selected_attempt_id,
             },
@@ -276,7 +278,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
               pass_id: pass.pass_id,
               scope: pass.scope,
               state: 'voice-complete',
-              voice_id: voice.voice_id,
+              voice_id: metricVoiceId(voice.voice_id),
               voice_status: 'not-applicable',
               na_reason: voice.not_applicable,
             },
@@ -310,7 +312,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
         event_id: item.eventId,
         correction_kind: 'finding',
         pass_id: item.corr.target.pass_id,
-        voice_id: item.corr.target.voice_id,
+        voice_id: metricVoiceId(item.corr.target.voice_id),
         attempt_id: item.corr.target.attempt_id,
         finding_id: item.corr.target.finding_id,
       };
@@ -340,7 +342,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
               event_id: uuidv5(NAMESPACE, `${runId}:attempt-correction:${pass.pass_id}:${voice.voice_id}:${att.attempt_id}`),
               correction_kind: correctionKind,
               pass_id: pass.pass_id,
-              voice_id: voice.voice_id,
+              voice_id: metricVoiceId(voice.voice_id),
               attempt_id: att.attempt_id,
             },
           });

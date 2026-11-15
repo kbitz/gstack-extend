@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.94.4] - 2026-11-15
+
+### Changed
+
+- Opted-in `/review-and-prep` runs that send `run-state=record` keep recording when a delegated part's attempt carries the delegate runner's own result entry or a review candidate names its Git tree, and every `/implement` handoff leads its `Coverage:` line with the deferred and blocked counts, zeros included.
+- Opted-in review recording accepts matching `candidate.tree` values and complete delegate runner rows while preserving metrics export compatibility for named review voices.
+- The `/implement` instructions require numeric deferred and blocked counts and check the final prompt when a checklist is separate.
+
 ## [0.94.3] - 2026-11-15
 
 ### Changed

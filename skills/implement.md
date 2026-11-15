@@ -576,7 +576,7 @@ full review pipeline. For each item, record one of:
 | DEFERRED BY USER | The explicit scope decision and rationale, plus a follow-up reference if one exists. |
 | BLOCKED | The missing or partial work, cause, and specific next action or input needed. |
 
-Count the items and each disposition. If the counts do not match the in-scope
+Count the items and each disposition. The DEFERRED BY USER and BLOCKED counts open the Coverage line in Step 4. If the counts do not match the in-scope
 list, restore the missing rows before finishing. Already-satisfied items count
 as BUILT with evidence from the existing code; they do not need artificial
 diff hunks. Check actual wiring and behavior: matching filenames, plan
@@ -643,7 +643,13 @@ row's scope decision after the disposition words, as the table above requires.
 Every successful handoff prints `<n> DEFERRED BY USER, <n> BLOCKED` first on the
 Coverage value, number first and zeros included, then the rows or the checklist
 path; never on a line of their own. The rows stay authoritative, and a nonzero
-BLOCKED count is not a handoff.
+BLOCKED count is not a handoff. The Coverage line is required in every successful
+handoff, whatever the checklist's length and wherever its rows live. It starts
+`Coverage: ` followed by both counts as digits in that order, zeros included, as
+in `Coverage: 0 DEFERRED BY USER, 0 BLOCKED; ` when nothing was deferred or
+blocked, then the rows or the durable checklist path. A checklist file holds
+rows, never the counts, and `none`, `no` or `zero` in place of a digit is not a
+count.
 
 Make the prompt self-contained. Include the plan path/link and accepted scope,
 approval and scope decisions, the complete compact checklist with evidence,
@@ -657,12 +663,17 @@ next agent must read the actual plan and current diff, rebuild
 checklist is context, not a prepared-PR receipt, a VERIFIED matrix, or
 permission to skip review.
 
-Before emitting the prompt or writing a handoff file, write the exact bytes to
-a temp file outside the repo, then scan with `gstack-redact --from-file` when
-available; otherwise inspect manually. Emit only the scanned text. Strip
-environment prefixes and URL credentials from recorded commands and excerpts
-only when the scan flags their values. If redact is unavailable, inspect
-manually before emitting.
+Before emitting the prompt, write its exact bytes to a temp file outside the
+repo. Run the Coverage check on that prompt file, never on a rows-only checklist
+file. Then confirm
+`grep -cE '^Coverage: [0-9]+ DEFERRED BY USER, [0-9]+ BLOCKED; ' <that file>`
+prints `1`. Any other result means the prompt lost or reshaped its Coverage
+line: rebuild it from the template before emitting. Before writing a separate
+handoff or checklist file, write its exact bytes to a temp file too. Scan both
+prompt and file text with `gstack-redact --from-file` when available; otherwise
+inspect manually. Emit or save only the scanned text. Strip environment prefixes and URL credentials from
+recorded commands and excerpts only when the scan flags their values. If redact
+is unavailable, inspect manually before emitting.
 
 For a long checklist, save a handoff document and reference its absolute path
 in the prompt. Use the project's established tracked documentation location
@@ -682,7 +693,7 @@ cross-machine handoff needs portable plan/checklist contents or a durable
 shared reference as well. Do not commit or push merely to make a handoff
 portable.
 
-Adapt this shape and replace every placeholder with concrete information:
+Fill in this template, never a report in another shape: keep its first line, every label in its order and the fixed lines exactly as written, and replace each `<…>` placeholder with concrete information:
 
 ```text
 Run /review-and-prep for the implementation below. Use the installed skill
