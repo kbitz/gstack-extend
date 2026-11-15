@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.94.2] - 2026-11-15
+
+### Changed
+
+- Acceptance records distinguish verified review runs from missing evidence and document hand-use qualification by launch type.
+
 ## [0.94.1] - 2026-11-14
 
 ### Changed
