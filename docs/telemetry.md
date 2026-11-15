@@ -1832,7 +1832,7 @@ entrypoint) without setting `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
 row got its mode. Historical v3 rows that recorded `run_mode_source` `Paseo`,
 `sdk-cli`, `sdk-ts`, `acp`, or `none` remain valid under the v3 schema branch.
 The classifier never inspects parent process command lines or orchestrator
-directories. Hand-use capture is not yet established: no real by-hand run has been read back on the owner's machines; see [the hand-use record](acceptance/hand-use-telemetry.md).
+directories. Hand-use capture is qualified for the owner's observed Claude `cli` and `paseo-entrypoint` launch types plus an orchestrated interactive run; see [the hand-use record](acceptance/hand-use-telemetry.md) for dated readbacks and non-Claude limitations. This is not fleet-wide SPEC O6 acceptance.
 
 <a id="hand-run-usability-signals"></a>
 
