@@ -83,26 +83,39 @@ required boundary no longer holds. Flag presence alone does not qualify it.
 ## Pre-merge copy dry-run (no model call)
 
 The implementer recorded a shallow-copy/install/test dry-run at the base HEAD
-`06679875ea89beca390496f3fc701000fc4485a9`: setup 171 ms, frozen install 24 ms,
+`06679875ea89beca390496f3fc701000fc4485a9` (git tree
+`1a41d92f8e319acce7578271aa6f705a00c0ed74`): setup 171 ms, frozen install 24 ms,
 `bun test tests/touchfiles.test.ts` 856 ms, all exit 0, parent directory removed.
-This used the earlier setup sequence. The review rerun of the repaired setup is
-recorded below before the external gate; neither run is model acceptance.
+This used the earlier setup sequence before the tools-mode implementation was
+added. The review rerun of the repaired setup is recorded below before the
+external gate; neither run is model acceptance.
 
 ### Review rerun with repaired setup (2026-11-09)
 
-A no-model fake CLI exercised the actual tools-mode runner at candidate
-`bb76a3736d3e2bdc0908ecdf3ab36a673795f476` (code/tree snapshot before recording this result).
-Git setup suppressed templates, hooks and LFS filters. review-delegate: tools-mode setup took 180 ms.
+A no-model fake CLI exercised the actual tools-mode runner at candidate commit
+`bb76a3736d3e2bdc0908ecdf3ab36a673795f476` (git tree
+`5bc01984b9476caa0066236c738ab10387d65f84`, code/tree snapshot before recording
+this result). That reviewed snapshot covers:
+
+- `src/review-delegate/cli.ts`: blob `3784a429069442755cc49d6f9df953a6e8eace1e`
+- `src/review-delegate/delegate.ts`: blob `faca167b0857283c94de65dcc37027d344550c9b`
+- `tests/review-delegate.test.ts`: blob `3d06416e75b5004d48c90bd90e94c49f3bef24ea`
+
+Those three paths have all changed at later HEADs, so this historical dry-run
+covers only the `bb76a3736d3e2bdc0908ecdf3ab36a673795f476` (`5bc01984b9476caa0066236c738ab10387d65f84`)
+snapshot above and does not qualify the current runner. Git setup suppressed
+templates, hooks and LFS filters. `review-delegate`: tools-mode setup took 180 ms.
 Frozen install exited 0 in 122 ms;
 `bun test --timeout 30000 tests/touchfiles.test.ts` exited 0 in 759 ms.
 The copy HEAD matched the candidate, the real tree check passed and the copy
-was removed. This verifies copy/install/test mechanics, not model acceptance.
+was removed. This verifies copy/install/test mechanics at that historical commit,
+not model acceptance.
 
 ## Post-merge installed-agent verification
 
 | ID | Status | Date | Host / Model | Delegate CLI / Model | Target Commit | Seeded Defect | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `PM1` | pending | — | — | `claude-code` / qualified version and actual model | one head for both arms | optional, clearly labeled | Complete the paired procedure below after the release is installed. |
+| `PM1` | pending | `2026-11-15` (checked) | — | `claude-code` / qualified version and actual model | one head for both arms | optional, clearly labeled | Checked `2026-11-15`: no paired diff-only + tools-mode installed-agent run (`delegation: active (...; tools=...)` or non-empty `policy.delegation.tools`) is present in local review receipts or `review-run-state.json` records; external tools-mode run requested from the orchestrator manager on `2026-11-15` (Track 109B) is not yet delivered. Complete items 1–5 below once delivered. |
 
 Run one orchestrated `/review-and-prep` twice on the **same head**: diff-only
 attacker delegation (also Track 72B PM2) and tools-mode adversarial delegation,

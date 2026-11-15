@@ -1,6 +1,6 @@
 # Hand-use telemetry qualification
 
-Status: pending — no real runs recorded
+Status: pending — `cli` by-hand and orchestrated interactive runs recorded via `report --by-host`; `paseo-entrypoint` by-hand row awaits `report --by-host` readback
 
 This record tracks real-run qualification for stage-runs v4 `run_mode` and
 `run_mode_source` ([Run mode](../telemetry.md#run-mode)). Fixtures in
@@ -10,13 +10,16 @@ real by-hand capture on the owner's machines.
 
 ## What counts
 
-Qualification requires all of the following real runs, read back from the
-owner's stage-runs ledgers without fabricating rows:
+On `2026-11-15`, the owner asked `"why is it a requirement to do this on every machine? that seems silly"` and approved `"ok"` to narrow Track 80D's hand-use qualification from every active machine to one real by-hand run per launch type the owner uses (`paseo-entrypoint` and `cli`), plus one orchestrated interactive run. ([SPEC.md](../SPEC.md) O6.1 retains the broader fleet-wide telemetry objective.)
 
-1. **By-hand runs on each of the owner's two machines** (macOS and Omarchy Linux):
+Qualification requires all three of the following real runs, read back from the
+owner's stage-runs ledgers through `gstack-extend-telemetry report --by-host`
+without fabricating rows:
+
+1. **One by-hand run for each launch type the owner uses**:
    - In the Paseo app (`CLAUDE_CODE_ENTRYPOINT=Paseo`, no orchestration or workspace-owner signal set), recording `run_mode: "user-directed"`, `run_mode_source: "paseo-entrypoint"`.
-   - Where the owner also runs stages from Claude Code's terminal (`CLAUDE_CODE_ENTRYPOINT=cli`, no orchestration or workspace-owner signal set), recording `run_mode: "user-directed"`, `run_mode_source: "cli"`.
-2. **One orchestrated run of an interactive stage** (`/plan-track`, `/roadmap`, or `/project-spec`) launched with `GSTACK_EXTEND_RUN_MODE=orchestrated`, recording `run_mode: "orchestrated"`, `run_mode_source: "run-mode-env"`.
+   - From Claude Code's terminal (`CLAUDE_CODE_ENTRYPOINT=cli`, no orchestration or workspace-owner signal set), recording `run_mode: "user-directed"`, `run_mode_source: "cli"`.
+2. **One orchestrated run of an interactive stage** (`/plan-track`, `/roadmap`, or `/project-spec`) launched with `GSTACK_EXTEND_RUN_MODE=orchestrated`, recording `run_mode: "orchestrated"` and `run_mode_source: "session-kind"`, `"work-item"`, or `"run-mode-env"` according to the 10-rule classifier precedence in [docs/telemetry.md](../telemetry.md#run-mode) (`"run-mode-env"` when no higher-precedence `GSTACK_SESSION_KIND=spawned|unattended` or `GSTACK_EXTEND_WORK_ITEM` signal is set, such as `--docs project-spec`, and `"session-kind"` when the hand worker is spawned with `GSTACK_SESSION_KIND=spawned`).
 
 An orchestrator that launches workers through Paseo or Claude's `cli`
 entrypoint must set `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
@@ -74,6 +77,15 @@ this record. Once all required rows are recorded in the table below, update the
 
 | Date | Machine (host label) | OS | Harness and version | gstack-extend version | How launched | run_mode | run_mode_source |
 |---|---|---|---|---|---|---|---|
+| `2026-11-09T16:22:59Z` | `349c-kb-ms` | macOS (release `unknown`) | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.78.0` (`f036f50`) | By-hand terminal (`CLAUDE_CODE_ENTRYPOINT=cli`), stage `gstack-extend-upgrade`, PR `none` (non-PR stage; `report --by-host` `cells.user-directed.runs=1`, `outcomes.success=1`, `last_seen="2026-11-09T16:22:59Z"`) | `user-directed` | `cli` |
+| `2026-11-14T05:22:21Z` | `3771h-kb-xps` | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.93.1` (`36a66ad`) | Orchestrated interactive stage `project-spec` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR `none` (`report --by-host` `project-spec:orchestrated` `last_seen="2026-11-14T05:22:21Z"`) | `orchestrated` | `run-mode-env` |
+| `2026-11-15T01:20:55Z` | `3771h-kb-xps` | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "high"`; CLI version `unknown`) | `0.94.0` (`6df3b69`) | Orchestrated interactive stage `roadmap` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_SESSION_KIND=spawned`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR #251 (`report --by-host` `roadmap:orchestrated` `last_seen="2026-11-15T01:20:55Z"`) | `orchestrated` | `session-kind` |
+
+**Open / candidate launch-type row (`paseo-entrypoint`):**
+
+- On `2026-11-15T02:49:37Z`, the owner ran `docs-ship` by hand in the Paseo app on `kb-xps` (Omarchy Linux, `gstack-extend` `0.94.1` / `0c1c33f`, harness `claude` with CLI version `unknown`, PR #12 at head `e23b8e306951d97d1e1727e61648d6a09fcc8db1`) and reported local stage-runs readback `stage="docs-ship"`, `run_mode="user-directed"`, `run_mode_source="paseo-entrypoint"`, `outcome="success"`.
+- On `2026-11-15`, `gstack-extend-telemetry report --by-host` shows host `kb-xps` at `cells.user-directed.runs=0` (`unknown=5`, `last_seen="2026-11-09T04:07:03Z"`) because cross-machine sync of `0600` stage-runs ledgers from `kb-xps` has not delivered rows after `2026-11-09T04:07:03Z` (and the 11 `user-directed` rows on `3771h-kb-xps`, `last_seen="2026-11-08T01:06:27Z"`, are pre-cutover `schema_version: 3` rows with `run_mode_source: "Paseo"`, which the cutover rule above treats as unattributed).
+- The `paseo-entrypoint` launch-type obligation remains **open** until `kb-xps` stage-runs sync delivers the row to `gstack-extend-telemetry report --by-host` (or a local Paseo by-hand run is read back through `report --by-host`). Until then, `Status:` above remains `pending` and the pending notice in [docs/telemetry.md](../telemetry.md#run-mode) stays in place.
 
 ## Harnesses and entrypoints that read `unknown`
 

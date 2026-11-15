@@ -2704,12 +2704,30 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     }
     expect(record).toContain('paseo-entrypoint');
     expect(record).toContain('GSTACK_EXTEND_RUN_MODE=orchestrated');
+    expect(record).toContain('why is it a requirement to do this on every machine? that seems silly');
+    expect(record).not.toMatch(/extend-[0-9a-f]{8}-[0-9a-f]{4}-/i);
+    expect(record).not.toContain('/home/');
+    expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    // Value: protects=pending qualification stays honest until real evidence is recorded; fails_when=empty evidence loses its notice or later evidence is forced pending; why_new=T9 requires the conditional transition; seam=none
-    const recordedRuns = section(record, '## Recorded runs').split('\n')
-      .filter(line => line.trim().startsWith('|')).slice(2);
-    if (recordedRuns.length === 0) {
+    // Value: protects=pending qualification stays honest until all three required launch/run types are verified; fails_when=partial or empty evidence loses its pending status/notice or complete evidence is forced pending; why_new=Track 80D records partial rows while paseo-entrypoint remains open; seam=none
+    const recordedRunsSection = section(record, '## Recorded runs');
+    const recordedRows = recordedRunsSection.split('\n')
+      .filter(line => line.trim().startsWith('|'))
+      .slice(2)
+      .map(line => line.split('|').slice(1, -1).map(c => c.trim().replace(/^`|`$/g, '')));
+    const hasPaseoByHand = recordedRows.some(
+      cells => cells[6] === 'user-directed' && cells[7] === 'paseo-entrypoint',
+    );
+    const hasCliByHand = recordedRows.some(
+      cells => cells[6] === 'user-directed' && cells[7] === 'cli',
+    );
+    const hasOrchestratedInteractive = recordedRows.some(
+      cells => cells[6] === 'orchestrated' && ['run-mode-env', 'session-kind', 'work-item'].includes(cells[7] ?? ''),
+    );
+    expect(hasCliByHand).toBe(true);
+    expect(hasOrchestratedInteractive).toBe(true);
+    if (!hasPaseoByHand || !hasCliByHand || !hasOrchestratedInteractive) {
       expect(record).toMatch(/^Status: pending/m);
       expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
       expect(runModeSection).toContain('Hand-use capture is not yet established: no real by-hand run has been read back');
