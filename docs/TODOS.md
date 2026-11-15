@@ -2,6 +2,16 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry-contract.test.ts] Grok sessions launched by hand are not detected
+
+- **Defect:** Grok sessions launched by hand (Paseo, owner's `kb-xps`, `0.94.1`) record `agent=null` and `run_mode_source=no-harness`; harness detection misses Grok.
+- **Evidence:** Owner's corrected raw-row readback for `docs-ship` at `2026-11-15T03:32:06Z`: `producer_version="0.94.1"`, `agent=null`, `run_mode="unknown"`, `run_mode_source="no-harness"`. The owner identifies the harness as Grok; the report paste independently shows that stage/time under `unknown`.
+- **Expected / observed:** Detect the actual Grok harness without calling it Claude; observed agent is null. A detected non-Claude by-hand harness should still classify `unknown` / `harness-unqualified` until a trustworthy launch signal exists, so fixing detection alone must not claim `user-directed`.
+- **Diagnosis:** `SESSION_MARKERS` and `harness_fingerprint()` count `GROK_SESSION_ID` only with `GROK_AGENT=1`, matching `detect()`. The missing marker is a hypothesis; the launch environment was not retained. No classifier or harness-detection fix is included here.
+- **Context:** Owner-supplied evidence and correction, `2026-11-15`; see [hand-use qualification](acceptance/hand-use-telemetry.md).
+- **Revisit when:** The next Track touches harness detection, or the next by-hand Grok/Paseo run supplies safe marker-presence evidence for reproduction. Never capture marker values or credentials.
+- **Effort:** ? (user triages in /roadmap).
+
 ### [review:files=docs/designs/review-run-state.md|docs/review-run-state-calls.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: diagnostic escaping contract drift
 
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`.

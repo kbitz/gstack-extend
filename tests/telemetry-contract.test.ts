@@ -2690,7 +2690,7 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     ]);
   }, 30_000);
 
-  test('hand-use qualification record and docs/telemetry.md notice match the pending-PM1 contract', () => {
+  test('hand-use qualification record and docs/telemetry.md notice match complete or partial readback evidence', () => {
     const recordPath = join(ROOT, 'docs/acceptance/hand-use-telemetry.md');
     expect(existsSync(recordPath)).toBe(true);
     const record = readFileSync(recordPath, 'utf8');
@@ -2706,31 +2706,61 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).toContain('GSTACK_EXTEND_RUN_MODE=orchestrated');
     expect(record).toContain('why is it a requirement to do this on every machine? that seems silly');
     expect(record).not.toMatch(/extend-[0-9a-f]{8}-[0-9a-f]{4}-/i);
-    expect(record).not.toContain('/home/');
+    expect(record).not.toMatch(/\/(?:home|Users)\/|~\//);
+    expect(record).not.toMatch(/[0-9a-f]{64}\.jsonl|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i);
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    // Value: protects=pending qualification stays honest until all three required launch/run types are verified; fails_when=partial or empty evidence loses its pending status/notice or complete evidence is forced pending; why_new=Track 80D records partial rows while paseo-entrypoint remains open; seam=none
+    // Value: protects=qualification needs three real readbacks, not candidate labels; fails_when=incomplete evidence clears pending or complete evidence stays pending; why_new=Track 80D now has all three readbacks; seam=none
     const recordedRunsSection = section(record, '## Recorded runs');
     const recordedRows = recordedRunsSection.split('\n')
       .filter(line => line.trim().startsWith('|'))
       .slice(2)
-      .map(line => line.split('|').slice(1, -1).map(c => c.trim().replace(/^`|`$/g, '')));
-    const hasPaseoByHand = recordedRows.some(
-      cells => cells[6] === 'user-directed' && cells[7] === 'paseo-entrypoint',
-    );
-    const hasCliByHand = recordedRows.some(
-      cells => cells[6] === 'user-directed' && cells[7] === 'cli',
-    );
-    const hasOrchestratedInteractive = recordedRows.some(
-      cells => cells[6] === 'orchestrated' && ['run-mode-env', 'session-kind', 'work-item'].includes(cells[7] ?? ''),
-    );
-    expect(hasCliByHand).toBe(true);
-    expect(hasOrchestratedInteractive).toBe(true);
-    if (!hasPaseoByHand || !hasCliByHand || !hasOrchestratedInteractive) {
+      .map(line => line.split('|').slice(1, -1).map(c => c.trim().replace(/`/g, '')));
+    const hasRequiredReadbacks = (rows: string[][]) => {
+      // Harness binary versions may stay explicitly unknown: this qualifies
+      // observed launch classification, not every harness/version combination.
+      const readbacks = rows.filter(cells => cells.length === 8
+        && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(cells[0])
+        && cells[0] >= '2026-11-09T15:58:00Z'
+        && cells[1] !== '' && cells[2] !== '' && /^claude\b/.test(cells[3])
+        && /\d+\.\d+\.\d+.*\([0-9a-f]{7,40}\)/.test(cells[4])
+        && cells[5].includes('report --by-host')
+        && !/\b(candidate|pending|unverified|awaiting)\b/i.test(cells[5]));
+      return readbacks.some(c => c[6] === 'user-directed' && c[7] === 'paseo-entrypoint')
+        && readbacks.some(c => c[6] === 'user-directed' && c[7] === 'cli')
+        && readbacks.some(c => c[6] === 'orchestrated'
+          && ['run-mode-env', 'session-kind', 'work-item'].includes(c[7])
+          && /\bstage (plan-track|roadmap|project-spec)\b/.test(c[5]));
+    };
+    const row = (mode: string, source: string, stage: string) => [
+      '2026-11-15T00:00:00Z', 'synthetic-host', 'Linux', 'claude (CLI version unknown)',
+      '0.94.1 (0c1c33f)', `stage ${stage}; report --by-host`, mode, source,
+    ];
+    const cli = row('user-directed', 'cli', 'gstack-extend-upgrade');
+    const paseo = row('user-directed', 'paseo-entrypoint', 'docs-ship');
+    const interactive = row('orchestrated', 'session-kind', 'roadmap');
+    expect(hasRequiredReadbacks([])).toBe(false);
+    for (const missing of [0, 1, 2]) {
+      expect(hasRequiredReadbacks([cli, paseo, interactive].filter((_, i) => i !== missing))).toBe(false);
+    }
+    for (const launch of ['candidate; report --by-host', 'stage docs-ship; no readback']) {
+      expect(hasRequiredReadbacks([cli, paseo.map((c, i) => i === 5 ? launch : c), interactive])).toBe(false);
+    }
+    expect(hasRequiredReadbacks([cli, paseo, row('orchestrated', 'session-kind', 'review-and-prep')])).toBe(false);
+    expect(hasRequiredReadbacks([cli, paseo.map((c, i) => i === 4 ? 'unknown' : c), interactive])).toBe(false);
+    expect(hasRequiredReadbacks([cli, paseo.map((c, i) => i === 0 ? '2026-11-08T00:00:00Z' : c), interactive])).toBe(false);
+    for (const source of ['run-mode-env', 'session-kind', 'work-item']) {
+      expect(hasRequiredReadbacks([cli, paseo, row('orchestrated', source, 'project-spec')])).toBe(true);
+    }
+    if (!hasRequiredReadbacks(recordedRows)) {
       expect(record).toMatch(/^Status: pending/m);
       expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
       expect(runModeSection).toContain('Hand-use capture is not yet established: no real by-hand run has been read back');
+    } else {
+      expect(record).toMatch(/^Status: qualified\b/m);
+      expect(runModeSection).toContain('(acceptance/hand-use-telemetry.md)');
+      expect(runModeSection).not.toContain('Hand-use capture is not yet established');
     }
   });
 });
