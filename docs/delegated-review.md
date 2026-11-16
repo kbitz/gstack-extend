@@ -404,6 +404,8 @@ The attacker parts' pending by-hand and orchestrated runs are listed in
 [the attacker-parts record](acceptance/attacker-parts.md), and tools-mode
 qualification and post-merge verification live in
 [the tools-mode acceptance record](acceptance/delegate-tools-mode.md).
+The [unshown-findings measurement](acceptance/review-unshown-findings.md)
+records the historical plan-contesting baseline and the separate proposed host-probe rule.
 
 ## Limits
 
