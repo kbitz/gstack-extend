@@ -1,4 +1,5 @@
 import { isAbsolute, join } from 'node:path';
+import { buildHelp, executeBuild } from './build.ts';
 import { executeExport, EXPORT_SCHEMA } from './export.ts';
 import { executeRender, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
 import { executeShow, SHOW_SCHEMA } from './show.ts';
@@ -13,6 +14,7 @@ export function renderMainHelp(): string {
 Experimental until Track 79A's default decision; internal store only.
 
 Usage:
+  bin/review-state build <command> --dir DIR [flags]
   bin/review-state start --dir DIR --input FILE
   bin/review-state record pass|correction|gate|audit --dir DIR --input FILE
   bin/review-state checkpoint --dir DIR --input FILE
@@ -21,7 +23,7 @@ Usage:
   bin/review-state export --dir DIR
   bin/review-state render --dir DIR --input FILE
   bin/review-state --version
-  bin/review-state --help | -h | <command> --help
+  bin/review-state --help | -h | build --help | <command> --help
 
 show and export are read-only: no --input, no lock, and no state writes.
 render reads review-run-state.json without locking or modifying it and writes output files in --dir.
@@ -84,6 +86,13 @@ function emitResult(res: StoreResult, io: CliIo): number {
 
 export function main(argv: string[], io: CliIo): number {
   const env = io.env ?? process.env;
+  if (argv[0] === 'build') {
+    if (argv.includes('--help') || argv.includes('-h')) {
+      io.stdout(buildHelp());
+      return 0;
+    }
+    return emitResult(executeBuild(argv, io.cwd, env, io.versionPath), io);
+  }
   if (argv.length === 1 && argv[0] === '--version') {
     io.stdout(`review-state ${readHelperVersion(io.versionPath) ?? 'unknown'}\n`);
     return 0;

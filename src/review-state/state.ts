@@ -191,7 +191,7 @@ const UPSTREAM_SEVERITY_LABELS: ReadonlyMap<string, string> = new Map([
   ['CRITICAL', 'critical'],
   ['INFORMATIONAL', 'info'],
 ]);
-const toPartLabel = (v: unknown): string | null =>
+export const toPartLabel = (v: unknown): string | null =>
   typeof v === 'string' ? (DELEGATE_PART_LABELS.get(v) ?? (isPart(v) ? v : null)) : null;
 export const isStr = (v: unknown, min: number, max: number, noWs = false): v is string =>
   typeof v === 'string' && v.length >= min && v.length <= max && !CTRL_RE.test(v) && (!noWs || !/\s/.test(v));
