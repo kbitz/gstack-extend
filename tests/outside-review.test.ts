@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { prepare, snapshotDiff, CLOSING_LINES, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
+import { SETTLED_RULE } from '../src/review-delegate/delegate';
 import { recover, type Classifier } from '../src/outside-review/recovery';
 import { run, measurement } from '../src/outside-review/run';
 import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
@@ -587,6 +588,18 @@ test('wrapper wires delta scope, both first-cycle voices and unchanged missing c
   const skill = readFileSync(join(import.meta.dir, '../skills/review-and-prep.md'), 'utf8');
   for (const marker of ['### Bound Claude Code outside calls', 'bin/outside-review', 'in-cap=delta',
     'continuation=repair-only', 'Retain both distinct', 'GATE: MISSING COVERAGE', 'native pass never substitutes']) expect(skill).toContain(marker);
+});
+
+test('prepare places SETTLED_RULE and settled context in the shared prefix for both phases', () => {
+  const settledContext = `${SETTLED_RULE}\nPlan: items/1.plan.md; SHA-256: ${'c'.repeat(64)}\nAccepted decisions:\n- Use base-tip read (items/1.plan.md:14)\nReview rules: none`;
+  const prepared = prepare({ ...request, context: settledContext }, '+diff\n');
+  expect(prepared.phases).toEqual(['challenge', 'structured']);
+  expect(prepared.prefix).toContain(JSON.stringify(settledContext));
+  for (const phase of prepared.phases) {
+    const rec = prepared.record(phase);
+    expect(rec.sections.other_context).toBe(Buffer.byteLength(JSON.stringify(settledContext), 'utf8'));
+    expect(rec.shared_prefix_bytes).toBe(Buffer.byteLength(prepared.prefix, 'utf8'));
+  }
 });
 
 test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('installed upstream transport and validator through fake Claude process (no paid calls)', async () => temporary(async dir => {

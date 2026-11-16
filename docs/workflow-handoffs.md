@@ -529,6 +529,14 @@ The H-B `Plan` hash is checked against the scope source as it is now:
 - A link is read only when it names a file in the bound repository at a full commit SHA. Any other link is `plan-unreadable`; never fetch an arbitrary URL to hash it.
 - `agreed task in the receipt`, with or without its quotes, points at the scope snapshot the receipt records, which `/ship-and-land` checks. The caller does not recompute it.
 
+### Settled decisions and `.gstack/review-rules.md`
+
+`/review-and-prep` builds a settled-context file (`settled-<sha256>.txt` in the branch-scoped delegate calls directory, mode `0600`, named by the SHA-256 of its complete UTF-8 bytes) from two inputs:
+
+- **Accepted plan decisions:** copied verbatim with `path:line` from the approved plan only (`/plan-track` `## Auto-decisions`, `/autoplan` Decision Audit Trail rows, and owner sign-offs in the plan or approval evidence — never H-A `Decisions/deviations`, rejected options, or open questions; no approval evidence means no decisions).
+- **`.gstack/review-rules.md`:** optional, owner-written repository review rules in free Markdown; recommended headings are `## Defects` (what counts here), `## Never flag` (classes and their reasons), and `## Hot spots` (paths). The 64 KiB limit covers the complete UTF-8 settled file, including headers and decision references. `/review-and-prep` never drafts or edits these rules and reads them only at the fetched base tip (`git show <base tip>:.gstack/review-rules.md`), never from HEAD or the work tree, so a reviewed PR's own edit never applies to that PR's review. When the file is absent and no accepted plan decisions exist, nothing is built and nothing changes for the repository; over the limit, no settled disposition activates.
+- **Greptile:** This workflow sends no per-PR plan decisions: its per-PR inputs are the trigger request and PR, while repository context comes from Greptile's source-branch configuration. An owner can give Greptile the same repository rules through its own [`.greptile/rules.md` configuration](https://www.greptile.com/docs/code-review/greptile-config-reference). Step 1 treats that as a review-policy change requiring the owner's decision; `/review-and-prep` never writes it on its own. The configuration references do not establish whether a trigger API or comment accepts per-request context; that capability is unknown here.
+
 ### Reference sketch
 
 This sketch is documentation. The executable reference is `classify()` in
@@ -951,6 +959,16 @@ A prepared receipt with non-blocking findings still emits `review: COMPLETE` in 
 H-B handoff: the `blocking:` status and `Finding blocking:` and `Finding not blocking:`
 lines live in the full receipt, not as handoff bindings, and `/ship-and-land` reads
 the receipt as a plain one.
+
+At the same decision point (whether or not `blocking=shown` is on, after
+`test-gaps=record`), **Give review parts the settled decisions** records a
+finding whose only claim is that a settled plan decision or a never-flag class
+in `.gstack/review-rules.md` is wrong under a distinct `Finding settled:`
+disposition instead of `Finding not blocking:`. Safety-class findings (data
+loss, trust-boundary bypass, uncapped spend, credential exposure) are decided
+first and are never recorded as settled. A prepared receipt with `settled:` and
+`Finding settled:` lines still emits `review: COMPLETE` in its H-B handoff: those
+lines live in the full receipt, not as handoff bindings.
 
 `post-audit=classify` follows the same rollout order and the same check, written as
 `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"` (exit 0 means
@@ -1561,6 +1579,7 @@ Release note: This fenced copy is not a disclosure.
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
 | `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`, one `Test gap recorded:` line per recorded gap with its upstream severity unchanged and the TODOS entry that carries it; a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
 | `blocking:` status and `Finding blocking:` and `Finding not blocking:` lines | receipt-present | published in the full receipt under `blocking=shown`, one line per decided finding with its attribution; a non-blocking finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
+| `settled:` status and `Finding settled:` lines | receipt-present | published in the full receipt when settled context is built or checked, one `Finding settled:` line per finding that only contests a settled plan decision or a never-flag rule in `.gstack/review-rules.md`; a safety-class finding is never recorded as settled, a settled finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
 | `delegation:` status and `Delegated part:` lines | receipt-present | published in the receipt under `delegate=<part>`, one `Delegated part:` line per delegated part with its provider label, model, outcome, fallback reason, wall time, token counts, finding count and call ID; the configuration's path never appears, and the lines never authorize a stage or merge (`B-DELEGATED-HEAD`) |
 | `Review arm:` and `Folded checklist:` lines | receipt-present | published in the receipt under `specialists=fold`: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per checklist the main pass read with its name, file path under the gstack root, SHA-256 and finding count; no local path outside the gstack root appears, and the lines never authorize a stage or merge (`B-FOLDED-HEAD`) |
 | `specialists-dispatched:` line | receipt-present | published in the receipt under `delegate=<part>` or `specialists=fold` while that section is active; records the current upstream item result (`waived`, `met`, `not declared` or `unmet`), with `; history=<cycle>:<outcome>[,...]` for mixed cycle outcomes preserving successful waivers' parts and failed calls' causes; never authorizes a stage or merge |

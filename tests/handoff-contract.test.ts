@@ -1273,6 +1273,8 @@ describe('(C) doc and producers agree', () => {
     expect(has(DOC, '`Test selection:` lines | receipt-present')).toBe(true);
     expect(has(rp, '`specialists-dispatched: waived (delegate;')).toBe(true);
     expect(has(DOC, '`specialists-dispatched:` line | receipt-present')).toBe(true);
+    expect(has(rp, '`Finding settled: <fingerprint>; found_by=<part>[,<part>...]; severity=<upstream label>; source=<plan|rules>; decision=<path:line>; evidence=<reference|none>`')).toBe(true);
+    expect(has(DOC, '`settled:` status and `Finding settled:` lines | receipt-present')).toBe(true);
   });
 
   test('producers keep the BLOCKED and PAUSED exits the doc treats as non-handoffs', () => {

@@ -37,7 +37,7 @@ class UsageError extends Error {
 interface Options {
   command: 'check' | 'run'; config: string; root: string; parts: Part[];
   repo: string; base: string; candidate: string; calls: string;
-  adversarial: string; caught: string;
+  adversarial: string; caught: string; settled: string;
 }
 
 const REQUIRED_FLAGS = {
@@ -47,7 +47,7 @@ const REQUIRED_FLAGS = {
 
 const KNOWN_FLAGS = {
   check: [...REQUIRED_FLAGS.check, '--adversarial'],
-  run: [...REQUIRED_FLAGS.run, '--adversarial', '--caught'],
+  run: [...REQUIRED_FLAGS.run, '--adversarial', '--caught', '--settled'],
 } as const;
 
 /** realpath of the nearest existing ancestor plus the not-yet-created tail, so a symlinked temp root cannot hide the repository. */
@@ -102,7 +102,7 @@ function parseArgs(argv: string[]): 'help' | Options {
       throw new UsageError('--caught is only allowed when --parts includes red-team', 'omit --caught or include red-team in --parts');
     }
   }
-  for (const flag of ['--config', '--gstack-root', '--repo', '--calls', '--adversarial', '--caught']) {
+  for (const flag of ['--config', '--gstack-root', '--repo', '--calls', '--adversarial', '--caught', '--settled']) {
     const value = seen.get(flag);
     if (value !== undefined && !isAbsolute(value)) throw new UsageError(`${flag} must be an absolute path`, `pass an absolute path for ${flag}`);
   }
@@ -113,11 +113,12 @@ function parseArgs(argv: string[]): 'help' | Options {
   const repo = seen.get('--repo');
   const calls = seen.get('--calls');
   const caught = seen.get('--caught');
+  const settled = seen.get('--settled');
   if (repo !== undefined) {
-    // A claim or caught-findings file inside the work tree would read as a write by the delegate or mix with reviewed files.
+    // A claim, caught-findings or settled-context file inside the work tree would read as a write by the delegate or mix with reviewed files.
     let top = resolve(repo);
     try { top = realpathSync(top); } catch { /* reported as repo-unreadable */ }
-    for (const [flag, target, label] of [['--calls', calls, 'calls directory'], ['--caught', caught, 'caught file']] as const) {
+    for (const [flag, target, label] of [['--calls', calls, 'calls directory'], ['--caught', caught, 'caught file'], ['--settled', settled, 'settled file']] as const) {
       if (target === undefined) continue;
       const rel = relative(top, realpathBelow(resolve(target)));
       if (!rel || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
@@ -128,11 +129,12 @@ function parseArgs(argv: string[]): 'help' | Options {
   return { command, config: resolve(seen.get('--config')!), root: resolve(seen.get('--gstack-root')!), parts: parts as Part[],
     repo: repo ?? '', base: seen.get('--base') ?? '', candidate: seen.get('--candidate') ?? '', calls: calls ?? '',
     adversarial: seen.get('--adversarial') ? resolve(seen.get('--adversarial')!) : '',
-    caught: caught ? resolve(caught) : '' };
+    caught: caught ? resolve(caught) : '',
+    settled: settled ? resolve(settled) : '' };
 }
 
 interface Prepared {
-  config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string;
+  config: DelegateConfig; sha: string; classify: Classifier; checklists: Record<string, string>; caught?: string; settled?: string;
 }
 type Preparation = { ok: true; prepared: Prepared } | { ok: false; reason: RefusalReason; detail?: string; fix?: string };
 
@@ -199,7 +201,13 @@ async function prepare(options: Options): Promise<Preparation> {
     if (!caughtRead.ok || caughtRead.bytes.length > CONFIG_LIMIT) return refuse('caught-unreadable');
     caught = caughtRead.bytes.toString('utf8');
   }
-  return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists, ...(caught !== undefined ? { caught } : {}) } };
+  let settled: string | undefined;
+  if (options.command === 'run' && options.settled) {
+    const settledRead = readTrusted(options.settled, 'settled context');
+    if (!settledRead.ok || settledRead.bytes.length > CONFIG_LIMIT) return refuse('settled-unreadable');
+    settled = settledRead.bytes.toString('utf8');
+  }
+  return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists, ...(caught !== undefined ? { caught } : {}), ...(settled !== undefined ? { settled } : {}) } };
 }
 
 /** Strip inherited GIT_* variables and apply isolated git settings. */
@@ -447,7 +455,7 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
   const label = prepared.config.parts[part]!;
   const provider = prepared.config.providers[label]!;
   const commands = provider.access === 'tools' ? provider.commands : undefined;
-  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined, commands);
+  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined, commands, prepared.settled);
   const id = callId(prompt, provider, label);
   const identity = { part, provider: label, model: provider.model, call_id: id };
   const saved = join(options.calls, `${id}.json`);
@@ -489,7 +497,7 @@ export function help() {
   return `review-delegate — run named review specialist and attacker parts through caller-configured provider commands
 
 Usage: review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE]
-       review-delegate run --config FILE --gstack-root DIR --parts P[,P...] --repo DIR --base SHA --candidate SHA --calls DIR [--adversarial FILE] [--caught FILE]
+       review-delegate run --config FILE --gstack-root DIR --parts P[,P...] --repo DIR --base SHA --candidate SHA --calls DIR [--adversarial FILE] [--caught FILE] [--settled FILE]
        review-delegate --help
 
 Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on the host model.
@@ -500,11 +508,12 @@ Parts: ${PARTS.join(', ')} (each at most once). Every other review part stays on
   --calls DIR         absolute private directory for call claims and saved results, outside --repo (run only)
   --adversarial FILE  absolute path of the adversarial instructions file (required when --parts includes adversarial)
   --caught FILE       absolute path of the already-caught findings file outside --repo, at most 64 KiB (run only; required when --parts includes red-team)
+  --settled FILE      absolute path of the settled decisions and review rules file outside --repo, at most 64 KiB (run only)
 
 Output (stdout, one JSON line):
   check: {"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model",..."access":"tools"}]}
          {"v":1,"status":"refused","reason":"config-missing|config-malformed|tools-unsupported|part-unmapped|helper-missing|checklist-anchor"}
-  run:   {"v":1,"status":"ran","config_sha256":...,"parts":[...]} or the same refused form (also reasons caught-unreadable and repo-unreadable)
+  run:   {"v":1,"status":"ran","config_sha256":...,"parts":[...]} or the same refused form (also reasons caught-unreadable, settled-unreadable and repo-unreadable)
 Exit: 0 every part credited; 4 a part fell back to the host; 1 refused before any call, or the work tree changed
       during the calls; 2 usage error (stdout empty; "ERROR USAGE: ..." and "FIX: ..." on stderr).
 Docs: docs/delegated-review.md

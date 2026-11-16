@@ -2,6 +2,62 @@
 
 ## Unprocessed
 
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: Settled input file boundary cases
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Empty, exact-64-KiB, multibyte-overflow and nonregular settled inputs lack dedicated new-flag cases.
+- **Hypothesis (untested):** Extend the existing fake-provider CLI table and assert output, exit and no dispatch for refusals.
+- **Upstream severity:** INFORMATIONAL (coverage-audit gap; parent classification)
+- **Found in:** src/review-delegate/cli.ts:205
+- **Evidence:** Coverage audit on `8610408`; existing tests and source read, no failing behavior reproduced.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/7d09b5f8` at `8610408` (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: Settled input containment aliases
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The new flag has a direct inside-repository case, but no dedicated symlink-alias or tools-mode subdirectory case.
+- **Hypothesis (untested):** Extend canonical-path fixtures to show settled data remains outside the resolved repository.
+- **Upstream severity:** INFORMATIONAL (coverage-audit gap; parent classification)
+- **Found in:** src/review-delegate/cli.ts:121
+- **Evidence:** Coverage audit on `8610408`; existing tests and source read, no failing behavior reproduced.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/7d09b5f8` at `8610408` (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Installed settled workflow execution
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Static contracts do not execute approval extraction, base-rule changes, inactive cases, resume and receipt exits through an installed agent.
+- **Hypothesis (untested):** Capture a bounded installed-agent acceptance run and bind results to its host, model and revisions.
+- **Upstream severity:** INFORMATIONAL (coverage-audit gap; parent classification)
+- **Found in:** skills/review-and-prep.md:2226
+- **Evidence:** Coverage audit on `8610408`; existing tests and source read, no failing behavior reproduced.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/7d09b5f8` at `8610408` (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/delegate.ts|skills/review-and-prep.md] Test gap: Settled finding semantic evaluation
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Prompt delivery and safety wording are covered, but no semantic eval proves accepted choices are distinguished from unaccepted failures.
+- **Hypothesis (untested):** Preregister bounded accepted-choice, unaccepted-failure and safety counterexamples; evaluate without claiming universal compliance.
+- **Upstream severity:** INFORMATIONAL (coverage-audit gap; parent classification)
+- **Found in:** src/review-delegate/delegate.ts:221
+- **Evidence:** Coverage audit on `8610408`; existing tests and source read, no failing behavior reproduced.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/7d09b5f8` at `8610408` (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: Settled help contract detail
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The help test checks flag presence, not the run-only, outside-repository and size-limit help claims.
+- **Hypothesis (untested):** Strengthen the existing help case against the documented CLI contract when this area is next touched.
+- **Upstream severity:** INFORMATIONAL (coverage-audit gap; parent classification)
+- **Found in:** src/review-delegate/cli.ts:497
+- **Evidence:** Coverage audit on `8610408`; existing tests and source read, no failing behavior reproduced.
+- **Context:** Filed by /review-and-prep before PR creation on `mmm/7d09b5f8` at `8610408` (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:severity=necessary,files=skills/review-and-prep.md|docs/workflow-handoffs.md] Require one targeted host probe before leaving a concrete CRITICAL attacker or outside finding not-shown
+- **Description:** Measurement of 386 deduplicated unshown findings across 50 PRs (`docs/acceptance/review-unshown-findings.md`) found that while `base-only` and `attacker-not-rerun` had zero post-merge escapes, 8 confirmed-real `reason=not-shown` findings on consumer A #188 (including 3 `CRITICAL`) were left unshown without a host probe: 1 escaped local review to Greptile and 7 reached merge and required follow-up fix PR #192.
+- **Hypothesis (untested):** In `skills/review-and-prep.md` (`### Block readiness only on shown findings`), require one bounded host probe before dispositioning a non-settled, non-source-disproved `CRITICAL` (`CRITICAL`/`P0`/`P1`) finding from `adversarial`, `red-team`, or `outside` as `reason=not-shown` when the finding names a concrete input state and failure on changed code.
+- **Evidence:** `docs/acceptance/review-unshown-findings.md` (6 of 80 `CRITICAL` `not-shown` rows confirmed real; 31 of 100 `CRITICAL` rows contested plan decisions, including 3 later confirmations. A failure the decision did not accept is an ordinary finding, never automatically covered by `Finding settled:`).
+- **Effort:** S (human: ~2 hours / CC: ~20 min)
+
 ### [review:files=tests/skill-protocols-review-and-prep.test.ts] Test gap: Resume guard uses current builder flag names
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** The negative Resume-authority assertion still searches the old details.value wording after the caller document changed to --greptile-value.

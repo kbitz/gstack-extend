@@ -15,7 +15,7 @@ import { agentShells, extractFences, runShell, scopedEnv } from './helpers/exten
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
-import { FALLBACK_REASONS, PARTS, PART_KEYS, RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
+import { FALLBACK_REASONS, PARTS, PART_KEYS, RECEIPT_KEYS, SETTLED_RULE } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, BUILT_KEYS } from '../src/review-state/build.ts';
 import { main as reviewStateMain } from '../src/review-state/cli.ts';
 
@@ -4677,5 +4677,74 @@ describe('review-and-prep run-state=record', () => {
     expect(
       scanBuiltKeyObjects('names its probe result as {path, sha256} relative to the evidence directory', true).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe('review-and-prep settled decisions', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const sectionRaw = skillSection(prep, '### Give review parts the settled decisions');
+  const section = sectionRaw.replace(/\s+/g, ' ');
+  const outside = skillSection(prep, '### Bound Claude Code outside calls').replace(/\s+/g, ' ');
+  const delegate = skillSection(prep, '### Delegate named specialist parts').replace(/\s+/g, ' ');
+  const shown = skillSection(prep, '### Block readiness only on shown findings').replace(/\s+/g, ' ');
+  const cap = skillSection(prep, '### When /review stops at its cycle cap').replace(/\s+/g, ' ');
+  const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+
+  // Value: protects=absent or oversized settled context cannot activate a disposition and content identity includes rules changes; fails_when=Decide runs without a built file or its identity is only the plan hash; why_new=AC3 no-op and AC7 base-rules freshness; seam=none; no_claim=installed-agent execution
+  test('settled disposition requires a built file and defines whole-file identity', () => {
+    expect(section).toMatch(/Decide only when Build wrote or reused a settled file/);
+    expect(section).toContain('keep Build\'s no-record or over-cap inactive outcome');
+    expect(section).toMatch(/SHA-256 of the complete UTF-8 file bytes/);
+    expect(section).toContain('including the header lines and decision references');
+  });
+
+  // Value: protects=section placement between test-gaps and blocking=shown, phase-table mapping, plan-only extraction, base-only rules read, absent-file and no-context no-ops, 64 KiB cap, SETTLED_RULE across every review part, safety-class precedence, Finding settled: key order, and receipt/readiness hooks; fails_when=any rule, part, key or receipt site drifts; why_new=AC2, AC3, AC4, AC6, AC7; seam=SETTLED_RULE in src/review-delegate/delegate.ts; no_claim=installed-agent execution
+  test('locks settled context build, base-only rules read, part delivery, safety-class precedence, and Finding settled disposition', () => {
+    const gapAt = prep.indexOf('### Record unproven test gaps');
+    const secAt = prep.indexOf('### Give review parts the settled decisions');
+    const shownAt = prep.indexOf('### Block readiness only on shown findings');
+    expect(gapAt).toBeGreaterThan(-1);
+    expect(secAt).toBeGreaterThan(gapAt);
+    expect(shownAt).toBeGreaterThan(secAt);
+    expect(prep.split('### Give review parts the settled decisions').length - 1).toBe(1);
+    expect(prep).toContain('| `Give review parts the settled decisions` | `local-pass`, `voice`, `fix` | none |');
+
+    for (const phrase of [
+      'extract accepted decisions verbatim with `path:line` from the approved plan only: `/plan-track` `## Auto-decisions` rows, `/autoplan` Decision Audit Trail rows, and owner sign-offs recorded in the plan or approval evidence — never H-A `Decisions/deviations`, rejected options, or open questions. No approval evidence means no decisions.',
+      'Read `.gstack/review-rules.md` with `git show <base tip>:.gstack/review-rules.md` at that fetched base tip, never from HEAD or the work tree; an absent file means `rules=none` and no rules text.',
+      'With neither decisions nor rules, build nothing and record nothing.',
+      'Over 64 KiB, pass nothing and record `settled: inactive — context over 64 KiB`.',
+      '`settled-<sha256>.txt` in the branch-scoped delegate calls directory (**Evidence directory**), mode `0600`, via a temporary file in that directory renamed into place, and reuse it unchanged on a resume or continuation:',
+      'every review part (`core`, `specialist:<name>`, `native-adversarial`, `red-team`, `qa`, `outside:challenge`, `outside:structured`)',
+      'Greptile receives none.',
+      '`settled: active (decisions=<n>; rules=<.gstack/review-rules.md@<short SHA>|none>; sha256=<64 hex>)`',
+      '`settled: inactive — anchor changed (<which>)`, still pass the context to review parts, and give every finding today\'s handling.',
+      '1. Safety-class findings (claiming data loss, a trust-boundary bypass, uncapped spend or credential exposure) are decided first and take today\'s handling; never record a safety-class finding as settled (`Finding settled:`).',
+      'A settled finding is not fixed, Step 5b writes nothing for it and Step 5c does not ask, its upstream severity is copied unchanged, it stays `open` in `/review`\'s action list with wrapper disposition `settled: <decision ref>`, is never `Auto-chosen`, never gets `Finding not blocking:`, is not unresolved, and is superseded by a later `Finding blocking:` line for that fingerprint; `/review`\'s zero-edit convergence rule is unchanged.',
+    ]) expect(section, phrase).toContain(phrase);
+
+    expect(section).toContain(SETTLED_RULE);
+    expect(outside).toContain('plus `SETTLED_RULE` and the settled context when a settled file exists (**Give review parts the settled decisions**)');
+    expect(delegate).toContain('[--settled "<settled file>"]');
+    expect(delegate).toContain('When a settled file exists (**Give review parts the settled decisions**), pass `--settled "<calls directory>/settled-<sha256>.txt"`.');
+    expect(shown).toContain('A settled finding is decided in **Give review parts the settled decisions** and never gets `Finding not blocking:`.');
+
+    const settledTpl = section.match(/`Finding settled: ([^`]+)`/)![1]!;
+    const keys = settledTpl.split('; ').slice(1).map((pair) => pair.split('=')[0]);
+    expect(keys).toEqual(['found_by', 'severity', 'source', 'decision', 'evidence']);
+    expect(settledTpl).toContain('source=<plan|rules>');
+    expect(settledTpl).toContain('decision=<path:line>');
+    expect(settledTpl).toContain('evidence=<reference|none>');
+
+    expect(cap).toContain('Add the `settled:` status and each `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context; a settled finding is not listed under `Unresolved:`.');
+    expect(flat).toContain('Record the `settled:` status and every `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context (a settled finding is not listed under `Unresolved:`).');
+    expect(flat).toContain('the `settled:` status line and every `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context (a settled finding is not listed under `Unresolved:`),');
+    expect(flat).toContain('- **Settled:** when a finding only contests a settled decision (**Give review parts the settled decisions**), apply that section\'s disposition and reply under the existing reply rules citing the decision.');
+    expect(readiness).toContain('A finding with a `Finding settled:` line is not unresolved unless a later `Finding blocking:` line supersedes it (**Give review parts the settled decisions**).');
+
+    expect(sectionRaw).not.toContain('byte for byte');
+    expect(sectionRaw).not.toContain('grep -F');
+    expect(sectionRaw).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });
