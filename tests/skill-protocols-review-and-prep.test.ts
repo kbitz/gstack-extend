@@ -4519,12 +4519,23 @@ describe('review-and-prep run-state=record', () => {
   test('Step 1 defines ### Evidence directory and every step and doc resolves to it', () => {
     const step1At = prep.indexOf('## 1. Establish the branch, PR, and review inputs');
     const evDirAt = prep.indexOf('### Evidence directory');
+    const step2At = prep.indexOf('## 2. Review and verify locally');
     const scopeAt = prep.indexOf('### Establish the approved implementation scope');
     expect(step1At).toBeGreaterThan(-1);
     expect(evDirAt).toBeGreaterThan(step1At);
+    expect(step2At).toBeGreaterThan(evDirAt);
     expect(scopeAt).toBeGreaterThan(evDirAt);
+    expect(prep.match(/^### Evidence directory$/gm)).toHaveLength(1);
 
     const evDirSection = skillSection(prep, '### Evidence directory').replace(/\s+/g, ' ');
+    for (const definition of [
+      '${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}',
+      '<state-root>/projects/<slug>/review-and-prep/',
+      '~/scratch/review-and-prep/',
+    ]) {
+      expect(prep.split(definition).length - 1, definition).toBe(1);
+      expect(evDirSection).toContain(definition);
+    }
     expect(evDirSection).toContain('`<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does.');
     expect(evDirSection).toContain('The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.');
     expect(evDirSection).toContain('Create this invocation\'s evidence directory — a unique branch-and-invocation subdirectory under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active)');
@@ -4534,6 +4545,7 @@ describe('review-and-prep run-state=record', () => {
     const delegateSection = skillSection(prep, '### Delegate named specialist parts').replace(/\s+/g, ' ');
     expect(delegateSection).toContain('--calls "<delegate calls directory>"');
     expect(delegateSection).not.toContain('--calls "<evidence-directory>/delegate-calls"');
+    expect(prep).not.toContain('<evidence-directory>/delegate-calls');
 
     const baselineSection = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
     expect(baselineSection).toContain('`<evidence-directory>` is this invocation\'s directory from **Evidence directory**, which already exists');

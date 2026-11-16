@@ -235,7 +235,8 @@
       "tests/lib-pack.test.ts"
     ],
     "docs/delegated-review.md": [
-      "tests/review-delegate.test.ts"
+      "tests/review-delegate.test.ts",
+      "tests/skill-protocols-review-and-prep.test.ts"
     ],
     "docs/designs/review-run-state.md": [
       "tests/review-state.test.ts",

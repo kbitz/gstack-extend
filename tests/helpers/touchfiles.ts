@@ -207,6 +207,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/skill-protocols-review-and-prep.test.ts': [
     skill('review-and-prep'),
+    'docs/delegated-review.md',
     // Producer-side locks for the ship-and-land handoff read the consumer too.
     skill('ship-and-land'),
     'docs/telemetry.md',
