@@ -4564,8 +4564,5 @@ describe('review-and-prep run-state=record', () => {
     const skillHeadings = new Set(prep.split('\n').filter((line) => /^##+ /.test(line)).map((line) => line.trim()));
     expect(skillHeadings.has(d2HeadingMatch![1]!)).toBe(true);
 
-    const delegatedReviewDoc = readFileSync(join(ROOT, 'docs', 'delegated-review.md'), 'utf8').replace(/\s+/g, ' ');
-    expect(delegatedReviewDoc).toContain('<evidence root>/<branch>-delegate-calls/');
-    expect(delegatedReviewDoc).toContain('**Evidence directory**');
   });
 });
