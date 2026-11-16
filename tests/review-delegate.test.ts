@@ -697,6 +697,13 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     }
   });
 
+  // Value: protects=settled labeling preserves severity and exempts safety claims before host triage; fails_when=the transport asks reviewers to demote findings or label safety claims settled; why_new=AC6 host prose alone cannot constrain the delivered prompt; seam=SETTLED_RULE (used by buildPrompt); no_claim=LLM compliance
+  test('settled labeling preserves severity and excludes safety claims', () => {
+    expect(SETTLED_RULE).toContain("Preserve each finding's ordinary severity.");
+    expect(SETTLED_RULE).not.toContain('lowest severity');
+    expect(SETTLED_RULE).toMatch(/Never label findings claiming data loss, a trust-boundary bypass, uncapped spend or credential exposure as settled/);
+  });
+
   test('--settled passes settled context into the prompt, changes call_id when edited, and refuses missing or oversized files with settled-unreadable', () => {
     const s = setup('sibling', { alpha: { mode: 'inspect' } }, { testing: 'alpha' });
     const settled = join(s.state, 'settled.txt');

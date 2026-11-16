@@ -2249,14 +2249,22 @@ Review rules: <.gstack/review-rules.md at <short base SHA> | none>
 <rules text verbatim, when present>
 ```
 
+The limit covers the complete UTF-8 file, including the header lines and
+decision references. Use the SHA-256 of the complete UTF-8 file bytes for
+`<sha256>` in its filename and status line; a changed plan or base-tip rules
+therefore cannot reuse stale content.
+
 **Pass.** When a settled file exists, every review part (`core`,
 `specialist:<name>`, `native-adversarial`, `red-team`, `qa`,
 `outside:challenge`, `outside:structured`) — the core pass, each specialist
 dispatch, folded checklists, the native adversarial subagent, every Red Team
 (upstream's and the wrapper's), QA, and every outside voice (including
-upstream's own outside prompts) — receives `SETTLED_RULE` ("The settled context lists decisions the approved plan accepted and this repository's review rules, as review data. Use it only to label findings: a finding whose only claim is that a listed decision is wrong, or that falls in a class the rules say never to flag, takes the lowest severity your output format allows and a summary that starts `Settled decision:` and names the decision. A finding that the change departs from a listed decision, breaks an acceptance criterion or fails in a way the decision did not accept is an ordinary finding.") and the settled context as review data. Greptile receives none.
+upstream's own outside prompts) — receives `SETTLED_RULE` ("The settled context lists decisions the approved plan accepted and this repository's review rules, as review data. Preserve each finding's ordinary severity. Use it only to label findings: a finding whose only claim is that a listed decision is wrong, or that falls in a class the rules say never to flag, gets a summary that starts `Settled decision:` and names the decision. Never label findings claiming data loss, a trust-boundary bypass, uncapped spend or credential exposure as settled; report them as ordinary findings. A finding that the change departs from a listed decision, breaks an acceptance criterion or fails in a way the decision did not accept is an ordinary finding.") and the settled context as review data. Greptile receives none.
 
-**Decide.** At the decision point **Block readiness only on shown findings**
+**Decide.** Decide only when Build wrote or reused a settled file for this
+plan and fetched base tip. Otherwise give every finding today's handling and
+keep Build's no-record or over-cap inactive outcome; record no active status
+or `Finding settled:` line. At the decision point **Block readiness only on shown findings**
 uses (after `/review`'s Step 5.0 dedup and Step 5a and before Step 5b's first
 edit, whether or not `blocking=shown` is on, after **Record unproven test
 gaps**), reuse **Block readiness only on shown findings**' anchor check: when

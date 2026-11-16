@@ -4691,6 +4691,14 @@ describe('review-and-prep settled decisions', () => {
   const cap = skillSection(prep, '### When /review stops at its cycle cap').replace(/\s+/g, ' ');
   const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
 
+  // Value: protects=absent or oversized settled context cannot activate a disposition and content identity includes rules changes; fails_when=Decide runs without a built file or its identity is only the plan hash; why_new=AC3 no-op and AC7 base-rules freshness; seam=none; no_claim=installed-agent execution
+  test('settled disposition requires a built file and defines whole-file identity', () => {
+    expect(section).toMatch(/Decide only when Build wrote or reused a settled file/);
+    expect(section).toContain('keep Build\'s no-record or over-cap inactive outcome');
+    expect(section).toMatch(/SHA-256 of the complete UTF-8 file bytes/);
+    expect(section).toContain('including the header lines and decision references');
+  });
+
   // Value: protects=section placement between test-gaps and blocking=shown, phase-table mapping, plan-only extraction, base-only rules read, absent-file and no-context no-ops, 64 KiB cap, SETTLED_RULE across every review part, safety-class precedence, Finding settled: key order, and receipt/readiness hooks; fails_when=any rule, part, key or receipt site drifts; why_new=AC2, AC3, AC4, AC6, AC7; seam=SETTLED_RULE in src/review-delegate/delegate.ts; no_claim=installed-agent execution
   test('locks settled context build, base-only rules read, part delivery, safety-class precedence, and Finding settled disposition', () => {
     const gapAt = prep.indexOf('### Record unproven test gaps');

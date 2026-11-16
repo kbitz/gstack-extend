@@ -531,10 +531,10 @@ The H-B `Plan` hash is checked against the scope source as it is now:
 
 ### Settled decisions and `.gstack/review-rules.md`
 
-`/review-and-prep` builds a settled-context file (`settled-<sha256>.txt` in the branch-scoped delegate calls directory, mode `0600`) from two inputs:
+`/review-and-prep` builds a settled-context file (`settled-<sha256>.txt` in the branch-scoped delegate calls directory, mode `0600`, named by the SHA-256 of its complete UTF-8 bytes) from two inputs:
 
 - **Accepted plan decisions:** copied verbatim with `path:line` from the approved plan only (`/plan-track` `## Auto-decisions`, `/autoplan` Decision Audit Trail rows, and owner sign-offs in the plan or approval evidence — never H-A `Decisions/deviations`, rejected options, or open questions; no approval evidence means no decisions).
-- **`.gstack/review-rules.md`:** optional, owner-written repository review rules in free Markdown using `## Defects`, `## Never flag`, and `## Hot spots` headings (64 KiB limit for the combined settled context). `/review-and-prep` reads it only at the fetched base tip (`git show <base tip>:.gstack/review-rules.md`), never from HEAD or the work tree, so a reviewed PR's own edit to `.gstack/review-rules.md` never applies to that PR's review. When `.gstack/review-rules.md` is absent and no accepted plan decisions exist, nothing is built and nothing changes for the repository.
+- **`.gstack/review-rules.md`:** optional, owner-written repository review rules in free Markdown; recommended headings are `## Defects` (what counts here), `## Never flag` (classes and their reasons), and `## Hot spots` (paths). The 64 KiB limit covers the complete UTF-8 settled file, including headers and decision references. `/review-and-prep` never drafts or edits these rules and reads them only at the fetched base tip (`git show <base tip>:.gstack/review-rules.md`), never from HEAD or the work tree, so a reviewed PR's own edit never applies to that PR's review. When the file is absent and no accepted plan decisions exist, nothing is built and nothing changes for the repository; over the limit, no settled disposition activates.
 - **Greptile:** Greptile receives no per-PR plan decisions (`trigger_code_review` and `@greptileai` comments accept no context parameter); an owner who wants Greptile to apply repository review rules configures Greptile's own repository files (such as `.greptile/rules.md` under root `.greptile/`) as an owner-made configuration change, which `/review-and-prep` never writes on its own.
 
 ### Reference sketch

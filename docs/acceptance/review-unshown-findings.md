@@ -92,6 +92,15 @@ Across all 100 deduplicated `CRITICAL` rows (`80` `not-shown`, `17` `attacker-no
 - **Contested an approved plan decision only (`yes`):** **31 of 100 (31.0%)** (`3` in consumer B, `19` in consumer A, `9` in this repository).
 - **Did not only contest a plan decision (`no`):** **69 of 100 (69.0%)**.
 - **Unknown:** **0**.
+
+Of the 31 `yes` rows, 3 were later confirmed under the signals above (3/31,
+9.7%); among the 69 `no` rows, 6 were confirmed (6/69, 8.7%). Rows #7, #9 and
+#11 are the confirmed `yes` cases. This is a historical plan-contesting
+baseline, not a count of findings safe to settle: a failure the decision did
+not accept remains an ordinary finding. Confirmation by a filed TODO or an
+accepted-risk reproduction is the plan's measurement definition, not proof of
+a post-merge escape; the high `base-only` rate largely reflects required filing.
+
 - **Check on #260 and #261:** #260 had 1 `Finding not blocking:` `CRITICAL` row (`directory-sharing`, `found_by=red-team,native-adversarial,outside:challenge,outside:structured`), which contested the plan's accepted slash-flattening scheme (`yes`), plus 1 delegated adversarial `CRITICAL` finding on nullable wall time that was rejected in `final-dispositions.md` before `Finding not blocking:` emission because the plan and SPEC O6.1 explicitly required nullable timing (`yes`). #261 had 3 `Finding not blocking:` `CRITICAL` rows: 1 (`skills/review-and-prep.md:2806:A1`) contested AC6's preserved prefix-only validation (`yes`), while 2 (`:2485:A2`, `:2439:A3`) misread existing snapshot/cycle prose (`no`).
 
 ## Decision: **change**
