@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.96.0] - 2026-11-16
+
+### Added
+
+- `bin/review-state build` creates canonical run-state requests from fact flags and evidence files.
+
+### Changed
+
+- With `run-state=record`, `/review-and-prep` now sends every run-state record through the review-state helper's new `build` subcommand, which turns the facts the review knows into the request, so a hand-written payload mistake no longer costs the run its recorded state.
+- `run-state=record` now directs all state-writing calls through the builder.
+
 ## [0.95.0] - 2026-11-16
 
 ### Changed
