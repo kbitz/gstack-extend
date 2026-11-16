@@ -801,7 +801,7 @@ Create this invocation's evidence directory — a unique branch-and-invocation s
 
 The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation's `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.
 
-Under `run-state=record`, this invocation's evidence directory is `--dir`, and every `evidence` path, `pregate.details.record_path` and `documentation.details.section_path` is relative to it and resolves inside it.
+Under `run-state=record`, this invocation's evidence directory is `--dir`, and every `--evidence`, `--pregate-record`, `--section` and `--delegate-file` path is relative to it and resolves inside it.
 
 ### Establish the approved implementation scope
 
@@ -1150,7 +1150,9 @@ line read as `none supplied` prints no warning.
   defines (resolve `<extend-root>` from this installed skill's `.extend-root`,
   as **Use the light review default** does), replacing the run `begin` and
   `end`, pass, correction and context-override metrics writes in **Workflow
-  metrics (optional, local)** with that document's derive command. It waives no
+  metrics (optional, local)** with that document's derive command. Every
+  run-state record is sent with `bin/review-state build` as the calls document
+  lists, never a hand-written request file. It waives no
   gate, changes no finding, gate, readiness or handoff line (the full receipt
   gains only the run-state lines that document names), never authorizes a
   continuation and combines with every key. Omitted, nothing changes. The light
@@ -1672,8 +1674,8 @@ Record each part in `voices.jsonl` and the receipt as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's
 `delegate` values. A fallback is the failed delegate attempt, then a host
 attempt that names it as its predecessor, then a `fallback` correction. Under
-`run-state=record`, the caller records the failed delegated attempt with its
-runner entry and the host attempt with `predecessor_attempt_id` naming it,
+`run-state=record`, the caller records the failed delegated attempt with
+`--delegate-file` and the host attempt with `--predecessor-attempt-id` naming it,
 `derive` writes the `fallback` correction, and no `record correction` is sent
 for it.
 
@@ -3176,8 +3178,8 @@ inputs it touched under that gate's own freshness rule before Step 6. Copy the
 final pregate record, the audit's post-child snapshot and its documentation
 section into this invocation's evidence directory (**Evidence directory**), not
 the evidence root, and record each copy's path and SHA-256 in the receipt.
-Under `run-state=record`, `record gate` `pregate`'s `details.record_path` and
-`record audit` `documentation`'s `details.section_path` are those copies' paths
+Under `run-state=record`, `record gate` `pregate`'s `--pregate-record` and
+`record audit` `documentation`'s `--section` are those copies' paths
 relative to it. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
 
 ### Classify changes after the documentation audit's last attempt

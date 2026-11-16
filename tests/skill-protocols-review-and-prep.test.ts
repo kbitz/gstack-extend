@@ -16,6 +16,7 @@ import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
 import { FALLBACK_REASONS, PARTS, PART_KEYS, RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
+import { BUILD_COMMANDS, BUILT_KEYS } from '../src/review-state/build.ts';
 import { main as reviewStateMain } from '../src/review-state/cli.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -3059,7 +3060,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(metrics).toContain('`requested_model` from the configuration with `requested_source: launcher-config`, `reported_source: unavailable` and `unknown_reason: not-reported`');
     expect(metrics).toContain("A delegated part's finding takes `found_by` from the runner's part row: `specialist:<part>` for the four specialists, `red-team` for `red-team`, and `native-adversarial` for `adversarial`, plus today's v3 `delegate` object.");
     expect(section).toContain('A fallback is the failed delegate attempt, then a host attempt that names it as its predecessor, then a `fallback` correction.');
-    expect(section).toContain('Under `run-state=record`, the caller records the failed delegated attempt with its runner entry and the host attempt with `predecessor_attempt_id` naming it, `derive` writes the `fallback` correction, and no `record correction` is sent for it.');
+    expect(section).toContain('Under `run-state=record`, the caller records the failed delegated attempt with `--delegate-file` and the host attempt with `--predecessor-attempt-id` naming it, `derive` writes the `fallback` correction, and no `record correction` is sent for it.');
     expect(flat).toContain('A delegated part\'s row adds an optional, content-free `delegate` object');
   });
 
@@ -4415,11 +4416,11 @@ describe('review-and-prep run-state=record', () => {
       '`delegation: active (…)`',
       'Under the value, receipts, PR text and handoff lines are rendered with `bin/review-state render` from the recorded state, and any output the helper refuses is written as today.',
       'When Step 1 recorded a Greptile skip, run `record gate` named `greptile` after `start` and `derive`.',
-      'Run `record gate` (`greptile`) each time the receipt\'s H-B Greptile value is decided or changes (Step 4\'s outcome, a recorded waiver, Step 6\'s changed applicability decision), with `details.value` the H-B Greptile value (for a skip, `skipped — <reason>; do not run it`, as `B-GREPTILE-SKIPPED` in `tests/fixtures/handoffs/cases.json` shows) and `details.run` the run link or `null`; `result` is `passed` for a completed run, `blocked` with reason `unverified` for the no-response fallback, and `not-run` with a reason for a skip or postponement (the renderer reads only `details`); the candidate is the current HEAD and base. The last `greptile` record is current.',
-      'Every gate and audit carries `candidate.base` (the reviewed base it ran against) and `candidate.wtree` when known, so D9\'s freshness rule matches it to the `ready` or `finish` binding.',
+      'Run `record gate` (`greptile`) each time the receipt\'s H-B Greptile value is decided or changes (Step 4\'s outcome, a recorded waiver, Step 6\'s changed applicability decision), with `--greptile-value` the H-B Greptile value (for a skip, `skipped — <reason>; do not run it`, as `B-GREPTILE-SKIPPED` in `tests/fixtures/handoffs/cases.json` shows) and `--greptile-run` the run link (omit when `null`); `--result` is `passed` for a completed run, `blocked` with `--reason unverified` for the no-response fallback, and `not-run` with `--reason` for a skip or postponement (the renderer reads only `details`); the candidate is the current `--commit` HEAD and `--base`. The last `greptile` record is current.',
+      'Every gate and audit carries `--base` (the reviewed base it ran against) and `--wtree` when known, so D9\'s freshness rule matches it to the `ready` or `finish` binding.',
       'When the stop\'s policy line differs from the recorded `policy` value or source, write the full receipt, stopped comment and H-E prompt inline instead (the body and stage line may still render).',
-      'Run `finish` `blocked` with `stop_reason: "provider-failures"`; with a draft, render `full-receipt` and `body` (`comment_url: null`); always render `final`.',
-      'Once every readiness gate passes, run `checkpoint ready` (fetched base, `wtree`); render `full-receipt`, then `comment`, post it with `--body-file`, render `body` with its permalink and splice that section into a fresh read of the PR body under the existing collision procedure; recheck, `gh pr ready`, readback; `finish` `prepared` with `readiness_confirmed_at`, `user_facing_changes`, and the `ready` checkpoint\'s `base`, `wtree` and the comment\'s `review_restriction_resolved` value, recording nothing between the comment render and `finish`; `derive`; render `final` and end the message with that file\'s bytes after the model\'s own prose.',
+      'Run `finish` `blocked` with `--stop-reason provider-failures`; with a draft, render `full-receipt` and `body` (`comment_url: null`); always render `final`.',
+      'Once every readiness gate passes, run `checkpoint ready` (fetched base, `wtree`); render `full-receipt`, then `comment`, post it with `--body-file`, render `body` with its permalink and splice that section into a fresh read of the PR body under the existing collision procedure; recheck, `gh pr ready`, readback; `finish` `prepared` with `--readiness-confirmed-at`, repeated `--user-facing-change`, and the `ready` checkpoint\'s `--base`, `--wtree` and `--review-restriction-resolved` when the comment set it, recording nothing between the comment render and `finish`; `derive`; render `final` and end the message with that file\'s bytes after the model\'s own prose.',
       'A render refusal, or a result line still missing or `retry: "same-input"` after the section\'s single retry, writes that one output inline; state recording continues. When the failed output is the full receipt, the inline full receipt carries `Run state: render unavailable (<output>: <reason>)`; a later output\'s failure goes in the exit message\'s prose in that same form, because the full receipt is never rewritten (`### Readiness`) and the rendered outputs already cite its SHA-256.',
       'Render outputs with `"<extend-root>/bin/review-state" render --dir <evidence directory> --input <file>`; inputs per output as `render --help` and [design D13](designs/review-run-state.md#d13-request-shapes-and-walkthrough) list them; the success line\'s `files[0].path` is the file to post with `--body-file` or splice.',
       'Sections and the body summary are files in the evidence directory holding only model-written parts (D9\'s full-receipt row list; the body\'s what-changed, `Review default:`, `Auto-chosen` lines, `Tests:` line and risks), never a line the renderer writes, and the summary has no `## ` line or `<!-- review-and-prep:` marker.',
@@ -4427,7 +4428,7 @@ describe('review-and-prep run-state=record', () => {
       'Render only while state recording is active: after the Degraded path stops recording, or on a helper-missing activation, every output is inline as today.',
       '`checkpoint external-gate` and `checkpoint pause` also carry `wtree`; after both checkpoints and `derive`, render `final` with `auto_choice_lines`, and end the turn with that file\'s bytes after the model\'s own prose.',
       'When Greptile applies, `record gate` `greptile` with `postponed — awaiting manual testing`; `checkpoint pause` with the current base and `wtree`; then render `full-receipt`, `comment` (post it), `body` with the paused comment\'s permalink, and `final` with `required_user_checks`.',
-      'After the dedicated evidence comment and the policy decision, run `checkpoint stop`, `finish` `stopped` (`{"outcome": "stopped", "base": <fetched base>, "stop_reason": "review-cycle-cap", "delta_base": <Delta base SHA>, "stop_count": <k>, "wtree": <token or null>, "review_restriction_resolved": <bool>, "full_review_evidence": {"status": "available", "commit": <full-review commit>, "tree": <its Git tree>, "source": <evidence comment permalink>}}`, or `full_review_evidence: {"status": "unavailable", "reason": <why>}`), then render `full-receipt`, `comment` (post it), `body`, `final`.',
+      'After the dedicated evidence comment and the policy decision, run `checkpoint stop`, `finish` `stopped` (`--outcome stopped --base <fetched base> --stop-reason review-cycle-cap --delta-base <Delta base SHA> --stop-count <k>`, optional `--wtree <token>` and `--review-restriction-resolved`, and either `--full-review-commit <full-review commit> --full-review-tree <its Git tree> --full-review-source <evidence comment permalink>` or `--full-review-unavailable <why>`), then render `full-receipt`, `comment` (post it), `body`, `final`.',
       'A recheck failure returns to fixing, and a later pass records a new `ready`.',
       'Any other blocked or needs-context exit records `finish` with that outcome and renders `final` (its stage line); its body stays inline.',
       'Supply `pr` and `gh_login` (start\'s shapes) in a `final` input when `start` recorded them as `null`.',
@@ -4444,10 +4445,10 @@ describe('review-and-prep run-state=record', () => {
     for (const text of [bullet, callsRaw]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 
-  // Value: protects=the policy.delegation object shape, delegate=-to-label storage rule, attempt/found_by part-label requirement, and start continuation object shape in docs/review-run-state-calls.md; fails_when=the calls doc drops the object-not-line rule, the six-part label mapping, the attempt/found_by label rule, or the continuation {prior_stops, max, continues} specification; why_new=Track 80A T2 + owner-approved continuation scope addition; seam=none; no_claim=installed-agent execution
+  // Value: protects=the start --delegation-line rule, delegate=-to-label storage rule, attempt/found_by part-label requirement, and start continuation flags in docs/review-run-state-calls.md; fails_when=the calls doc drops the --delegation-line flag, the six-part label mapping, the attempt/found_by label rule, or the --prior-stops/--max-continuations/--continues specification; why_new=Track 80A T2 + builder update T5; seam=none; no_claim=installed-agent execution
   test('the calls document states start policy.delegation object shape, delegate= label mapping, attempt/found_by part-label rule, and continuation object shape', () => {
     expect(calls).toContain(
-      '`start`\'s `policy.delegation` is a JSON object, never the text of the receipt\'s `delegation:` line: `null` when the policy has no `delegate=` value; `{"status": "inactive", "reason": "<reason>"}` when **Delegate named specialist parts** recorded `delegation: inactive — <reason>`; otherwise `{"status": "active", "parts": [...], "config": "<sha256>", "tools": [...]}`, listing `parts` and `tools` as that section\'s `delegation: active (…)` line names them (for example `"parts": ["maintainability", "adversarial", "red-team"]`, and `"tools": []` when the line has no `tools=`).',
+      '`--delegation-line` (the receipt\'s exact `delegation: active (parts=…; config=…[; tools=…])` or `delegation: inactive — <reason>` line from **Delegate named specialist parts**, parsed by the helper as the inverse of its renderer; omit when the policy has no `delegate=` value)',
     );
     expect(calls).toContain(
       'The helper stores each `delegate=` part name as its part label (`specialist:<name>` for `testing`, `maintainability`, `performance` and `simplification`, `native-adversarial` for `adversarial`, and `red-team` for `red-team`), stores any other part label (`PART_RE`) as sent, and refuses anything else with `invalid-input` at `policy.delegation.parts` or `policy.delegation.tools`.',
@@ -4456,14 +4457,11 @@ describe('review-and-prep run-state=record', () => {
       'A delegated attempt\'s `part` and each finding\'s `found_by` always use the part labels, never the `delegate=` names.',
     );
     expect(calls).toContain(
-      '`start`\'s `continuation` is a JSON object `{"prior_stops": <int >= 0>, "max": <int >= 0>, "continues": <40-hex|null>}` (`continues` defaults to `null` when omitted, and keys such as `count` are refused as unknown): on an initial (non-continuation) invocation, `{"prior_stops": 0, "max": <max-continuations>, "continues": null}` (`continues` must be `null` or omitted when `prior_stops === 0`); on a `/review-and-prep continue` invocation, `prior_stops` is `k` (`>= 1`, the live count of distinct corroborated stopped-record SHAs on the PR), `max` is the effective `max-continuations` (`n`), and `continues` is required and names the 40-hex commit SHA from the newest corroborated stopped record\'s `Stopped at: <full HEAD SHA>` line that this run continues.',
-    );
-    expect(calls).toContain(
-      'The helper refuses `{"count", "max"}` or `prior_stops >= 1` without a 40-hex `continues` with `invalid-input` at `continuation.*`.',
+      '`--prior-stops` (defaults to `0` on an initial invocation; on a `/review-and-prep continue` invocation, pass `k >= 1`, the live count of distinct corroborated stopped-record SHAs on the PR), `--continues` (absent stores `null` when `--prior-stops` is `0`; required 40-hex commit SHA from the newest corroborated stopped record\'s `Stopped at: <full HEAD SHA>` line when `--prior-stops` is `>= 1`)',
     );
   });
 
-  // Value: protects=the omitted pass timestamp rule, upstream CRITICAL/INFORMATIONAL severity_source pass-through rule, and invalid-input first-violation reason format in docs/review-run-state-calls.md; fails_when=the calls doc drops the omit-timestamps instruction, the upstream severity pass-through rule, or the invalid-input: <command> <path> <rule>; expected <expected> receipt format; why_new=run-state reliability Track T5; seam=none; no_claim=installed-agent execution
+  // Value: protects=the omitted pass timestamp/tree rule, upstream CRITICAL/INFORMATIONAL severity_source mapping, rubric derivation table, and invalid-input first-violation reason format in docs/review-run-state-calls.md; fails_when=the calls doc drops the timestamp/tree derivation rule, the upstream severity mapping, the rubric table, or the invalid-input: <command> <path> <rule>; expected <expected> receipt format; why_new=run-state reliability Track T5 + builder update T5; seam=none; no_claim=installed-agent execution
   test('the calls document has the caller omit pass timestamps, copy upstream severities, and name the first invalid-input violation', () => {
     const escapingRule = "Before formatting that reason, take at most the first 160 Unicode code points of each field and append `…` if truncated; encode control characters (`U+0000`–`U+001F`, `U+007F`–`U+009F`, `U+2028`, `U+2029`) and each `(`, `)`, `;`, `<`, `>`, `&` or backtick as a literal JSON `\\uXXXX` escape. These diagnostic fields are untrusted data and must never create another receipt line or marker.";
     expect(calls).toContain(escapingRule);
@@ -4471,47 +4469,44 @@ describe('review-and-prep run-state=record', () => {
     expect(design).toContain(`- **Diagnostic receipt fields:** ${escapingRule}`);
 
     expect(calls).toContain(
-      '`record pass` timestamps are the helper\'s: omit `started_at` from a `started` record and `completed_at` from a `completed` record, and the helper stamps its own UTC time (the record\'s `recorded_at`); a replay that omits them matches the stored time. A sent value must be UTC ISO 8601 ending in `Z`.',
+      '`build` accepts no timestamp or tree flag; the helper stamps `started_at` from its UTC clock and resolves `candidate.tree` from `--commit`.',
     );
     expect(calls).toContain(
-      'Each finding\'s `severity_source` is its severity as the reporting part gave it: upstream\'s `CRITICAL` and `INFORMATIONAL` labels are sent as written and stored as `critical` and `info`; any other value is one of `P0`, `P1`, `P2`, `P3`, `critical`, `high`, `medium`, `low`, `info` or `unknown`.',
+      'maps upstream\'s `CRITICAL` and `INFORMATIONAL` `severity_source` labels to `critical` and `info` (other valid severities: `P0`, `P1`, `P2`, `P3`, `critical`, `high`, `medium`, `low`, `info`, `unknown`), and derives `severity_rubric` from `--part` (`core` → `core`; `specialist:*` and `red-team` → `specialist`; `native-adversarial` → `adversarial`; `greptile` → `greptile`; `qa`, `outside:challenge` and `outside:structured` → `other`; no `--part` → `unknown`).',
     );
     expect(calls).toContain(
       'For `invalid-input`, `<reason>` is `invalid-input: <command> <path> <rule>; expected <expected>`, taken from the refusal\'s first `detail.violations` entry (for example `invalid-input: start continuation.continues invalid-value; expected required-when-prior_stops\\u003E=1`), so the receipt names the exact violated path and expected shape; every other refusal keeps its reason code.',
     );
   });
 
-  // Value: protects=the delegate parts[] entry instruction, call_id requirement, no-call fallback rule, and candidate.tree rule in docs/review-run-state-calls.md; fails_when=the calls doc drops the unchanged parts[] entry rule, the call_id requirement, the null wall_ms/token fallback instruction, or the candidate.tree tree-mismatch rule; why_new=0.94.x C7/C8 T3; seam=none; no_claim=installed-agent execution
+  // Value: protects=the --delegate-file instruction, call_id and null-count preservation, --finding completed-only rule, and cycle-1 ordering rules in docs/review-run-state-calls.md; fails_when=the calls doc drops the --delegate-file rule, the null wall_ms/token fallback instruction, the completed-only findings rule, or the cycle-1 candidate B / before-fix ordering rules; why_new=0.94.x C7/C8 T3 + builder update T5; seam=none; no_claim=installed-agent execution
   test('the calls document specifies sending the delegate runner parts[] entry with call_id, the no-call fallback rule, and optional candidate.tree', () => {
     expect(calls).toContain(
-      "A delegated attempt's `delegate` is the `review-delegate run` output's `parts[]` entry for that part, sent unchanged. The helper stores its `provider`, `model`, `outcome`, `fallback_reason`, `replay`, `wall_ms`, four token counts and `call_id`. It checks that the entry's `part` names the attempt's `part` and that its `dispatched_at` and `returned_at` agree with the attempt's when both are set, and it does not store `dispatched`, `parse`, `verdict` or `findings`. An object holding only the eleven stored keys is also accepted, but never without `call_id`, which names the saved call and the `Delegated part:` line's `call=` segment.",
+      'With `--delegate-file`, the helper reads the saved `review-delegate run` output from `--dir`, selects the single `parts[]` entry matching `--part`, copies it into the request (keeping `call_id` and any `null` `wall_ms` or token counts as explicit unknowns, rendered `unknown` in `Delegated part:` and derived as `null`, never `0`), derives `outcome` when `--outcome` is omitted (`credited` → `completed`, `fell-back` → `failed`), and copies string `dispatched_at` and `returned_at` from the entry when those flags are omitted.',
     );
     expect(calls).toContain(
-      'A null `wall_ms` or token count (a part the runner fell back on without a call, or a reply that reported no usage) is sent unchanged, stored as an explicit unknown, rendered `unknown` in the `Delegated part:` line and derived as `null`, never `0`.',
+      'The helper writes `findings` only when `outcome` is `completed` (defaulting to `[]` when no `--finding` is passed and refusing `--finding` on a non-`completed` attempt with `invalid-value`, expected `none-when-outcome-not-completed`).',
     );
     expect(calls).toContain(
-      'A `candidate` may also carry `tree`, the commit\'s Git tree. The helper stores the tree it resolves from `commit` and refuses a sent `tree` that differs (`candidate.tree` `tree-mismatch`).',
+      'For each `--finding`, the helper sets `adjudication: "unclassified"` and `resolution: "open"` (never `"pending"`; triage\'s decision is a later `record correction`)',
     );
     expect(calls).toContain(
-      'A finding recorded with its attempt, before triage, has `adjudication: "unclassified"` and `resolution: "open"` (never `"pending"`); triage\'s decision is a later `record correction`.',
-    );
-    expect(calls).toContain(
-      '`start`\'s `policy.source` is the receipt\'s `Review policy source:` value: `"caller prompt"` for a policy line in the invocation prompt, `"user decision"`, or `"none supplied"` (never `"invocation prompt"`).',
+      '`start` takes `--run-id`, `--base`, `--plan-ref`, `--plan-sha256`, `--policy-source` (the receipt\'s `Review policy source:` value: `"caller prompt"` for a policy line in the invocation prompt, `"user decision"`, or `"none supplied"` — never `"invocation prompt"`),',
     );
     expect(calls).toContain(
       'Every `record` call names its subtype (`record pass`, `record correction`, `record gate` or `record audit`); a bare `record` with no subtype is refused with `usage`.',
     );
     expect(calls).toContain(
-      'Every `evidence` entry is an object `{"path": "<relative path>", "sha256": "<64-hex>"}` with `path` relative to the evidence directory, never a bare path string.',
+      'Every file a flag names (`--evidence`, `--pregate-record`, `--section`, `--delegate-file`) is a path relative to `--dir` that resolves inside `--dir`, and the helper hashes or reads it directly.',
     );
     expect(calls).toContain(
       '`scope` is sent on `started` only — `"local"`, or `"greptile"` for the Greptile pass — and `attempt`, `voice-complete` and `completed` carry none',
     );
     expect(calls).toContain(
-      'for a delegated fallback, record the failed delegated attempt with its runner entry and the host attempt with `predecessor_attempt_id` naming it, and `derive` writes the `fallback` correction (send no `record correction` for it).',
+      'for a delegated fallback, record the failed delegated attempt with `--delegate-file` and the host attempt with `--predecessor-attempt-id` naming it, and `derive` writes the `fallback` correction (send no `record correction` for it).',
     );
     expect(calls).toContain(
-      'a `probe-<id>` gate sends no `details` and names its probe result and any capture files as `evidence` entries `{path, sha256}` relative to the evidence directory.',
+      'a `probe-<id>` gate sends no detail flags and names its probe result and any capture files with repeated `--evidence <relative path>` inside `--dir`.',
     );
     expect(calls).toContain(
       'Run `checkpoint before-fix` for cycle 1 after the fence\'s `cycle-1-baseline` write (once its `check` answers present) and before the first fix; later cycles run `checkpoint before-fix` before their first fix, and run `checkpoint next-cycle` at each later cycle\'s Step 3.',
@@ -4616,7 +4611,7 @@ describe('review-and-prep run-state=record', () => {
     expect(evDirSection).toContain('The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.');
     expect(evDirSection).toContain('Create this invocation\'s evidence directory — a unique branch-and-invocation subdirectory under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active)');
     expect(evDirSection).toContain('The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation\'s `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.');
-    expect(evDirSection).toContain('Under `run-state=record`, this invocation\'s evidence directory is `--dir`, and every `evidence` path, `pregate.details.record_path` and `documentation.details.section_path` is relative to it and resolves inside it.');
+    expect(evDirSection).toContain('Under `run-state=record`, this invocation\'s evidence directory is `--dir`, and every `--evidence`, `--pregate-record`, `--section` and `--delegate-file` path is relative to it and resolves inside it.');
 
     const delegateSection = skillSection(prep, '### Delegate named specialist parts').replace(/\s+/g, ' ');
     expect(delegateSection).toContain('--calls "<delegate calls directory>"');
@@ -4628,10 +4623,10 @@ describe('review-and-prep run-state=record', () => {
 
     const gatesSection = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
     expect(gatesSection).toContain('Copy the final pregate record, the audit\'s post-child snapshot and its documentation section into this invocation\'s evidence directory (**Evidence directory**), not the evidence root');
-    expect(gatesSection).toContain('Under `run-state=record`, `record gate` `pregate`\'s `details.record_path` and `record audit` `documentation`\'s `details.section_path` are those copies\' paths relative to it.');
+    expect(gatesSection).toContain('Under `run-state=record`, `record gate` `pregate`\'s `--pregate-record` and `record audit` `documentation`\'s `--section` are those copies\' paths relative to it.');
 
     expect(calls).toContain('`--dir` is the invocation\'s evidence directory (**Evidence directory** in Step 1), which Step 1 creates with `mkdir -p` before `start` whatever the `run-state` value');
-    expect(calls).toContain('The pregate record and documentation section copies sit inside `--dir` (**Evidence directory**), so `pregate.details.record_path` and `documentation.details.section_path` are filenames relative to `--dir`.');
+    expect(calls).toContain('The pregate record and documentation section copies sit inside `--dir` (**Evidence directory**), so `--pregate-record` and `--section` are filenames relative to `--dir`.');
     expect(calls).toContain('inspect the newest invocation directory under the evidence root (**Evidence directory**) whose state `show` binds to this repository and branch.');
 
     const designRaw = readFileSync(join(ROOT, 'docs', 'designs', 'review-run-state.md'), 'utf8');
@@ -4640,5 +4635,47 @@ describe('review-and-prep run-state=record', () => {
     const skillHeadings = new Set(prep.split('\n').filter((line) => /^##+ /.test(line)).map((line) => line.trim()));
     expect(skillHeadings.has(d2HeadingMatch![1]!)).toBe(true);
 
+  });
+
+  // Value: protects=AC3 builder-only caller contract in skills/review-and-prep.md and docs/review-run-state-calls.md; fails_when=the calls doc gains a ```json fence, the skill gains a ```json review-state fence, either text contains a hand-written request object literal whose first key is in BUILT_KEYS, or a BUILD_COMMANDS entry is missing from the calls doc; why_new=T5 (AC3, AC4); seam=src/review-state/build.ts BUILT_KEYS and BUILD_COMMANDS; no_claim=installed-agent execution
+  test('the skill and calls document send every run-state record through build and show no hand-written request body', () => {
+    // (1) No ```json fence in calls doc, and no ```json review-state fence in the skill
+    expect(callsRaw).not.toMatch(/```json\b/);
+    expect(prep).not.toMatch(/```json\s+review-state\b/);
+
+    // (2) Scanner for object literals whose first key is in BUILT_KEYS
+    const scanBuiltKeyObjects = (text: string, includeUnquoted: boolean): string[] => {
+      const hits: string[] = [];
+      for (const m of text.matchAll(/\{\s*(?:\\?"([A-Za-z0-9_]+)\\?"|([A-Za-z0-9_]+))\s*[,:\}]/g)) {
+        const quotedKey = m[1];
+        const unquotedKey = m[2];
+        if (quotedKey && BUILT_KEYS.has(quotedKey)) hits.push(m[0]);
+        else if (includeUnquoted && unquotedKey && BUILT_KEYS.has(unquotedKey)) hits.push(m[0]);
+      }
+      return hits;
+    };
+
+    expect(scanBuiltKeyObjects(callsRaw, true)).toEqual([]);
+    expect(scanBuiltKeyObjects(prep, false)).toEqual([]);
+
+    // (3) Calls document has a bin/review-state" build <command> line for every BUILD_COMMANDS entry, and skill bullet names bin/review-state build
+    for (const cmd of BUILD_COMMANDS) {
+      expect(callsRaw, cmd).toContain(`bin/review-state" build ${cmd} `);
+    }
+    expect(bullet).toContain('Every run-state record is sent with `bin/review-state build` as the calls document lists, never a hand-written request file.');
+
+    // (4) Self-check: scanner flags the former record pass example body, {"prior_stops": 0, ...} text, and unquoted {path, sha256}
+    expect(
+      scanBuiltKeyObjects(
+        '{"pass_id":"019315e0-0000-7000-8000-000000000002","state":"attempt","voice_id":"core","part":"core","attempt_id":"019315e0-0000-7000-8000-000000000003","outcome":"completed","findings":[]}',
+        false,
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      scanBuiltKeyObjects('{"prior_stops": 0, "max": <max-continuations>, "continues": null}', false).length,
+    ).toBeGreaterThan(0);
+    expect(
+      scanBuiltKeyObjects('names its probe result as {path, sha256} relative to the evidence directory', true).length,
+    ).toBeGreaterThan(0);
   });
 });

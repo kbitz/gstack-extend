@@ -2,6 +2,77 @@
 
 ## Unprocessed
 
+### [review:files=tests/skill-protocols-review-and-prep.test.ts] Test gap: Resume guard uses current builder flag names
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The negative Resume-authority assertion still searches the old details.value wording after the caller document changed to --greptile-value.
+- **Hypothesis (untested):** Re-verify authority rules and extend the existing negative assertion to the current flag spelling.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** tests/skill-protocols-review-and-prep.test.ts:4564
+- **Evidence:** Read-only review/audit (specialists-host-1.json); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: Builder attribution-only finding syntax
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Builder tests do not directly cover attribution-only findings and mixed or empty comma syntax.
+- **Hypothesis (untested):** Extend the existing refusal table with valid attribution and malformed syntax cases.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:345
+- **Evidence:** Read-only review/audit (coverage-audit.json gap25); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: Builder less-common optional facts
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The executable example sequence covers common subsets; PR fields, delta-from, not-applicable, supersedes, resume/session and unavailable full-review flags lack direct builder integration cases.
+- **Hypothesis (untested):** Extend existing fixture sequences for optional flags when their callers next change.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:280
+- **Evidence:** Read-only review/audit (coverage-audit.json gap26); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: Builder numeric refusal boundaries
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Numeric conversion tests currently use valid values rather than malformed percentages and unsafe integer boundaries.
+- **Hypothesis (untested):** Extend the existing refusal table and assert the validator retains ownership of malformed numeric values.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:226
+- **Evidence:** Read-only review/audit (coverage-audit.json gap27); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: Builder canonical request collision refusals
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Identical regular-file reuse is tested; a differing existing request, symlink and non-file collision have no direct builder test.
+- **Hypothesis (untested):** Re-verify publication behavior, then add collision cases that require refusal and unchanged evidence.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:690
+- **Evidence:** Read-only review/audit (coverage-audit.json gap28); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: Builder post-creation I/O cleanup
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The regression covers failed open before creation; write and fsync failure cleanup after creating a new request remains untested.
+- **Hypothesis (untested):** Extend isolated I/O fault injection and require cleanup only of the failed call’s own partial request.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:679
+- **Evidence:** Read-only review/audit (coverage-audit.json gap29); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/review-and-prep.md|docs/designs/review-run-state.md] Test gap: Installed builder delegated-review success target
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** CLI fixtures and static prose guards do not establish that installed agents complete three consecutive delegated reviews with recorded state. The approved change restates this future measurement target.
+- **Hypothesis (untested):** After release, retain three consecutive qualifying factory review receipts and inspect their attempt records and refusal evidence.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** docs/designs/review-run-state.md:287
+- **Evidence:** Read-only review/audit (coverage-audit.json gap30); no product failure demonstrated for this gap. The two proving suites passed 394 tests after separate reproduced-defect repairs.
+- **Context:** Filed by /review-and-prep before PR creation at `809a8d5` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
+
 ### [review:files=tests/handoff-contract.test.ts] Test gap: Compare producer and consumer eligibility by meaning
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** The eligible-row count check and neighboring exact-table and consumer cases cover the current contract, but the count check alone does not match each producer condition to its consumer input.

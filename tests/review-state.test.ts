@@ -4,11 +4,12 @@ import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
+import { BUILD_COMMANDS, buildHelp, buildRequest, parseDelegationLine, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
 import { FIELD_FMT, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
-import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, WTREE_RE, type CommandName, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
+import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, WTREE_RE, type CommandName, type DelegationPolicy, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
 import { readHelperVersion } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
@@ -3941,14 +3942,27 @@ describe('bin/review-state', () => {
       'findings[0].severity_source',
       'delegate.call_id',
       'candidate.tree',
+      'findings[0].severity_rubric',
+      'findings',
     ]) {
       expect(d15, causePath).toContain('`' + causePath + '`');
+    }
+    for (const row of [
+      '| C7 | `record pass` (`attempt`) `delegate.call_id` | keys copied from another tool |',
+      '| C8 | `record pass` (`started`) `candidate.tree` | keys copied from another tool |',
+      '| C14 | `record pass` (`attempt`) `findings[0].severity_rubric` | enum spelling |',
+      '| C15 | `record pass` (`attempt`) `findings` | conditional nullability |',
+    ]) {
+      expect(d15, row).toContain(row);
     }
     expect(d15).toContain(
       'The next three consecutive factory `/review-and-prep` runs of this repository that send `run-state=record` on a helper release containing this change each end with `Run state: recorded (…)` in their full receipt and none carries an `invalid-input` refusal',
     );
     expect(d15).toContain(
       "the next three consecutive factory-orchestrated `/review-and-prep` runs that send `run-state=record` with an active `delegate=` value, on a helper release containing C7's and C8's fixes, each end with `Run state: recorded (…)` in their full receipt, record their delegated parts' attempts, and carry no `invalid-input` refusal",
+    );
+    expect(d15).toContain(
+      "Target: the next 3 consecutive factory-orchestrated `/review-and-prep` runs with an active `delegate=` value on a helper release containing `build`, each ending `Run state: recorded (…)` in their full receipt, recording their delegated parts' attempts, and carrying no `invalid-input` refusal, measured afterwards from the factory's own reviews' evidence directories with no owner by-hand runs counted.",
     );
   });
 
@@ -4239,14 +4253,116 @@ describe('bin/review-state', () => {
     }
   });
 
-  // Value: protects=every json fence in docs/review-run-state-calls.md and D13's walkthrough in docs/designs/review-run-state.md against schema drift; fails_when=a documented example fence omits its review-state <command> tag, fails applyCommand, or produces a state rejected by validateStoredState; why_new=Track 83A T5 (AC6); seam=src/review-state/state.ts; no_claim=installed-agent execution
-  test('every json fence in docs/review-run-state-calls.md and D13 walkthrough records cleanly through applyCommand', () => {
+  // Value: protects=every build example in docs/review-run-state-calls.md and D13's walkthrough in docs/designs/review-run-state.md against CLI/schema drift; fails_when=a documented build line fails runCli, a BUILD_COMMANDS entry or record pass state is missing from the examples, or D13's walkthrough fails applyCommand/validateStoredState; why_new=T3/T4 build examples; seam=CLI and src/review-state/build.ts + state.ts; no_claim=installed-agent execution
+  test('every build example in docs/review-run-state-calls.md records in sequence and the D13 walkthrough records', () => {
+    const splitShLine = (line: string): string[] => {
+      const tokens: string[] = [];
+      let cur = '';
+      let quote: '"' | "'" | null = null;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i]!;
+        if (quote) {
+          if (ch === quote) quote = null;
+          else cur += ch;
+        } else if (ch === '"' || ch === "'") {
+          quote = ch;
+        } else if (/\s/.test(ch)) {
+          if (cur.length > 0) { tokens.push(cur); cur = ''; }
+        } else {
+          cur += ch;
+        }
+      }
+      if (cur.length > 0) tokens.push(cur);
+      return tokens;
+    };
+
     const callsDoc = readFileSync(join(REPO_ROOT, 'docs', 'review-run-state-calls.md'), 'utf8');
-    const allJsonFences = [...callsDoc.matchAll(/```json([^\n]*)\n([\s\S]*?)\n```/g)];
-    expect(allJsonFences.length).toBeGreaterThanOrEqual(6);
+    const shFences = [...callsDoc.matchAll(/```sh\n([\s\S]*?)\n```/g)].map((m) =>
+      m[1]!.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#')),
+    );
+    expect(shFences.length).toBeGreaterThanOrEqual(2);
+    const seqLines = shFences[0]!;
+    const stoppedLines = shFences[1]!;
 
     const exCommit = '0123456789abcdef0123456789abcdef01234567';
     const exBase = '89abcdef0123456789abcdef0123456789abcdef';
+    const exSha256 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+    const prepFiles = (dir: string) => {
+      writeJson(dir, 'delegate-specialist.json', {
+        v: 1,
+        status: 'ran',
+        config_sha256: exSha256,
+        parts: [{
+          part: 'maintainability',
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          call_id: exSha256,
+          replay: false,
+          dispatched: true,
+          dispatched_at: '2026-11-10T18:01:00Z',
+          returned_at: '2026-11-10T18:02:00Z',
+          wall_ms: 1200,
+          input_tokens: 400,
+          output_tokens: 120,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: null,
+          parse: 'valid',
+          verdict: 'clean',
+          outcome: 'credited',
+          fallback_reason: null,
+          findings: [],
+        }],
+      });
+      writeFileSync(join(dir, 'probe-0123456789ab.json'), '{"outcome":"passed"}\n');
+      writeFileSync(join(dir, 'pregate.json'), '{"verdict":"PASS"}\n');
+      writeFileSync(join(dir, 'documentation.md'), '### Documentation\nPassed.\n');
+    };
+
+    const subLine = (line: string, dir: string): string[] => {
+      const substituted = line
+        .replaceAll('<extend-root>', REPO_ROOT)
+        .replaceAll('<evidence directory>', dir)
+        .replaceAll(exCommit, headSha)
+        .replaceAll(exBase, baseSha);
+      const tokens = splitShLine(substituted);
+      expect(tokens[0]).toBe(`${REPO_ROOT}/bin/review-state`);
+      expect(tokens[1]).toBe('build');
+      return tokens.slice(1);
+    };
+
+    const dSeq = newDir();
+    prepFiles(dSeq);
+    const seenCommands = new Set<string>();
+    const seenPassStates = new Set<string>();
+    for (const [idx, line] of seqLines.entries()) {
+      const argv = subLine(line, dSeq);
+      const cmd = argv[1] === 'record' ? `record ${argv[2]}` : argv[1]!;
+      seenCommands.add(cmd);
+      if (cmd === 'record pass') {
+        const stIdx = argv.indexOf('--state');
+        if (stIdx !== -1 && argv[stIdx + 1]) seenPassStates.add(argv[stIdx + 1]!);
+      }
+      const res = runCli(argv);
+      expect(res.json.reason, `seq line #${idx}: ${line}`).toBe('recorded');
+    }
+    for (const cmd of BUILD_COMMANDS) expect(seenCommands.has(cmd), `missing command ${cmd}`).toBe(true);
+    for (const st of PASS_STATES) expect(seenPassStates.has(st), `missing pass state ${st}`).toBe(true);
+    const seqState = JSON.parse(readFileSync(join(dSeq, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(validateStoredState(seqState).ok).toBe(true);
+
+    // Separate stopped finish example after start in a fresh directory
+    const dStop = newDir();
+    prepFiles(dStop);
+    expect(runCli(subLine(seqLines[0]!, dStop)).json.reason).toBe('recorded');
+    for (const [idx, line] of stoppedLines.entries()) {
+      const res = runCli(subLine(line, dStop));
+      expect(res.json.reason, `stopped line #${idx}: ${line}`).toBe('recorded');
+    }
+    const stopState = JSON.parse(readFileSync(join(dStop, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stopState.finish?.outcome).toBe('stopped');
+    expect(validateStoredState(stopState).ok).toBe(true);
+
     const gitInfo: GitInfo = {
       repo: '/fixture/.git',
       toplevel: '/fixture',
@@ -4261,28 +4377,6 @@ describe('bin/review-state', () => {
       checkEvidence: () => null,
     };
     const now = '2026-11-10T18:00:00Z';
-
-    const rSeedStart = applyCommand(null, 'start', REQUEST_EXAMPLES.start, gitInfo, env, now);
-    expect(rSeedStart.reason).toBe('recorded');
-    if (rSeedStart.reason !== 'recorded') throw new Error('seed start failed');
-    const rSeedPass = applyCommand(rSeedStart.state, 'record pass', REQUEST_EXAMPLES['record pass (started)'], gitInfo, env, now);
-    expect(rSeedPass.reason).toBe('recorded');
-    if (rSeedPass.reason !== 'recorded') throw new Error('seed pass failed');
-    const seedState = rSeedPass.state;
-
-    for (const [idx, m] of allJsonFences.entries()) {
-      const info = m[1]!.trim();
-      expect(info, `fence #${idx} info string`).toMatch(/^review-state (start|record (?:pass|correction|gate|audit)|checkpoint|finish)$/);
-      const cmd = info.slice('review-state '.length) as CommandName;
-      const payload = JSON.parse(m[2]!.trim());
-      const baseState = cmd === 'start' ? null : (JSON.parse(serializeState(seedState)) as ReviewRunState);
-      const res = applyCommand(baseState, cmd, payload, gitInfo, env, now);
-      expect(res.reason, `fence #${idx} (${cmd})`).toBe('recorded');
-      if (res.reason !== 'recorded') throw new Error(`fence #${idx} failed`);
-      const validated = validateStoredState(JSON.parse(serializeState(res.state)));
-      expect(validated.ok, `fence #${idx} validateStoredState`).toBe(true);
-    }
-
     const designDoc = readFileSync(DESIGN_PATH, 'utf8');
     const walkthroughBlocks = [...designDoc.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) =>
       JSON.parse(m[1]!.replaceAll('<BASE_SHA>', exBase).replaceAll('<HEAD_SHA>', exCommit).replaceAll('<PLAN_SHA256>', sha256('walkthrough-plan'))),
@@ -4479,5 +4573,579 @@ describe('bin/review-state', () => {
     expect(rFinal.code).toBe(0);
     expect(rFinal.json.schema).toBe(RENDER_SCHEMA);
     expect(rFinal.json.files[0].path).toBe(join(d, 'final-1.md'));
+  });
+
+  // Value: protects=C7, C8, C14, and C15 observed caller refusals on --input and verifies that the build subcommand records each one cleanly, refuses --finding on a non-completed attempt with the documented reason, and replays on identical reruns reusing the same request file; fails_when=--input accepts a broken C7/C14/C15 payload, build fails to record C7/C8/C14/C15 or writes candidate.tree, build accepts --finding on a failed attempt, or an identical build rerun writes a second request file or fails to replay; why_new=T3 (AC1, AC2, AC7, AC8); seam=CLI, build.ts, store.ts, state.ts
+  test('build path records each observed caller refusal (C7, C8, C14, C15)', () => {
+    const cfgSha = sha256('build-replay-cfg');
+    const planSha = sha256('build-replay-plan');
+    const reqFiles = (dir: string) => readdirSync(dir).filter((f) => f.startsWith('request-') && f.endsWith('.json')).sort();
+
+    // C7 & C8 directory
+    const d78 = newDir();
+    const startArgs78 = [
+      'build', 'start', '--dir', d78,
+      '--run-id', uid(901),
+      '--base', baseSha,
+      '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', planSha,
+      '--policy-value', REAL_POLICY_LINE,
+      '--policy-source', 'caller prompt',
+      '--delegation-line', `delegation: active (parts=maintainability,adversarial,red-team; config=${cfgSha})`,
+      '--max-continuations', '1',
+    ];
+    expect(runCli(startArgs78).json.reason).toBe('recorded');
+    const startReqFiles = reqFiles(d78);
+    expect(startReqFiles).toHaveLength(1);
+    expect(runCli(startArgs78).json.reason).toBe('replayed');
+    expect(reqFiles(d78)).toEqual(startReqFiles);
+
+    // C8: 12 observed voices through build record pass --state started; written request has no tree key, stored candidate.tree is treeSha
+    const c8Voices = [
+      'core',
+      'specialist:testing',
+      'specialist:maintainability',
+      'specialist:security',
+      'specialist:performance',
+      'specialist:simplification',
+      'specialist:state-machines',
+      'red-team',
+      'native-adversarial',
+      'outside:challenge',
+      'outside:structured',
+      'qa',
+    ];
+    const pass78Id = uid(902);
+    const c8StartedArgs = [
+      'build', 'record', 'pass', '--dir', d78,
+      '--pass-id', pass78Id,
+      '--state', 'started',
+      '--scope', 'local',
+      '--cycle', '1',
+      '--coverage', 'full',
+      '--commit', headSha,
+      '--base', baseSha,
+      ...c8Voices.flatMap((v) => ['--voice', v]),
+    ];
+    expect(runCli(c8StartedArgs).json.reason).toBe('recorded');
+    const passStartedReqName = reqFiles(d78).find((f) => f.startsWith('request-record-pass-'))!;
+    const passStartedReq = JSON.parse(readFileSync(join(d78, passStartedReqName), 'utf8'));
+    expect('tree' in passStartedReq.candidate).toBe(false);
+    const stAfterC8 = JSON.parse(readFileSync(join(d78, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stAfterC8.passes[0]!.candidate.tree).toBe(treeSha);
+    expect(stAfterC8.passes[0]!.required_voices).toEqual(c8Voices);
+    const afterC8ReqFiles = reqFiles(d78);
+    expect(runCli(c8StartedArgs).json.reason).toBe('replayed');
+    expect(reqFiles(d78)).toEqual(afterC8ReqFiles);
+
+    // C7: observed 10-key hand-written attempt still refuses delegate.call_id missing-key through --input
+    const tenKeyDelegate = {
+      provider: 'provider-a',
+      model: 'model-a',
+      outcome: 'credited',
+      fallback_reason: null,
+      replay: false,
+      wall_ms: 28644,
+      input_tokens: 26808,
+      output_tokens: 2005,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+    };
+    const rC7Input = callCmd(d78, 'record pass', {
+      pass_id: pass78Id,
+      state: 'attempt',
+      voice_id: 'specialist:maintainability',
+      part: 'specialist:maintainability',
+      attempt_id: uid(903),
+      outcome: 'completed',
+      dispatched_at: '2026-11-15T13:58:49.618Z',
+      returned_at: '2026-11-15T13:59:18.262Z',
+      delegate: tenKeyDelegate,
+      findings: [],
+    });
+    expect(rC7Input.json.reason).toBe('invalid-input');
+    expect(rC7Input.json.detail.violations[0]).toEqual({
+      path: 'delegate.call_id',
+      rule: 'missing-key',
+      expected: 'call_id',
+    });
+
+    // C7 via build --delegate-file: runner output with all PART_KEYS records and stores call_id
+    const c7CallId = sha256('c7-runner-call');
+    writeJson(d78, 'c7-runner.json', {
+      v: 1,
+      status: 'ran',
+      config_sha256: cfgSha,
+      parts: [{
+        part: 'maintainability',
+        ...tenKeyDelegate,
+        call_id: c7CallId,
+        dispatched: true,
+        dispatched_at: '2026-11-15T13:58:49.618Z',
+        returned_at: '2026-11-15T13:59:18.262Z',
+        parse: 'valid',
+        verdict: 'clean',
+        findings: [],
+      }],
+    });
+    const c7BuildArgs = [
+      'build', 'record', 'pass', '--dir', d78,
+      '--pass-id', pass78Id,
+      '--state', 'attempt',
+      '--voice-id', 'specialist:maintainability',
+      '--part', 'specialist:maintainability',
+      '--attempt-id', uid(903),
+      '--delegate-file', 'c7-runner.json',
+    ];
+    expect(runCli(c7BuildArgs).json.reason).toBe('recorded');
+    const afterC7ReqFiles = reqFiles(d78);
+    expect(runCli(c7BuildArgs).json.reason).toBe('replayed');
+    expect(reqFiles(d78)).toEqual(afterC7ReqFiles);
+    const stAfterC7 = JSON.parse(readFileSync(join(d78, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const c7Attempt = stAfterC7.passes[0]!.voices.find((v) => v.voice_id === 'specialist:maintainability')!.attempts[0]!;
+    expect(c7Attempt.outcome).toBe('completed');
+    expect(c7Attempt.delegate?.call_id).toBe(c7CallId);
+
+    // C14 (PR #260's review): 6-voice started pass; --input with severity_rubric "red-team" refuses at findings[0] and findings[1]; build with --delegate-file and --finding records with specialist rubric
+    const d14 = newDir();
+    expect(runCli([
+      'build', 'start', '--dir', d14,
+      '--run-id', uid(910),
+      '--base', baseSha,
+      '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', planSha,
+      '--policy-value', REAL_POLICY_LINE,
+      '--policy-source', 'caller prompt',
+      '--delegation-line', `delegation: active (parts=maintainability,adversarial,red-team; config=${cfgSha})`,
+      '--max-continuations', '1',
+    ]).json.reason).toBe('recorded');
+    const c14PassId = uid(911);
+    const c14Voices = ['core', 'specialist:maintainability', 'red-team', 'native-adversarial', 'outside:challenge', 'outside:structured'];
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', d14,
+      '--pass-id', c14PassId,
+      '--state', 'started',
+      '--scope', 'local',
+      '--cycle', '1',
+      '--coverage', 'full',
+      '--commit', headSha,
+      '--base', baseSha,
+      ...c14Voices.flatMap((v) => ['--voice', v]),
+    ]).json.reason).toBe('recorded');
+
+    const c14CallId = '8c10689dcbac82dba7078666f9297dd78c087c6b820e0861b68d0de17be7ba80';
+    const c14RunnerEntry = {
+      part: 'red-team',
+      provider: 'provider-b',
+      model: 'model-b',
+      call_id: c14CallId,
+      replay: false,
+      dispatched: true,
+      dispatched_at: '2026-11-15T23:56:52.598Z',
+      returned_at: '2026-11-16T00:05:15.656Z',
+      wall_ms: 503058,
+      input_tokens: 55792,
+      output_tokens: 48794,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+      parse: 'valid',
+      verdict: 'findings',
+      outcome: 'credited',
+      fallback_reason: null,
+      findings: [{ severity: 'CRITICAL' }, { severity: 'INFORMATIONAL' }],
+    };
+    const c14AttemptId = uid(912);
+    const rC14Input = callCmd(d14, 'record pass', {
+      pass_id: c14PassId,
+      state: 'attempt',
+      voice_id: 'red-team',
+      part: 'red-team',
+      attempt_id: c14AttemptId,
+      outcome: 'completed',
+      dispatched_at: '2026-11-15T23:56:52.598Z',
+      returned_at: '2026-11-16T00:05:15.656Z',
+      delegate: c14RunnerEntry,
+      findings: [
+        { finding_id: 'red-team-1-1', severity_source: 'CRITICAL', severity_rubric: 'red-team', adjudication: 'unclassified', resolution: 'open', found_by: ['red-team'] },
+        { finding_id: 'red-team-1-2', severity_source: 'INFORMATIONAL', severity_rubric: 'red-team', adjudication: 'unclassified', resolution: 'open', found_by: ['red-team'] },
+      ],
+    });
+    expect(rC14Input.json.reason).toBe('invalid-input');
+    expect(rC14Input.json.detail.violations).toEqual([
+      { path: 'findings[0].severity_rubric', rule: 'invalid-enum', expected: 'core|specialist|adversarial|greptile|gstack-review|other|unknown' },
+      { path: 'findings[1].severity_rubric', rule: 'invalid-enum', expected: 'core|specialist|adversarial|greptile|gstack-review|other|unknown' },
+    ]);
+
+    writeJson(d14, 'c14-delegate-red-team.json', {
+      v: 1,
+      status: 'ran',
+      config_sha256: cfgSha,
+      parts: [c14RunnerEntry],
+    });
+    const c14BuildArgs = [
+      'build', 'record', 'pass', '--dir', d14,
+      '--pass-id', c14PassId,
+      '--state', 'attempt',
+      '--voice-id', 'red-team',
+      '--part', 'red-team',
+      '--attempt-id', c14AttemptId,
+      '--delegate-file', 'c14-delegate-red-team.json',
+      '--finding', 'red-team-1-1,CRITICAL,red-team',
+      '--finding', 'red-team-1-2,INFORMATIONAL,red-team',
+    ];
+    expect(runCli(c14BuildArgs).json.reason).toBe('recorded');
+    const afterC14ReqFiles = reqFiles(d14);
+    expect(runCli(c14BuildArgs).json.reason).toBe('replayed');
+    expect(reqFiles(d14)).toEqual(afterC14ReqFiles);
+    const stAfterC14 = JSON.parse(readFileSync(join(d14, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const c14Attempt = stAfterC14.passes[0]!.voices.find((v) => v.voice_id === 'red-team')!.attempts[0]!;
+    expect(c14Attempt.outcome).toBe('completed');
+    expect(c14Attempt.dispatched_at).toBe('2026-11-15T23:56:52.598Z');
+    expect(c14Attempt.returned_at).toBe('2026-11-16T00:05:15.656Z');
+    expect(c14Attempt.findings).toEqual([
+      {
+        finding_id: 'red-team-1-1',
+        severity_source: 'critical',
+        severity_rubric: 'specialist',
+        adjudication: 'unclassified',
+        resolution: 'open',
+        duplicate_of: null,
+        found_by: ['red-team'],
+        attribution_reason: null,
+        receipt_class: null,
+      },
+      {
+        finding_id: 'red-team-1-2',
+        severity_source: 'info',
+        severity_rubric: 'specialist',
+        adjudication: 'unclassified',
+        resolution: 'open',
+        duplicate_of: null,
+        found_by: ['red-team'],
+        attribution_reason: null,
+        receipt_class: null,
+      },
+    ]);
+
+    // C15 (PR #261's review): 7-voice started pass; --input with outcome "failed" and findings: [] refuses; build with fell-back runner entry records with outcome "failed", findings: null, and dispatch times; build plus --finding refuses at --finding and leaves state bytes unchanged
+    const d15 = newDir();
+    expect(runCli([
+      'build', 'start', '--dir', d15,
+      '--run-id', uid(920),
+      '--base', baseSha,
+      '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', planSha,
+      '--policy-value', REAL_POLICY_LINE,
+      '--policy-source', 'caller prompt',
+      '--delegation-line', `delegation: active (parts=maintainability,adversarial,red-team; config=${cfgSha})`,
+      '--max-continuations', '1',
+    ]).json.reason).toBe('recorded');
+    const c15PassId = uid(921);
+    const c15Voices = ['core', 'maintainability', 'red-team', 'qa', 'adversarial', 'outside-challenge', 'outside-structured'];
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', d15,
+      '--pass-id', c15PassId,
+      '--state', 'started',
+      '--scope', 'local',
+      '--cycle', '1',
+      '--coverage', 'full',
+      '--commit', headSha,
+      '--base', baseSha,
+      ...c15Voices.flatMap((v) => ['--voice', v]),
+    ]).json.reason).toBe('recorded');
+
+    const c15CallId = 'a6941fa45f8725fe86dee1be9c2795c5e7a846d637e7b04ce70120bc4d8bc5f8';
+    const c15RunnerEntry = {
+      part: 'red-team',
+      provider: 'provider-b',
+      model: 'model-b',
+      call_id: c15CallId,
+      replay: false,
+      dispatched: true,
+      dispatched_at: '2026-11-16T03:18:00.938Z',
+      returned_at: '2026-11-16T03:23:46.244Z',
+      wall_ms: 345306,
+      input_tokens: 36020,
+      output_tokens: 29978,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+      parse: 'failed',
+      verdict: 'unverified',
+      outcome: 'fell-back',
+      fallback_reason: 'needs-context',
+      findings: [],
+    };
+    const c15AttemptId = uid(922);
+    const rC15Input = callCmd(d15, 'record pass', {
+      pass_id: c15PassId,
+      state: 'attempt',
+      voice_id: 'red-team',
+      part: 'red-team',
+      attempt_id: c15AttemptId,
+      outcome: 'failed',
+      delegate: c15RunnerEntry,
+      findings: [],
+    });
+    expect(rC15Input.json.reason).toBe('invalid-input');
+    expect(rC15Input.json.detail.violations).toEqual([
+      { path: 'findings', rule: 'invalid-value', expected: 'null-when-outcome-not-completed' },
+    ]);
+
+    writeJson(d15, 'c15-delegate-red-team.json', {
+      v: 1,
+      status: 'ran',
+      config_sha256: cfgSha,
+      parts: [c15RunnerEntry],
+    });
+    const c15BuildArgs = [
+      'build', 'record', 'pass', '--dir', d15,
+      '--pass-id', c15PassId,
+      '--state', 'attempt',
+      '--voice-id', 'red-team',
+      '--part', 'red-team',
+      '--attempt-id', c15AttemptId,
+      '--delegate-file', 'c15-delegate-red-team.json',
+    ];
+    const state15Path = join(d15, 'review-run-state.json');
+    const beforeC15BadFindingBytes = readFileSync(state15Path, 'utf8');
+    const rC15BadFinding = runCli([...c15BuildArgs, '--finding', 'red-team-1-1,CRITICAL,red-team']);
+    expect(rC15BadFinding.code).toBe(1);
+    expect(rC15BadFinding.json.reason).toBe('invalid-input');
+    expect(rC15BadFinding.json.detail.violations).toEqual([
+      { path: '--finding', rule: 'invalid-value', expected: 'none-when-outcome-not-completed' },
+    ]);
+    expect(readFileSync(state15Path, 'utf8')).toBe(beforeC15BadFindingBytes);
+
+    expect(runCli(c15BuildArgs).json.reason).toBe('recorded');
+    const afterC15ReqFiles = reqFiles(d15);
+    expect(runCli(c15BuildArgs).json.reason).toBe('replayed');
+    expect(reqFiles(d15)).toEqual(afterC15ReqFiles);
+    const stAfterC15 = JSON.parse(readFileSync(state15Path, 'utf8')) as ReviewRunState;
+    const c15Attempt = stAfterC15.passes[0]!.voices.find((v) => v.voice_id === 'red-team')!.attempts[0]!;
+    expect(c15Attempt.outcome).toBe('failed');
+    expect(c15Attempt.findings).toBeNull();
+    expect(c15Attempt.dispatched_at).toBe('2026-11-16T03:18:00.938Z');
+    expect(c15Attempt.returned_at).toBe('2026-11-16T03:23:46.244Z');
+  });
+
+  // Value: protects=option/value ownership during --dir extraction; fails_when=a literal --dir/--input value is treated as an option or removing --dir silently stitches an omitted value to a later flag; why_new=review reproduction; seam=CLI and persisted finish
+  test('build preserves option values while extracting the state directory', () => {
+    for (const reason of ['--dir', '--input']) {
+      const d = newDir();
+      const start = ['build', 'start', '--dir', d, '--run-id', uid(960), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('option-values'), '--policy-source', 'none supplied', '--max-continuations', '1'];
+      expect(runCli(start).json.reason).toBe('recorded');
+      expect(runCli(['build', 'finish', '--stop-reason', reason, '--dir', d, '--outcome', 'blocked', '--base', baseSha, '--review-restriction-resolved']).json.reason).toBe('recorded');
+      const st = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+      expect(st.finish?.stop_reason).toBe(reason);
+      expect(st.finish?.review_restriction_resolved).toBe(true);
+    }
+    const d = newDir();
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(961), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('missing-value'), '--policy-source', 'none supplied', '--max-continuations', '1']).json.reason).toBe('recorded');
+    const before = readFileSync(join(d, 'review-run-state.json'));
+    const bad = runCli(['build', 'finish', '--outcome', 'blocked', '--base', baseSha, '--stop-reason', '--dir', d, '--review-restriction-resolved']);
+    expect(bad.code).toBe(2);
+    expect(bad.json.reason).toBe('usage');
+    expect(readFileSync(join(d, 'review-run-state.json'))).toEqual(before);
+  });
+
+  // Value: protects=previous canonical request evidence on an open failure; fails_when=EMFILE before exclusive creation unlinks an existing request; why_new=review reproduction; seam=isolated child CLI and filesystem
+  test('build preserves an existing request when opening it fails before creation', () => {
+    const d = newDir();
+    const args = ['build', 'start', '--dir', d, '--run-id', uid(962), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('open-failure'), '--policy-source', 'none supplied', '--max-continuations', '1'];
+    expect(runCli(args).json.reason).toBe('recorded');
+    const req = join(d, readdirSync(d).find((name) => name.startsWith('request-start-'))!);
+    const beforeRequest = readFileSync(req);
+    const beforeState = readFileSync(join(d, 'review-run-state.json'));
+    const script = `
+      import { mock } from 'bun:test';
+      import * as fs from 'node:fs';
+      const original = { ...fs };
+      mock.module('node:fs', () => ({ ...original, openSync(p, ...args) {
+        if (String(p).includes('/request-start-')) {
+          const error = new Error('injected open failure'); error.code = 'EMFILE'; error.syscall = 'open'; throw error;
+        }
+        return original.openSync(p, ...args);
+      }}));
+      const { main } = await import(process.argv[1]);
+      const code = main(JSON.parse(process.argv[2]), { cwd: process.argv[3], stdout: s => process.stdout.write(s), stderr: s => process.stderr.write(s) });
+      process.exit(code);
+    `;
+    const child = spawnSync('bun', ['--no-env-file', '--config=/dev/null', '-e', script, join(REPO_ROOT, 'src/review-state/cli.ts'), JSON.stringify(args), repo], { env: GIT_ENV, encoding: 'utf8', timeout: 10000 });
+    expect(child.status).toBe(3);
+    expect(JSON.parse(child.stdout).reason).toBe('unwritable');
+    expect(existsSync(req)).toBe(true);
+    expect(readFileSync(req)).toEqual(beforeRequest);
+    expect(readFileSync(join(d, 'review-run-state.json'))).toEqual(beforeState);
+  });
+
+  // Value: protects=build refusal rules, table-order deterministic request serialization, parseDelegationLine round-trip against renderDelegationPolicyLine, and build --help coverage; fails_when=unknown/duplicate/missing flags or bad evidence/delegate/delegation inputs are accepted or create a state file, flag order changes serialized bytes, parseDelegationLine fails to invert renderDelegationPolicyLine, or build --help omits a command or pass state; why_new=T3 (AC1, AC2, AC7, AC8); seam=CLI, build.ts, render.ts
+  test('build refusals, flag order and delegation-line round trip', () => {
+    const d = newDir();
+    const statePath = join(d, 'review-run-state.json');
+    writeFileSync(join(d, 'multi-parts.json'), JSON.stringify({
+      v: 1,
+      status: 'ran',
+      config_sha256: sha256('cfg'),
+      parts: [],
+    }));
+    writeFileSync(join(d, 'bad-json.json'), '{not-json');
+
+    // Usage refusals: unknown flag, duplicate scalar flag, value-less flag, build --input, bare build record
+    for (const [argv, expectedCommand, expectedMsg] of [
+      [['build', 'start', '--dir', d, '--unknown'], 'start', 'unknown argument --unknown'],
+      [['build', 'start', '--dir', d, '--run-id', uid(1), '--run-id', uid(2)], 'start', 'duplicate --run-id flag'],
+      [['build', 'start', '--dir', d, '--run-id'], 'start', '--run-id requires a value'],
+      [['build', 'finish', '--dir', d, '--review-restriction-resolved', '--review-restriction-resolved'], 'finish', 'duplicate --review-restriction-resolved flag'],
+      [['build', 'start', '--dir', d, '--input', join(d, 'multi-parts.json')], 'start', 'build does not accept --input'],
+      [['build', '--input', join(d, 'multi-parts.json')], 'build', 'build does not accept --input'],
+      [['build', 'record', '--dir', d], 'record', 'unknown command "record"'],
+      [['build', '--dir', d], 'build', 'unknown command "build"'],
+      [['build', 'start'], 'start', '--dir is required'],
+    ] as const) {
+      const res = runCli([...argv]);
+      expect(res.code, argv.join(' ')).toBe(2);
+      expect(res.json.reason).toBe('usage');
+      expect(res.json.command).toBe(expectedCommand);
+      expect(res.json.detail).toEqual({ message: expectedMsg });
+      expect(existsSync(statePath)).toBe(false);
+    }
+
+    // Invalid-input refusals: missing required flag, missing/invalid --state, checkDirFile rules, no-matching-part, invalid-json delegate file, malformed --delegation-line, mutually exclusive full_review_evidence
+    for (const [argv, expectedViolation] of [
+      [
+        ['build', 'start', '--dir', d, '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('p'), '--policy-source', 'none supplied', '--max-continuations', '1'],
+        { path: '--run-id', rule: 'missing-flag', expected: 'run_id' },
+      ],
+      [
+        ['build', 'record', 'pass', '--dir', d, '--pass-id', uid(1)],
+        { path: '--state', rule: 'missing-flag', expected: 'state' },
+      ],
+      [
+        ['build', 'record', 'pass', '--dir', d, '--pass-id', uid(1), '--state', 'bogus'],
+        { path: '--state', rule: 'invalid-enum', expected: 'started|attempt|voice-complete|completed' },
+      ],
+      [
+        ['build', 'checkpoint', '--dir', d, '--checkpoint-id', uid(2), '--kind', 'ready', '--base', baseSha, '--evidence', '../outside.txt'],
+        { path: '--evidence', rule: 'evidence-outside-dir', expected: 'valid-evidence-file-in-dir' },
+      ],
+      [
+        ['build', 'checkpoint', '--dir', d, '--checkpoint-id', uid(2), '--kind', 'ready', '--base', baseSha, '--evidence', 'missing.txt'],
+        { path: '--evidence', rule: 'evidence-missing', expected: 'valid-evidence-file-in-dir' },
+      ],
+      [
+        ['build', 'record', 'pass', '--dir', d, '--pass-id', uid(1), '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(3), '--delegate-file', 'multi-parts.json'],
+        { path: '--delegate-file', rule: 'no-matching-part', expected: 'single-parts-entry-for-red-team' },
+      ],
+      [
+        ['build', 'record', 'pass', '--dir', d, '--pass-id', uid(1), '--state', 'attempt', '--voice-id', 'red-team', '--attempt-id', uid(3), '--delegate-file', 'multi-parts.json'],
+        { path: '--part', rule: 'missing-flag', expected: 'part' },
+      ],
+      [
+        ['build', 'record', 'pass', '--dir', d, '--pass-id', uid(1), '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(3), '--delegate-file', 'bad-json.json'],
+        { path: '--delegate-file', rule: 'invalid-json', expected: 'valid-json-object' },
+      ],
+      [
+        ['build', 'start', '--dir', d, '--run-id', uid(1), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('p'), '--policy-source', 'caller prompt', '--delegation-line', 'delegation: malformed', '--max-continuations', '1'],
+        { path: '--delegation-line', rule: 'invalid-value', expected: 'delegation: active (parts=...; config=...[; tools=...])|delegation: inactive \u2014 <reason>' },
+      ],
+      [
+        ['build', 'finish', '--dir', d, '--outcome', 'stopped', '--base', baseSha, '--stop-reason', 'cap', '--delta-base', headSha, '--stop-count', '1', '--full-review-commit', headSha, '--full-review-tree', treeSha, '--full-review-source', 'https://example.com/1', '--full-review-unavailable', 'missing'],
+        { path: '--full-review-unavailable', rule: 'invalid-value', expected: 'mutually-exclusive-with-full-review-commit-tree-source' },
+      ],
+    ] as const) {
+      const res = runCli([...argv]);
+      expect(res.code, argv.join(' ')).toBe(1);
+      expect(res.json.reason).toBe('invalid-input');
+      expect(res.json.detail.violations).toEqual([expectedViolation]);
+      expect(existsSync(statePath)).toBe(false);
+    }
+
+    // Same flags in two orders write identical bytes and replay
+    const dOrder1 = newDir();
+    const dOrder2 = newDir();
+    const orderA = [
+      '--run-id', uid(950),
+      '--base', baseSha,
+      '--wtree', 'wt:clean',
+      '--gh-login', 'octocat',
+      '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', sha256('order-plan'),
+      '--policy-value', REAL_POLICY_LINE,
+      '--policy-source', 'caller prompt',
+      '--prior-stops', '1',
+      '--max-continuations', '2',
+      '--continues', headSha,
+      '--session-id', `extend-${uid(951)}`,
+    ];
+    const orderB = [
+      '--session-id', `extend-${uid(951)}`,
+      '--continues', headSha,
+      '--max-continuations', '2',
+      '--prior-stops', '1',
+      '--policy-source', 'caller prompt',
+      '--policy-value', REAL_POLICY_LINE,
+      '--plan-sha256', sha256('order-plan'),
+      '--plan-ref', 'docs/plan.md',
+      '--gh-login', 'octocat',
+      '--wtree', 'wt:clean',
+      '--base', baseSha,
+      '--run-id', uid(950),
+    ];
+    expect(buildRequest('start', orderA, dOrder1)).toEqual(buildRequest('start', orderB, dOrder2));
+    expect(runCli(['build', 'start', '--dir', dOrder1, ...orderA]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'start', '--dir', dOrder2, ...orderB]).json.reason).toBe('recorded');
+    const reqFile1 = readdirSync(dOrder1).find((f) => f.startsWith('request-start-'))!;
+    const reqFile2 = readdirSync(dOrder2).find((f) => f.startsWith('request-start-'))!;
+    expect(reqFile1).toBe(reqFile2);
+    expect(readFileSync(join(dOrder1, reqFile1), 'utf8')).toBe(readFileSync(join(dOrder2, reqFile2), 'utf8'));
+    expect(runCli(['build', 'start', '--dir', dOrder1, ...orderB]).json.reason).toBe('replayed');
+
+    // parseDelegationLine(renderDelegationPolicyLine(d)) round-trip
+    const activeWithTools: DelegationPolicy = {
+      status: 'active',
+      parts: ['specialist:maintainability', 'native-adversarial', 'red-team'],
+      config: sha256('del-cfg-tools'),
+      tools: ['specialist:maintainability', 'red-team'],
+    };
+    const activeWithoutTools: DelegationPolicy = {
+      status: 'active',
+      parts: ['specialist:testing', 'specialist:performance', 'native-adversarial'],
+      config: sha256('del-cfg-no-tools'),
+      tools: [],
+    };
+    const inactiveDel: DelegationPolicy = {
+      status: 'inactive',
+      reason: 'no Review delegates line',
+    };
+    for (const del of [activeWithTools, activeWithoutTools, inactiveDel]) {
+      const rendered = renderDelegationPolicyLine(del);
+      expect(rendered).not.toBeNull();
+      expect(parseDelegationLine(rendered)).toEqual(del);
+    }
+
+    // rubricForPart mapping
+    expect(rubricForPart('core')).toBe('core');
+    expect(rubricForPart('specialist:maintainability')).toBe('specialist');
+    expect(rubricForPart('red-team')).toBe('specialist');
+    expect(rubricForPart('native-adversarial')).toBe('adversarial');
+    expect(rubricForPart('greptile')).toBe('greptile');
+    expect(rubricForPart('qa')).toBe('other');
+    expect(rubricForPart('outside:challenge')).toBe('other');
+    expect(rubricForPart('outside:structured')).toBe('other');
+    expect(rubricForPart(undefined)).toBe('unknown');
+
+    // build --help has a section for every BUILD_COMMANDS entry and every record pass state
+    const helpRes = runCli(['build', '--help']);
+    expect(helpRes.code).toBe(0);
+    expect(helpRes.out).toBe(buildHelp());
+    for (const cmd of BUILD_COMMANDS) {
+      if (cmd === 'record pass') {
+        for (const st of PASS_STATES) {
+          expect(helpRes.out).toContain(`record pass (--state ${st}):\n  required:`);
+        }
+      } else {
+        expect(helpRes.out).toContain(`${cmd}:\n  required:`);
+      }
+    }
   });
 });
