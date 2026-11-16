@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.94.5] - 2026-11-15
+
+### Changed
+
+- Opted-in `run-state=record` reviews now record a delegated part whose wall time or token counts were not reported, storing them as unknown and printing `unknown` in its `Delegated part:` line, instead of falling back to `Run state: unavailable`.
+- `/review-and-prep` now creates its evidence directory before review starts, keeps delegate call claims in one directory per branch so a continuation reuses them, and keeps the pregate record and documentation section inside the invocation's evidence directory.
+- `review-state` accepts unknown delegate measurements as `null` and renders them as `unknown`.
+- `/review-and-prep` creates its evidence directory before review and keeps delegate claims in a persistent branch directory.
+
+### Upgrade notes
+
+- A continuation of a branch whose earlier invocation kept delegate calls inside its own evidence directory does not reuse those saved calls, so a delegated part may run, and be paid for, once more.
+- An older run-state helper that reads a run state holding an unknown delegate count reports `newer-schema`, and that review continues without recorded state.
+
 ## [0.94.4] - 2026-11-15
 
 ### Changed
