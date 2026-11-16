@@ -628,6 +628,8 @@ export function executeBuild(
   let dirErr: string | null = null;
   let hasInputFlag = false;
   const flagArgs: string[] = [];
+  const commandRows = validCommand === 'record pass' ? ALL_PASS_FLAGS : validCommand ? FLAG_TABLES[validCommand] : [];
+  const valueFlags = new Set(commandRows.filter((row) => row.kind !== 'presence').map((row) => row.flag));
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--dir') {
@@ -640,6 +642,8 @@ export function executeBuild(
       if (i + 1 < args.length) i++;
     } else {
       flagArgs.push(arg);
+      // Keep each option's value attached before inspecting later directory/input options.
+      if (valueFlags.has(arg) && i + 1 < args.length) flagArgs.push(args[++i]!);
     }
   }
 
@@ -669,8 +673,10 @@ export function executeBuild(
   const hash16 = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
   const reqPath = join(realDir, `request-${validCommand.replace(/ /g, '-')}-${hash16}.json`);
 
+  let createdRequest = false;
   try {
     const fd = openSync(reqPath, 'wx', 0o600);
+    createdRequest = true;
     try {
       writeAll(fd, bytes);
       fsyncSync(fd);
@@ -691,7 +697,7 @@ export function executeBuild(
         return makeEnvelope(validCommand, 'unwritable', { errno: 'EEXIST', syscall: 'open', path: truncate80(reqPath) }, validStatePath, null, undefined, helperVersion);
       }
     } else {
-      unlinkQuiet(reqPath);
+      if (createdRequest) unlinkQuiet(reqPath);
       return makeEnvelope(validCommand, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(reqPath) }, validStatePath, null, undefined, helperVersion);
     }
   }

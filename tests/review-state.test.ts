@@ -4928,6 +4928,56 @@ describe('bin/review-state', () => {
     expect(c15Attempt.returned_at).toBe('2026-11-16T03:23:46.244Z');
   });
 
+  // Value: protects=option/value ownership during --dir extraction; fails_when=a literal --dir/--input value is treated as an option or removing --dir silently stitches an omitted value to a later flag; why_new=review reproduction; seam=CLI and persisted finish
+  test('build preserves option values while extracting the state directory', () => {
+    for (const reason of ['--dir', '--input']) {
+      const d = newDir();
+      const start = ['build', 'start', '--dir', d, '--run-id', uid(960), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('option-values'), '--policy-source', 'none supplied', '--max-continuations', '1'];
+      expect(runCli(start).json.reason).toBe('recorded');
+      expect(runCli(['build', 'finish', '--stop-reason', reason, '--dir', d, '--outcome', 'blocked', '--base', baseSha, '--review-restriction-resolved']).json.reason).toBe('recorded');
+      const st = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+      expect(st.finish?.stop_reason).toBe(reason);
+      expect(st.finish?.review_restriction_resolved).toBe(true);
+    }
+    const d = newDir();
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(961), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('missing-value'), '--policy-source', 'none supplied', '--max-continuations', '1']).json.reason).toBe('recorded');
+    const before = readFileSync(join(d, 'review-run-state.json'));
+    const bad = runCli(['build', 'finish', '--outcome', 'blocked', '--base', baseSha, '--stop-reason', '--dir', d, '--review-restriction-resolved']);
+    expect(bad.code).toBe(2);
+    expect(bad.json.reason).toBe('usage');
+    expect(readFileSync(join(d, 'review-run-state.json'))).toEqual(before);
+  });
+
+  // Value: protects=previous canonical request evidence on an open failure; fails_when=EMFILE before exclusive creation unlinks an existing request; why_new=review reproduction; seam=isolated child CLI and filesystem
+  test('build preserves an existing request when opening it fails before creation', () => {
+    const d = newDir();
+    const args = ['build', 'start', '--dir', d, '--run-id', uid(962), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('open-failure'), '--policy-source', 'none supplied', '--max-continuations', '1'];
+    expect(runCli(args).json.reason).toBe('recorded');
+    const req = join(d, readdirSync(d).find((name) => name.startsWith('request-start-'))!);
+    const beforeRequest = readFileSync(req);
+    const beforeState = readFileSync(join(d, 'review-run-state.json'));
+    const script = `
+      import { mock } from 'bun:test';
+      import * as fs from 'node:fs';
+      const original = { ...fs };
+      mock.module('node:fs', () => ({ ...original, openSync(p, ...args) {
+        if (String(p).includes('/request-start-')) {
+          const error = new Error('injected open failure'); error.code = 'EMFILE'; error.syscall = 'open'; throw error;
+        }
+        return original.openSync(p, ...args);
+      }}));
+      const { main } = await import(process.argv[1]);
+      const code = main(JSON.parse(process.argv[2]), { cwd: process.argv[3], stdout: s => process.stdout.write(s), stderr: s => process.stderr.write(s) });
+      process.exit(code);
+    `;
+    const child = spawnSync('bun', ['--no-env-file', '--config=/dev/null', '-e', script, join(REPO_ROOT, 'src/review-state/cli.ts'), JSON.stringify(args), repo], { env: GIT_ENV, encoding: 'utf8', timeout: 10000 });
+    expect(child.status).toBe(3);
+    expect(JSON.parse(child.stdout).reason).toBe('unwritable');
+    expect(existsSync(req)).toBe(true);
+    expect(readFileSync(req)).toEqual(beforeRequest);
+    expect(readFileSync(join(d, 'review-run-state.json'))).toEqual(beforeState);
+  });
+
   // Value: protects=build refusal rules, table-order deterministic request serialization, parseDelegationLine round-trip against renderDelegationPolicyLine, and build --help coverage; fails_when=unknown/duplicate/missing flags or bad evidence/delegate/delegation inputs are accepted or create a state file, flag order changes serialized bytes, parseDelegationLine fails to invert renderDelegationPolicyLine, or build --help omits a command or pass state; why_new=T3 (AC1, AC2, AC7, AC8); seam=CLI, build.ts, render.ts
   test('build refusals, flag order and delegation-line round trip', () => {
     const d = newDir();
