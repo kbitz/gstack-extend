@@ -962,10 +962,14 @@ independent of every other key, including `documentation-audit=final` and
 rule is opt-in and today's owner stop stays the default: under `post-audit=classify`,
 after the documentation audit's last attempt, each post-audit change gets one
 bounded parent-side re-audit of its delta before the owner is asked; a change
-touching no documented behavior (`rename`, `tests-only`, `todos-only`,
-`mechanical-correction` or `already-documented`) proceeds with that classification
-recorded, and a change touching documented behavior keeps today's owner stop. It
-keeps upstream's attempt bound (never a third audit attempt), never upgrades a
+touching no documented behavior (`rename`, `tests-only`, `test-tooling`,
+`todos-only`, `mechanical-correction` or `already-documented`) proceeds with that
+classification recorded, and a change touching documented behavior keeps today's
+owner stop. On the classify path only, a change confined to test runners,
+pregate maps, test-selection maps and test helpers that no doc names no longer
+takes the broad fallback; package manifests, CI workflows and install entry
+points still do, and every test gate still runs on the final head. It keeps
+upstream's attempt bound (never a third audit attempt), never upgrades a
 blocked audit, waives no gate and never authorizes a continuation. When a
 precondition it relies on fails, blocked recovery runs as today and the receipt
 records `post-audit: not applied — <reason>`. See
@@ -1167,7 +1171,11 @@ Do not run /ship on this PR.
    nothing fills the row from HEAD, and later stops carry it unchanged. A stop
    after a first cycle that reproduced defects has its row only when cycle 2's
    fix review completed (`cycle-1-fix-review` with `fix-reviewed=true`);
-   otherwise it is `unavailable` (`reviewer-incomplete`).
+   otherwise it is `unavailable` (`reviewer-incomplete`). A full-scope cycle 2
+   that reruns each cycle-1-reproduced probe by its key writes that record with
+   scope `full`, so a policy with `in-cap=full` reaches the row too, and the
+   producer prints a warning when a policy pairs `in-cap=full` with
+   `continuation=repair-only` (the pair stays valid and changes no binding).
 4. **Manual holds stay holds.** A continuation that reaches required user testing
    pauses (`H-C`) and records `reviewRestrictionResolved: true` only after its
    review completed.
