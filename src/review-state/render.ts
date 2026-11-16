@@ -183,8 +183,8 @@ export const FIELD_FMT = {
       if (!chosen?.delegate) continue;
       const d = chosen.delegate, vals: Record<string, string | number> = {
         part: wirePart(voice.part ?? chosen.part ?? voice.voice_id), provider: d.provider, model: d.model, outcome: d.outcome,
-        reason: d.outcome === 'credited' ? 'none' : (d.fallback_reason ?? 'none'), wall_ms: d.wall_ms,
-        input_tokens: d.input_tokens, output_tokens: d.output_tokens, cache_read_input_tokens: d.cache_read_input_tokens,
+        reason: d.outcome === 'credited' ? 'none' : (d.fallback_reason ?? 'none'), wall_ms: d.wall_ms ?? 'unknown',
+        input_tokens: d.input_tokens ?? 'unknown', output_tokens: d.output_tokens ?? 'unknown', cache_read_input_tokens: d.cache_read_input_tokens ?? 'unknown',
         cache_creation_input_tokens: d.cache_creation_input_tokens ?? 'unknown', findings: chosen.findings ? chosen.findings.length : 0, call: d.call_id,
       };
       lines.push(`Delegated part: ${Object.keys(RECEIPT_KEYS).map((k, i) => (i === 0 ? String(vals[k]) : `${k}=${vals[k]}`)).join('; ')}`);

@@ -140,7 +140,7 @@ export type CandidateBinding = { commit: string; tree: string; base: string | nu
 export type PrInfo = { url: string; repo: string; number: number; head_repo: string; head_branch: string; base_ref: string };
 export type DelegationPolicy = { status: 'active'; parts: string[]; config: string; tools: string[] } | { status: 'inactive'; reason: string };
 export type FindingRecord = { finding_id: string; severity_source: string; severity_rubric: string; adjudication: string; resolution: string; duplicate_of: string | null; found_by: string[]; attribution_reason: string | null; receipt_class: string | null };
-export type DelegateRecord = { provider: string; model: string; outcome: string; fallback_reason: string | null; replay: boolean; wall_ms: number; input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number | null; call_id: string };
+export type DelegateRecord = { provider: string; model: string; outcome: string; fallback_reason: string | null; replay: boolean; wall_ms: number | null; input_tokens: number | null; output_tokens: number | null; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null; call_id: string };
 export type AttemptRecord = { attempt_id: string; part: string | null; outcome: string; predecessor_attempt_id: string | null; dispatched_at: string | null; returned_at: string | null; delegate: DelegateRecord | null; findings: FindingRecord[] | null; recorded_at: string };
 export type VoiceRecord = { voice_id: string; part: string | null; required: boolean; not_applicable: string | null; selected_attempt_id: string | null; attempts: AttemptRecord[]; recorded_at: string | null };
 export type PassRecord = { pass_id: string; segment: number | null; scope: string; cycle: number; coverage: string; delta_from: string | null; candidate: CandidateBinding; required_voices: string[]; started_at: string; completed_at: string | null; state: 'open' | 'completed'; voices: VoiceRecord[]; recorded_at: string; completed_recorded_at: string | null };
@@ -518,7 +518,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
             part: null, dispatched: null, dispatched_at: null, returned_at: null, parse: null, verdict: null, findings: null,
           }, {
             provider: R.provider, model: R.safeId, outcome: R.enum(ENUMS.delegateOutcome), fallback_reason: R.enumN(ENUMS.fallbackReason),
-            replay: R.bool, wall_ms: R.nonNegInt, input_tokens: R.nonNegInt, output_tokens: R.nonNegInt, cache_read_input_tokens: R.nonNegInt,
+            replay: R.bool, wall_ms: R.nonNegIntN, input_tokens: R.nonNegIntN, output_tokens: R.nonNegIntN, cache_read_input_tokens: R.nonNegIntN,
             cache_creation_input_tokens: R.nonNegIntN, call_id: R.hex64,
             dispatched: R.bool, dispatched_at: R.isoZN, returned_at: R.isoZN,
             parse: R.str(1, 64, true), verdict: R.str(1, 64, true),
@@ -891,7 +891,7 @@ export type StoredValidationResult =
   | { ok: true; state: ReviewRunState }
   | { ok: false; reason: 'corrupt' | 'newer-schema'; detail: Record<string, unknown> };
 
-export function validateStoredState(raw: unknown, statePath: string, helperVersion: string | null = null): StoredValidationResult {
+export function validateStoredState(raw: unknown, statePath: string = 'review-run-state.json', helperVersion: string | null = null): StoredValidationResult {
   if (isObj(raw) && typeof raw.schema === 'string') {
     const m = /^review-run-state\/v([1-9]\d*)$/.exec(raw.schema);
     if (m && Number(m[1]) > 1) {
@@ -973,7 +973,7 @@ export function validateStoredState(raw: unknown, statePath: string, helperVersi
           if (!a) return;
           if (a.predecessor_attempt_id !== null) reference(prior.has(a.predecessor_attempt_id as string), `${ap}.predecessor_attempt_id`);
           unique(attemptIds, a.attempt_id, `${ap}.attempt_id`); prior.add(a.attempt_id as string);
-          if (a.delegate !== null) object(a.delegate, STATE_KEYS.delegate, { provider: R.provider, model: R.safeId, outcome: R.enum(ENUMS.delegateOutcome), fallback_reason: R.enumN(ENUMS.fallbackReason), replay: R.bool, wall_ms: R.nonNegInt, input_tokens: R.nonNegInt, output_tokens: R.nonNegInt, cache_read_input_tokens: R.nonNegInt, cache_creation_input_tokens: R.nonNegIntN, call_id: R.hex64 }, `${ap}.delegate`);
+          if (a.delegate !== null) object(a.delegate, STATE_KEYS.delegate, { provider: R.provider, model: R.safeId, outcome: R.enum(ENUMS.delegateOutcome), fallback_reason: R.enumN(ENUMS.fallbackReason), replay: R.bool, wall_ms: R.nonNegIntN, input_tokens: R.nonNegIntN, output_tokens: R.nonNegIntN, cache_read_input_tokens: R.nonNegIntN, cache_creation_input_tokens: R.nonNegIntN, call_id: R.hex64 }, `${ap}.delegate`);
           if (a.findings === null) {
             if (a.outcome === 'completed') v.push({ path: `${ap}.findings`, rule: 'invalid-type', expected: 'array' });
           } else array(a.findings, `${ap}.findings`, (x, fp) => {

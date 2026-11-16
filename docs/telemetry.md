@@ -1104,6 +1104,10 @@ leaving `review-run-state.json` untouched.
   nearest ancestor correction that emitted a metrics record (skipping receipt-only and
   `fixed_in`-only corrections), so `metrics read` never reports `missing-reference` for
   a cross-segment or skipped correction.
+- **Delegated counts and fallback corrections:** a recorded delegated attempt's unreported
+  counts (`wall_ms` or any of the four token counts) derive as `null` in the `pass` v3
+  `delegate`, and a host attempt that names a failed delegated attempt as its predecessor
+  derives a `fallback` correction.
 - **Stage-runs rows for derived segments:** closed `derived: true` segments append one
   schema-version-4 row (`agent`, `model`, and `effort` `null` with `*_source: "unknown"`,
   `started_at` and `duration_s` from the segment bounds, `outcome` and `branch` from the

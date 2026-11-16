@@ -2,6 +2,16 @@
 
 ## Unprocessed
 
+### [review:files=docs/delegated-review.md|tests/review-delegate.test.ts] Test gap: Delegate evidence-directory documentation pointer
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The explanatory delegate-review document names the branch-scoped calls directory and points to the skill's Evidence directory section, but its existing owning test suite does not lock that pointer.
+- **Hypothesis (untested):** Re-verify the published directory contract, then consider extending the existing delegate-document test and its existing dependency rather than adding another cross-suite read.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** docs/delegated-review.md:148
+- **Evidence:** Static adversarial delta review; no wrong path, failed runtime command or other product defect reproduced. The unplanned protocol-suite read was removed to preserve Track 83A's approved test-file read set and one-path touchfile change.
+- **Context:** Filed by /review-and-prep before PR creation at `5448ef2` (2026-11-16). Revisit in the next Track touching these files.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=src/review-state/state.ts|tests/review-state.test.ts] Test gap: Optional candidate tree malformed and null boundaries
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Add table rows for null and malformed optional tree values across pass/gate/audit; no defect demonstrated.
