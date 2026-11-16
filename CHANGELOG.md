@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.97.0] - 2026-11-16
+
+### Added
+
+- `bin/review-delegate run` accepts optional `--settled FILE` context.
+
+### Changed
+
+- `/review-and-prep` now gives every review part the approved plan's accepted decisions and an optional `.gstack/review-rules.md` read from the base branch, and records a finding that only contests one of them on its own `Finding settled:` receipt line.
+- `/review-and-prep` gives review parts approved decisions and base-branch rules, with a separate settled-finding disposition and safety precedence.
+
+### Upgrade notes
+
+- Delegated and outside review calls now also receive that settled text, so a configured provider sees the plan's decisions, and a review resumed across the upgrade makes new delegate calls because their prompts changed.
+
 ## [0.96.0] - 2026-11-16
 
 ### Added
