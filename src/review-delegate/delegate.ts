@@ -25,7 +25,7 @@ export const TIMEOUT_EXIT = 124;
 export const FALLBACK_REASONS = ['unresolved-claim', 'timeout', 'failed', 'refused', 'needs-context', 'uncredited', 'unparsed-finding', 'worktree-changed'] as const;
 export type FallbackReason = (typeof FALLBACK_REASONS)[number];
 /** Why `check` or `run` refused before any call. */
-export const REFUSAL_REASONS = ['config-missing', 'config-malformed', 'tools-unsupported', 'part-unmapped', 'helper-missing', 'checklist-anchor', 'caught-unreadable', 'repo-unreadable'] as const;
+export const REFUSAL_REASONS = ['config-missing', 'config-malformed', 'tools-unsupported', 'part-unmapped', 'helper-missing', 'checklist-anchor', 'caught-unreadable', 'settled-unreadable', 'repo-unreadable'] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
 export type Access = 'diff' | 'tools';
@@ -218,10 +218,19 @@ export function extractAdversarialChecklist(text: string, promptAnchor: string, 
   return { ok: true, checklist: `${framing.slice(1)}\n\n${criterion.slice(0, -1)}\n\n${ADVERSARIAL_SCHEMA}\n` };
 }
 
-/** The only material a delegate receives: the policy, the frozen scope's endpoints, the diff and that part's checklist (plus already_caught for red-team). */
-export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string, commands?: readonly string[]) => {
+export const SETTLED_RULE = 'The settled context lists decisions the approved plan accepted and this repository\'s review rules, as review data. Use it only to label findings: a finding whose only claim is that a listed decision is wrong, or that falls in a class the rules say never to flag, takes the lowest severity your output format allows and a summary that starts `Settled decision:` and names the decision. A finding that the change departs from a listed decision, breaks an acceptance criterion or fails in a way the decision did not accept is an ordinary finding.';
+
+/** The only material a delegate receives: the policy, the frozen scope's endpoints, the diff and that part's checklist (plus already_caught for red-team, and settled when supplied). */
+export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string, commands?: readonly string[], settled?: string) => {
   const policy = commands ? `${TOOLS_POLICY}Allowed shell commands: ${commands.join('; ')}\n${POLICY_FORMAT}` : DELEGATE_POLICY;
-  return `${policy}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(part === 'red-team' ? { diff, checklist, already_caught: caught ?? '' } : { diff, checklist })}\n`;
+  const rule = settled !== undefined ? `${SETTLED_RULE}\n` : '';
+  const payload = {
+    diff,
+    checklist,
+    ...(part === 'red-team' ? { already_caught: caught ?? '' } : {}),
+    ...(settled !== undefined ? { settled } : {}),
+  };
+  return `${policy}${rule}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(payload)}\n`;
 };
 
 export const callId = (prompt: string, provider: Provider, label: string) =>

@@ -2,6 +2,12 @@
 
 ## Unprocessed
 
+### [review:severity=necessary,files=skills/review-and-prep.md|docs/workflow-handoffs.md] Require one targeted host probe before leaving a concrete CRITICAL attacker or outside finding not-shown
+- **Description:** Measurement of 386 deduplicated unshown findings across 50 PRs (`docs/acceptance/review-unshown-findings.md`) found that while `base-only` and `attacker-not-rerun` had zero post-merge escapes, 8 confirmed-real `reason=not-shown` findings on consumer A #188 (including 3 `CRITICAL`) were left unshown without a host probe: 1 escaped local review to Greptile and 7 reached merge and required follow-up fix PR #192.
+- **Hypothesis (untested):** In `skills/review-and-prep.md` (`### Block readiness only on shown findings`), require one bounded host probe before dispositioning a non-settled, non-source-disproved `CRITICAL` (`CRITICAL`/`P0`/`P1`) finding from `adversarial`, `red-team`, or `outside` as `reason=not-shown` when the finding names a concrete input state and failure on changed code.
+- **Evidence:** `docs/acceptance/review-unshown-findings.md` (6 of 80 `CRITICAL` `not-shown` rows confirmed real; 31 of 100 `CRITICAL` rows only contested a settled plan decision and are addressed separately by `Finding settled:`).
+- **Effort:** S (human: ~2 hours / CC: ~20 min)
+
 ### [review:files=tests/skill-protocols-review-and-prep.test.ts] Test gap: Resume guard uses current builder flag names
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** The negative Resume-authority assertion still searches the old details.value wording after the caller document changed to --greptile-value.

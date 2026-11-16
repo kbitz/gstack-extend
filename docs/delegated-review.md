@@ -121,8 +121,11 @@ A delegated part is one bounded call:
   JSON object"); the upstream line that starts `Read the diff for this branch`
   is not sent. The framing line is found by its position because a sibling
   rendering that inlines Review Army (the Cursor copy) repeats the framing text
-  for the Security specialist and the Red Team. Nothing else: no learnings,
-  stack notes, repository files, skill text or plan.
+  for the Security specialist and the Red Team. When `--settled` is passed,
+  `SETTLED_RULE` follows the policy and `"settled"` is added as the last key of
+  the second JSON line with the UTF-8 text of `--settled`; without `--settled`,
+  the prompt and call id are byte-identical to today's. Nothing else: no
+  learnings, stack notes, repository files, skill text or full plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
   TZ`, and only those that are set (plus `DISABLE_AUTOUPDATER=1` and `PATH`
   filtered to absolute entries in [Tools mode](#tools-mode)). No key or
@@ -226,7 +229,7 @@ silently: the receipt names the part and the reason.
 
 ```text
 review-delegate check --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE]
-review-delegate run --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE] --repo DIR --base SHA --candidate SHA --calls DIR [--caught FILE]
+review-delegate run --config FILE --gstack-root DIR --parts P[,P...] [--adversarial FILE] --repo DIR --base SHA --candidate SHA --calls DIR [--caught FILE] [--settled FILE]
 ```
 
 `--adversarial FILE` (check and run; absolute path) is required when `--parts`
@@ -238,7 +241,11 @@ changed list is a new call id: `/review-and-prep` writes it once per cycle as
 mode 0700 when missing), mode 0600, before the cycle's first red-team call. It
 writes the file through a temporary file in that directory renamed into place
 (so a crash never leaves a partial list to reuse), never rewrites it, and
-reuses it unchanged on a resume.
+reuses it unchanged on a resume. `--settled FILE` (run only; optional; absolute
+path; outside `--repo`) passes the settled context (`settled-<sha256>.txt` in
+that same branch-scoped calls directory, mode 0600, written via a temporary file
+renamed into place and reused unchanged on resume/continuation) into every named
+part's prompt and call id.
 
 `check` validates without any call. Exit 0 prints
 `{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`
@@ -255,14 +262,16 @@ line, or the prompt or criteria line does not occur once). Tools-specific
 schema, timeout, model and part-mapping refusals retain the JSON-only diagnostic.
 Exit 2 is a usage error
 decided before any work (an unknown flag, a part outside the six, a repeated
-part, a missing or extra `--adversarial` or `--caught`, a relative path, a
-`--calls` or `--caught` inside `--repo`): standard output is empty and standard
-error has `ERROR USAGE: ...` and `FIX: ...`.
+part, a missing or extra `--adversarial` or `--caught`, `--settled` on `check`,
+a relative path, a `--calls`, `--caught` or `--settled` inside `--repo`):
+standard output is empty and standard error has `ERROR USAGE: ...` and `FIX: ...`.
 
 `run` takes the same flags plus the repository, the frozen scope's two full
-SHAs, the calls directory and (for `red-team`) `--caught`. It runs `check`
-first (a missing or >64 KiB `--caught` file refuses with `caught-unreadable`,
-and a repository git cannot read refuses with `repo-unreadable`), takes the diff
+SHAs, the calls directory, (for `red-team`) `--caught`, and optional `--settled`.
+It runs `check` first (a missing or >64 KiB `--caught` file refuses with
+`caught-unreadable`, a missing or >64 KiB `--settled` file refuses with
+`settled-unreadable`, and a repository git cannot read refuses with
+`repo-unreadable`), takes the diff
 once and runs the parts concurrently. Exit 0 means every part was credited, 4
 means a part fell back, and 1 means a refusal before any call or a
 `worktree-changed` result. It prints
@@ -377,10 +386,11 @@ effect together. A `Review delegates:` line beside a policy that carries only
 
 ## Privacy
 
-The frozen diff, including any secret it contains, is sent to the command you
-configured and on to whatever provider it calls. Configure a provider you would
-trust with the repository's diff; the runner passes no credential, but it cannot
-stop a command from reading its own.
+The frozen diff (and, when `--settled` is passed, the settled context from the
+approved plan and `.gstack/review-rules.md`), including any secret it contains,
+is sent to the command you configured and on to whatever provider it calls.
+Configure a provider you would trust with the repository's diff; the runner
+passes no credential, but it cannot stop a command from reading its own.
 
 ## Measurement
 

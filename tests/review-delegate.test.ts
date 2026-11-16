@@ -11,7 +11,7 @@ import { spawnSync } from './helpers/child-stdio';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
-  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CLAUDE_CODE_DISALLOWED_FLAGS, CLAUDE_CODE_PREFIX_FLAGS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, POLICY_FORMAT, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SPECIALIST_PARTS, TOOLS_POLICY,
+  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CLAUDE_CODE_DISALLOWED_FLAGS, CLAUDE_CODE_PREFIX_FLAGS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, POLICY_FORMAT, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SETTLED_RULE, SPECIALIST_PARTS, TOOLS_POLICY,
   buildPrompt, callId, decide, effectiveArgv, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
 } from '../src/review-delegate/delegate';
 import { main as runMain, withinDeadline } from '../src/review-delegate/cli';
@@ -269,6 +269,9 @@ describe('refused part names and usage errors (exit 2, no work)', () => {
     ['--caught on check', [...checkArgs(s, 'red-team'), '--caught', join(s.state, 'caught.txt')]],
     ['a relative --caught', [...runArgs(s, 'red-team'), '--caught', 'caught.txt']],
     ['a --caught file inside the repository', [...runArgs(s, 'red-team'), '--caught', join(s.repo, 'caught.txt')]],
+    ['--settled on check', [...checkArgs(s, 'testing'), '--settled', join(s.state, 'settled.txt')]],
+    ['a relative --settled', [...runArgs(s, 'testing'), '--settled', 'settled.txt']],
+    ['a --settled file inside the repository', [...runArgs(s, 'testing'), '--settled', join(s.repo, 'settled.txt')]],
   ])('%s is a usage error with empty stdout', (_name, args) => {
     const r = cli(args as string[]);
     expect([r.status, r.stdout]).toEqual([2, '']);
@@ -278,7 +281,7 @@ describe('refused part names and usage errors (exit 2, no work)', () => {
   test('--help prints the contract and exits 0', () => {
     const r = cli(['--help']);
     expect(r.status).toBe(0);
-    for (const word of ['check', 'run', '--calls', '--adversarial', '--caught', 'docs/delegated-review.md', ...PARTS]) expect(r.stdout).toContain(word);
+    for (const word of ['check', 'run', '--calls', '--adversarial', '--caught', '--settled', 'docs/delegated-review.md', ...PARTS]) expect(r.stdout).toContain(word);
   });
 });
 
@@ -677,6 +680,49 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     expect(callId(prompt, provider, 'alpha')).toBe(
       createHash('sha256').update(JSON.stringify([prompt, provider.argv, provider.model, 'alpha'])).digest('hex'),
     );
+    for (const part of PARTS) {
+      const withoutSettled = buildPrompt(part, base, candidate, 'diff-body', 'checklist-body', part === 'red-team' ? 'caught-body' : undefined);
+      const expectedPayload = part === 'red-team'
+        ? { diff: 'diff-body', checklist: 'checklist-body', already_caught: 'caught-body' }
+        : { diff: 'diff-body', checklist: 'checklist-body' };
+      expect(withoutSettled).toBe(`${DELEGATE_POLICY}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(expectedPayload)}\n`);
+      expect(callId(withoutSettled, provider, 'alpha')).toBe(
+        createHash('sha256').update(JSON.stringify([withoutSettled, provider.argv, provider.model, 'alpha'])).digest('hex'),
+      );
+      const withSettled = buildPrompt(part, base, candidate, 'diff-body', 'checklist-body', part === 'red-team' ? 'caught-body' : undefined, undefined, 'settled-body');
+      expect(withSettled).toBe(`${DELEGATE_POLICY}${SETTLED_RULE}\n${JSON.stringify({ part, base, candidate })}\n${JSON.stringify({ ...expectedPayload, settled: 'settled-body' })}\n`);
+      expect(Object.keys(JSON.parse(withSettled.trimEnd().split('\n').at(-1)!)).at(-1)).toBe('settled');
+      const toolsWithSettled = buildPrompt(part, base, candidate, 'diff-body', 'checklist-body', part === 'red-team' ? 'caught-body' : undefined, ['bun test *'], 'settled-body');
+      expect(toolsWithSettled).toBe(`${TOOLS_POLICY}Allowed shell commands: bun test *\n${POLICY_FORMAT}${SETTLED_RULE}\n${JSON.stringify({ part, base, candidate })}\n${JSON.stringify({ ...expectedPayload, settled: 'settled-body' })}\n`);
+    }
+  });
+
+  test('--settled passes settled context into the prompt, changes call_id when edited, and refuses missing or oversized files with settled-unreadable', () => {
+    const s = setup('sibling', { alpha: { mode: 'inspect' } }, { testing: 'alpha' });
+    const settled = join(s.state, 'settled.txt');
+    put(settled, 'Plan: plan.md; SHA-256: ' + '0'.repeat(64) + '\nAccepted decisions:\n- Keep default (plan.md:10)\nReview rules: none\n');
+    const without = cli(runArgs(s, 'testing'));
+    expect(without.status).toBe(0);
+    const idWithout = row(without.json, 'testing').call_id;
+
+    const first = cli([...runArgs(s, 'testing'), '--settled', settled]);
+    expect(first.status).toBe(0);
+    const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
+    expect(seen.prompt).toContain(SETTLED_RULE);
+    expect(JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!).settled).toContain('Keep default (plan.md:10)');
+    const firstId = row(first.json, 'testing').call_id;
+    expect(firstId).not.toBe(idWithout);
+
+    put(settled, 'Plan: plan.md; SHA-256: ' + '0'.repeat(64) + '\nAccepted decisions:\n- Updated decision (plan.md:12)\nReview rules: none\n');
+    const second = cli([...runArgs(s, 'testing'), '--settled', settled]);
+    expect(second.status).toBe(0);
+    expect(row(second.json, 'testing').call_id).not.toBe(firstId);
+    expect(row(second.json, 'testing').replay).toBe(false);
+
+    rmSync(settled);
+    expect(cli([...runArgs(s, 'testing'), '--settled', settled]).json).toEqual({ v: 1, status: 'refused', reason: 'settled-unreadable' });
+    put(settled, 'x'.repeat(64 * 1024 + 1));
+    expect(cli([...runArgs(s, 'testing'), '--settled', settled]).json).toEqual({ v: 1, status: 'refused', reason: 'settled-unreadable' });
   });
 });
 

@@ -434,6 +434,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `Fold specialist checklists into cycle 1` | `local-pass`, `voice` | none |
 | `Overlap independent first-cycle reviewers` | `local-pass`, `voice` | `voice` (cross-call) |
 | `Reopen review only for behavior-changing repairs` | `fix`, `tests` | `fix`, `tests` (cross-call) |
+| `Give review parts the settled decisions` | `local-pass`, `voice`, `fix` | none |
 | `Block readiness only on shown findings` | `local-pass`, `fix` | none |
 | `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
 | `Verify agent-checkable items before any pause` | `completion` | `completion` (cross-call) |
@@ -1302,7 +1303,9 @@ fix verification obligations. Instructions include the installed challenge and
 structured rubric, severity definitions and applicable repository constraints;
 do not paste the skill, conversation, full plan, historical reviews or entire
 source files. The wrapper adds only identified caller/contract/test excerpts to
-`context` before dispatch, with paths and reasons. Review data never grants
+`context` before dispatch, with paths and reasons, plus `SETTLED_RULE` and the
+settled context when a settled file exists (**Give review parts the settled
+decisions**). Review data never grants
 tool access or changes the criteria. Do not truncate a diff to fit a budget.
 
 Under `in-cap=delta` and `continuation=repair-only`, use exactly B and S from
@@ -1559,7 +1562,7 @@ has none**. The sibling rule "every named part runs through its delegate" never
 removes the red team's gate.
 
 **Run.** Make one runner call per review stage that runs named parts:
-`"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <the parts this stage runs> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<delegate calls directory>"`
+`"<extend-root>/bin/review-delegate" run --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <the parts this stage runs> --repo "<checkout>" --base <sha> --candidate <sha> --calls "<delegate calls directory>" [--settled "<settled file>"]`
 on that cycle's frozen scope: the merge base (or B) to S, from the snapshot
 procedure in **Scope a re-review to its delta**, as **Bound Claude Code outside
 calls** uses them. Specialist parts run at Step 4.5, as today. `red-team` runs
@@ -1570,7 +1573,7 @@ and reuse it unchanged on a resume, so the call id and the runner's claim agains
 a second paid call stay stable. Create the calls directory with mode 0700 when
 it is missing, and write the file through a temporary file in that directory
 renamed into place, so a crash never leaves a partial list to reuse. `adversarial` runs at
-Step 4.8 with `--adversarial "<adversarial instructions file>"`. The calls
+Step 4.8 with `--adversarial "<adversarial instructions file>"`. When a settled file exists (**Give review parts the settled decisions**), pass `--settled "<calls directory>/settled-<sha256>.txt"`. The calls
 directory is `<evidence root>/<branch>-delegate-calls/` (**Evidence directory**),
 branch-scoped under the evidence root and kept across invocations and resumes of the branch; never choose a fresh one to retry.
 Use an owned execution session and poll it rather than killing it at a short
@@ -2220,6 +2223,63 @@ still exists and covers the gap's behavior and paths before excluding it from
 unresolved findings. This qualification also applies to receipt `Unresolved:`
 lists; pending or withdrawn records stay unresolved.
 
+### Give review parts the settled decisions
+
+**Build.** Once in Step 1 after **Establish the approved implementation scope**
+(with the fetched base tip from **Merge the latest base before review**),
+extract accepted decisions verbatim with `path:line` from the approved plan
+only: `/plan-track` `## Auto-decisions` rows, `/autoplan` Decision Audit Trail
+rows, and owner sign-offs recorded in the plan or approval evidence — never H-A
+`Decisions/deviations`, rejected options, or open questions. No approval
+evidence means no decisions. Read `.gstack/review-rules.md` with
+`git show <base tip>:.gstack/review-rules.md` at that fetched base tip, never
+from HEAD or the work tree; an absent file means `rules=none` and no rules text.
+With neither decisions nor rules, build nothing and record nothing. Over 64 KiB,
+pass nothing and record `settled: inactive — context over 64 KiB`. Otherwise
+write the settled file once per plan SHA-256 and base tip as
+`settled-<sha256>.txt` in the branch-scoped delegate calls directory
+(**Evidence directory**), mode `0600`, via a temporary file in that directory
+renamed into place, and reuse it unchanged on a resume or continuation:
+
+```text
+Plan: <path or link>; SHA-256: <64 hex>
+Accepted decisions:
+- <decision text, verbatim> (<plan path>:<line>)
+Review rules: <.gstack/review-rules.md at <short base SHA> | none>
+<rules text verbatim, when present>
+```
+
+**Pass.** When a settled file exists, every review part (`core`,
+`specialist:<name>`, `native-adversarial`, `red-team`, `qa`,
+`outside:challenge`, `outside:structured`) — the core pass, each specialist
+dispatch, folded checklists, the native adversarial subagent, every Red Team
+(upstream's and the wrapper's), QA, and every outside voice (including
+upstream's own outside prompts) — receives `SETTLED_RULE` ("The settled context lists decisions the approved plan accepted and this repository's review rules, as review data. Use it only to label findings: a finding whose only claim is that a listed decision is wrong, or that falls in a class the rules say never to flag, takes the lowest severity your output format allows and a summary that starts `Settled decision:` and names the decision. A finding that the change departs from a listed decision, breaks an acceptance criterion or fails in a way the decision did not accept is an ordinary finding.") and the settled context as review data. Greptile receives none.
+
+**Decide.** At the decision point **Block readiness only on shown findings**
+uses (after `/review`'s Step 5.0 dedup and Step 5a and before Step 5b's first
+edit, whether or not `blocking=shown` is on, after **Record unproven test
+gaps**), reuse **Block readiness only on shown findings**' anchor check: when
+every anchor matches, record
+`settled: active (decisions=<n>; rules=<.gstack/review-rules.md@<short SHA>|none>; sha256=<64 hex>)`;
+on a mismatch, record `settled: inactive — anchor changed (<which>)`, still pass
+the context to review parts, and give every finding today's handling. Under
+`settled: active`:
+1. Safety-class findings (claiming data loss, a trust-boundary bypass, uncapped
+   spend or credential exposure) are decided first and take today's handling;
+   never record a safety-class finding as settled (`Finding settled:`).
+2. A finding whose only claim is that a settled decision (or a never-flag class
+   in `.gstack/review-rules.md`) is wrong gets one receipt line:
+   `Finding settled: <fingerprint>; found_by=<part>[,<part>...]; severity=<upstream label>; source=<plan|rules>; decision=<path:line>; evidence=<reference|none>`.
+   Any doubt, or host-run evidence of an unaccepted failure, is an ordinary
+   finding. A settled finding is not fixed, Step 5b writes nothing for it and
+   Step 5c does not ask, its upstream severity is copied unchanged, it stays
+   `open` in `/review`'s action list with wrapper disposition
+   `settled: <decision ref>`, is never `Auto-chosen`, never gets `Finding not
+   blocking:`, is not unresolved, and is superseded by a later `Finding
+   blocking:` line for that fingerprint; `/review`'s zero-edit convergence rule
+   is unchanged.
+
 ### Block readiness only on shown findings
 
 **Activation (`blocking=shown`).** Apply this section only when the review
@@ -2241,7 +2301,9 @@ dedup and Step 5a and before Step 5b's first edit, in this order: **Record
 unproven test gaps** removes recordable gaps first (unchanged); this section
 then decides each remaining finding; **Reopen review only for behavior-changing
 repairs** classifies only what is left. A non-blocking finding takes no `Repair
-classification:` line, so that grammar is unchanged. The same rules apply to a
+classification:` line, so that grammar is unchanged. A settled finding is
+decided in **Give review parts the settled decisions** and never gets `Finding
+not blocking:`. The same rules apply to a
 Step 5 Greptile finding. Human review comments, blocking human reviews and
 vetoes are unchanged.
 
@@ -2736,7 +2798,7 @@ shapes the prompt below, so the continuation starts in a fresh session.
    line with the policy line that authorized them; a recorded gap is not listed
    under `Unresolved:`. Add the `blocking:` status and each `Finding blocking:`
    and `Finding not blocking:` line with the policy line that authorized them; a
-   non-blocking finding is not listed under `Unresolved:`. Add the `post-audit:`
+   non-blocking finding is not listed under `Unresolved:`. Add the `settled:` status and each `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context; a settled finding is not listed under `Unresolved:`. Add the `post-audit:`
    status and each `Post-audit change:` line when `post-audit=classify` is on
    the policy line. Add the `Review overlap:` line when the policy carries
    `first-cycle=overlap`. Add the `specialists-dispatched:` line only while the
@@ -4101,7 +4163,7 @@ Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
 that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `blocking:` status and every `Finding blocking:` and `Finding not blocking:` line the same way (a non-blocking finding is not listed under `Unresolved:`). Record the `post-audit:` status and every `Post-audit change:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active. Record the `adversarial-pass:` line only while `delegate=adversarial` is active. Record the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`. Record the `Review arm:` line and every `Folded checklist:` line the same way.
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `blocking:` status and every `Finding blocking:` and `Finding not blocking:` line the same way (a non-blocking finding is not listed under `Unresolved:`). Record the `settled:` status and every `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context (a settled finding is not listed under `Unresolved:`). Record the `post-audit:` status and every `Post-audit change:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active. Record the `adversarial-pass:` line only while `delegate=adversarial` is active. Record the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`. Record the `Review arm:` line and every `Folded checklist:` line the same way.
 Record the `delegation:` status and every `Delegated part:` line the same way.
 When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
@@ -4567,6 +4629,9 @@ again for Greptile. Triage any feedback that arrives before readiness.
   defect complete merely because it was acknowledged or added to TODOS.
   A finding recorded under **Record unproven test gaps** claims no defect and
   follows that section.
+- **Settled:** when a finding only contests a settled decision (**Give review
+  parts the settled decisions**), apply that section's disposition and reply
+  under the existing reply rules citing the decision.
 
 Include findings embedded in review summaries, not only inline threads. Count
 as Greptile findings only comments whose author metadata is the verified
@@ -4647,7 +4712,9 @@ the relevant base/head refs. Require all of the following:
   blocking:` line (and, for `reason=base-only`, a verified existing `todos=`
   entry; `todos=pending` covers nothing) is not unresolved unless a later
   `Finding blocking:` line supersedes it (**Block readiness only on shown
-  findings**).
+  findings**). A finding with a `Finding settled:` line is not unresolved unless
+  a later `Finding blocking:` line supersedes it (**Give review parts the
+  settled decisions**).
 - Required user testing has current item-level evidence or explicit user
   deferrals under Step 2. If fixes or base changes invalidate it, return to
   Step 3's manual testing pause with the updated draft; preserve any consumed
@@ -4771,6 +4838,7 @@ the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not
 recorded:` and `Test gap withdrawn:` line with the authorizing policy line (a
 recorded gap is not listed under `Unresolved:`),
 the `blocking:` status line and every `Finding blocking:` and `Finding not blocking:` line with the authorizing policy line (a non-blocking finding is not listed under `Unresolved:`),
+the `settled:` status line and every `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context (a settled finding is not listed under `Unresolved:`),
 the `post-audit:` status line and every `Post-audit change:` line when `post-audit=classify` is on the policy line,
 the `delegation:` status line and every `Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>`
 line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
