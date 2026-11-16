@@ -2,6 +2,46 @@
 
 ## Unprocessed
 
+### [review:files=tests/handoff-contract.test.ts] Test gap: Compare producer and consumer eligibility by meaning
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The eligible-row count check and neighboring exact-table and consumer cases cover the current contract, but the count check alone does not match each producer condition to its consumer input.
+- **Hypothesis (untested):** Re-verify the table and model, then consider mapping their eligible cases directly when this suite next changes.
+- **Upstream severity:** CRITICAL (delegated adversarial); P3 (outside reviews).
+- **Found in:** tests/handoff-contract.test.ts:1500
+- **Evidence:** Read-only reviews; the parent observed 1,971 passing selected tests, 20 skips and no failures. No consumer defect was reproduced.
+- **Context:** Filed by /review-and-prep before PR creation at `a799fe4` (2026-11-16). Revisit in the next Track touching this file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/skill-protocols-review-and-prep.test.ts] Test gap: Anchor baseline token checks to their owning bullets
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The full-scope and checkpoint token assertions search the baseline section. Searching each owning bullet could reject a token moved elsewhere without restoring brittle sentence locks.
+- **Hypothesis (untested):** Re-verify the published requirements, then extend the existing structural assertions when the suite next changes.
+- **Upstream severity:** P3
+- **Found in:** tests/skill-protocols-review-and-prep.test.ts:1487
+- **Evidence:** Read-only outside challenge; the current protocol suite passed. No wrong instruction or runtime failure was demonstrated.
+- **Context:** Filed by /review-and-prep before PR creation at `a799fe4` (2026-11-16). Revisit in the next Track touching this file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/review-and-prep.md] Test gap: Installed-agent full-scope second-cycle continuation
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Executable fences and handoff fixtures do not establish that an installed agent follows the full-scope cycle-2 snapshot, reproduced-probe rerun and record sequence.
+- **Hypothesis (untested):** Retain an installed run with a reproduced first-cycle defect, a full second cycle, its actual records and the continuation outcome.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/review-and-prep.md:2433
+- **Evidence:** Read-only coverage audit; fixture/static coverage was 18 of 20 paths. No installed-agent result or product defect is claimed.
+- **Context:** Filed by /review-and-prep before PR creation at `a799fe4` (2026-11-16). Revisit in the next Track touching this file.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/review-and-prep.md] Test gap: Installed-agent test-tooling classification and final gates
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Protocol assertions do not establish live classification of eligible test-tooling changes, a documented runner, excluded manifest or CI changes, and final-head test freshness.
+- **Hypothesis (untested):** Retain an installed-agent evaluation covering eligible and excluded cases and the final test gates.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/review-and-prep.md:3239
+- **Evidence:** Read-only coverage audit; the published class, exclusions and freshness rules have fixture/static coverage. No failed classification or skipped gate was reproduced.
+- **Context:** Filed by /review-and-prep before PR creation at `a799fe4` (2026-11-16). Revisit in the next Track touching this file.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=docs/delegated-review.md|tests/review-delegate.test.ts] Test gap: Delegate evidence-directory documentation pointer
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** The explanatory delegate-review document names the branch-scoped calls directory and points to the skill's Evidence directory section, but its existing owning test suite does not lock that pointer.
