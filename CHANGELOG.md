@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.95.0] - 2026-11-16
+
+### Changed
+
+- In `/review-and-prep`, a second review cycle that runs at full scope now records its review of the first cycle's fixes, so a capped review whose first cycle reproduced a defect can still continue under `continuation=repair-only`, and a policy that pairs `in-cap=full` with `continuation=repair-only` prints a warning when it is read.
+- Under the opt-in `post-audit=classify` review policy value, a change after the last documentation audit that touches only test runners, pregate maps, test-selection maps, test helpers, tests or fixtures, and that names no document, is classified `test-tooling` and continues without an owner stop, while package manifests, CI workflows and install entry points still stop for the owner.
+- A completed full-scope second review cycle can now satisfy the review cap after rerunning each previously reproduced probe.
+- Under `post-audit=classify`, eligible `test-tooling` changes can proceed after the final documentation audit while preserving test gates.
+
+### Upgrade notes
+
+- Tools that read `Post-audit change:` receipt lines can now see `class=test-tooling`.
+- A capped review whose second cycle ran at full scope can now report full-review evidence where it used to report it unavailable, so a relayed `continuation=repair-only` prompt can continue instead of waiting for a full continuation.
+
 ## [0.94.5] - 2026-11-15
 
 ### Changed

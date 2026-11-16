@@ -1348,7 +1348,14 @@ function guardFromReceipt(receipt: string): Verdict {
 }
 
 interface Cycle1 {
-  continuation: boolean; scope: 'full' | 'delta'; anchor: boolean; reviewers: 'complete' | 'incomplete'; requiredProbes: 'pass' | 'incomplete'; snapshotTree: string; baseTree: string;
+  continuation: boolean;
+  scope: 'full' | 'delta';
+  anchor: boolean;
+  reviewers: 'complete' | 'incomplete';
+  requiredProbes: 'pass' | 'reproduced' | 'incomplete';
+  snapshotTree: string;
+  baseTree: string;
+  fixReview?: { snapshot: 'same' | 'other'; scope: 'delta' | 'full'; fixReviewed: boolean } | null;
 }
 const UNAVAILABLE_REASONS = ['anchor-changed', 'tree-differs', 'reviewer-incomplete', 'record-missing'];
 /** The skill's rules: which row a cap stop may print for a cycle 1 record. */
@@ -1359,9 +1366,14 @@ function rowFor(record: Cycle1 | null, carried: string | null): { row: string; r
   const unavailable = (reason: string) => ({ row: 'Full-review evidence: unavailable', reason });
   if (record === null) return unavailable('record-missing');
   if (!record.anchor) return unavailable('anchor-changed');
-  if (record.reviewers !== 'complete' || record.requiredProbes !== 'pass') return unavailable('reviewer-incomplete');
+  if (record.reviewers !== 'complete' || record.requiredProbes === 'incomplete') return unavailable('reviewer-incomplete');
   if (record.snapshotTree !== record.baseTree) return unavailable('tree-differs');
-  return { row: '' };
+  if (record.requiredProbes === 'pass') return { row: '' };
+  if (!record.fixReview || record.fixReview.snapshot !== 'same' || !record.fixReview.fixReviewed) {
+    return unavailable('reviewer-incomplete');
+  }
+  if (record.fixReview.scope === 'delta' || record.fixReview.scope === 'full') return { row: '' };
+  return unavailable('reviewer-incomplete');
 }
 
 describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
@@ -1459,22 +1471,44 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=a cap after a completed cycle 1 continues under repair-only and every unavailable baseline holds with delta-base; fails_when=the producer's rules or the guard's binding drift; why_new=the continuation path was dead for lack of a producer record; seam=none
   test.each([
-    { name: 'a completed full-scope cycle 1', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: false },
-    { name: 'a continuation carrying the prior row', record: { continuation: true, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: prior, hold: false },
-    { name: 'a continuation with no prior row', record: { continuation: true, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
-    { name: 'a reviewer that did not complete', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'incomplete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
-    { name: 'a snapshot tree that differs from B', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'U', baseTree: 'T' } as Cycle1, carried: null, hold: true },
-    { name: 'a changed /review anchor', record: { continuation: false, scope: 'full', anchor: false, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
-    { name: 'a delta-scope cycle 1', record: { continuation: false, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
-    { name: 'a delta-scope cycle 1 carrying the prior row', record: { continuation: false, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: prior, hold: false },
-    { name: 'required probes did not pass', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'incomplete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
-    { name: 'no record', record: null, carried: null, hold: true },
-  ])('$name', ({ record, carried, hold }) => {
+    { name: 'a completed full-scope cycle 1', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: false, reason: undefined },
+    { name: 'a continuation carrying the prior row', record: { continuation: true, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: prior, hold: false, reason: undefined },
+    { name: 'a continuation with no prior row', record: { continuation: true, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'record-missing' },
+    { name: 'a reviewer that did not complete', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'incomplete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    { name: 'a snapshot tree that differs from B', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'U', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'tree-differs' },
+    { name: 'a changed /review anchor', record: { continuation: false, scope: 'full', anchor: false, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'anchor-changed' },
+    { name: 'a delta-scope cycle 1', record: { continuation: false, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'record-missing' },
+    { name: 'a delta-scope cycle 1 carrying the prior row', record: { continuation: false, scope: 'delta', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: prior, hold: false, reason: undefined },
+    { name: 'required probes did not pass', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'incomplete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    { name: 'no record', record: null, carried: null, hold: true, reason: 'record-missing' },
+    { name: 'reproduced probes with a differing snapshot tree', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'U', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } } as Cycle1, carried: null, hold: true, reason: 'tree-differs' },
+    { name: 'reproduced probes with no fix-review record', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: null } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    { name: 'reproduced probes with a fix-review record for another snapshot', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'other', scope: 'delta', fixReviewed: true } } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    { name: 'reproduced probes with fix-reviewed=false', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: false } } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    { name: 'reproduced probes confirmed by a delta cycle 2', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } } as Cycle1, carried: null, hold: false, reason: undefined },
+    { name: 'reproduced probes confirmed by a full-scope cycle 2', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: true } } as Cycle1, carried: null, hold: false, reason: undefined },
+  ])('$name', ({ record, carried, hold, reason }) => {
     const decided = rowFor(record, carried);
     const row = decided.row === '' ? completedRow : decided.row;
     const v = guardFromReceipt(receipt([[completedRow, row]]));
     expect(v.mismatches.map((m) => m.binding)).toEqual(hold ? ['delta-base'] : []);
+    expect(decided.reason).toBe(reason);
     if (decided.reason) expect(UNAVAILABLE_REASONS).toContain(decided.reason);
+  });
+
+  // Value: protects=the consumer model's eligible branches match the skill's stop-table eligible rows; fails_when=the stop table or the model adds or drops an eligible branch; why_new=Track 84A T2 producer-to-model tie; seam=none; no_claim=installed-agent execution
+  test('the skill stop table has the same three eligible rows as the model', () => {
+    const tableLines = stopSection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
+    const tableCells = tableLines.map((l) => l.trim().slice(1, -1).split('|').map((c) => c.trim()));
+    const producerEligible = tableCells.filter((r) => r[2] === 'the row');
+    const modelEligible: Cycle1[] = [
+      { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
+      { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } },
+      { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: true } },
+    ];
+    expect(modelEligible.every((r) => rowFor(r, null).row === '')).toBe(true);
+    expect(producerEligible).toHaveLength(3);
+    expect(producerEligible).toHaveLength(modelEligible.length);
   });
 
   // Value: protects=ambiguous receipt evidence holds repair-only continuation; fails_when=duplicate fields collapse to a last-wins map; why_new=new receipt parser boundary; seam=none
@@ -2967,9 +3001,16 @@ describe('(M) blocking=shown and post-audit=classify', () => {
       'A prepared receipt with non-blocking findings still emits `review: COMPLETE` in its H-B handoff',
       '| `blocking:` status and `Finding blocking:` and `Finding not blocking:` lines | receipt-present | published in the full receipt under `blocking=shown`, one line per decided finding with its attribution; a non-blocking finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |',
       '| `post-audit:` status and `Post-audit change:` lines | receipt-present | published in the full receipt under `post-audit=classify`, one line per post-audit change naming why it did or did not need the owner; the documentation status they accompany stays the accepted audit\'s own and a blocked audit is never upgraded; the lines never authorize a stage or merge |',
+      'On the classify path only, a change confined to test runners, pregate maps, test-selection maps and test helpers that no doc names no longer takes the broad fallback;',
+      'package manifests, CI workflows and install entry points still do, and every test gate still runs on the final head.',
     ]) {
       expect(has(doc, phrase), phrase).toBe(true);
     }
+    const docClasses = [...(/touching no documented behavior \(([^)]+)\)/.exec(doc)?.[1] ?? '').matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
+    const skillClasses = [...(/in a no-documented-behavior class \(([^)]+),\s*so `owner=not-needed`\)/.exec(prep)?.[1] ?? '').matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
+    expect(docClasses).toContain('test-tooling');
+    expect(docClasses).toEqual(skillClasses);
+    expect(docClasses).toEqual(['rename', 'tests-only', 'test-tooling', 'todos-only', 'mechanical-correction', 'already-documented']);
     expect(run('B-TRUSTED').outcome).toBe(TRUSTED);
   });
 
@@ -3042,6 +3083,9 @@ describe('(O) capped-review recovery', () => {
     for (const phrase of [
       '`k` counts distinct stop SHAs for the PR\'s lifetime and is never reset',
       'A stop after a first cycle that reproduced defects has its row only when cycle 2\'s fix review completed (`cycle-1-fix-review` with `fix-reviewed=true`); otherwise it is `unavailable` (`reviewer-incomplete`).',
+      'A full-scope cycle 2 that reruns each cycle-1-reproduced probe by its key writes that record with scope `full`',
+      'a policy with `in-cap=full` reaches the row too',
+      'the producer prints a warning when a policy pairs `in-cap=full` with `continuation=repair-only` (the pair stays valid and changes no binding).',
       '([`B-STOPPED-NONE-RECORDED`](#b-stopped-none-recorded))',
       '[efficiency program](designs/workflow-efficiency-program.md) (E11)',
     ]) {

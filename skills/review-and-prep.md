@@ -945,6 +945,13 @@ reason>)`, before any review work, so a typo that drops every key is visible.
 Redact diagnostic values and keep this phase-status line outside the eventual
 copyable handoff; the handoff and receipt retain their own exact policy label.
 
+When the parsed policy carries both `in-cap=full` and
+`continuation=repair-only`, print on the next line:
+`Review policy warning: in-cap=full with continuation=repair-only — after a first cycle that reproduces a defect, repair-only stays available only if the full-scope second cycle completes and reruns each reproduced probe by its key.`
+It is a phase-status line like the parsed policy: outside any copyable handoff,
+not a receipt line, and it changes no key, gate, outcome or continuation. A
+line read as `none supplied` prints no warning.
+
 - Keys after the version are optional and unordered. `max-continuations`
   defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.
   A repeated key, an unknown version, key or value, or a second policy line
@@ -2336,17 +2343,19 @@ Two records back a new baseline: `cycle-1-baseline` (written by cycle 1) and
 `cycle-1-fix-review` (written by cycle 2). A cap stop can only report a
 completed full-review baseline that was recorded while those cycles ran. Write
 the baseline record only while the installed `/review` read in
-Step 1 still contains the anchor `A pass covers Steps 3–5, including all
+this skill's Step 1 still contains the anchor `A pass covers Steps 3–5, including all
 reviewers before fixes.`, checked as `in-cap=delta` checks its anchors (that
 paragraph's inventory already covers this one). A missing anchor writes
 `completed=false` with reason `anchor-changed`.
 
-- **B.** B is the HEAD that cycle 1 reviews: capture it at cycle 1's Step 3,
-  after Step 2's base merge and after "Commit pending intended work before
+- **B.** B is the HEAD that cycle 1 reviews: capture it at cycle 1's /review's Step 3,
+  after this skill's Step 2's base merge and after "Commit pending intended work before
   invoking `/review`". B must be an ancestor of the pushed stop commit.
 - **Snapshot.** Whenever the anchor is present, take cycle 1's candidate
   snapshot with the delta procedure above, whether or not `in-cap=delta`
-  applies.
+  applies. When cycle 1's record says `completed=pending-fix-review`, also
+  take cycle 2's candidate snapshot at /review's Step 3 with the same
+  procedure, whether or not `in-cap=delta` applies.
 - **Scope.** Only a full-scope cycle 1 of a non-continuation invocation writes
   `completed=true` or `completed=pending-fix-review`. A `continue` invocation,
   delta or full, never writes a new baseline; it carries the newest
@@ -2365,7 +2374,7 @@ paragraph's inventory already covers this one). A missing anchor writes
   size-gated (`gate: skipped`, `completed:false`). A gate skip is never an
   incomplete reviewer. This defines "adaptive-gate skips" below, for both
   cycles.
-- **Required probes.** The record lists each required Step 4.7 probe once. Its
+- **Required probes.** The record lists each required /review's Step 4.7 probe once. Its
   key is its contract plus its native command or request as the evidence tool
   records it (the annotation's `command`), without the guard wrapper, capture
   IDs, the deadline and timeout flags and evidence paths. Its probe ID is the
@@ -2373,11 +2382,11 @@ paragraph's inventory already covers this one). A missing anchor writes
   comment use the ID, so the cycle 1 and cycle 2 entries match explicitly while
   the commands stay local. A minimized replay is evidence only, never the key,
   and a defect fingerprint never keys a probe, because its line shifts after
-  fixes. A changed probe command is a different probe, as in Step 4.7's own
+  fixes. A changed probe command is a different probe, as in /review's Step 4.7's own
   rerun rule, so the original probe counts as `not-run` (fail closed by
   design).
 - **Probe outcomes.** Each probe gets exactly one outcome, taken as known at
-  the record's write point from Step 4.7's provisional results, never from the
+  the record's write point from /review's Step 4.7's provisional results, never from the
   final materialized verdict:
   - `pass` → `passed`
   - `product-defect`, or `fail`/`failed` classified as a product defect with a
@@ -2393,14 +2402,14 @@ paragraph's inventory already covers this one). A missing anchor writes
     classification>)`, recorded with its check key, sensitive values redacted
 
   A reproduced defect is a probe result: a `reproduced` probe has run to a
-  result and is never an incomplete probe. A browser check that Step 4.7
+  result and is never an incomplete probe. A browser check that /review's Step 4.7
   reports as current passing evidence is `passed`, so `completed=true` stays as
-  reachable as before. The `/review` anchor check does not cover Step 4.7's
+  reachable as before. The `/review` anchor check does not cover /review's Step 4.7's
   outcome labels, classifications or Fix-First return shape; if upstream
   renames or changes them, the result maps to `inconclusive` and the baseline
   is unavailable, never misread.
 - **Write point.** At the end of cycle 1's review collection, after every
-  selected reader has returned or is confirmed stopped and before Step 5
+  selected reader has returned or is confirmed stopped and before /review's Step 5
   applies any fix, write
   `cycle-1-baseline` to the invocation's evidence directory: B, T
   (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree
@@ -2422,13 +2431,17 @@ paragraph's inventory already covers this one). A missing anchor writes
   (cycle 2) makes a record usable: any other value, `pending-fix-review` alone
   included, is not a baseline.
 - **Fix-review record.** When cycle 1's record says
-  `completed=pending-fix-review` and cycle 2 of the same invocation runs as the
-  in-cap delta from cycle 1's snapshot (recorded `delta from <cycle 1
-  snapshot>` with `SCOPE_DELTA: covered`), cycle 2 writes a separate record,
-  `cycle-1-fix-review`, to the same evidence directory. Write it at the end of
+  `completed=pending-fix-review` and cycle 2 of the same invocation runs either
+  as the in-cap delta from cycle 1's snapshot (recorded with scope `delta from
+  <cycle 1 snapshot>` and `SCOPE_DELTA: covered`) or at full scope from the
+  verified PR merge base to its own snapshot (recorded with scope `full`,
+  whatever made it full: `in-cap=full`, no `in-cap` value, an inactive in-cap
+  delta, or a recorded full-scope fallback of the delta procedure), cycle 2
+  writes a separate record, `cycle-1-fix-review`, to the same evidence
+  directory. Write it at the end of
   cycle 2's review collection, after every selected reader has returned or is
-  confirmed stopped and before Step 5 applies any cycle 2 fix. Before that
-  write point, cycle 2's Step 4.7 reruns each cycle-1-reproduced probe by its
+  confirmed stopped and before /review's Step 5 applies any cycle 2 fix. Before that
+  write point, cycle 2's /review's Step 4.7 reruns each cycle-1-reproduced probe by its
   key, with its exact recorded command or request, as revalidation of an
   affected check, which upstream runs even after the smoke limit, not as a
   smoke recheck. A probe has a cycle 2 result when it was rerun by its key on
@@ -2452,15 +2465,15 @@ paragraph's inventory already covers this one). A missing anchor writes
   Otherwise write false with reason `reviewer-incomplete`, naming the reviewer
   or probe. `fix-reviewed=true` means cycle 2 reviewed cycle 1's fixes, not
   that they hold; a defect still open at the stop stays in the receipt's
-  unresolved findings and its `Unresolved:` line. A full-scope or inactive
-  cycle 2 writes no fix-review record.
+  unresolved findings and its `Unresolved:` line. A cycle 2 without its own
+  snapshot writes no fix-review record.
 - **Checkpoints.** Verify the records with the fence's `check` action at three
-  boundaries: (1) `before-fix`, after the write point and before Step 5 applies
+  boundaries: (1) `before-fix`, after the write point and before /review's Step 5 applies
   the cycle's first fix (cycle 1 for `cycle-1-baseline`; cycle 2 for
   `cycle-1-fix-review` when that record is required). `missing` there is still
   inside the write point because no fix has been applied: write the record now
   from the same collection results, check again, and apply no fix until it says
-  `present`. (2) `next-cycle`, at the next cycle's Step 3 (cycle 2 for
+  `present`. (2) `next-cycle`, at the next cycle's /review's Step 3 (cycle 2 for
   `cycle-1-baseline`, cycle 3 for `cycle-1-fix-review`), before any of that
   cycle's readers or probes start. `missed` there records the miss at once:
   print `Full-review record missed: <kind> — detected at cycle <n>'s start`,
@@ -2469,14 +2482,13 @@ paragraph's inventory already covers this one). A missing anchor writes
   or record write; repair that I/O failure before resuming the checkpoint.
   (3) `stop`: the cap stop reads both records only through this action. The
   fix-review checkpoints run only when the baseline says `pending-fix-review`
-  and cycle 2 runs as the in-cap delta from cycle 1's snapshot, matching
-  **Fix-review record**.
+  and cycle 2 qualifies under **Fix-review record**, at either scope.
 - **Late write.** Allowed once, at the `next-cycle` checkpoint that recorded the
   miss and before any reader or probe of that cycle starts. B, T and the
   snapshot are the values that cycle recorded (the snapshot's tree check runs
   in the fence). Each stage's result and each probe's outcome come only from
   evidence-directory files written during that cycle's review collection that
-  name its snapshot (the per-review evidence and Step 4.7 results kept under
+  name its snapshot (the per-review evidence and /review's Step 4.7 results kept under
   **Capture evidence and commit**), listed as `sources`. Never take a value from
   memory or chat, a later cycle, the final materialized verdict or a later
   relabel. Without such a source for every value, leave the miss: the stop
@@ -2499,7 +2511,7 @@ paragraph's inventory already covers this one). A missing anchor writes
   `review_read_row`, `completed` (the string `"true"`, `"pending-fix-review"`
   or `"false"`) and `cause` (required unless `completed` is `"true"`);
   `cycle-1-fix-review` has `schema`, `provenance`, `cycle_1_snapshot`,
-  `cycle_2_snapshot`, `scope` (starting `delta from `), `stages`, `probes`
+  `cycle_2_snapshot`, `scope` (`full` or starting `delta from `), `stages`, `probes`
   (each may carry `evidence`, the reference behind a reused current result),
   `fix_reviewed` (`"true"` or `"false"`) and `cause` (required unless `"true"`).
   Write each record with the fence's `write` action, which creates the file
@@ -2512,7 +2524,7 @@ paragraph's inventory already covers this one). A missing anchor writes
   invalid required field, makes a record unreadable; an unreadable or duplicate
   record counts as no record of that kind. A `continue` invocation writes
   neither record. The records belong to the invocation's first `/review` run; a
-  later `/review` run in the same invocation (Step 5's delta re-review, or a
+  later `/review` run in the same invocation (this skill's Step 5's delta re-review, or a
   full-scope fallback) writes neither.
 - **Unavailable.** A snapshot tree that differs from T (reviewed uncommitted or
   untracked content) is `tree-differs`; a missing record is `record-missing`.
@@ -2583,7 +2595,7 @@ const validate = (r, mode) => {
   } else {
     if (!hex40(r.cycle_1_snapshot)) return "cycle_1_snapshot";
     if (!hex40(r.cycle_2_snapshot)) return "cycle_2_snapshot";
-    if (typeof r.scope !== "string" || !r.scope.startsWith("delta from ")) return "scope";
+    if (typeof r.scope !== "string" || (r.scope !== "full" && !r.scope.startsWith("delta from "))) return "scope";
     if (r.fix_reviewed !== "true" && r.fix_reviewed !== "false") return "fix_reviewed";
     if (r.fix_reviewed === "true" && r.probes.some(p => !/^(passed|reproduced)\b/.test(p.outcome))) return "fix_reviewed";
     if (r.fix_reviewed !== "true" && (typeof r.cause !== "string" || !r.cause)) return "cause";
@@ -2765,8 +2777,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    with `scope=full; completed=true`, and in both paths B is the first stop's
    delta base and the row's `commit=`. In this row `completed=true` records
    coverage: every selected reviewer completed and every required probe ran to
-   a result on B, and cycle 2's delta reviewed the fixes for any reproduced
-   defect. It never claims a clean review; reviewer findings never made a pass
+   a result on B, and a delta or full-scope cycle 2 reviewed the fixes for any
+   reproduced defect. It never claims a clean review; reviewer findings never made a pass
    incomplete, only probe outcomes did. At a continuation or delta re-review
    stop, preserve the prior corroborated row and evidence-comment reference
    instead; the original local file is not required on another host. Never
@@ -2792,7 +2804,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    | `completed=true`, snapshot tree equals T | not read | the row |
    | `completed=pending-fix-review`, snapshot tree differs from T | any | unavailable `tree-differs` |
    | `completed=pending-fix-review`, tree equals T | no readable record, one for another snapshot, or `fix-reviewed=false` | unavailable `reviewer-incomplete` |
-   | `completed=pending-fix-review`, tree equals T | same snapshot, `fix-reviewed=true` | the row |
+   | `completed=pending-fix-review`, tree equals T | same snapshot, scope `delta from <S1>`, `fix-reviewed=true` | the row |
+   | `completed=pending-fix-review`, tree equals T | same snapshot, scope `full`, `fix-reviewed=true` | the row |
 
    Read each record with the fence's `check` action at `stop`: `present`
    supplies the record's values to the table above, and `missing`, `missed` or
@@ -3189,6 +3202,12 @@ when:
 - or **Bound the documentation audit** item 4's broad-fallback conditions hold
   for the delta.
 
+On this path only, a changed test-tooling path (defined under **Classes**) does
+not by itself meet item 4's "build, test or install entry point or
+configuration" condition; a package manifest or lockfile, a CI workflow, an
+install or setup entry point and build or docs-build configuration still do,
+and item 4's other conditions apply unchanged.
+
 A policy without the value records nothing here and runs today's blocked
 recovery.
 
@@ -3218,6 +3237,20 @@ line; a later commit gets its own line.
   its documentation are updated.
 - `tests-only`: only test or fixture paths changed, and no inventoried doc names
   a changed path or a contract it changes;
+- `test-tooling`: every changed path is a test, fixture or test-tooling path and
+  at least one is a test-tooling path; no inventoried doc names a changed path
+  or a contract it changes (the same literal search as `tests-only`); and the
+  change adds, removes or renames no command, flag, help line, configuration
+  key or environment variable a person uses. Test-tooling paths are a test
+  runner (a script whose only role is to select, start or report the project's
+  tests, such as a pregate runner script), a pregate map
+  (`.gstack/pregate.json`), a test-selection map (a file mapping source paths
+  to the tests they select) and a test helper (a module only tests use). A
+  package manifest or lockfile, a CI workflow, an install or setup entry point
+  and build or docs-build configuration are never test-tooling paths. When the
+  search finds a doc naming a changed test-tooling path or a contract it
+  changes, the change is `documented-behavior`, or `already-documented` when a
+  doc line read here already states its behavior, cited as `path:line`;
 - `todos-only`: only the TODOS file (`docs/TODOS.md` or `TODOS.md`) changed;
 - `mechanical-correction`: a doc edit correcting a count, a pointer or a link,
   verified by a recorded check (such as a recount command, the target existing
@@ -3229,10 +3262,14 @@ line; a later commit gets its own line.
 
 **Outcome.** When every post-audit change after the accepted audit's post-child
 snapshot is in a no-documented-behavior class (`rename`, `tests-only`,
-`todos-only`, `mechanical-correction` or `already-documented`, so
-`owner=not-needed`), continue without asking the owner: the documentation
+`test-tooling`, `todos-only`, `mechanical-correction` or `already-documented`,
+so `owner=not-needed`), continue without asking the owner: the documentation
 status stays the accepted audit's own status (`current` or `updated`), never
-upgraded, and `.gstack/tmp/docs-audit.json` is untouched. Any
+upgraded, and `.gstack/tmp/docs-audit.json` is untouched. `test-tooling` waives
+no test gate: the pregate and test lanes rerun on the changed content under
+their freshness rule, under `full-suite=external` the external full-suite gate
+still runs on the final head (**Pause for an external full-suite gate**), and
+under `full-suite=final` `/ship-and-land`'s full run is unchanged. Any
 `documented-behavior` change (`owner=needed`) takes the audit's blocked
 recovery as today (the owner stop, including its named-risk exception), naming
 that change and why it needed the owner.
@@ -3243,7 +3280,7 @@ post-audit freshness check with no attempt left is reached, record
 `post-audit: active` record one line per post-audit change naming why it did or
 did not need the owner:
 
-`Post-audit change: <full commit SHA>; paths=<n>; class=<rename|tests-only|todos-only|mechanical-correction|already-documented|documented-behavior>; owner=<not-needed|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`
+`Post-audit change: <full commit SHA>; paths=<n>; class=<rename|tests-only|test-tooling|todos-only|mechanical-correction|already-documented|documented-behavior>; owner=<not-needed|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`
 
 When the value is on the policy line but no exhausted-audit freshness check was
 reached, record `post-audit: not applied — no exhausted-audit freshness check reached`.
