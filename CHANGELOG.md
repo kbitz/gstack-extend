@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.97.2] - 2026-11-17
+
+### Changed
+
+- Under the opt-in `blocking=shown` review policy value, `/review-and-prep` now runs one bounded reproduction probe before it leaves a concrete `CRITICAL` finding from an adversarial pass, a red team or an outside voice non-blocking, and a finding that probe reproduces now blocks readiness.
+- `/review-and-prep` runs one bounded reproduction probe for qualifying critical findings under `blocking=shown` before leaving them unshown.
+
+### Upgrade notes
+
+- Callers that send `blocking=shown` may see more reviews held for a fix, and each such finding can add up to five minutes of probe time to a review.
+
 ## [0.97.1] - 2026-11-17
 
 ### Changed
