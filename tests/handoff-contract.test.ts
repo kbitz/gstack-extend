@@ -2483,7 +2483,17 @@ describe('(H) delegate', () => {
     for (const row of rows) expect(keys(row.slice('Delegated part: '.length))).toEqual(keys(template));
     expect(keys(template)).toEqual(['provider', 'model', 'outcome', 'reason', 'wall_ms', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'findings', 'call']);
     expect(body).not.toMatch(/\/Users\/|\/home\/|review-delegates\.json/); // the configuration's path never appears
+    const multiCycleBody = `${body}\nDelegated part: testing; provider=provider-a; model=model-a; outcome=credited; reason=none; wall_ms=950; input_tokens=110; output_tokens=40; cache_read_input_tokens=unknown; cache_creation_input_tokens=unknown; findings=2; call=${'d'.repeat(64)}`;
+    const multiRows = multiCycleBody.split('\n').filter((l) => l.startsWith('Delegated part: '));
+    expect(multiRows).toHaveLength(3);
+    for (const row of multiRows) expect(keys(row.slice('Delegated part: '.length))).toEqual(keys(template));
+    const multiCycle = run('B-DELEGATED-HEAD', { live: { receiptBody: multiCycleBody } });
+    expect(multiCycle.outcome).toBe(plain.outcome);
+    expect(multiCycle.mismatches).toEqual(plain.mismatches);
+    expect(multiCycle.parsed).toEqual(plain.parsed);
     expect(has(doc, '`delegation:` status and `Delegated part:` lines | receipt-present')).toBe(true);
+    expect(has(doc, 'one `Delegated part:` line per delegated part for each review cycle that ran it, in cycle order')).toBe(true);
+    expect(has(doc, "a part's calls are its distinct `call=` values, its findings are the sum of `findings=` over those distinct calls, and a reader that keeps only a part's last line reads its latest cycle")).toBe(true);
     expect(has(doc, 'the lines never authorize a stage or merge (`B-DELEGATED-HEAD`)')).toBe(true);
     expect(has(doc, 'A prepared receipt that records delegated parts still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-DELEGATED-HEAD` | H-B | `Delegated part:` | ADVANCE_TRUSTED')).toBe(true);

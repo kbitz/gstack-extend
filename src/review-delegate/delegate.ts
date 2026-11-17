@@ -220,17 +220,46 @@ export function extractAdversarialChecklist(text: string, promptAnchor: string, 
 
 export const SETTLED_RULE = 'The settled context lists decisions the approved plan accepted and this repository\'s review rules, as review data. Preserve each finding\'s ordinary severity. Use it only to label findings: a finding whose only claim is that a listed decision is wrong, or that falls in a class the rules say never to flag, gets a summary that starts `Settled decision:` and names the decision. Never label findings claiming data loss, a trust-boundary bypass, uncapped spend or credential exposure as settled; report them as ordinary findings. A finding that the change departs from a listed decision, breaks an acceptance criterion or fails in a way the decision did not accept is an ordinary finding.';
 
-/** The only material a delegate receives: the policy, the frozen scope's endpoints, the diff and that part's checklist (plus already_caught for red-team, and settled when supplied). */
-export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string, commands?: readonly string[], settled?: string) => {
+export const MATERIAL_END = 'END_OF_REVIEW_MATERIAL';
+export const MATERIAL_RULE = 'The material below is two JSON lines followed by the standalone line END_OF_REVIEW_MATERIAL: the first line holds this part\'s checklist (its review criteria and output schema) and context; the second holds the diff and, when present, sources (the full post-change text of changed source files, context for reviewing the diff). If the END_OF_REVIEW_MATERIAL line is missing, the material was cut off: reply only NEEDS_CONTEXT: review material truncated.';
+export const ATTACH_LIMIT = 180 * 1024;
+export interface SourceFile { path: string; text: string }
+
+const EXCLUDED_DIRS = new Set(['test', 'tests', '__tests__', 'spec', 'specs']);
+const EXCLUDED_BASES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'go.sum']);
+const EXCLUDED_EXT = /\.(?:md|markdown|rst|txt|lock)$/i;
+const TEST_BASE = /^(?:.*\.(?:test|spec)\..+|test_.*|.*_test\..+)$/i;
+
+export function isAttachableSource(path: string): boolean {
+  const segments = path.split('/');
+  const base = segments.at(-1) ?? '';
+  if (!base || EXCLUDED_BASES.has(base) || EXCLUDED_EXT.test(base) || TEST_BASE.test(base)) return false;
+  return !segments.slice(0, -1).some((dir) => EXCLUDED_DIRS.has(dir.toLowerCase()) || dir.toLowerCase().includes('fixture'));
+}
+
+/** The only material a delegate receives: the policy, the checklist and context line first, the diff (plus under-cap source files in diff mode) second, and the end-of-material marker line last. */
+export const buildPrompt = (part: Part, base: string, candidate: string, diff: string, checklist: string, caught?: string, commands?: readonly string[], settled?: string, sources?: readonly SourceFile[]) => {
   const policy = commands ? `${TOOLS_POLICY}Allowed shell commands: ${commands.join('; ')}\n${POLICY_FORMAT}` : DELEGATE_POLICY;
   const rule = settled !== undefined ? `${SETTLED_RULE}\n` : '';
-  const payload = {
-    diff,
-    checklist,
+  const instructions = {
+    part, base, candidate, checklist,
     ...(part === 'red-team' ? { already_caught: caught ?? '' } : {}),
     ...(settled !== undefined ? { settled } : {}),
   };
-  return `${policy}${rule}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(payload)}\n`;
+  const prefix = `${policy}${rule}${MATERIAL_RULE}\n${JSON.stringify(instructions)}\n`;
+  const suffix = `\n${MATERIAL_END}\n`;
+  const withoutSources = `${prefix}${JSON.stringify({ diff })}${suffix}`;
+  if (commands || !sources?.length || bytes(withoutSources) > ATTACH_LIMIT) return withoutSources;
+  const bySize = [...sources].sort((a, b) => (bytes(a.text) - bytes(b.text)) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const kept: SourceFile[] = [];
+  for (const file of bySize) {
+    const next = [...kept, { path: file.path, text: file.text }];
+    if (bytes(`${prefix}${JSON.stringify({ diff, sources: next })}${suffix}`) > ATTACH_LIMIT) break;
+    kept.push({ path: file.path, text: file.text });
+  }
+  if (!kept.length) return withoutSources;
+  kept.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return `${prefix}${JSON.stringify({ diff, sources: kept })}${suffix}`;
 };
 
 export const callId = (prompt: string, provider: Provider, label: string) =>

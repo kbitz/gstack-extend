@@ -4978,10 +4978,12 @@ reviewRestrictionResolved: true
 Full receipt: <~-relative path>; sha256: <64 hex>
 ```
 
-`Delegated part:` appears once per delegated part when `delegate=<part>` is
-active, and `Unresolved:` records unresolved findings or `none recorded`; keep
-both in the compact receipt comment as machine-read lines in their exact
-grammar rather than moving them only to `full-receipt-<n>.md`.
+`Delegated part:` appears once per delegated part for each review cycle that ran
+it, in cycle order, when `delegate=<part>` is active (a part run in three cycles
+has three lines, and its last line is its latest cycle), and `Unresolved:`
+records unresolved findings or `none recorded`; keep both in the compact receipt
+comment as machine-read lines in their exact grammar rather than moving them
+only to `full-receipt-<n>.md`.
 `reviewRestrictionResolved: true` appears only when the rule above requires it.
 Write paths under `$HOME` as `~/…`.
 

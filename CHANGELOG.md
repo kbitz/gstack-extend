@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.0] - 2026-11-17
+
+### Added
+
+- A delegated diff-mode prompt that stays within 180 KiB now also carries the full text of the changed non-test source files, so the part can see definitions and callers outside the diff hunks.
+- Diff-mode reviews can attach complete changed source files when the prompt remains within 180 KiB.
+
+### Changed
+
+- Delegated review parts now receive their checklist and output schema before the diff, so a provider that cuts off a long prompt loses diff text rather than the part's instructions, and a part whose material arrives cut off returns to the host model.
+- Review receipts now list one `Delegated part:` line per delegated part for each review cycle that ran it, in cycle order, so a reader can count each part's calls and findings across the whole review.
+- Delegated review rules and checklists now precede diff material.
+- Review receipts retain delegated call and finding lines for every review cycle.
+
+### Upgrade notes
+
+- Configured delegate providers now also receive the full text of changed non-test source files when the prompt fits within 180 KiB, which shows them more of the repository and raises their input usage.
+- Every delegated prompt changed, so a review resumed across the upgrade sends its delegated parts again instead of replaying their saved results.
+- A receipt reader that keeps one `Delegated part:` line per part still reads the latest cycle; to count every cycle it must sum `findings=` over the distinct `call=` values.
+
 ## [0.97.3] - 2026-11-17
 
 ### Changed

@@ -11,8 +11,8 @@ import { spawnSync } from './helpers/child-stdio';
 import { recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
-  ADVERSARIAL_SCHEMA, ATTACKER_PARTS, CLAUDE_CODE_DISALLOWED_FLAGS, CLAUDE_CODE_PREFIX_FLAGS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, PART_KEYS, PARTS, POLICY_FORMAT, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SETTLED_RULE, SPECIALIST_PARTS, TOOLS_POLICY,
-  buildPrompt, callId, decide, effectiveArgv, extractAdversarialChecklist, parseFindings, readReply, validateConfig,
+  ADVERSARIAL_SCHEMA, ATTACH_LIMIT, ATTACKER_PARTS, CLAUDE_CODE_DISALLOWED_FLAGS, CLAUDE_CODE_PREFIX_FLAGS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, MATERIAL_END, MATERIAL_RULE, PART_KEYS, PARTS, POLICY_FORMAT, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SETTLED_RULE, SPECIALIST_PARTS, TOOLS_POLICY,
+  buildPrompt, callId, decide, effectiveArgv, extractAdversarialChecklist, isAttachableSource, parseFindings, readReply, validateConfig,
 } from '../src/review-delegate/delegate';
 import { main as runMain, withinDeadline } from '../src/review-delegate/cli';
 
@@ -530,7 +530,11 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     expect(seen.prompt).toContain('CHECKLIST-MARKER-testing');
     expect(seen.prompt).not.toContain('CHECKLIST-MARKER-maintainability');
     expect(seen.prompt).not.toContain('REPO-ONLY-MARKER');
-    expect(seen.prompt).toContain(JSON.stringify({ part: 'testing', base: s.base, candidate: s.candidate }));
+    const promptLines = seen.prompt.trimEnd().split('\n');
+    expect(JSON.parse(promptLines.at(-3)!)).toMatchObject({ part: 'testing', base: s.base, candidate: s.candidate });
+    expect(JSON.parse(promptLines.at(-2)!)).toEqual({ diff: expect.stringContaining('DIFF-MARKER') });
+    expect(promptLines.at(-1)).toBe(MATERIAL_END);
+    expect(seen.prompt.indexOf('CHECKLIST-MARKER-testing')).toBeLessThan(seen.prompt.indexOf('DIFF-MARKER'));
     expect(seen.prompt).toContain("These response-format instructions override the checklist's output-format instructions");
     expect(seen.prompt).not.toContain(s.repo);
     expect(seen.prompt).not.toContain(s.config);
@@ -585,7 +589,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adv]);
     expect(r.status).toBe(0);
     const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
-    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!);
+    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-3)!);
     expect(payload.checklist).toContain(ATTACKER.adversarial[1].slice(1));
     expect(payload.checklist).toContain(ATTACKER.adversarial[2]);
     expect(payload.checklist).toContain(ADVERSARIAL_SCHEMA);
@@ -602,7 +606,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     const r = cli([...runArgs(s, 'adversarial'), '--adversarial', adv]);
     expect(r.status).toBe(0);
     const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
-    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!);
+    const payload = JSON.parse(seen.prompt.trimEnd().split('\n').at(-3)!);
     expect(payload.checklist).toContain('Focus on concrete failure modes.');
     expect(payload.checklist).not.toContain('REVIEW-ARMY-COPY');
   });
@@ -640,7 +644,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
     expect(seen.prompt).toContain('"already_caught":"finding-one\\n"');
     // The red-team checklist opens with the defensive framing upstream gives its Red Team dispatch, then red-team.md.
-    const redTeamChecklist = JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!).checklist as string;
+    const redTeamChecklist = JSON.parse(seen.prompt.trimEnd().split('\n').at(-3)!).checklist as string;
     expect(redTeamChecklist.startsWith(`${RED_TEAM_FRAMING}\n\n${ATTACKER['red-team'][0]}`)).toBe(true);
     const firstId = row(first.json, 'red-team').call_id;
 
@@ -672,7 +676,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     const base = 'a'.repeat(40);
     const candidate = 'b'.repeat(40);
     const prompt = buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body');
-    expect(prompt).toBe(`${DELEGATE_POLICY}${JSON.stringify({ part: 'testing', base, candidate })}\n${JSON.stringify({ diff: 'diff-body', checklist: 'checklist-body' })}\n`);
+    expect(prompt).toBe(`${DELEGATE_POLICY}${MATERIAL_RULE}\n${JSON.stringify({ part: 'testing', base, candidate, checklist: 'checklist-body' })}\n${JSON.stringify({ diff: 'diff-body' })}\n${MATERIAL_END}\n`);
     expect(prompt).not.toContain('already_caught');
     // Even if a caller passes a caught string for a specialist part, buildPrompt ignores it so specialist callIds cannot drift.
     expect(buildPrompt('testing', base, candidate, 'diff-body', 'checklist-body', 'ignored')).toBe(prompt);
@@ -682,19 +686,172 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     );
     for (const part of PARTS) {
       const withoutSettled = buildPrompt(part, base, candidate, 'diff-body', 'checklist-body', part === 'red-team' ? 'caught-body' : undefined);
-      const expectedPayload = part === 'red-team'
-        ? { diff: 'diff-body', checklist: 'checklist-body', already_caught: 'caught-body' }
-        : { diff: 'diff-body', checklist: 'checklist-body' };
-      expect(withoutSettled).toBe(`${DELEGATE_POLICY}${JSON.stringify({ part, base, candidate })}\n${JSON.stringify(expectedPayload)}\n`);
+      const expectedInstructions = part === 'red-team'
+        ? { part, base, candidate, checklist: 'checklist-body', already_caught: 'caught-body' }
+        : { part, base, candidate, checklist: 'checklist-body' };
+      const expectedDiff = { diff: 'diff-body' };
+      expect(withoutSettled).toBe(`${DELEGATE_POLICY}${MATERIAL_RULE}\n${JSON.stringify(expectedInstructions)}\n${JSON.stringify(expectedDiff)}\n${MATERIAL_END}\n`);
       expect(callId(withoutSettled, provider, 'alpha')).toBe(
         createHash('sha256').update(JSON.stringify([withoutSettled, provider.argv, provider.model, 'alpha'])).digest('hex'),
       );
       const withSettled = buildPrompt(part, base, candidate, 'diff-body', 'checklist-body', part === 'red-team' ? 'caught-body' : undefined, undefined, 'settled-body');
-      expect(withSettled).toBe(`${DELEGATE_POLICY}${SETTLED_RULE}\n${JSON.stringify({ part, base, candidate })}\n${JSON.stringify({ ...expectedPayload, settled: 'settled-body' })}\n`);
-      expect(Object.keys(JSON.parse(withSettled.trimEnd().split('\n').at(-1)!)).at(-1)).toBe('settled');
+      expect(withSettled).toBe(`${DELEGATE_POLICY}${SETTLED_RULE}\n${MATERIAL_RULE}\n${JSON.stringify({ ...expectedInstructions, settled: 'settled-body' })}\n${JSON.stringify(expectedDiff)}\n${MATERIAL_END}\n`);
+      expect(Object.keys(JSON.parse(withSettled.trimEnd().split('\n').at(-3)!)).at(-1)).toBe('settled');
       const toolsWithSettled = buildPrompt(part, base, candidate, 'diff-body', 'checklist-body', part === 'red-team' ? 'caught-body' : undefined, ['bun test *'], 'settled-body');
-      expect(toolsWithSettled).toBe(`${TOOLS_POLICY}Allowed shell commands: bun test *\n${POLICY_FORMAT}${SETTLED_RULE}\n${JSON.stringify({ part, base, candidate })}\n${JSON.stringify({ ...expectedPayload, settled: 'settled-body' })}\n`);
+      expect(toolsWithSettled).toBe(`${TOOLS_POLICY}Allowed shell commands: bun test *\n${POLICY_FORMAT}${SETTLED_RULE}\n${MATERIAL_RULE}\n${JSON.stringify({ ...expectedInstructions, settled: 'settled-body' })}\n${JSON.stringify(expectedDiff)}\n${MATERIAL_END}\n`);
     }
+  });
+
+  test('prompt order, truncation resilience, and end-of-material marker forgery protection', () => {
+    const base = 'a'.repeat(40), candidate = 'b'.repeat(40);
+    for (const token of ['two JSON lines', MATERIAL_END, 'checklist', 'output schema', 'sources', 'NEEDS_CONTEXT: review material truncated']) {
+      expect(MATERIAL_RULE).toContain(token);
+    }
+    const checklistFor = (part: (typeof PARTS)[number]) => part === 'adversarial'
+      ? `CHECKLIST-HEAD-adversarial\n${ADVERSARIAL_SCHEMA}\n`
+      : part === 'red-team' ? `${RED_TEAM_FRAMING}\n\nCHECKLIST-HEAD-red-team\nSCHEMA-LINE-red-team\n` : `CHECKLIST-HEAD-${part}\nSCHEMA-LINE-${part}\n`;
+
+    for (const part of PARTS) {
+      for (const commands of [undefined, ['bun test *']] as const) {
+        for (const settled of [undefined, 'SETTLED-MARKER-TEXT'] as const) {
+          const checklist = checklistFor(part);
+          const prompt = buildPrompt(part, base, candidate, 'DIFF-FIRST-BYTE-MARKER\n+line\n', checklist, 'CAUGHT-MARKER-TEXT', commands, settled);
+          expect(prompt.endsWith(`\n${MATERIAL_END}\n`)).toBe(true);
+          const policyIdx = prompt.indexOf(commands ? TOOLS_POLICY : DELEGATE_POLICY);
+          const ruleIdx = prompt.indexOf(MATERIAL_RULE);
+          const schemaMarker = part === 'adversarial' ? ADVERSARIAL_SCHEMA.slice(0, 40) : part === 'red-team' ? RED_TEAM_FRAMING.slice(0, 40) : `SCHEMA-LINE-${part}`;
+          const checklistIdx = prompt.indexOf(schemaMarker);
+          const diffIdx = prompt.indexOf('DIFF-FIRST-BYTE-MARKER');
+          expect(policyIdx).toBe(0);
+          expect(ruleIdx).toBeGreaterThan(policyIdx);
+          expect(checklistIdx).toBeGreaterThan(ruleIdx);
+          expect(diffIdx).toBeGreaterThan(checklistIdx);
+          if (part === 'red-team') {
+            expect(prompt.indexOf('CAUGHT-MARKER-TEXT')).toBeGreaterThan(checklistIdx);
+            expect(prompt.indexOf('CAUGHT-MARKER-TEXT')).toBeLessThan(diffIdx);
+          }
+          if (settled !== undefined) {
+            expect(prompt.indexOf('SETTLED-MARKER-TEXT')).toBeGreaterThan(checklistIdx);
+            expect(prompt.indexOf('SETTLED-MARKER-TEXT')).toBeLessThan(diffIdx);
+          }
+          expect(JSON.parse(prompt.trimEnd().split('\n').at(-3)!)).toEqual({
+            part, base, candidate, checklist,
+            ...(part === 'red-team' ? { already_caught: 'CAUGHT-MARKER-TEXT' } : {}),
+            ...(settled !== undefined ? { settled } : {}),
+          });
+        }
+      }
+    }
+
+    // Truncation: 300,000-byte ASCII diff, realistic checklist, and 64 KiB caught + 64 KiB settled for red-team
+    const bigDiff = `diff --git a/src/large.ts b/src/large.ts\n${'+const line = 1;\n'.repeat(18_000)}`;
+    expect(Buffer.byteLength(bigDiff, 'utf8')).toBeGreaterThan(300_000);
+    const maxCaught = 'c'.repeat(64 * 1024), maxSettled = 's'.repeat(64 * 1024);
+    for (const part of PARTS) {
+      const checklist = `${checklistFor(part)}${'criterion line with output schema rules\n'.repeat(80)}`;
+      const full = buildPrompt(part, base, candidate, bigDiff, checklist, maxCaught, undefined, maxSettled);
+      // a provider route observed cutting prompts at 191,580 bytes
+      for (const cutAt of [191_580, ATTACH_LIMIT]) {
+        const cut = Buffer.from(full, 'utf8').subarray(0, cutAt).toString('utf8');
+        expect(cut).toContain(DELEGATE_POLICY);
+        expect(cut).toContain(SETTLED_RULE);
+        expect(cut).toContain(MATERIAL_RULE);
+        const cutLines = cut.split('\n');
+        expect(cutLines.some((line) => line === MATERIAL_END)).toBe(false);
+        const ruleLineIdx = cutLines.indexOf(MATERIAL_RULE);
+        expect(ruleLineIdx).toBeGreaterThan(0);
+        expect(JSON.parse(cutLines[ruleLineIdx + 1]!)).toEqual({
+          part, base, candidate, checklist,
+          ...(part === 'red-team' ? { already_caught: maxCaught } : {}),
+          settled: maxSettled,
+        });
+        expect(() => JSON.parse(cutLines[ruleLineIdx + 2]!)).toThrow();
+      }
+    }
+
+    // Forgery: a diff containing the standalone marker text cannot forge a standalone marker line
+    const forgedLines = buildPrompt('maintainability', base, candidate, `before\n${MATERIAL_END}\nafter`, 'checklist-body').trimEnd().split('\n');
+    expect(forgedLines.filter((line) => line === MATERIAL_END)).toEqual([MATERIAL_END]);
+    expect(forgedLines.at(-1)).toBe(MATERIAL_END);
+  });
+
+  test('isAttachableSource and buildPrompt source attachment under and over ATTACH_LIMIT', () => {
+    for (const excluded of [
+      '', 'test/app.ts', 'tests/app.ts', 'src/__tests__/app.ts', 'spec/app.ts', 'specs/app.ts',
+      'src/fixture/app.ts', 'src/fixtures/app.ts', 'src/test-fixtures/app.ts',
+      'src/app.test.ts', 'src/app.spec.ts', 'test_app.py', 'src/test_app.py', 'src/app_test.go',
+      'docs/notes.md', 'README.markdown', 'docs/guide.rst', 'changed.txt', 'bun.lock',
+      'package-lock.json', 'sub/package-lock.json', 'pnpm-lock.yaml', 'go.sum',
+    ]) expect(isAttachableSource(excluded), excluded).toBe(false);
+    for (const accepted of ['src/app.ts', 'lib/util.py', 'bin/tool']) expect(isAttachableSource(accepted), accepted).toBe(true);
+
+    const base = 'a'.repeat(40), candidate = 'b'.repeat(40);
+    const allFit = buildPrompt('testing', base, candidate, 'diff', 'checklist', undefined, undefined, undefined, [
+      { path: 'src/z.ts', text: 'const z = 1;\n' },
+      { path: 'src/a.ts', text: 'const a = 1;\n' },
+    ]);
+    expect(JSON.parse(allFit.trimEnd().split('\n').at(-2)!)).toEqual({
+      diff: 'diff',
+      sources: [{ path: 'src/a.ts', text: 'const a = 1;\n' }, { path: 'src/z.ts', text: 'const z = 1;\n' }],
+    });
+
+    const toolsWithSources = buildPrompt('testing', base, candidate, 'diff', 'checklist', undefined, ['bun test *'], undefined, [{ path: 'src/a.ts', text: 'const a = 1;\n' }]);
+    expect(JSON.parse(toolsWithSources.trimEnd().split('\n').at(-2)!)).toEqual({ diff: 'diff' });
+
+    const hugeDiff = 'd'.repeat(ATTACH_LIMIT);
+    const overWithoutSources = buildPrompt('testing', base, candidate, hugeDiff, 'checklist', undefined, undefined, undefined, [{ path: 'src/a.ts', text: 'x' }]);
+    expect(JSON.parse(overWithoutSources.trimEnd().split('\n').at(-2)!)).toEqual({ diff: hugeDiff });
+
+    const small = { path: 'src/a.ts', text: 'small-file\n' };
+    const probe = buildPrompt('testing', base, candidate, 'diff', 'checklist', undefined, undefined, undefined, [small, { path: 'src/b.ts', text: '' }]);
+    const remaining = ATTACH_LIMIT - Buffer.byteLength(probe, 'utf8');
+    expect(remaining).toBeGreaterThan(100);
+    const exactSecond = { path: 'src/b.ts', text: 'x'.repeat(remaining) };
+    const atLimit = buildPrompt('testing', base, candidate, 'diff', 'checklist', undefined, undefined, undefined, [exactSecond, small]);
+    expect(Buffer.byteLength(atLimit, 'utf8')).toBe(ATTACH_LIMIT);
+    expect(JSON.parse(atLimit.trimEnd().split('\n').at(-2)!).sources).toEqual([small, exactSecond]);
+
+    const oneOver = buildPrompt('testing', base, candidate, 'diff', 'checklist', undefined, undefined, undefined, [{ path: 'src/b.ts', text: 'x'.repeat(remaining + 1) }, small]);
+    expect(Buffer.byteLength(oneOver, 'utf8')).toBeLessThan(ATTACH_LIMIT);
+    expect(JSON.parse(oneOver.trimEnd().split('\n').at(-2)!).sources).toEqual([small]);
+  });
+
+  test('CLI attaches only changed attachable UTF-8 source files in diff mode and none in tools mode', () => {
+    const s = setup('sibling', { alpha: { mode: 'inspect' } }, { testing: 'alpha' });
+    const appLines = ['edited line 1', 'line 2', 'line 3', 'line 4', 'line 5', 'line 6', 'OUTSIDE-HUNK-MARKER', 'line 8'].join('\n') + '\n';
+    put(join(s.repo, 'src/deleted.ts'), 'export const gone = true;\n');
+    put(join(s.repo, 'src/app.ts'), appLines.replace('edited line 1', 'line 1'));
+    git(s.repo, 'add', '.');
+    git(s.repo, 'commit', '-q', '-m', 'seed source and deleted');
+    s.base = git(s.repo, 'rev-parse', 'HEAD').stdout.trim();
+
+    rmSync(join(s.repo, 'src/deleted.ts'));
+    put(join(s.repo, 'src/app.ts'), appLines);
+    put(join(s.repo, 'tests/app.test.ts'), 'TEST-FILE-MARKER\n');
+    put(join(s.repo, 'docs/notes.md'), 'DOCS-FILE-MARKER\n');
+    writeFileSync(join(s.repo, 'src/binary.ts'), Buffer.from('BINARY-MARKER\0hidden\n', 'utf8'));
+    spawnSync('ln', ['-s', 'app.ts', join(s.repo, 'src/link.ts')]);
+    git(s.repo, 'add', '-A');
+    git(s.repo, 'commit', '-q', '-m', 'candidate changes');
+    s.candidate = git(s.repo, 'rev-parse', 'HEAD').stdout.trim();
+
+    const r = cli(runArgs(s, 'testing'));
+    expect(r.status).toBe(0);
+    const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
+    expect(Buffer.byteLength(seen.prompt, 'utf8')).toBeLessThanOrEqual(ATTACH_LIMIT);
+    expect(JSON.parse(seen.prompt.trimEnd().split('\n').at(-2)!).sources).toEqual([{ path: 'src/app.ts', text: appLines }]);
+    expect(seen.prompt).toContain('OUTSIDE-HUNK-MARKER');
+
+    const toolsState = fresh('tools-no-sources');
+    put(s.config, JSON.stringify({
+      schema: CONFIG_SCHEMA,
+      providers: { alpha: { access: 'tools', cli: 'claude-code', argv: [TOOLS_WRAPPER, '--effort', 'high', '--max-budget-usd', '0.25'], timeout_s: 30, model: 'sonnet', commands: ['bun test *'] } },
+      parts: { testing: 'alpha' },
+    }));
+    expect(cli(runArgs(s, 'testing'), { TMPDIR: toolsState }).status).toBe(0);
+    const toolsLaunched = JSON.parse(readFileSync(join(toolsState, 'tools-spawns.log'), 'utf8').trim());
+    expect(Object.keys(JSON.parse(toolsLaunched.prompt.trimEnd().split('\n').at(-2)!))).toEqual(['diff']);
+    expect(toolsLaunched.prompt).not.toContain('OUTSIDE-HUNK-MARKER');
   });
 
   // Value: protects=settled labeling preserves severity and exempts safety claims before host triage; fails_when=the transport asks reviewers to demote findings or label safety claims settled; why_new=AC6 host prose alone cannot constrain the delivered prompt; seam=SETTLED_RULE (used by buildPrompt); no_claim=LLM compliance
@@ -716,7 +873,7 @@ writeSync(1, 'NO_FINDINGS: none\\nRecommendation: merge because clean.\\n');
     expect(first.status).toBe(0);
     const seen = JSON.parse(readFileSync(join(s.state, 'inspect.json'), 'utf8'));
     expect(seen.prompt).toContain(SETTLED_RULE);
-    expect(JSON.parse(seen.prompt.trimEnd().split('\n').at(-1)!).settled).toContain('Keep default (plan.md:10)');
+    expect(JSON.parse(seen.prompt.trimEnd().split('\n').at(-3)!).settled).toContain('Keep default (plan.md:10)');
     const firstId = row(first.json, 'testing').call_id;
     expect(firstId).not.toBe(idWithout);
 
@@ -1091,6 +1248,10 @@ describe('documentation', () => {
     expect(record).toContain(expectedFlags);
     expect(record).toContain('No installed-agent run backs\nit yet: a static prose test is not installed-agent acceptance');
     expect(record).toContain('| `PM1` | pending |');
+    expect(docs).toContain(String(ATTACH_LIMIT));
+    expect(docs).toContain(MATERIAL_END);
+    const privacy = /## Privacy\n\n([\s\S]*?)\n\n## /.exec(docs)?.[1] ?? '';
+    expect(privacy).toContain('source files');
   });
 });
 
@@ -1277,9 +1438,11 @@ describe('tools mode', () => {
   test('effectiveArgv, callId, and buildPrompt bind the new confidence policy and tools-mode flags', () => {
     expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
     const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
-    // The closing verdict-line and explicit percent-scale rules intentionally invalidate old cached calls.
-    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('3f34fb694b0d14cf837278bf6c6454f98cfef9d9febcfab8687e72594600ca57');
-    const preVerdictPrompt = diffPrompt.replace(
+    // The instructions-first layout and end-of-material marker intentionally invalidate old cached calls.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('629f054612e3ca366cba089fb99ede9f8d4999ff3caed369ba2168eb92809968');
+    const preReorderPrompt = `${DELEGATE_POLICY}${JSON.stringify({ part: 'testing', base: 'aaaa', candidate: 'bbbb' })}\n${JSON.stringify({ diff: 'diff-body', checklist: 'checklist-body' })}\n`;
+    expect(createHash('sha256').update(preReorderPrompt).digest('hex')).toBe('3f34fb694b0d14cf837278bf6c6454f98cfef9d9febcfab8687e72594600ca57');
+    const preVerdictPrompt = preReorderPrompt.replace(
       'After the findings, write Recommendation: <action> because <specific reason>.\nEnd with exactly one more line, the last line of the reply: VERDICT: CLEAN if you report no findings, or VERDICT: FINDINGS if you report any finding.',
       'End with Recommendation: <action> because <specific reason>.',
     );
@@ -1288,6 +1451,7 @@ describe('tools mode', () => {
     const legacyPrompt = preVerdictPrompt.replace('Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.\n', '');
     // Independent legacy bytes from origin/main@5b54ffe.
     expect(createHash('sha256').update(legacyPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(preReorderPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(preVerdictPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(legacyPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(diffPrompt).toContain(DELEGATE_POLICY);
@@ -1322,7 +1486,8 @@ describe('tools mode', () => {
     if (!diffParsed.ok) return;
     const diffProv = diffParsed.config.providers.alpha!;
     expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
-    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('23810f73bf2daa28c81a4bda1461110796bd5ee3d4e6cf322ed12630df8e055c');
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('06d1ac2dc855ec6c0300727db3b25913cb9b8fb6c1296b11c6a0e75872da3e45');
+    expect(callId(preReorderPrompt, diffProv, 'alpha')).toBe('23810f73bf2daa28c81a4bda1461110796bd5ee3d4e6cf322ed12630df8e055c');
     expect(callId(preVerdictPrompt, diffProv, 'alpha')).toBe('b8d806cb3ad984da1ab076a59e6fb333fc2f43f48b829fc7d3a7559fc042d2f9');
     expect(callId(legacyPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
     expect(callId(diffPrompt, diffProv, 'alpha')).toBe(

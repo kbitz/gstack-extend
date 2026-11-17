@@ -100,11 +100,18 @@ model needs a caller that configures that provider.
 
 A delegated part is one bounded call:
 
-- **Sent.** A fixed policy, one JSON line `{part, base, candidate}`, then
-  `{"diff": ..., "checklist": ...}` for the four specialists and `adversarial`,
-  or `{"diff": ..., "checklist": ..., "already_caught": ...}` for `red-team`
-  (where `already_caught` is the UTF-8 text of `--caught`): the frozen diff and
-  that part's checklist. For the four specialists, the checklist is
+- **Sent.** A fixed policy (followed by `SETTLED_RULE` when `--settled` is
+  passed), `MATERIAL_RULE`, then two JSON lines followed by the standalone line
+  `END_OF_REVIEW_MATERIAL`: the first JSON line holds
+  `{"part": ..., "base": ..., "candidate": ..., "checklist": ...}` for the four
+  specialists and `adversarial`, or
+  `{"part": ..., "base": ..., "candidate": ..., "checklist": ..., "already_caught": ...}`
+  for `red-team` (where `already_caught` is the UTF-8 text of `--caught`), with
+  `"settled"` added as the last key of that first JSON line when `--settled` is
+  passed (the UTF-8 text of `--settled`); the second JSON line holds
+  `{"diff": ...}` (plus `"sources": [{"path": ..., "text": ...}, ...]` in diff
+  mode when under the attachment cap), so the checklist, output schema and
+  context precede the frozen diff. For the four specialists, the checklist is
   `<gstack-root>/review/specialists/<part>.md`. For `red-team`, it is
   `<gstack-root>/review/specialists/red-team.md` after the extension-owned
   `RED_TEAM_FRAMING`, the defensive framing upstream gives its Red Team dispatch
@@ -121,11 +128,22 @@ A delegated part is one bounded call:
   JSON object"); the upstream line that starts `Read the diff for this branch`
   is not sent. The framing line is found by its position because a sibling
   rendering that inlines Review Army (the Cursor copy) repeats the framing text
-  for the Security specialist and the Red Team. When `--settled` is passed,
-  `SETTLED_RULE` follows the policy and `"settled"` is added as the last key of
-  the second JSON line with the UTF-8 text of `--settled`; without `--settled`,
-  the prompt and call id are byte-identical to today's. Nothing else: no
-  learnings, stack notes, repository files, skill text or full plan.
+  for the Security specialist and the Red Team. In diff mode only, the runner
+  also collects added, modified and type-changed regular text blobs (`100644` or
+  `100755`, valid UTF-8 without NUL bytes, each at most `ATTACH_LIMIT` bytes) at
+  `--candidate`, excluding any path with a directory segment `test`, `tests`,
+  `__tests__`, `spec` or `specs`, or a directory segment containing `fixture`,
+  a basename matching `*.test.*`, `*.spec.*`, `test_*` or `*_test.*`, an extension `.md`,
+  `.markdown`, `.rst`, `.txt` or `.lock`, or a basename `package-lock.json`,
+  `pnpm-lock.yaml` or `go.sum`. When the prompt without `sources` already
+  exceeds `ATTACH_LIMIT` (180 KiB = 184320 UTF-8 bytes of the whole prompt,
+  including the `END_OF_REVIEW_MATERIAL` line), no `sources` key is added;
+  otherwise each part considers eligible files in ascending UTF-8 byte length of
+  `text` (ties by `path`) and keeps adding while the complete prompt stays at
+  most 184320 bytes, dropping the largest files first and serializing the kept
+  files in path order. Tools-mode prompts carry no `sources`. Nothing else: no
+  learnings, stack notes, no repository file other than the attached
+  post-images, skill text or full plan.
 - **Environment.** Only `HOME PATH USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE
   TZ`, and only those that are set (plus `DISABLE_AUTOUPDATER=1` and `PATH`
   filtered to absolute entries in [Tools mode](#tools-mode)). No key or
@@ -215,7 +233,7 @@ parts actually run on the host. Otherwise, the first matching reason wins:
 | `timeout` | The delegate ran past its configured timeout. |
 | `failed` | Its temporary directory could not be created or cleaned up, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
 | `refused` | The installed classifier read the reply as a refusal. |
-| `needs-context` | The reply says `NEEDS_CONTEXT`. |
+| `needs-context` | The reply says `NEEDS_CONTEXT` (including when the delegate finds the closing `END_OF_REVIEW_MATERIAL` line missing because the prompt was cut off). |
 | `uncredited` | The installed classifier did not credit the reply. |
 | `unparsed-finding` | Any reply content is outside the required form, a finding has malformed fields, or the classifier saw findings the runner could not parse. |
 | `worktree-changed` | The work tree or HEAD changed during the calls; applies to every part that call dispatched. |
@@ -345,9 +363,13 @@ effect together. A `Review delegates:` line beside a policy that carries only
   `adversarial-pass:` line while `delegate=adversarial` is active (`waived`,
   `met`, `not declared` or `unmet`), one `Red team:` line when the policy
   carries `red-team=ensure` or `delegate=` names `red-team`, and one
-  `Delegated part:` line per part with
+  `Delegated part:` line per delegated part for each review cycle that ran it,
+  in cycle order, with
   `provider`, `model`, `outcome`, `reason`, `wall_ms`, the four token counts,
-  `findings` and `call` (the call id). Unknown values read `unknown`. The PAUSED
+  `findings` and `call` (the call id). Unknown values read `unknown`. A part's
+  calls across the review are its distinct `call=` values, its findings are the
+  sum of `findings=` over those distinct calls, and a reader that keeps only a
+  part's last line reads its latest cycle. The PAUSED
   and STOPPED receipts carry the same lines. The twelve-segment `Delegated part:`
   receipt grammar and both documented `delegation: active (…)` forms are stable
   handoff/receipt surfaces for an orchestrator under
@@ -355,7 +377,8 @@ effect together. A `Review delegates:` line beside a policy that carries only
   versioned handoff category, governed by that policy and
   [Stage handoff contract](workflow-handoffs.md#validated-and-receipt-present-bindings)
   ([Versioning and compatibility](workflow-handoffs.md#versioning-and-compatibility));
-  `bin/review-delegate` itself remains internal.
+  per-cycle `Delegated part:` lines keep each line's twelve-segment grammar
+  unchanged, and `bin/review-delegate` itself remains internal.
 - The `specialists-dispatched:` status describes the current upstream item
   result, and its waiver is scoped to credited specialist parts (a credited
   `red-team` or `adversarial` alone waives nothing there); `adversarial-pass:`
@@ -373,8 +396,11 @@ effect together. A `Review delegates:` line beside a policy that carries only
   extension-owned response-format instructions explicitly require 0 to 100
   for every part, overriding any upstream checklist confidence scale. Values
   from 0 to 10 remain low percentages, never guessed to mean a 1 to 10 score.
-  This prompt change gives every part a new call id: saved replies from the
-  old scale are not replayed for the new prompt. A credited specialist
+  This prompt layout (putting the checklist and context before the diff,
+  closing with `END_OF_REVIEW_MATERIAL`, and attaching under-cap source files in
+  diff mode) and the confidence-scale rule give every part a new call id: saved
+  replies from the previous layout or old scale are not replayed for the new
+  prompt. A credited specialist
   part is recorded as dispatched in the review's `specialists` object, as is a
   credited `red-team` part in both layouts; a credited `adversarial` part adds
   no `specialists` entry.
@@ -386,11 +412,14 @@ effect together. A `Review delegates:` line beside a policy that carries only
 
 ## Privacy
 
-The frozen diff (and, when `--settled` is passed, the settled context from the
-approved plan and `.gstack/review-rules.md`), including any secret it contains,
-is sent to the command you configured and on to whatever provider it calls.
-Configure a provider you would trust with the repository's diff; the runner
-passes no credential, but it cannot stop a command from reading its own.
+The frozen diff, in diff mode the full post-change text of changed non-test
+source files attached within the 180 KiB (184320-byte) prompt cap, and, when
+`--settled` is passed, the settled context from the approved plan and
+`.gstack/review-rules.md`, including any secret those source files or the diff
+contain, are sent to the command you configured and on to whatever provider it
+calls. Configure a provider you would trust with the repository's diff and
+changed source files; the runner passes no credential, but it cannot stop a
+command from reading its own.
 
 ## Measurement
 
@@ -423,10 +452,17 @@ records the historical plan-contesting baseline and the separate proposed host-p
   [Tools mode](#tools-mode)).
 - Concurrent parts on one provider can hit its rate limit together and all fall
   back; that costs spend, not coverage.
-- In diff mode, a delegated attacker part sees only the diff, never repository
-  files, unlike the native subagent; fixture bytes go in full, as they already
-  do to outside voices (for repository and test-execution access, see
-  [Tools mode](#tools-mode)).
+- In diff mode, a delegated attacker part sees only the diff and any under-cap
+  attached post-images of changed non-test source files, never other repository
+  files, unlike the native subagent; fixture bytes in the diff go in full, as
+  they already do to outside voices (for full repository and test-execution
+  access, see [Tools mode](#tools-mode)).
+- The runner does not know a provider's own prompt cut size; the 180 KiB
+  (184320-byte) `ATTACH_LIMIT` bounds only source-file attachments. A provider
+  that cuts prompts below a prompt's size can lose the closing
+  `END_OF_REVIEW_MATERIAL` line, and the part then falls back as
+  `needs-context`; a delegate that ignores the end-line rule can still credit a
+  review of a cut diff.
 - The six parts are the only delegable ones, `/ship-and-land` and
   `/full-review` do not delegate, and routing by remaining quota is a non-goal.
 - An older helper answers `unsupported-version` to a v3 `pass` and reads a stored
