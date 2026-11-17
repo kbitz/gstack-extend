@@ -2246,6 +2246,32 @@ describe('bin/review-state', () => {
       'Delegated part: red-team',
     ]);
     for (const line of linesA) expect(line.split('; ')).toHaveLength(12);
+
+    // Two passes, each with a delegated maintainability attempt, render two Delegated part: maintainability lines in pass order
+    const call1 = sha256('call-maint-pass-1');
+    const call2 = sha256('call-maint-pass-2');
+    const twoPassRes1 = applyCommand(a, 'record pass', mkPassStarted(11, {
+      required_voices: ['maintainability'],
+    }), gitInfo, env, '2026-11-10T18:07:00Z', '0.92.0');
+    if (twoPassRes1.reason !== 'recorded') throw new Error(JSON.stringify(twoPassRes1));
+    const twoPassRes2 = applyCommand(twoPassRes1.state, 'record pass', {
+      pass_id: uid(11), state: 'attempt', voice_id: 'maintainability', part: 'specialist:maintainability',
+      attempt_id: uid(23), outcome: 'completed',
+      delegate: {
+        provider: 'claude', model: 'sonnet', outcome: 'credited', fallback_reason: null, replay: false,
+        wall_ms: 180, input_tokens: 110, output_tokens: 35, cache_read_input_tokens: 10, cache_creation_input_tokens: 0, call_id: call2,
+      },
+      findings: [],
+    }, gitInfo, env, '2026-11-10T18:08:00Z', '0.92.0');
+    if (twoPassRes2.reason !== 'recorded') throw new Error(JSON.stringify(twoPassRes2));
+    const maintLines = FIELD_FMT.delegatedParts({ state: twoPassRes2.state } as unknown as RenderCtx)
+      .filter((line) => line.startsWith('Delegated part: maintainability;'));
+    expect(maintLines).toEqual([
+      `Delegated part: maintainability; provider=claude; model=sonnet; outcome=credited; reason=none; wall_ms=150; input_tokens=100; output_tokens=40; cache_read_input_tokens=20; cache_creation_input_tokens=5; findings=1; call=${sha256('call-maint')}`,
+      `Delegated part: maintainability; provider=claude; model=sonnet; outcome=credited; reason=none; wall_ms=180; input_tokens=110; output_tokens=35; cache_read_input_tokens=10; cache_creation_input_tokens=0; findings=0; call=${call2}`,
+    ]);
+    for (const line of maintLines) expect(line.split('; ')).toHaveLength(12);
+    expect(call1).not.toBe(call2);
   });
 
   // Value: protects=attempt and finding cross-field validator rules and refusal atomicity; fails_when=an invalid attempt, delegate, or finding records or mutates state; why_new=Track 80A T3 attempt/finding gaps; seam=CLI and state file

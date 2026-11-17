@@ -3067,6 +3067,7 @@ describe('review-and-prep delegate=<part>', () => {
     expect(flat).toContain('(the PAUSED and STOPPED receipts carry them too when they carry Step 2 review evidence; the receipt names the configuration\'s SHA-256 and labels, never its path)');
     expect(flat).toContain('Record the `delegation:` status and every `Delegated part:` line the same way. When Greptile applies,');
     expect(flat).toContain('Add the `delegation:` status and every `Delegated part:` line. Post it once as a comment marked');
+    expect(flat).toContain('`Delegated part:` appears once per delegated part for each review cycle that ran it, in cycle order, when `delegate=<part>` is active (a part run in three cycles has three lines, and its last line is its latest cycle)');
     for (const status of [
       '`delegation: active (parts=<list>; config=<sha256>; tools=<part>[,<part>...])`',
       '`delegation: active (parts=<list>; config=<sha256>)`',

@@ -16,8 +16,8 @@ import { snapshotDiff, type Request } from '../outside-review/prompt';
 import type { Classifier } from '../outside-review/recovery';
 import { attackerInventory, delegateInventory, extendRoot, readTrusted } from '../upstream-check/cli';
 import {
-  ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, effectiveArgv, extractAdversarialChecklist, validateConfig,
-  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SpecialistPart, type Spawned,
+  ATTACH_LIMIT, ATTACKER_PARTS, CONFIG_LIMIT, PARTS, RED_TEAM_FRAMING, SPECIALIST_PARTS, STDERR_LIMIT, STDOUT_LIMIT, TIMEOUT_EXIT, buildPrompt, callId, claimBody, decide, effectiveArgv, extractAdversarialChecklist, isAttachableSource, validateConfig,
+  type DelegateConfig, type Part, type PartResult, type RefusalReason, type SourceFile, type SpecialistPart, type Spawned,
 } from './delegate';
 
 export const EXIT = { ok: 0, refused: 1, usage: 2, fellBack: 4 } as const;
@@ -214,6 +214,40 @@ async function prepare(options: Options): Promise<Preparation> {
 function gitEnv(extra: Record<string, string> = {}): Record<string, string> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
   return { ...env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C', ...extra };
+}
+
+/** Collect changed attachable non-test source files at candidate, skipping blobs over ATTACH_LIMIT, binary blobs or invalid UTF-8. */
+function changedSources(repo: string, base: string, candidate: string): SourceFile[] | undefined {
+  const env = gitEnv();
+  const maxBuffer = 64 * 1024 * 1024;
+  const raw = spawnSync('git', ['-C', repo, 'diff', '--no-ext-diff', '--no-renames', '--raw', '-z', '--no-abbrev', base, candidate, '--'],
+    { encoding: 'utf8', maxBuffer, env });
+  if (raw.status !== 0 || raw.signal !== null || raw.error || typeof raw.stdout !== 'string') return undefined;
+  if (!raw.stdout.length) return [];
+  const entries = raw.stdout.split('\0');
+  if (entries.at(-1) !== '' || (entries.length - 1) % 2 !== 0) return undefined;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const files: SourceFile[] = [];
+  for (let i = 0; i + 1 < entries.length; i += 2) {
+    const meta = entries[i]!;
+    const path = entries[i + 1]!;
+    const m = /^:[0-7]{6} ([0-7]{6}) [0-9a-f]{40} ([0-9a-f]{40}) ([A-Z])[0-9]*$/.exec(meta);
+    if (!m || !path) return undefined;
+    const [, dstMode, dstOid, status] = m as unknown as [string, string, string, string];
+    if ((status !== 'A' && status !== 'M' && status !== 'T') || (dstMode !== '100644' && dstMode !== '100755') || !isAttachableSource(path)) continue;
+    const sizeRes = spawnSync('git', ['-C', repo, 'cat-file', '-s', dstOid], { encoding: 'utf8', maxBuffer, env });
+    if (sizeRes.status !== 0 || sizeRes.signal !== null || sizeRes.error) return undefined;
+    const size = Number(sizeRes.stdout.trim());
+    if (!Number.isInteger(size) || size < 0) return undefined;
+    if (size > ATTACH_LIMIT) continue;
+    const blobRes = spawnSync('git', ['-C', repo, 'cat-file', 'blob', dstOid], { maxBuffer, env });
+    if (blobRes.status !== 0 || blobRes.signal !== null || blobRes.error || !Buffer.isBuffer(blobRes.stdout)) return undefined;
+    if (blobRes.stdout.includes(0)) continue;
+    try {
+      files.push({ path, text: decoder.decode(blobRes.stdout) });
+    } catch { /* non-UTF-8 blob: skip */ }
+  }
+  return files;
 }
 
 /** Hash HEAD, status, index entries and nonignored file bytes without following symlinks. */
@@ -451,11 +485,11 @@ const NO_CALL = { replay: false, dispatched: false, dispatched_at: null, returne
   input_tokens: null, output_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null,
   parse: 'not-applicable', verdict: 'unavailable' as string, outcome: 'fell-back' as const, findings: [] };
 
-async function runPart(part: Part, prepared: Prepared, options: Options, diff: string, deps?: Deps): Promise<PendingPart> {
+async function runPart(part: Part, prepared: Prepared, options: Options, diff: string, sources: readonly SourceFile[], deps?: Deps): Promise<PendingPart> {
   const label = prepared.config.parts[part]!;
   const provider = prepared.config.providers[label]!;
   const commands = provider.access === 'tools' ? provider.commands : undefined;
-  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined, commands, prepared.settled);
+  const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!, part === 'red-team' ? prepared.caught : undefined, commands, prepared.settled, commands ? undefined : sources);
   const id = callId(prompt, provider, label);
   const identity = { part, provider: label, model: provider.model, call_id: id };
   const saved = join(options.calls, `${id}.json`);
@@ -574,9 +608,13 @@ export async function main(argv: string[], io: CliIo, deps?: Deps): Promise<numb
   const before = worktreeState(options.repo);
   let diff: string | undefined;
   try { diff = snapshotDiff({ repo: options.repo, base: options.base, candidate: options.candidate, scope: 'full' } as Request); } catch { diff = undefined; }
-  if (before === undefined || diff === undefined) { print({ status: 'refused', reason: 'repo-unreadable' }); return EXIT.refused; }
+  const hasDiffMode = options.parts.some((part) => config.providers[config.parts[part]!]!.access !== 'tools');
+  const sources = before !== undefined && diff !== undefined && hasDiffMode
+    ? changedSources(options.repo, options.base, options.candidate)
+    : [];
+  if (before === undefined || diff === undefined || sources === undefined) { print({ status: 'refused', reason: 'repo-unreadable' }); return EXIT.refused; }
   mkdirSync(options.calls, { recursive: true, mode: 0o700 });
-  const pending = await Promise.all(options.parts.map((part) => runPart(part, prepared.prepared, options, diff, deps)));
+  const pending = await Promise.all(options.parts.map((part) => runPart(part, prepared.prepared, options, diff, sources, deps)));
   const results = pending.map((part) => part.result);
   const changed = worktreeState(options.repo) !== before;
   if (changed) {
