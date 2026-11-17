@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.97.3] - 2026-11-17
+
+### Changed
+
+- The run-state request builder now names the earlier correction that a new correction on the same review finding replaces, so callers can omit `--supersedes`, and a `--supersedes` that names the wrong correction is replaced with a warning instead of being refused.
+- `bin/review-state build record correction` derives `--supersedes` from run state and warns when replacing a conflicting value.
+
+### Upgrade notes
+
+- A correction request the helper used to refuse for a wrong `--supersedes` now records with the helper's value, so check the builder's override warnings and its overrides log when a correction chain looks wrong.
+
 ## [0.97.2] - 2026-11-17
 
 ### Changed
