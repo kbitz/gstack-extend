@@ -2,6 +2,39 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: coverage composition upper boundary
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** A composed coverage-audit result of exactly 200 UTF-16 code units is not directly pinned; current cases exercise below and above the limit.
+- **Hypothesis (untested):** Extend the C18 CLI fixture with an exactly-200-character composed result and verify the complete stored result, threshold label and warnings; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:619
+- **Evidence:** Read-only coverage audit mapped 15 of 18 changed behavior paths to strong tests (83.33%); targeted verification passed 485 tests and no failure was reproduced for this gap.
+- **Context:** Filed by /review-and-prep before draft PR creation at 02b1d22 (2026-11-17).
+- **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: coverage composition control characters
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The long-threshold relocation path lacks a focused case where control characters make the composed result fail isStr.
+- **Hypothesis (untested):** Extend the C18 CLI fixture with a control-character-bearing long threshold and verify refusal without relocation or state changes; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:619
+- **Evidence:** Read-only coverage audit mapped 15 of 18 changed behavior paths to strong tests (83.33%); targeted verification passed 485 tests and no failure was reproduced for this gap.
+- **Context:** Filed by /review-and-prep before draft PR creation at 02b1d22 (2026-11-17).
+- **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/build.ts|tests/review-state.test.ts] Test gap: alternate directory order for every record subtype
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Alternate --dir placement is exercised with record gate, without direct canonical-byte equivalence rows for pass, audit and correction.
+- **Hypothesis (untested):** Extend the existing argument-order fixture with valid pass, audit and correction calls in both orders, comparing request filenames and bytes; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:725
+- **Evidence:** Read-only coverage audit mapped 15 of 18 changed behavior paths to strong tests (83.33%); targeted verification passed 485 tests and no failure was reproduced for this gap.
+- **Context:** Filed by /review-and-prep before draft PR creation at 02b1d22 (2026-11-17).
+- **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: source collector failure and byte-filter branches
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** CLI coverage omits raw-diff failure/malformed records, failed or invalid size lookup, blob-read failure, oversized source exclusion, and invalid UTF-8 without NUL bytes.

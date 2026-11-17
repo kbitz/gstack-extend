@@ -602,6 +602,7 @@ export function buildRequest(command: CommandName, args: readonly string[], real
 
   if (command === 'record audit') {
     const name = scalars.get('--name')!;
+    let result = scalars.get('--result')!;
     const details: Record<string, unknown> = {};
     if (keep(scalars, '--coverage-pct', name === 'documentation', 'coverage-audit-only')) {
       const rawPct = scalars.get('--coverage-pct')!;
@@ -610,7 +611,25 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       details.pct = null;
     }
     if (keep(scalars, '--coverage-threshold', name === 'documentation', 'coverage-audit-only')) {
-      details.threshold = toNumberOrString(scalars.get('--coverage-threshold')!);
+      const rawThreshold = scalars.get('--coverage-threshold')!;
+      const threshold = toNumberOrString(rawThreshold);
+      if (name === 'coverage' && typeof threshold === 'string' && threshold.length > 64) {
+        const composed = `${result} \u2014 ${threshold}`;
+        if (isStr(composed, 1, 200)) {
+          details.threshold = 'see result';
+          overrides.push(
+            { flag: '--coverage-threshold', sent: rawThreshold, used: 'see result', rule: 'threshold-explanation-in-result' },
+            { flag: '--result', sent: result, used: composed, rule: 'threshold-explanation-in-result' },
+          );
+          result = composed;
+        } else {
+          details.threshold = threshold;
+        }
+      } else {
+        details.threshold = threshold;
+      }
+    } else if (name === 'coverage' && details.pct === null) {
+      details.threshold = 'n/a';
     }
     if (keep(scalars, '--report-id', name === 'coverage', 'documentation-audit-only')) details.report_id = scalars.get('--report-id')!;
     if (keep(scalars, '--section', name === 'coverage', 'documentation-audit-only')) {
@@ -631,7 +650,7 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     const req: Record<string, unknown> = {
       audit_id: scalars.get('--audit-id')!,
       name,
-      result: scalars.get('--result')!,
+      result,
       details,
       candidate,
     };
@@ -702,6 +721,14 @@ export function executeBuild(
   if (commandStr === 'record' && rest[1] && !rest[1].startsWith('-')) {
     commandStr = `record ${rest[1]}`;
     args = rest.slice(2);
+  } else if (
+    rest[0] === 'record' &&
+    rest[1] === '--dir' &&
+    rest[2] !== undefined &&
+    (BUILD_COMMANDS as readonly string[]).includes(`record ${rest[3]}`)
+  ) {
+    commandStr = `record ${rest[3]}`;
+    args = ['--dir', rest[2], ...rest.slice(4)];
   }
 
   const validCommand = (BUILD_COMMANDS as readonly string[]).includes(commandStr) ? (commandStr as CommandName) : null;
