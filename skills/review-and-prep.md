@@ -182,8 +182,9 @@ prints the ID that the new run (and its single run `begin`) uses, as
 **Segments** above says.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
-Under `run-state=record` (**Read an optional review policy**), spans, waits and
-decisions stay with `GX_RUN` from derive's `current.run_step_id`, `GX_SID` from
+Under `run-state=record`, follow its **Read an optional review policy** bullet
+instead of the writes below; spans, waits and decisions stay with `GX_RUN` from
+derive's `current.run_step_id`, `GX_SID` from
 its `current.session_id`, `GX_CAPTURE=1` only when `current.run_begin` is
 `recorded` or `replayed`, and no context-override argument.
 
@@ -947,8 +948,9 @@ It is a phase-status line like the parsed policy: outside any copyable handoff,
 not a receipt line, and it changes no key, gate, outcome or continuation. A
 line read as `none supplied` prints no warning.
 
-An installation without the value reads the whole line as `none supplied`
-(exit 0 means supported) and omits the value otherwise, keeping its other keys;
+An installation without the value reads the whole line as `none supplied`,
+so a caller first runs the bullet's capability check (exit 0 means supported)
+and omits the value otherwise, keeping its other keys;
 see the caller rollout in
 [workflow handoffs](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#grammar-h-e-continue)
 (`docs/workflow-handoffs.md#grammar-h-e-continue`). Omitted, an opt-in key or
@@ -1097,9 +1099,10 @@ continuation.
   `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`.
 - `run-state=record` (its only value) is opt-in. It records this invocation's
   run state through the experimental `bin/review-state` helper as
-  `<extend-root>/docs/review-run-state-calls.md` defines, replacing the run
+  `<extend-root>/docs/review-run-state-calls.md` defines. Read it once at Step 1;
+  its derive command replaces the run
   `begin` and `end`, pass, correction and context-override metrics writes in
-  **Workflow metrics (optional, local)** with that document's derive command.
+  **Workflow metrics (optional, local)**.
   Every run-state record is sent with `bin/review-state build` as the calls
   document lists, never a hand-written request file. It changes no finding,
   gate, readiness or handoff line (the full receipt gains only the run-state
@@ -1550,7 +1553,7 @@ delegate credited at least one specialist part, waive the item once after those
 parts are credited with `gstack-skill-contract waive <item> --reason "<why>"`
 (no `--skill` flag; for `specialists-dispatched`, `<why>` names `delegate=` and
 the credited specialist parts). Parts that run on the host model, including
-fell-back parts, keep their Agent dispatch, and a cycle with no credited covered
+fell-back parts, keep their Agent dispatch, and a cycle with no credited specialist
 part waives nothing and meets the item as upstream defines it. Never print a
 narrowed or zero-count selection line or dispatch a placeholder Agent to satisfy
 an item. If upstream's opt-in contract hook blocks on the item, answer with the
@@ -1571,17 +1574,18 @@ successful waiver. Under the same waiver, current-result and history procedure,
 when `delegate=adversarial` is active and list (c) in **Activation (attacker
 parts)** is declared, each pass with a credited delegated `adversarial` part
 waives `adversarial-pass` (reason naming `delegate=adversarial` and the provider
-label) and records:
+label). While `delegate=adversarial` is active, record one line under the
+same current-result and history rule:
 `adversarial-pass: waived (delegate; cycles=<n>[,<n>...])`,
 `adversarial-pass: met (delegate; <reason>)`,
 `adversarial-pass: not declared (delegate)` or
 `adversarial-pass: unmet (delegate; waive failed: <cause>)`.
 
-Record each part in `voices.jsonl`, in the receipt as
-`Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>`
-(the receipt names the configuration's SHA-256 and labels, never its path) as
-**Capture evidence and commit** describes, and in the workflow metrics as an
-attempt with the runner's `delegate` values. A fallback is the failed delegate
+Record each part in `voices.jsonl` and include its `Delegated part:` line in the
+receipt using the compact receipt template in **Readiness** (name the
+configuration's SHA-256 and labels, never its path), as **Capture evidence and
+commit** describes, and in the workflow metrics as an attempt with the runner's
+`delegate` values. A fallback is the failed delegate
 attempt, then a host attempt that names it as its predecessor, then a `fallback`
 correction. Under `run-state=record`, the caller records the failed delegated
 attempt with `--delegate-file` and the host attempt with
@@ -3729,7 +3733,7 @@ today's rule. An intact pause record with no repair history can establish unused
 project's own docs-only rules and `docs-ship:` markers from the base tip,
 without `docs-ship:docs` opt-ins. Apply the contract's rules to each path of
 `git diff --no-renames --name-status B S`; do not run `bin/docs-ship classify`
-on that range. A missing pointer or contract is the fallback
+on that range. A missing root or contract is the fallback
 `classification-unreadable`, not a stop.
 
 - A path qualifies as tests only if its basename matches the classification's
@@ -4726,8 +4730,8 @@ this receipt-line table (templates live in each row's producing section):
 
 | Line | Condition | Final | Paused | Stopped |
 |---|---|---|---|---|
-| `Review default:` | always, with each cycle's scope (**Use the light review default**) | yes | no | no |
-| `Auto-chosen (veto by replying on this PR):` | each auto-chosen fix-scope option (**Take recommended fix-scope options without asking**) | yes | no | no |
+| `Review default:` | always, with each cycle's scope (**Use the light review default**) | yes | yes | yes |
+| `Auto-chosen (veto by replying on this PR):` | each auto-chosen fix-scope option (**Take recommended fix-scope options without asking**) | yes | yes | yes |
 | `Final-gate repair:`, `Final-gate repair rerun:`, `Final-gate repair review:`, `Final-gate repair refusal:` | when `final-gate-repair=tests-docs` ran a repair or fallback, with the authorizing policy line (**Repair a test-only final-gate failure**) | yes | yes | no |
 | `repair-review:`, `Repair classification:`, `Repair without review cycle:`, `Repair evidence:`, `Repair chain voided:`, `neutral-only baseline:` | when `repair-review=behavior-changing` is on the policy line, with the authorizing policy line (**Reopen review only for behavior-changing repairs**) | yes | yes | yes |
 | `skipped — light default repair cycle; source: repair-cycles=light`, `repair-cycles=light: nothing skipped — in-cap=full` | when `repair-cycles=light` is on the policy line (**Read an optional review policy**) | yes | no | no |

@@ -2531,6 +2531,12 @@ describe('Track 86B single-statement locks', () => {
         }
       }
     }
+    for (const prefix of ['`Review default:`', '`Auto-chosen (veto by replying on this PR):`']) {
+      const row = rows.find((r) => r[0]?.includes(prefix));
+      if (!row || row.slice(2).join(',') !== 'yes,yes,yes') {
+        violations.push(`${prefix} must appear in Final, Paused and Stopped receipts`);
+      }
+    }
     const repairReviewRow = rows.find((r) => r[0]?.includes('`repair-review:`'));
     if (!repairReviewRow || repairReviewRow.slice(2).join(',') !== 'yes,yes,yes') {
       violations.push('repair-review row must be Final:yes, Paused:yes, Stopped:yes');
@@ -2611,6 +2617,12 @@ describe('Track 86B single-statement locks', () => {
     if (text.includes('It never sets')) {
       violations.push('skill still contains "It never sets" bullet');
     }
+    const start = lightFlat.indexOf('Those three (');
+    const end = lightFlat.indexOf('are the only policy behaviors', start);
+    const values = start >= 0 && end > start ? lightFlat.slice(start, end) : '';
+    for (const value of ['`in-cap=delta`', 'cycles 2–3', '`documentation-audit=final`', '`full-suite=final`']) {
+      if (!values.includes(value)) violations.push(`allow-list sentence missing ${value}`);
+    }
     const allowListMatches =
       lightFlat.split(
         'are the only policy behaviors the light default sets; every other policy key or value needs a caller that opts in (`SPEC P1`)',
@@ -2682,7 +2694,7 @@ describe('Track 86B single-statement locks', () => {
     {
       name: 'light default states its allow-list once with no It never sets bullets',
       lock: checkLightDefaultAllowListLock,
-      mutate: (t) => `${t}\n- It never sets \`delegate=\`.\n`,
+      mutate: (t) => t.replace('`documentation-audit=final` and `full-suite=final`)', '`documentation-audit=final` and `full-suite=external`)'),
     },
     {
       name: 'policy section links caller rollout once and drops repeated none-supplied boilerplate',

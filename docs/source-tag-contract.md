@@ -174,7 +174,7 @@ amendment to cut; writing `defer=true` does not supply that approval.
 | `full-review:nice-to-have` | PROMPT | Non-essential improvement |
 | `full-review:edge-case` | SUGGEST_KILL | Edge or hypothetical — bias toward drop |
 | `full-review` (no severity, legacy) | PROMPT | Legacy tag without taxonomy |
-| `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. `/review-and-prep` also writes `[review:files=<paths>]` for a recorded test gap (a `**Test gap:** no demonstrated defect` bullet, no `severity=`); it is KEEP like any `review` tag, and `/roadmap` places it by its `files=` instead of by a defect claim. Under `blocking=shown`, `/review-and-prep` writes `### [review:files=<a.ts|b.ts>] Base issue: <short title>` (or `### [review] Base issue: <short title>` when a path cannot form a `files=` value) for a finding already present at the merge base; it routes KEEP with source `review`. |
+| `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. `/review-and-prep` also writes `[review:files=<paths>]` for a recorded test gap (a `**Test gap:** no demonstrated defect` bullet, no `severity=`); it is KEEP like any `review` tag, and `/roadmap` places it by its `files=` instead of by a defect claim. |
 | `plan-ceo-review:track=<id>,defer=true` | PROMPT | Review deferral; reassess the selected target before placement, deferral or rejection |
 | `plan-eng-review:track=<id>,defer=true` | PROMPT | Same target-based reassessment as plan-ceo-review |
 | `plan-ceo-review` / `plan-eng-review` (no `defer=true`) | PROMPT | Review-surfaced finding that wasn't in original scope — ask user whether it's a deferred-scope item or new work |
@@ -219,6 +219,8 @@ amendment to cut; writing `defer=true` does not supply that approval.
 - **Evidence:** read the function and its existing tests; no failure was reproduced.
 - **Context:** Filed by /review-and-prep on https://github.com/example-org/example-repo/pull/42 at a1b2c3d (2026-11-01).
 - **Effort:** ? (user triages in /roadmap)
+
+Under `blocking=shown`, `/review-and-prep` writes `### [review:files=<a.ts|b.ts>] Base issue: <short title>` (or `### [review] Base issue: <short title>` when a path cannot form a `files=` value) for a finding already present at the merge base; it routes KEEP with source `review`.
 
 ### [review:files=src/export.ts|src/export-format.ts] Base issue: header row lacks newline on empty input
 - **Base issue:** present at merge base `a0b1c2d`; filed under `blocking=shown`
