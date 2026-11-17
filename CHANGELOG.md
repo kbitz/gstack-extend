@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.1] - 2026-11-17
+
+### Added
+
+- Coverage audits can now record skipped coverage without a threshold and retain long threshold explanations in the result with override warnings.
+- `build record` now accepts `--dir DIR` between `record` and its subtype.
+
+### Changed
+
+- The review run-state builder now records a skipped or not-applicable coverage audit whose reason is in the result, writes threshold `n/a` when no coverage percentage is given, moves an over-long threshold explanation into the result with an override warning instead of refusing, and accepts the state directory option between `record` and its subtype.
+
+### Upgrade notes
+
+- Coverage audits that used to be refused for an over-long threshold explanation now record successfully, with the explanation in the result and an override warning.
+- Tools that read a recorded coverage threshold now see `n/a` when no coverage percentage is given.
+
 ## [0.98.0] - 2026-11-17
 
 ### Added
