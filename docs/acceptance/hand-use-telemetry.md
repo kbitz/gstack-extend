@@ -78,24 +78,27 @@ this record. Once all required rows are recorded in the table below, update the
 These rows qualify the observed Claude launch types and orchestrated interactive
 stages, not fleet-wide SPEC O6 acceptance or other harnesses. Exact harness CLI
 binary versions remain unknown; the reported extension revisions are retained.
+Machines appear under generic host labels (host A, B and C; distinct labels are
+distinct telemetry host labels, not necessarily distinct machines), and the
+real hostnames are kept in local evidence.
 
 | Date | Machine (host label) | OS | Harness and version | gstack-extend version | How launched | run_mode | run_mode_source |
 |---|---|---|---|---|---|---|---|
-| `2026-11-09T16:22:59Z` | `349c-kb-ms` | macOS (release `unknown`) | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.78.0` (`f036f50`) | Owner-reported by-hand terminal (`CLAUDE_CODE_ENTRYPOINT=cli`), stage `gstack-extend-upgrade`, PR `none` (non-PR stage; `report --by-host` `cells.user-directed.runs=1`, `outcomes.success=1`, `last_seen="2026-11-09T16:22:59Z"`) | `user-directed` | `cli` |
-| `2026-11-14T05:22:21Z` | `3771h-kb-xps` | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.93.1` (`36a66ad`) | Orchestrated interactive stage `project-spec` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR `none` (`report --by-host` `project-spec:orchestrated` `last_seen="2026-11-14T05:22:21Z"`) | `orchestrated` | `run-mode-env` |
-| `2026-11-15T01:20:55Z` | `3771h-kb-xps` | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "high"`; CLI version `unknown`) | `0.94.0` (`6df3b69`) | Orchestrated interactive stage `roadmap` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_SESSION_KIND=spawned`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR #251 (`report --by-host` `roadmap:orchestrated` `last_seen="2026-11-15T01:20:55Z"`) | `orchestrated` | `session-kind` |
-| `2026-11-15T02:49:37Z` | `kb-xps` | Omarchy Linux | `claude` (CLI version `unknown`) | `0.94.1` (`0c1c33f`) | By-hand Paseo app, stage `docs-ship`, PR #12; raw row `outcome="success"`, confirmed by the owner's local `report --by-host` paste on `2026-11-15` | `user-directed` | `paseo-entrypoint` |
+| `2026-11-09T16:22:59Z` | host C | macOS (release `unknown`) | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.78.0` (`0667987`) | Owner-reported by-hand terminal (`CLAUDE_CODE_ENTRYPOINT=cli`), stage `gstack-extend-upgrade`, PR `none` (non-PR stage; `report --by-host` `cells.user-directed.runs=1`, `outcomes.success=1`, `last_seen="2026-11-09T16:22:59Z"`) | `user-directed` | `cli` |
+| `2026-11-14T05:22:21Z` | host B | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "medium"`; CLI version `unknown`) | `0.93.1` (`36a66ad`) | Orchestrated interactive stage `project-spec` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR `none` (`report --by-host` `project-spec:orchestrated` `last_seen="2026-11-14T05:22:21Z"`) | `orchestrated` | `run-mode-env` |
+| `2026-11-15T01:20:55Z` | host B | Omarchy Linux | `claude` (`claude-opus-5-5`, `effort: "high"`; CLI version `unknown`) | `0.94.0` (`6df3b69`) | Orchestrated interactive stage `roadmap` via Paseo (`CLAUDE_CODE_ENTRYPOINT=Paseo`, `GSTACK_SESSION_KIND=spawned`, `GSTACK_EXTEND_RUN_MODE=orchestrated`), PR #251 (`report --by-host` `roadmap:orchestrated` `last_seen="2026-11-15T01:20:55Z"`) | `orchestrated` | `session-kind` |
+| `2026-11-15T02:49:37Z` | host A | Omarchy Linux | `claude` (CLI version `unknown`) | `0.94.1` (`0c1c33f`) | By-hand Paseo app, stage `docs-ship`, a consumer repository PR; raw row `outcome="success"`, confirmed by the owner's local `report --by-host` paste on `2026-11-15` | `user-directed` | `paseo-entrypoint` |
 
 **Paseo readback provenance (`2026-11-15`):** The owner ran
-`gstack-extend-telemetry report --by-host` on `kb-xps` and pasted its output to
+`gstack-extend-telemetry report --by-host` on host A and pasted its output to
 the manager: files `read=5 unreadable=0`; rows `counted=239 routed=0 malformed=0
-invalid=0 unsupported=0`. Host `kb-xps` showed `user-directed` runs `3`, all
+invalid=0 unsupported=0`. Host A showed `user-directed` runs `3`, all
 successful, last seen `2026-11-15T02:54:03Z`; the `docs-ship` `user-directed`
 aggregate showed runs `3` (success `2`, blocked `1`), last seen
 `2026-11-15T02:49:37Z`. Together with the owner's earlier raw row readback
 (`agent="claude"`, `run_mode="user-directed"`,
 `run_mode_source="paseo-entrypoint"`), this satisfies the local readback rule.
-The earlier review-machine report had stale synced `kb-xps` rows; qualification
+The earlier review-machine report had stale synced host A rows; qualification
 uses the owner's report on the machine itself, without requiring sync repair.
 The stage aggregate spans hosts; the paired raw row supplies this run's host
 and source attribution, rather than treating the aggregate counts as one run.
@@ -103,7 +106,7 @@ and source attribution, rather than treating the aggregate counts as one run.
 ## Harnesses and entrypoints that read `unknown`
 
 Non-Claude by-hand runs are outside this qualification. The owner identified a
-by-hand Grok `docs-ship` run in Paseo on `kb-xps` at `2026-11-15T03:32:06Z`
+by-hand Grok `docs-ship` run in Paseo on host A at `2026-11-15T03:32:06Z`
 (`producer_version: "0.94.1"`): the raw row has `agent: null`,
 `run_mode: "unknown"`, and `run_mode_source: "no-harness"`. Two distinct
 limitations were identified in the `2026-11-15` provider-parity audit:
@@ -162,7 +165,7 @@ When no primary orchestration signal (`session-kind`, `work-item`,
 
 ## Per-harness launch inventory (`2026-11-15`)
 
-Inspected on `3771h-kb-xps` (Omarchy Linux, `gstack-extend 0.94.2`) across the
+Inspected on host B (Omarchy Linux, `gstack-extend 0.94.2`) across the
 installed harness binaries (`claude 2.1.325`, `grok 1.0.77`,
 `codex-cli 0.169.0`, `cursor-agent 2026.11.13-eacade1`) and workspace host
 (`paseo 0.15.2`). Signal names, presence, and structural keys are recorded
@@ -177,7 +180,7 @@ qualified for `user-directed`; the existing Claude readbacks above still stand.
 |---|---|---|---|---|---|
 | `claude 2.1.325` | Terminal CLI (`claude`), Paseo SDK (`paseo 0.15.2` `ClaudeAgentClient` with `claude-code-entrypoint-env` plugin) | `CLAUDECODE="1"`, `CLAUDE_CODE_SESSION_ID` (`valid_session` UUID shape), `CLAUDE_CODE_ENTRYPOINT` (`"cli"` in terminal, `"Paseo"` in Paseo, `"sdk-ts"`/`"sdk-cli"` in SDK workers) | `$CLAUDE_CONFIG_DIR/projects/<slug>/<session>.jsonl`: per-turn `assistant` records with `timestamp`, `isSidechain`, `message.model`, `message.effort`, `message.stop_reason`, `message.content[].type`/`name`/`id`, and `user` records | Qualified (`agent="claude"`, `model` and `effort` detected) | Qualified (`CLAUDE_CODE_ENTRYPOINT=cli` → `user-directed`/`cli`; `CLAUDE_CODE_ENTRYPOINT=Paseo` → `user-directed`/`paseo-entrypoint`) |
 | `grok 1.0.77` | Terminal CLI (`grok`), hook/MCP child processes, Paseo ACP (`paseo 0.15.2` `GenericACPAgentClient` → `grok acp`) | Local shell (`xai-grok-tools`): `GROK_AGENT="1"` (`GROK_AGENT` is also a user-configurable agent profile variable when set to a profile name); hook/MCP spawners (`xai-grok-hooks`, `xai-grok-mcp`): `GROK_SESSION_ID` (`valid_session` UUID shape); Paseo ACP `terminal/create` (`xai-grok-shell-terminal` → `ACPAgentClient.createTerminal`): exports `PASEO_AGENT_ID`, `PASEO_AGENT_CWD`, `CARGO_TERM_PROGRESS_WHEN`, `CARGO_TERM_PROGRESS_WIDTH`, `NPM_CONFIG_PROGRESS` and omits both `GROK_SESSION_ID` and `GROK_AGENT` | `$GROK_HOME/sessions/<url-encoded-cwd>/<session>/events.jsonl` (`type="turn_started"`, `ts`, `model_id`, `role`, `turn_id`) and `summary.json` (`id`, `created_at`, `updated_at`, `current_model_id`, `reasoning_effort`, `last_message_id`, `turn_count`, `git_branch`). Note: Paseo's `fetchCatalog` probe creates zero-turn `summary.json` directories via `grok acp` whenever a workspace opens for any provider | Detection supported when valid `GROK_SESSION_ID` or `GROK_AGENT=1` is present (session-ID-only path fixture-qualified); unmarked under Paseo ACP `terminal/create` (`run_mode_source="no-harness"` until `GROK_SESSION_ID` or `GROK_AGENT=1` is forwarded) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"` when detected; neither env vars nor `summary.json`/`events.jsonl` records a launch entrypoint) |
-| `codex-cli 0.169.0` | Terminal CLI (`codex`), non-interactive (`codex exec`), Paseo app-server (`paseo 0.15.2` `CodexAppServerAgentClient` → `codex app-server`) | `CODEX_THREAD_ID` (`valid_session` UUID shape), `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_MANAGED_BY_NPM`/`CODEX_MANAGED_BY_BUN` (installer origin only). Under Paseo, `PASEO_AGENT_ID` and `PASEO_AGENT_CWD` are also present | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`: `session_meta` (`payload.id`, `payload.timestamp`, `payload.cwd`, `payload.originator`, `payload.cli_version`, `payload.source`, `payload.model_provider`) and `turn_context` (`payload.model`, `payload.effort`). Observed `(originator, source)` pairs across 798 local logs on `3771h-kb-xps`: `("codex_cli_rs", "vscode")` (747), `("codex_exec", "exec")` (43), and subagent review/spawn entries (8) | Qualified (`agent="codex"`, `model` and `effort` detected) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"`; neither `CODEX_*` env vars nor `session_meta.payload.originator`/`source` distinguishes a by-hand session from an orchestrated worker, and Paseo passes hardcoded `clientInfo.name="codex_app_server_daemon"`) |
+| `codex-cli 0.169.0` | Terminal CLI (`codex`), non-interactive (`codex exec`), Paseo app-server (`paseo 0.15.2` `CodexAppServerAgentClient` → `codex app-server`) | `CODEX_THREAD_ID` (`valid_session` UUID shape), `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_MANAGED_BY_NPM`/`CODEX_MANAGED_BY_BUN` (installer origin only). Under Paseo, `PASEO_AGENT_ID` and `PASEO_AGENT_CWD` are also present | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`: `session_meta` (`payload.id`, `payload.timestamp`, `payload.cwd`, `payload.originator`, `payload.cli_version`, `payload.source`, `payload.model_provider`) and `turn_context` (`payload.model`, `payload.effort`). Observed `(originator, source)` pairs across 798 local logs on host B: `("codex_cli_rs", "vscode")` (747), `("codex_exec", "exec")` (43), and subagent review/spawn entries (8) | Qualified (`agent="codex"`, `model` and `effort` detected) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"`; neither `CODEX_*` env vars nor `session_meta.payload.originator`/`source` distinguishes a by-hand session from an orchestrated worker, and Paseo passes hardcoded `clientInfo.name="codex_app_server_daemon"`) |
 | `cursor-agent 2026.11.13-eacade1` | Terminal CLI (`cursor-agent`), Paseo ACP (`paseo 0.15.2` `GenericACPAgentClient` → `cursor-agent acp`) | `CURSOR_AGENT="1"`, `CURSOR_CONVERSATION_ID` (`valid_session` shape), `CURSOR_INVOKED_AS` (`"cursor-agent"` or `"agent"`), `CURSOR_COMPILE_CACHE_IPC_PORT`, `CURSOR_TRACE_ID` | `.cursor/projects/<slug>/agent-transcripts/<id>.txt` or `<id>/<id>.jsonl`: `role` and `message.content` only (no model, effort, or entrypoint metadata) | Qualified when `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` is present (`agent="cursor"`; model/effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT`) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"`; neither `CURSOR_*` env vars nor agent transcripts expose an entrypoint distinguishing interactive by-hand use from ACP or headless worker launches) |
 
 ## Drafted upstream requests
