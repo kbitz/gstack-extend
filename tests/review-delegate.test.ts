@@ -1217,7 +1217,7 @@ describe('documentation', () => {
     expect(Object.keys(checked.config.parts).sort()).toEqual([...PARTS].sort());
   });
 
-  // Value: protects=partial installed observations never claim closed attacker qualification; fails_when=pending rows or historical identity disappear; why_new=Track 80D records partial real runs; seam=none
+  // Value: protects=partial installed observations never claim closed attacker qualification; fails_when=pending rows or historical identity disappear, or a private owner/repo path appears; why_new=Track 80D records partial real runs; seam=none
   test('the attacker-parts acceptance record distinguishes partial observations from pending PM1 and PM2 qualification', () => {
     const record = readFileSync(join(REPO, 'docs', 'acceptance', 'attacker-parts.md'), 'utf8');
     expect(record).toContain('Installed-agent observations\nare partial, with PM1 and PM2 still pending');
@@ -1226,6 +1226,7 @@ describe('documentation', () => {
     expect(record).toContain('297f50c7e1d46aab1404f5f2e8a9584af76ad6b2');
     expect(record).toContain('red-team=ensure');
     expect(record).toContain('delegate=adversarial,red-team');
+    expect(record).not.toContain('kbitz/');
   });
 
   test('the tools-mode quickstart example validates and the flag list and acceptance record stay locked to code constants', () => {
