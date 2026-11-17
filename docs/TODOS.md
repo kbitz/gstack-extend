@@ -2,6 +2,16 @@
 
 ## Unprocessed
 
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: source collector failure and byte-filter branches
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** CLI coverage omits raw-diff failure/malformed records, failed or invalid size lookup, blob-read failure, oversized source exclusion, and invalid UTF-8 without NUL bytes.
+- **Hypothesis (untested):** Extend the existing source-attachment fixture and a controlled Git wrapper to verify refusal before provider dispatch and omission of oversized or invalid-byte blobs; re-verify the gaps first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-delegate/cli.ts:223-250
+- **Evidence:** Testing specialist and coverage audit found five untested collector branches; the prompt-cap tests bypass collection and the binary fixture exits at the NUL check. Required targeted checks passed; no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at 8abfba0 (2026-11-17).
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: malformed delegate timestamp passthrough
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Override cases cover valid timestamps but do not directly exercise malformed caller timestamps.
