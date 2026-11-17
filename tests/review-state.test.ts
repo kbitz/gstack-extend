@@ -5269,6 +5269,134 @@ describe('bin/review-state', () => {
     expect(existsSync(join(d, 'build-overrides.jsonl'))).toBe(false);
   });
 
+  test("build record correction derives supersedes from the target finding's latest correction", () => {
+    const { dir: d, statePath } = dirFromSeed(ensureRefusalSeeds().attemptState);
+    const c1 = uid(1011), c2 = uid(1012), c3 = uid(1013);
+    const baseArgs = (dir: string, id: string) => ['build', 'record', 'correction', '--dir', dir, '--correction-id', id, '--pass-id', uid(10), '--voice-id', 'core', '--attempt-id', uid(20), '--finding-id', 'F-1'];
+    const reqFiles = (dir: string) => readdirSync(dir).filter((f) => f.startsWith('request-record-correction-') && f.endsWith('.json')).sort();
+
+    const r1 = runCli([...baseArgs(d, c1), '--receipt-class', 'non-blocking']);
+    expect([r1.json.reason, r1.err, r1.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    const [req1] = reqFiles(d);
+    expect('supersedes' in JSON.parse(readFileSync(join(d, req1!), 'utf8'))).toBe(false);
+
+    const dExplicit = newDir();
+    copyFileSync(statePath, join(dExplicit, 'review-run-state.json'));
+
+    const c2Args = (dir: string) => [...baseArgs(dir, c2), '--resolution', 'fixed', '--fixed-in', headSha];
+    const r2 = runCli(c2Args(d));
+    expect([r2.json.reason, r2.err, r2.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    const req2 = reqFiles(d).find((f) => f !== req1)!;
+    const req2Bytes = readFileSync(join(d, req2), 'utf8');
+    expect(JSON.parse(req2Bytes).supersedes).toBe(c1);
+
+    const r2Explicit = runCli([...c2Args(dExplicit), '--supersedes', c1]);
+    expect([r2Explicit.json.reason, r2Explicit.err, r2Explicit.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    expect(reqFiles(dExplicit)).toEqual([req2]);
+    expect(readFileSync(join(dExplicit, req2), 'utf8')).toBe(req2Bytes);
+
+    const r3 = runCli([...baseArgs(d, c3), '--adjudication', 'rejected']);
+    expect([r3.json.reason, r3.err, r3.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+
+    const st = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(st.corrections.map((c) => [c.correction_id, c.supersedes])).toEqual([
+      [c1, null],
+      [c2, c1],
+      [c3, c2],
+    ]);
+
+    const r2Replay = runCli(c2Args(d));
+    expect([r2Replay.json.reason, r2Replay.err, r2Replay.json.detail.overrides]).toEqual(['replayed', '', undefined]);
+    expect(existsSync(join(d, 'build-overrides.jsonl'))).toBe(false);
+
+    const dEmpty = newDir();
+    const rNoState = runCli([...c2Args(dEmpty), '--supersedes', c1]);
+    expect([rNoState.json.reason, rNoState.json.detail.overrides]).toEqual(['not-started', undefined]);
+    expect(rNoState.err).not.toContain('WARNING BUILD_OVERRIDE');
+    expect(JSON.parse(readFileSync(join(dEmpty, reqFiles(dEmpty)[0]!), 'utf8')).supersedes).toBe(c1);
+    expect(existsSync(join(dEmpty, 'build-overrides.jsonl'))).toBe(false);
+  });
+
+  test('build overrides a contradicting --supersedes with the latest correction, warns, logs and records', () => {
+    const reqFiles = (dir: string) => readdirSync(dir).filter((f) => f.startsWith('request-record-correction-') && f.endsWith('.json')).sort();
+    const baseArgs = (dir: string, id: string) => ['build', 'record', 'correction', '--dir', dir, '--correction-id', id, '--pass-id', uid(10), '--voice-id', 'core', '--attempt-id', uid(20), '--finding-id', 'F-1'];
+
+    // Case 1: prior corrections A then B; sending --supersedes A overrides with B.
+    const { dir: d1, statePath: sp1 } = dirFromSeed(ensureRefusalSeeds().attemptState);
+    const idA = uid(1014), idB = uid(1015), idC = uid(1016);
+    expect(runCli([...baseArgs(d1, idA), '--receipt-class', 'non-blocking']).json.reason).toBe('recorded');
+    expect(runCli([...baseArgs(d1, idB), '--resolution', 'fixed', '--fixed-in', headSha]).json.reason).toBe('recorded');
+    const beforeFiles1 = new Set(reqFiles(d1));
+    const rC = runCli([...baseArgs(d1, idC), '--adjudication', 'rejected', '--supersedes', idA]);
+    const ov1 = { flag: '--supersedes', sent: idA, used: idB, rule: 'latest-correction-on-finding' };
+    expect(rC.json.reason).toBe('recorded');
+    expect(rC.err).toBe(`WARNING BUILD_OVERRIDE: record correction --supersedes sent "${idA}"; used "${idB}"; rule latest-correction-on-finding\n`);
+    expect(rC.json.detail.overrides).toEqual([ov1]);
+    const written1 = reqFiles(d1).find((f) => !beforeFiles1.has(f))!;
+    expect(JSON.parse(readFileSync(join(d1, written1), 'utf8')).supersedes).toBe(idB);
+    expect(JSON.parse(readFileSync(sp1, 'utf8')).corrections.at(-1).supersedes).toBe(idB);
+    const log1 = readFileSync(join(d1, 'build-overrides.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(log1).toHaveLength(1);
+    expect(log1[0]).toMatchObject({ v: 1, command: 'record correction', request: written1, overrides: [ov1] });
+
+    // Case 2: no prior correction on finding; sending --supersedes <uuid> overrides with null and omits the key.
+    const { dir: d2, statePath: sp2 } = dirFromSeed(ensureRefusalSeeds().attemptState);
+    const idFirst = uid(1017), wrongSup = uid(1018);
+    const rFirst = runCli([...baseArgs(d2, idFirst), '--receipt-class', 'non-blocking', '--supersedes', wrongSup]);
+    const ov2 = { flag: '--supersedes', sent: wrongSup, used: null, rule: 'latest-correction-on-finding' };
+    expect(rFirst.json.reason).toBe('recorded');
+    expect(rFirst.err).toBe(`WARNING BUILD_OVERRIDE: record correction --supersedes sent "${wrongSup}"; used null; rule latest-correction-on-finding\n`);
+    expect(rFirst.json.detail.overrides).toEqual([ov2]);
+    const [written2] = reqFiles(d2);
+    expect('supersedes' in JSON.parse(readFileSync(join(d2, written2!), 'utf8'))).toBe(false);
+    expect(JSON.parse(readFileSync(sp2, 'utf8')).corrections.at(-1).supersedes).toBeNull();
+    const log2 = readFileSync(join(d2, 'build-overrides.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(log2).toHaveLength(1);
+    expect(log2[0]).toMatchObject({ v: 1, command: 'record correction', request: written2, overrides: [ov2] });
+  });
+
+  test("replays PR #265's second correction (C17): build derives supersedes from the latest correction and records", () => {
+    const d = newDir();
+    const passId = '06902024-e629-4744-af53-bf92081e6d4f';
+    const attId = 'ee603c57-7c31-496b-9d4b-0dbee7f584db';
+    const firstId = '4eeb9d41-c35a-44be-af02-2b29cdf98dc1';
+    const secondId = '83223003-c274-4ba7-af50-7c99e4a4a356';
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1019), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('pr265'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'native-adversarial']).json.reason).toBe('recorded');
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'native-adversarial', '--part', 'native-adversarial', '--attempt-id', attId, '--outcome', 'completed',
+      '--finding', 'A1,high,native-adversarial', '--finding', 'A2,medium,native-adversarial',
+    ]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'voice-complete', '--voice-id', 'native-adversarial', '--selected-attempt-id', attId]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'completed']).json.reason).toBe('recorded');
+    expect(runCli([
+      'build', 'record', 'correction', '--dir', d, '--correction-id', firstId, '--pass-id', passId, '--voice-id', 'native-adversarial', '--attempt-id', attId, '--finding-id', 'A2',
+      '--adjudication', 'accepted', '--resolution', 'open', '--receipt-class', 'non-blocking',
+    ]).json.reason).toBe('recorded');
+
+    const dInput = newDir();
+    copyFileSync(join(d, 'review-run-state.json'), join(dInput, 'review-run-state.json'));
+
+    const rSecond = runCli([
+      'build', 'record', 'correction', '--dir', d, '--correction-id', secondId, '--pass-id', passId, '--voice-id', 'native-adversarial', '--attempt-id', attId, '--finding-id', 'A2',
+      '--adjudication', 'rejected',
+    ]);
+    expect([rSecond.json.reason, rSecond.err, rSecond.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    expect(existsSync(join(d, 'build-overrides.jsonl'))).toBe(false);
+    const st = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const storedSecond = st.corrections.find((c) => c.correction_id === secondId);
+    expect(storedSecond).toMatchObject({ correction_id: secondId, adjudication: 'rejected', resolution: 'unknown', supersedes: firstId });
+
+    const rRaw = callCmd(dInput, 'record correction', {
+      correction_id: secondId,
+      target: { pass_id: passId, voice_id: 'native-adversarial', attempt_id: attId, finding_id: 'A2' },
+      adjudication: 'rejected',
+      resolution: 'unknown',
+    });
+    expect(rRaw.json.reason).toBe('invalid-input');
+    expect(rRaw.json.detail.violations).toEqual([{ path: 'supersedes', rule: 'invalid-reference', expected: firstId }]);
+  });
+
   test('build overrides a flag that contradicts a value the helper fixes, warns, logs and records', () => {
     const reqFiles = (dir: string) => readdirSync(dir).filter((f) => f.startsWith('request-') && f.endsWith('.json')).sort();
     const seedStart = newDir(), seedOpen = newDir(), passId = uid(981);
@@ -5357,7 +5485,7 @@ describe('bin/review-state', () => {
     for (let i = 1; i < pos.length; i++) expect(pos[i]!.idx).toBeGreaterThan(pos[i - 1]!.idx);
 
     const drop = new Set(['uuid', 'nonempty-unique-part-array', 'nonempty-unique-voice-id-array', 'unique-part-array-0..8']);
-    const expectedSet = new Set<string>(), segByCmd = new Map<string, string>();
+    const expectedSet = new Set<string>(), segByCmd = new Map<string, string>(), computedRefs: string[] = [];
     for (let i = 0; i < pos.length; i++) {
       const seg = slice.slice(pos[i]!.idx, i + 1 < pos.length ? pos[i + 1]!.idx : slice.length);
       segByCmd.set(pos[i]!.cmd, seg);
@@ -5369,7 +5497,13 @@ describe('bin/review-state', () => {
           if (!drop.has(exp)) expectedSet.add(`${pos[i]!.cmd}|${path}|${exp}`);
         }
       }
+      for (const m of seg.matchAll(/\{\s*path:\s*([^,]+),\s*rule:\s*'invalid-reference',\s*expected:\s*((?:`[^`]*`|'[^']*'|[^\}])+)\}/g)) {
+        const path = m[1]!.trim().replace(/^['"`]|['"`]$/g, '');
+        if (!/^'[^']*'$/.test(m[2]!.trim())) computedRefs.push(`${pos[i]!.cmd}|${path}`);
+      }
     }
+    expect(computedRefs).toEqual(['record correction|supersedes']);
+    expectedSet.add('record correction|supersedes|latest-correction-on-finding');
     for (const [cmd, path, exp, anchor] of [
       ['record pass (attempt)', 'findings', 'required-when-outcome-completed', "rawInput.outcome === 'completed' ? ['findings'] : []"],
       ['record pass (attempt)', 'findings[i].attribution_reason', 'enum-when-found_by-empty', 'fb.length === 0 && !inEnum(ENUMS.attrReason)(fc.attribution_reason)'],
