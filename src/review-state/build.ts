@@ -517,10 +517,12 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     };
     if (scalars.has('--adjudication')) req.adjudication = scalars.get('--adjudication')!;
     if (scalars.get('--adjudication') === 'rejected') {
-      if (scalars.has('--resolution') && scalars.get('--resolution') !== 'unknown') {
-        over('--resolution', scalars.get('--resolution')!, 'unknown', 'unknown-when-rejected');
+      const sent = scalars.get('--resolution');
+      const omit = sent !== 'unknown' && canOmitRejectedResolution(realDir, scalars.get('--correction-id')!, target);
+      if (sent !== undefined && sent !== 'unknown') {
+        over('--resolution', sent, omit ? null : 'unknown', 'unknown-when-rejected');
       }
-      if (scalars.has('--resolution') || !canOmitRejectedResolution(realDir, scalars.get('--correction-id')!, target)) req.resolution = 'unknown';
+      if (!omit) req.resolution = 'unknown';
     } else if (scalars.has('--resolution')) {
       req.resolution = scalars.get('--resolution')!;
     }
@@ -760,8 +762,10 @@ export function executeBuild(
   if (built.overrides.length > 0) {
     const logBytes = Buffer.from(`${JSON.stringify({ v: 1, at: new Date().toISOString(), command: validCommand, request: reqName, overrides: built.overrides })}\n`, 'utf8');
     try {
-      const fd = openSync(join(realDir, 'build-overrides.jsonl'), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+      const fd = openSync(join(realDir, 'build-overrides.jsonl'), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
       try {
+        const st = fstatSync(fd);
+        if (!st.isFile() || st.nlink !== 1) throw Object.assign(new Error('unsafe override log target'), { code: 'EINVAL' });
         writeAll(fd, logBytes);
         fsyncSync(fd);
       } finally {

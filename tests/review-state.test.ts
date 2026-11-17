@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, buildHelp, buildRequest, parseDelegationLine, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
@@ -5223,10 +5223,50 @@ describe('bin/review-state', () => {
       expect(readFileSync(statePath, 'utf8')).toBe(recorded);
       expect(JSON.parse(recorded).corrections.at(-1).resolution).toBeNull();
       expect(existsSync(join(d, 'build-overrides.jsonl'))).toBe(false);
+      const requestFiles = readdirSync(d).filter((f) => f.startsWith('request-')).sort();
+      const override = runCli([...args(d, id, prior), '--resolution', 'open']);
+      expect(override.json.reason).toBe('replayed');
+      expect(override.json.detail.overrides).toEqual([{ flag: '--resolution', sent: 'open', used: null, rule: 'unknown-when-rejected' }]);
+      expect(override.err).toContain('used null; rule unknown-when-rejected');
+      expect(readdirSync(d).filter((f) => f.startsWith('request-')).sort()).toEqual(requestFiles);
+      expect(readFileSync(statePath, 'utf8')).toBe(recorded);
       // A later correction must not change how the earlier request is rebuilt for replay.
       expect(callCmd(d, 'record correction', { correction_id: uid(1003), target, adjudication: 'accepted', resolution: 'open', supersedes: id }).json.reason).toBe('recorded');
       expect(runCli(args(d, id, prior)).json.reason).toBe('replayed');
     }
+  });
+
+  test('unsafe override log targets warn without blocking recording or changing linked files', () => {
+    for (const kind of ['fifo', 'directory', 'symlink', 'hardlink']) {
+      const { dir: d, statePath } = dirFromSeed(ensureRefusalSeeds().attemptState);
+      const log = join(d, 'build-overrides.jsonl'), sentinel = join(d, 'sentinel');
+      writeFileSync(sentinel, 'unchanged\n');
+      if (kind === 'fifo') expect(spawnSync('mkfifo', [log], { env: GIT_ENV }).status).toBe(0);
+      else if (kind === 'directory') mkdirSync(log);
+      else if (kind === 'symlink') symlinkSync(sentinel, log);
+      else linkSync(sentinel, log);
+      const r = spawnSync(BIN_PATH, ['build', 'record', 'correction', '--dir', d, '--correction-id', uid(1004), '--pass-id', uid(10), '--voice-id', 'core', '--attempt-id', uid(20), '--finding-id', 'F-1', '--adjudication', 'rejected', '--resolution', 'open'], { cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 2000 });
+      expect(r.status, kind).toBe(0);
+      const result = JSON.parse(r.stdout);
+      expect(result.reason).toBe('recorded');
+      expect(result.detail.overrides).toEqual([{ flag: '--resolution', sent: 'open', used: 'unknown', rule: 'unknown-when-rejected' }]);
+      expect(r.stderr).toContain('WARNING BUILD_OVERRIDE_LOG:');
+      expect(r.stderr).toContain('WARNING BUILD_OVERRIDE: record correction --resolution');
+      expect(readFileSync(sentinel, 'utf8')).toBe('unchanged\n');
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).corrections.at(-1).resolution).toBe('unknown');
+    }
+  });
+
+  test('a fresh rejecting correction derives unknown without a resolution flag or override', () => {
+    const { dir: d, statePath } = dirFromSeed(ensureRefusalSeeds().attemptState);
+    const args = ['build', 'record', 'correction', '--dir', d, '--correction-id', uid(1005), '--pass-id', uid(10), '--voice-id', 'core', '--attempt-id', uid(20), '--finding-id', 'F-1', '--adjudication', 'rejected'];
+    const r = runCli(args);
+    expect([r.json.reason, r.err, r.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).corrections.at(-1).resolution).toBe('unknown');
+    const request = readdirSync(d).find((f) => f.startsWith('request-record-correction-'))!;
+    expect(JSON.parse(readFileSync(join(d, request), 'utf8')).resolution).toBe('unknown');
+    expect(runCli(args).json.reason).toBe('replayed');
+    expect(existsSync(join(d, 'build-overrides.jsonl'))).toBe(false);
   });
 
   test('build overrides a flag that contradicts a value the helper fixes, warns, logs and records', () => {
