@@ -2,6 +2,66 @@
 
 ## Unprocessed
 
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: malformed delegate timestamp passthrough
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Override cases cover valid timestamps but do not directly exercise malformed caller timestamps.
+- **Hypothesis (untested):** Extend the existing table to verify malformed timestamps retain the validator's refusal; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:370
+- **Evidence:** Coverage audit of the override table found no direct case; no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: explicit unknown against a legacy omitted resolution
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Legacy replay cases cover omitted and contradicting flags, without directly testing an explicit `unknown` against an old omitted-resolution correction.
+- **Hypothesis (untested):** Extend the legacy fixture to verify explicit `unknown` stays explicit and preserves the existing conflict; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:520
+- **Evidence:** Coverage audit read the compatibility fixture; changing flags was already a conflict before this change, and no new failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: rejected-correction lookup refusal shapes
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Compatibility tests use valid regular state files, without directly covering missing, corrupt or unsafe lookup targets.
+- **Hypothesis (untested):** Extend the fixture to verify invalid state never authorizes omission or gets repaired by the lookup; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:279
+- **Evidence:** Coverage audit identified fallback branches without direct tests; no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: override diagnostics on request-file refusal
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Existing request-open failure coverage sends no overriding flag, leaving override details on early refusals untested.
+- **Hypothesis (untested):** Add an override to the existing refusal fixture and verify diagnostics coexist with the original error details; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:754
+- **Evidence:** Coverage audit compared the request-file failure fixture with the override return paths; no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: FIFO log with an attached reader
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The no-reader FIFO fixture fails at nonblocking open, so it does not directly exercise the regular-file guard after a successful FIFO open.
+- **Hypothesis (untested):** Hold a FIFO reader while invoking the real CLI and verify recording succeeds with a log warning and no FIFO write; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** tests/review-state.test.ts:5244; src/review-state/build.ts:766
+- **Evidence:** Testing specialist and coverage audit identified the same missing branch case; the unsafe-target tests and required FIFO probe pass, with no remaining defect reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/cli.ts] Test gap: multiple override diagnostics in one call
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Override table rows send one contradiction per invocation, without directly covering several simultaneous overrides.
+- **Hypothesis (untested):** Extend an existing row to verify all warnings, envelope entries and the single log entry retain deterministic order; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/cli.ts:95
+- **Evidence:** Coverage audit inspected the table and diagnostics loop; no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

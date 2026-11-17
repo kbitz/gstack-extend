@@ -4485,7 +4485,7 @@ describe('review-and-prep run-state=record', () => {
       'With `--delegate-file`, the helper reads the saved `review-delegate run` output from `--dir`, selects the single `parts[]` entry matching `--part`, copies it into the request (keeping `call_id` and any `null` `wall_ms` or token counts as explicit unknowns, rendered `unknown` in `Delegated part:` and derived as `null`, never `0`), derives `outcome` when `--outcome` is omitted (`credited` → `completed`, `fell-back` → `failed`), and copies string `dispatched_at` and `returned_at` from the entry when those flags are omitted.',
     );
     expect(calls).toContain(
-      'The helper writes `findings` only when `outcome` is `completed` (defaulting to `[]` when no `--finding` is passed and refusing `--finding` on a non-`completed` attempt with `invalid-value`, expected `none-when-outcome-not-completed`).',
+      'The helper writes `findings` only when `outcome` is `completed` (defaulting to `[]` when no `--finding` is passed and dropping `--finding` on a non-`completed` attempt with an override warning, rule `null-when-outcome-not-completed`).',
     );
     expect(calls).toContain(
       'For each `--finding`, the helper sets `adjudication: "unclassified"` and `resolution: "open"` (never `"pending"`; triage\'s decision is a later `record correction`)',
