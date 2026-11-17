@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.97.1] - 2026-11-17
+
+### Changed
+
+- The run-state request builder now records a correction that rejects a review finding with resolution `unknown`, and when a flag contradicts a value the helper sets from another flag it uses the helper's value, prints a warning and records the override in its result and in the evidence directory instead of refusing.
+- `review-state build` derives determined values, warns about overridden flags, and preserves successful legacy correction replays.
+
+### Upgrade notes
+
+- Requests the helper used to refuse for such a contradicting flag now record with the helper's value instead, so check the builder's override warnings and its overrides log when a recorded value looks wrong.
+
 ## [0.97.0] - 2026-11-16
 
 ### Added
