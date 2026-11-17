@@ -16,8 +16,9 @@ import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
 import { FALLBACK_REASONS, PARTS, PART_KEYS, RECEIPT_KEYS, SETTLED_RULE } from '../src/review-delegate/delegate.ts';
-import { BUILD_COMMANDS, BUILT_KEYS } from '../src/review-state/build.ts';
+import { BUILD_COMMANDS, BUILT_KEYS, GATE_FLAGS } from '../src/review-state/build.ts';
 import { main as reviewStateMain } from '../src/review-state/cli.ts';
+import { PART_RE } from '../src/review-state/state.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -1317,17 +1318,26 @@ describe('review-and-prep final-gate repair', () => {
   // worked example are read from the skill, never copied into a second list here.
   const baselineRaw = skillSection(prep, "### Record cycle 1's full-review baseline");
   const stopRaw = skillSection(prep, '### When /review stops at its cycle cap');
+  const ownBullet = (raw: string, label: string): string => {
+    const lines = raw.split('\n');
+    const start = lines.findIndex((l) => l.startsWith(`- **${label}.**`));
+    if (start < 0) return '';
+    const next = lines.slice(start + 1).findIndex((l) => l.startsWith('- **'));
+    const end = next < 0 ? lines.length : start + 1 + next;
+    return lines.slice(start, end).join('\n').replace(/\s+/g, ' ');
+  };
   const reasonList = /`Full-review evidence unavailable: <([a-z|-]+)>`/.exec(prep)?.[1]?.split('|') ?? [];
   const tableCells = (line: string): string[] => line.trim().slice(1, -1).split('|').map((c) => c.trim());
   const tableLines = stopRaw.split('\n').filter((l) => /^\s*\|/.test(l));
   const tableHeader = tableCells(tableLines[0] ?? '');
   const tableRows = tableLines.slice(2).map(tableCells);
 
-  // Value: protects=a cycle 1 whose probes reproduced a defect is a completed review once a delta or full-scope cycle 2 reviewed the fixes, and the stop names cycle 1's B and T; fails_when=a reproduced probe is again an incomplete probe, the pending or fix-review conditions drift, or the row is filled without a matching fix-reviewed=true record; why_new=Track 32A reproduced-defects baseline; seam=none; no_claim=installed-agent execution
+  // Value: protects=a cycle 1 whose probes reproduced a defect is a completed review once a delta or full-scope cycle 2 reviewed the fixes (anchored to Fix-review record and Files and write-once bullets), and the stop names cycle 1's B and T; fails_when=a reproduced probe is again an incomplete probe, the pending or fix-review conditions drift or move out of their owning bullets, or the row is filled without a matching fix-reviewed=true record; why_new=Track 32A reproduced-defects baseline and Track 85D T4 owning-bullet anchor; seam=none; no_claim=installed-agent execution
   test('a reproduced defect is a probe result, so cycle 2 can confirm the fixes and the stop names cycle 1', () => {
     expect(baseline).toContain('Two records back a new baseline: `cycle-1-baseline` (written by cycle 1) and `cycle-1-fix-review` (written by cycle 2).');
     expect(baseline).toContain('A reproduced defect is a probe result: a `reproduced` probe has run to a result and is never an incomplete probe.');
     expect(baseline).toContain('`completed=pending-fix-review`: every selected reviewer completed, every required probe is `passed` or `reproduced`, and at least one is `reproduced`.');
+    const fixReviewBullet = ownBullet(baselineRaw, 'Fix-review record');
     for (const token of [
       '`delta from <cycle 1 snapshot>` and `SCOPE_DELTA: covered`',
       'at full scope from the verified PR merge base to its own snapshot (recorded with scope `full`',
@@ -1335,8 +1345,13 @@ describe('review-and-prep final-gate repair', () => {
       'no `in-cap` value',
       'an inactive in-cap delta',
       'a recorded full-scope fallback of the delta procedure',
-      '`scope` (`full` or starting `delta from `)',
-    ]) expect(baseline, token).toContain(token);
+    ]) expect(fixReviewBullet, token).toContain(token);
+    expect(ownBullet(baselineRaw, 'Files and write-once')).toContain('`scope` (`full` or starting `delta from `)');
+    const movedRaw = baselineRaw
+      .replace('`in-cap=full`', '')
+      .replace('- **Unavailable.**', '- **Unavailable.** `in-cap=full`');
+    expect(movedRaw.replace(/\s+/g, ' ')).toContain('`in-cap=full`');
+    expect(ownBullet(movedRaw, 'Fix-review record')).not.toContain('`in-cap=full`');
     expect(baseline).toContain("Write it at the end of cycle 2's review collection, after every selected reader has returned or is confirmed stopped and before /review's Step 5 applies any cycle 2 fix.");
     expect(baseline).toContain("Fields: cycle 1's snapshot (equal to the one in `cycle-1-baseline`), cycle 2's snapshot, the scope line, each stage's result with every recorded skip and its reason");
     expect(baseline).toContain("Set true only when every selected reviewer completed and every probe in the union has a result on cycle 2's inputs (`passed` or `reproduced`).");
@@ -1485,16 +1500,22 @@ describe('review-and-prep final-gate repair', () => {
     for (const added of ['cycle-1-fix-review', 'cycle-1-baseline', 'pending-fix-review', 'fix-reviewed', 'FULL_REVIEW_RECORD', 'provenance']) expect(inCap).not.toContain(added);
   });
 
-  // Value: protects=checkpoints catch a missed record before the first fix or at the next cycle start, late writes require retained snapshot-bound evidence files and never run at the stop, and the stop carries late provenance; fails_when=a checkpoint, late-write source rule, no-late-write-at-stop boundary or stop provenance rule drifts; why_new=missed full-review record recovery contract; seam=none; no_claim=installed-agent execution
+  // Value: protects=checkpoints catch a missed record before the first fix or at the next cycle start (anchored to the Checkpoints bullet), late writes require retained snapshot-bound evidence files and never run at the stop, and the stop carries late provenance; fails_when=a checkpoint, late-write source rule, no-late-write-at-stop boundary or stop provenance rule drifts or moves out of Checkpoints; why_new=missed full-review record recovery contract and Track 85D T4 owning-bullet anchor; seam=none; no_claim=installed-agent execution
   test('checkpoints, late-write source rules and stop provenance stay pinned', () => {
     expect(baseline).toContain("(1) `before-fix`, after the write point and before /review's Step 5 applies the cycle's first fix (cycle 1 for `cycle-1-baseline`; cycle 2 for `cycle-1-fix-review` when that record is required).");
     expect(baseline).toContain('`missing` there is still inside the write point because no fix has been applied: write the record now from the same collection results, check again, and apply no fix until it says `present`.');
     expect(baseline).toContain("(2) `next-cycle`, at the next cycle's /review's Step 3 (cycle 2 for `cycle-1-baseline`, cycle 3 for `cycle-1-fix-review`), before any of that cycle's readers or probes start.");
     expect(baseline).toContain("print `Full-review record missed: <kind> — detected at cycle <n>'s start`, and from then on only the late write below can make the record available.");
     expect(baseline).toContain('(3) `stop`: the cap stop reads both records only through this action.');
+    const checkpointsBullet = ownBullet(baselineRaw, 'Checkpoints');
     for (const token of ['`pending-fix-review`', 'cycle 2 qualifies under **Fix-review record**', 'at either scope']) {
-      expect(baseline, token).toContain(token);
+      expect(checkpointsBullet, token).toContain(token);
     }
+    const movedCheckpointRaw = baselineRaw
+      .replace('at either scope', '')
+      .replace('- **Unavailable.**', '- **Unavailable.** at either scope');
+    expect(movedCheckpointRaw.replace(/\s+/g, ' ')).toContain('at either scope');
+    expect(ownBullet(movedCheckpointRaw, 'Checkpoints')).not.toContain('at either scope');
     expect(baseline).toContain('Allowed once, at the `next-cycle` checkpoint that recorded the miss and before any reader or probe of that cycle starts.');
     expect(baseline).toContain("Each stage's result and each probe's outcome come only from evidence-directory files written during that cycle's review collection that name its snapshot (the per-review evidence and /review's Step 4.7 results kept under **Capture evidence and commit**), listed as `sources`.");
     expect(baseline).toContain('Never take a value from memory or chat, a later cycle, the final materialized verdict or a later relabel.');
@@ -4211,6 +4232,73 @@ describe('review-and-prep blocking=shown', () => {
     expect(flat).toContain('the `blocking:` status line and every `Finding blocking:` and `Finding not blocking:` line with the authorizing policy line (a non-blocking finding is not listed under `Unresolved:`),');
     for (const text of [sectionRaw, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
+
+  const PROBE_TOKENS = [
+    'reason=not-shown',
+    'CRITICAL',
+    'P0',
+    'P1',
+    'native-adversarial',
+    'red-team',
+    'outside:challenge',
+    'outside:structured',
+    'Finding settled:',
+    'path:line',
+    '**Shown**',
+    '**Base-only**',
+    'fresh disposable copy at S',
+    '300 seconds',
+    'not-shown-probe-<id>.txt',
+    'first 12 hex digits',
+    'shown=reproduction',
+    'evidence=',
+    'INFORMATIONAL',
+    'attacker-not-rerun',
+  ] as const;
+
+  // Value: protects=Probe before not-shown sits once inside the blocking=shown section between Base-only and Not shown, carries every required contract token, aligns its part and shown tokens with the receipt grammar, and fails when any token is removed; fails_when=the paragraph moves outside the gated section, drops a contract token, uses an invalid part/shown token, or a token removal still passes; why_new=Track 85D T1, T3; seam=none; no_claim=installed-agent execution
+  test('probes concrete CRITICAL attacker and outside findings before reason=not-shown with contract tokens and vocabulary alignment', () => {
+    const label = '**Probe before not-shown.**';
+    expect(prep.split(label).length - 1).toBe(1);
+    expect(sectionRaw.split(label).length - 1).toBe(1);
+    const baseOnlyAt = sectionRaw.indexOf('**Base-only.**');
+    const probeAt = sectionRaw.indexOf(label);
+    const notShownAt = sectionRaw.indexOf('**Not shown.**');
+    expect(baseOnlyAt).toBeGreaterThan(-1);
+    expect(probeAt).toBeGreaterThan(baseOnlyAt);
+    expect(notShownAt).toBeGreaterThan(probeAt);
+    const probeEnd = sectionRaw.indexOf('\n\n', probeAt);
+    expect(probeEnd).toBeGreaterThan(probeAt);
+    expect(probeEnd).toBeLessThan(notShownAt);
+
+    const probe = sectionRaw.slice(probeAt, probeEnd).replace(/\s+/g, ' ');
+    const hasAllProbeTokens = (text: string) => PROBE_TOKENS.every((t) => text.includes(t));
+    for (const token of PROBE_TOKENS) {
+      expect(probe, token).toContain(token);
+    }
+    expect(hasAllProbeTokens(probe)).toBe(true);
+
+    const vocabLine = section.slice(section.indexOf('`found_by` uses the attribution vocabulary'));
+    const vocabParts = [...vocabLine.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    const probePartTokens = PROBE_TOKENS.filter((t) =>
+      ['native-adversarial', 'red-team', 'outside:challenge', 'outside:structured'].includes(t),
+    );
+    expect(probePartTokens).toHaveLength(4);
+    for (const part of probePartTokens) {
+      expect(PART_RE.test(part), part).toBe(true);
+      expect(vocabParts, part).toContain(part);
+    }
+
+    const blockingTpl = section.match(/`Finding blocking: ([^`]+)`/)![1]!;
+    const shownChoices = /shown=<([^>]+)>/.exec(blockingTpl)?.[1]?.split('|') ?? [];
+    expect(shownChoices.map((c) => `shown=${c}`)).toContain('shown=reproduction');
+
+    for (const token of PROBE_TOKENS) {
+      const mutated = probe.split(token).join('');
+      expect(mutated, token).not.toContain(token);
+      expect(hasAllProbeTokens(mutated), token).toBe(false);
+    }
+  });
 });
 
 // Track 75A T3: `post-audit=classify` runs one bounded parent-side re-audit of each post-audit change before the owner stop.
@@ -4561,7 +4649,20 @@ describe('review-and-prep run-state=record', () => {
     }
     expect(resumeSection).not.toContain('.context/');
     expect(resumeSection).not.toContain('or a fresh `start`');
-    expect(resumeSection).not.toContain('`details.value`');
+    const greptileFlags = GATE_FLAGS.filter((r) => r.flag.startsWith('--greptile-'));
+    expect(greptileFlags.length).toBeGreaterThan(0);
+    const callsOutsideResume = callsRaw.slice(0, resumeStart) + callsRaw.slice(deriveStart);
+    const resumeForbidsGreptileGateDetails = (text: string) =>
+      greptileFlags.every((r) => !text.includes(r.flag) && !text.includes(`\`${r.key}\``));
+    for (const r of greptileFlags) {
+      expect(resumeSection, r.flag).not.toContain(r.flag);
+      expect(resumeSection, r.key).not.toContain(`\`${r.key}\``);
+      expect(callsOutsideResume, r.flag).toContain(r.flag);
+    }
+    expect(resumeForbidsGreptileGateDetails(resumeSection)).toBe(true);
+    expect(resumeForbidsGreptileGateDetails(`${resumeSection} --greptile-value`)).toBe(false);
+    expect(resumeSection).toContain('live corroboration');
+    expect(resumeSection).toContain('never a `not-run` result alone');
 
     const expectedSkillPara = 'Under `run-state=record`, a resume or repeat invocation first runs the calls document\'s **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.';
     expect(flat).toContain(`${expectedSkillPara} With \`full-suite=external\` in the invocation prompt, read **Resume entry**`);
