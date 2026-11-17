@@ -138,6 +138,16 @@
 - **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: unavailable-template uniqueness
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The unavailable-evidence template lock checks the allowed reason tokens but does not directly reject a second conflicting template definition.
+- **Hypothesis (untested):** Extend the existing template guard with an occurrence-count mutation when this area is next changed; first verify that a duplicate definition would escape the other contract checks.
+- **Upstream severity:** CRITICAL (adversarial A5b; outside OS8 reported the same optional gap)
+- **Found in:** tests/skill-protocols-review-and-prep.test.ts:539
+- **Evidence:** Full-source review and the coverage audit found one current template, not a duplicate or a demonstrated defect. The format mutation and 14 targeted suites pass. The approved plan requires contract-class mutation coverage, not this additional duplicate-definition case.
+- **Context:** Filed by /review-and-prep before draft PR creation at 59ae31c (2026-11-17).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
