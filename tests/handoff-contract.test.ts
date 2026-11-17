@@ -3059,6 +3059,32 @@ describe('(M) blocking=shown and post-audit=classify', () => {
     expect(raw).not.toMatch(/\b(?:routine|novel)\b/);
     expect(raw).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
   });
+
+  // Value: protects=docs/workflow-handoffs.md's blocking=shown paragraph states the CRITICAL attacker/outside reproduction probe and fails when any probe token is removed; fails_when=the paragraph drops a probe token or a mutation still passes; why_new=Track 85D T2, T3; seam=none; no_claim=installed-agent execution
+  test('blocking=shown paragraph in the handoff doc states the CRITICAL probe and fails on token removal', () => {
+    const start = DOC.indexOf('`blocking=shown` follows the same rollout order');
+    expect(start).toBeGreaterThan(-1);
+    const end = DOC.indexOf('\n\n', start);
+    expect(end).toBeGreaterThan(start);
+    const para = squash(DOC.slice(start, end));
+    const DOC_PROBE_TOKENS = [
+      'one bounded reproduction probe',
+      '`CRITICAL`',
+      'attacker part',
+      'outside voice',
+      'evidence reference',
+    ] as const;
+    const hasAll = (text: string) => DOC_PROBE_TOKENS.every((t) => has(text, t));
+    for (const token of DOC_PROBE_TOKENS) {
+      expect(has(para, token), token).toBe(true);
+    }
+    expect(hasAll(para)).toBe(true);
+    for (const token of DOC_PROBE_TOKENS) {
+      const mutated = para.split(token).join('');
+      expect(has(mutated, token), token).toBe(false);
+      expect(hasAll(mutated), token).toBe(false);
+    }
+  });
 });
 
 // Track 75A T4: capped-review recovery walk inside H-E.
