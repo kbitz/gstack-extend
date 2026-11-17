@@ -4907,16 +4907,12 @@ describe('bin/review-state', () => {
       '--delegate-file', 'c15-delegate-red-team.json',
     ];
     const state15Path = join(d15, 'review-run-state.json');
-    const beforeC15BadFindingBytes = readFileSync(state15Path, 'utf8');
     const rC15BadFinding = runCli([...c15BuildArgs, '--finding', 'red-team-1-1,CRITICAL,red-team']);
-    expect(rC15BadFinding.code).toBe(1);
-    expect(rC15BadFinding.json.reason).toBe('invalid-input');
-    expect(rC15BadFinding.json.detail.violations).toEqual([
-      { path: '--finding', rule: 'invalid-value', expected: 'none-when-outcome-not-completed' },
+    expect(rC15BadFinding.code).toBe(0);
+    expect(rC15BadFinding.json.reason).toBe('recorded');
+    expect(rC15BadFinding.json.detail.overrides).toEqual([
+      { flag: '--finding', sent: ['red-team-1-1,CRITICAL,red-team'], used: null, rule: 'null-when-outcome-not-completed' },
     ]);
-    expect(readFileSync(state15Path, 'utf8')).toBe(beforeC15BadFindingBytes);
-
-    expect(runCli(c15BuildArgs).json.reason).toBe('recorded');
     const afterC15ReqFiles = reqFiles(d15);
     expect(runCli(c15BuildArgs).json.reason).toBe('replayed');
     expect(reqFiles(d15)).toEqual(afterC15ReqFiles);
@@ -5147,5 +5143,184 @@ describe('bin/review-state', () => {
         expect(helpRes.out).toContain(`${cmd}:\n  required:`);
       }
     }
+  });
+
+  test("replays PR #263's rejected correction (C16): build overrides a contradicting --resolution with unknown, warns and records", () => {
+    const d = newDir(), passId = '002d2488-ed60-4d4f-9b83-01720b1d42ca', attId = 'ec9b7710-cdcf-4ab5-8bc3-7dc7ee7e3dc7', a4Id = '31e0b113-1473-43e6-b717-e50b99491811';
+    const reqFiles = () => readdirSync(d).filter((f) => f.startsWith('request-') && f.endsWith('.json')).sort();
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(970), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('pr263'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'native-adversarial']).json.reason).toBe('recorded');
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'native-adversarial', '--part', 'native-adversarial', '--attempt-id', attId, '--outcome', 'completed',
+      '--finding', 'A1,critical,native-adversarial', '--finding', 'A2,critical,native-adversarial', '--finding', 'A3,info,native-adversarial', '--finding', 'A4,info,native-adversarial', '--finding', 'A5,info,native-adversarial',
+    ]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'voice-complete', '--voice-id', 'native-adversarial', '--selected-attempt-id', attId]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'completed']).json.reason).toBe('recorded');
+    for (const [cid, fid] of [['9ae507ca-9129-4636-b395-e69dd1345ea0', 'A1'], ['9efef6f0-38a1-4544-bb8e-546c554d97f0', 'A2'], ['899ed21a-0b85-4f72-b29c-556a97c75861', 'A3']] as const) {
+      expect(runCli(['build', 'record', 'correction', '--dir', d, '--correction-id', cid, '--pass-id', passId, '--voice-id', 'native-adversarial', '--attempt-id', attId, '--finding-id', fid, '--adjudication', 'accepted', '--resolution', 'fixed', '--fixed-in', headSha]).json.reason).toBe('recorded');
+    }
+
+    const dInput = newDir();
+    copyFileSync(join(d, 'review-run-state.json'), join(dInput, 'review-run-state.json'));
+    const baseA4 = ['build', 'record', 'correction', '--dir', d, '--correction-id', a4Id, '--pass-id', passId, '--voice-id', 'native-adversarial', '--attempt-id', attId, '--finding-id', 'A4', '--adjudication', 'rejected'];
+    const rA4 = runCli([...baseA4, '--resolution', 'open']);
+    expect(rA4.json.reason).toBe('recorded');
+    expect(rA4.err).toBe('WARNING BUILD_OVERRIDE: record correction --resolution sent "open"; used "unknown"; rule unknown-when-rejected\n');
+    const expectedOverride = [{ flag: '--resolution', sent: 'open', used: 'unknown', rule: 'unknown-when-rejected' }];
+    expect(rA4.json.detail.overrides).toEqual(expectedOverride);
+
+    const a4ReqFiles = reqFiles(), logPath = join(d, 'build-overrides.jsonl');
+    const logLines1 = readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(logLines1).toHaveLength(1);
+    expect(logLines1[0]).toMatchObject({ v: 1, command: 'record correction', overrides: expectedOverride });
+    expect(a4ReqFiles).toContain(logLines1[0].request);
+    expect(JSON.parse(readFileSync(join(d, logLines1[0].request), 'utf8')).resolution).toBe('unknown');
+
+    const rOmit = runCli(baseA4);
+    expect([rOmit.json.reason, rOmit.err, rOmit.json.detail.overrides]).toEqual(['replayed', '', undefined]);
+    expect(reqFiles()).toEqual(a4ReqFiles);
+    expect(readFileSync(logPath, 'utf8').trim().split('\n')).toHaveLength(1);
+
+    const rFixed = runCli([...baseA4, '--resolution', 'fixed']);
+    expect(rFixed.json.reason).toBe('replayed');
+    expect(rFixed.err).toBe('WARNING BUILD_OVERRIDE: record correction --resolution sent "fixed"; used "unknown"; rule unknown-when-rejected\n');
+    expect(readFileSync(logPath, 'utf8').trim().split('\n')).toHaveLength(2);
+
+    const st = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(st.corrections.find((c) => c.correction_id === a4Id)?.resolution).toBe('unknown');
+    expect(unresolvedFindings(st)).toEqual(['A5 info']);
+
+    const rRaw = callCmd(dInput, 'record correction', { correction_id: a4Id, target: { pass_id: passId, voice_id: 'native-adversarial', attempt_id: attId, finding_id: 'A4' }, adjudication: 'rejected', resolution: 'open' });
+    expect(rRaw.json.reason).toBe('invalid-input');
+    expect(rRaw.json.detail.violations).toEqual([{ path: 'resolution', rule: 'invalid-value', expected: 'unknown-when-rejected' }]);
+    expect(readFileSync(join(REPO_ROOT, 'docs', 'review-run-state-calls.md'), 'utf8')).toContain(
+      'With `--adjudication rejected`, omit `--resolution`: the helper writes `unknown`, and any other `--resolution` is replaced with `unknown` and reported as an override.',
+    );
+  });
+
+  test('build overrides a flag that contradicts a value the helper fixes, warns, logs and records', () => {
+    const reqFiles = (dir: string) => readdirSync(dir).filter((f) => f.startsWith('request-') && f.endsWith('.json')).sort();
+    const seedStart = newDir(), seedOpen = newDir(), passId = uid(981);
+    const startRes = runCli(['build', 'start', '--dir', seedStart, '--run-id', uid(980), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('t2-seed'), '--policy-source', 'none supplied', '--max-continuations', '1']);
+    expect([startRes.json.reason, startRes.err, startRes.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    copyFileSync(join(seedStart, 'review-run-state.json'), join(seedOpen, 'review-run-state.json'));
+    const openRes = runCli(['build', 'record', 'pass', '--dir', seedOpen, '--pass-id', passId, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core', '--voice', 'red-team']);
+    expect([openRes.json.reason, openRes.err, existsSync(join(seedOpen, 'build-overrides.jsonl'))]).toEqual(['recorded', '', false]);
+
+    const tDisp = '2026-11-16T01:00:00Z', tRet = '2026-11-16T01:05:00Z';
+    const mkRunner = (outcome: 'credited' | 'fell-back') => ({
+      v: 1, status: 'ran', config_sha256: sha256('cfg'),
+      parts: [{ part: 'red-team', provider: 'p', model: 'm', call_id: sha256(outcome), replay: false, dispatched: true, dispatched_at: tDisp, returned_at: tRet, wall_ms: 10, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: null, parse: 'valid', verdict: 'clean', outcome, fallback_reason: outcome === 'credited' ? null : 'failed', findings: [] }],
+    });
+    const prepDir = (startOnly: boolean) => {
+      const d = newDir();
+      copyFileSync(join(startOnly ? seedStart : seedOpen, 'review-run-state.json'), join(d, 'review-run-state.json'));
+      if (!startOnly) { writeJson(d, 'credited.json', mkRunner('credited')); writeJson(d, 'fell-back.json', mkRunner('fell-back')); writeFileSync(join(d, 'pregate.json'), '{}\n'); writeFileSync(join(d, 'doc.md'), 'ok\n'); }
+      return d;
+    };
+
+    const rows: Array<{ startOnly?: boolean; emptyDir?: boolean; cmd: string; clean: string[]; extra: string[]; ov: { flag: string; sent: string | string[]; used: string | null; rule: string } }> = [
+      { emptyDir: true, cmd: 'start', clean: ['start', '--run-id', uid(982), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('p'), '--policy-source', 'none supplied', '--max-continuations', '1'], extra: ['--continues', headSha], ov: { flag: '--continues', sent: headSha, used: null, rule: 'null-when-prior_stops===0' } },
+      { cmd: 'record pass', clean: ['record', 'pass', '--pass-id', uid(983), '--state', 'started', '--scope', 'local', '--cycle', '2', '--coverage', 'full', '--commit', headSha, '--voice', 'core'], extra: ['--delta-from', baseSha], ov: { flag: '--delta-from', sent: baseSha, used: null, rule: 'null-when-full' } },
+      { cmd: 'record pass', clean: ['record', 'pass', '--pass-id', passId, '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(984), '--delegate-file', 'credited.json'], extra: ['--outcome', 'failed'], ov: { flag: '--outcome', sent: 'failed', used: 'completed', rule: 'credited-requires-completed-and-null-fallback_reason' } },
+      { cmd: 'record pass', clean: ['record', 'pass', '--pass-id', passId, '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(985), '--delegate-file', 'fell-back.json'], extra: ['--outcome', 'completed'], ov: { flag: '--outcome', sent: 'completed', used: 'failed', rule: 'fell-back-requires-failed-and-fallback_reason' } },
+      { cmd: 'record pass', clean: ['record', 'pass', '--pass-id', passId, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', uid(986), '--outcome', 'failed'], extra: ['--finding', 'F-1,P2,core'], ov: { flag: '--finding', sent: ['F-1,P2,core'], used: null, rule: 'null-when-outcome-not-completed' } },
+      { cmd: 'record pass', clean: ['record', 'pass', '--pass-id', passId, '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(987), '--delegate-file', 'credited.json'], extra: ['--dispatched-at', '2026-11-16T00:00:00Z'], ov: { flag: '--dispatched-at', sent: '2026-11-16T00:00:00Z', used: tDisp, rule: 'equal-to-attempt-dispatched_at' } },
+      { cmd: 'record pass', clean: ['record', 'pass', '--pass-id', passId, '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(988), '--delegate-file', 'credited.json'], extra: ['--returned-at', '2026-11-16T00:05:00Z'], ov: { flag: '--returned-at', sent: '2026-11-16T00:05:00Z', used: tRet, rule: 'equal-to-attempt-returned_at' } },
+      { cmd: 'record gate', clean: ['record', 'gate', '--gate-id', uid(989), '--name', 'pregate', '--result', 'passed', '--commit', headSha, '--pregate-raw-verdict', 'PASS', '--pregate-wrapper-verdict', 'passed', '--pregate-policy', 'base', '--pregate-record', 'pregate.json'], extra: ['--greptile-value', 'clean'], ov: { flag: '--greptile-value', sent: 'clean', used: null, rule: 'greptile-gate-only' } },
+      { cmd: 'record gate', clean: ['record', 'gate', '--gate-id', uid(990), '--name', 'greptile', '--result', 'passed', '--commit', headSha, '--greptile-value', 'clean'], extra: ['--skipped-lane', 'unit'], ov: { flag: '--skipped-lane', sent: ['unit'], used: null, rule: 'pregate-gate-only' } },
+      { cmd: 'record gate', clean: ['record', 'gate', '--gate-id', uid(991), '--name', 'probe-1', '--result', 'passed', '--commit', headSha], extra: ['--greptile-run', 'https://example.com/r'], ov: { flag: '--greptile-run', sent: 'https://example.com/r', used: null, rule: 'greptile-gate-only' } },
+      { cmd: 'record audit', clean: ['record', 'audit', '--audit-id', uid(992), '--name', 'documentation', '--result', 'passed', '--report-id', 'doc-1', '--section', 'doc.md', '--commit', headSha], extra: ['--coverage-pct', '90'], ov: { flag: '--coverage-pct', sent: '90', used: null, rule: 'coverage-audit-only' } },
+      { cmd: 'record audit', clean: ['record', 'audit', '--audit-id', uid(993), '--name', 'coverage', '--result', 'passed', '--coverage-threshold', '80', '--commit', headSha], extra: ['--report-id', 'doc-1'], ov: { flag: '--report-id', sent: 'doc-1', used: null, rule: 'documentation-audit-only' } },
+      { cmd: 'checkpoint', clean: ['checkpoint', '--checkpoint-id', uid(994), '--kind', 'ready', '--base', baseSha], extra: ['--session-id', `extend-${uid(994)}`], ov: { flag: '--session-id', sent: `extend-${uid(994)}`, used: null, rule: 'null-when-kind-not-resume' } },
+      { startOnly: true, cmd: 'finish', clean: ['finish', '--outcome', 'prepared', '--base', baseSha], extra: ['--stop-reason', 'cap'], ov: { flag: '--stop-reason', sent: 'cap', used: null, rule: 'null-when-prepared' } },
+      { startOnly: true, cmd: 'finish', clean: ['finish', '--outcome', 'blocked', '--base', baseSha, '--stop-reason', 'err'], extra: ['--delta-base', baseSha], ov: { flag: '--delta-base', sent: baseSha, used: null, rule: 'null-when-not-stopped' } },
+      { startOnly: true, cmd: 'finish', clean: ['finish', '--outcome', 'blocked', '--base', baseSha, '--stop-reason', 'err'], extra: ['--stop-count', '1'], ov: { flag: '--stop-count', sent: '1', used: null, rule: 'null-when-not-stopped' } },
+    ];
+    expect(rows).toHaveLength(16);
+    for (const row of rows) {
+      const d = row.emptyDir ? newDir() : prepDir(Boolean(row.startOnly));
+      const r1 = runCli(['build', ...row.clean, '--dir', d, ...row.extra]);
+      expect(r1.json.reason, row.ov.rule).toBe('recorded');
+      expect(r1.err).toBe(`WARNING BUILD_OVERRIDE: ${row.cmd} ${row.ov.flag} sent ${JSON.stringify(row.ov.sent)}; used ${JSON.stringify(row.ov.used)}; rule ${row.ov.rule}\n`);
+      expect(r1.json.detail.overrides).toEqual([row.ov]);
+      expect(readFileSync(join(d, 'build-overrides.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+      const files1 = reqFiles(d);
+      expect(runCli(['build', ...row.clean, '--dir', d]).json.reason, `replay ${row.ov.rule}`).toBe('replayed');
+      expect(reqFiles(d)).toEqual(files1);
+    }
+
+    const dPos = prepDir(false);
+    for (const posArgs of [
+      ['build', 'record', 'pass', '--dir', dPos, '--pass-id', uid(995), '--state', 'started', '--scope', 'local', '--cycle', '2', '--coverage', 'delta', '--delta-from', baseSha, '--commit', headSha, '--voice', 'core'],
+      ['build', 'record', 'pass', '--dir', dPos, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'red-team', '--part', 'red-team', '--attempt-id', uid(996), '--delegate-file', 'credited.json', '--dispatched-at', tDisp],
+      ['build', 'checkpoint', '--dir', dPos, '--checkpoint-id', uid(997), '--kind', 'resume', '--session-id', `extend-${uid(997)}`],
+    ]) {
+      const rPos = runCli(posArgs);
+      expect([rPos.json.reason, rPos.err, rPos.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    }
+    expect(existsSync(join(dPos, 'build-overrides.jsonl'))).toBe(false);
+
+    const beforeVcState = readFileSync(join(dPos, 'review-run-state.json'), 'utf8'), beforeVcFiles = reqFiles(dPos);
+    const rVc = runCli(['build', 'record', 'pass', '--dir', dPos, '--pass-id', passId, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', uid(996), '--not-applicable', 'not-applicable']);
+    expect([rVc.code, rVc.json.reason, rVc.json.detail.violations]).toEqual([1, 'invalid-input', [{ path: '--selected-attempt-id', rule: 'invalid-value', expected: 'exactly-one-of-selected_attempt_id-or-not_applicable' }]]);
+    expect(reqFiles(dPos)).toEqual(beforeVcFiles);
+    expect(readFileSync(join(dPos, 'review-run-state.json'), 'utf8')).toBe(beforeVcState);
+  });
+
+  test('design D13 builder coverage table lists every cross-field rule in applyCommand with its handling', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src', 'review-state', 'state.ts'), 'utf8');
+    const slice = src.slice(src.indexOf('export function applyCommand('), src.indexOf('function latestHelperTimestamp('));
+    const anchors = [
+      ['start', "if (command === 'start') {"], ['record pass', "if (command === 'record pass') {"],
+      ['record pass (started)', "if (pState === 'started') {"], ['record pass (attempt)', "if (pState === 'attempt') {"],
+      ['record pass (voice-complete)', "if (pState === 'voice-complete') {"], ['record pass (completed)', "checkShape(rawInput, 'record pass (completed)'"],
+      ['record correction', "if (command === 'record correction') {"], ['record gate', "if (command === 'record gate') {"],
+      ['record audit', "if (command === 'record audit') {"], ['checkpoint', "if (command === 'checkpoint') {"], ['finish', '// finish'],
+    ] as const;
+    const pos = anchors.map(([cmd, a]) => {
+      const idx = slice.indexOf(a);
+      expect([idx > -1, slice.indexOf(a, idx + 1)], a).toEqual([true, -1]);
+      return { cmd, idx };
+    });
+    for (let i = 1; i < pos.length; i++) expect(pos[i]!.idx).toBeGreaterThan(pos[i - 1]!.idx);
+
+    const drop = new Set(['uuid', 'nonempty-unique-part-array', 'nonempty-unique-voice-id-array', 'unique-part-array-0..8']);
+    const expectedSet = new Set<string>(), segByCmd = new Map<string, string>();
+    for (let i = 0; i < pos.length; i++) {
+      const seg = slice.slice(pos[i]!.idx, i + 1 < pos.length ? pos[i + 1]!.idx : slice.length);
+      segByCmd.set(pos[i]!.cmd, seg);
+      for (const m of seg.matchAll(/\{\s*path:\s*([^,]+),\s*rule:\s*'(?:invalid-value|tree-mismatch)',\s*expected:\s*((?:`[^`]*`|'[^']*'|[^\}])+)\}/g)) {
+        const path = m[1]!.trim().replace(/^['"`]|['"`]$/g, '').replace(/\$\{fp\}/g, 'findings[i]');
+        const expExpr = m[2]!.includes('?') ? m[2]!.slice(m[2]!.indexOf('?') + 1) : m[2]!;
+        for (const lit of expExpr.matchAll(/['"`]([^'"`]+)['"`]/g)) {
+          const exp = lit[1]!.replace(/\$\{voice\.part\}/g, '<part>');
+          if (!drop.has(exp)) expectedSet.add(`${pos[i]!.cmd}|${path}|${exp}`);
+        }
+      }
+    }
+    for (const [cmd, path, exp, anchor] of [
+      ['record pass (attempt)', 'findings', 'required-when-outcome-completed', "rawInput.outcome === 'completed' ? ['findings'] : []"],
+      ['record pass (attempt)', 'findings[i].attribution_reason', 'enum-when-found_by-empty', 'fb.length === 0 && !inEnum(ENUMS.attrReason)(fc.attribution_reason)'],
+      ['start', 'policy.delegation', 'keys-by-status', "pol.delegation.status === 'active'"],
+      ['record gate', 'details', 'required-for-pregate-and-greptile', "gName === 'pregate' || gName === 'greptile' ? ['details'] : []"],
+      ['record gate', 'details', 'keys-by-name', "checkKeys(c.details, [], [], 'details', v)"],
+      ['record audit', 'details', 'keys-by-name', "c.name === 'documentation'"],
+      ['finish', 'full_review_evidence', 'keys-by-status', "c.full_review_evidence.status === 'available'"],
+    ] as const) {
+      expect(segByCmd.get(cmd)).toContain(anchor);
+      expectedSet.add(`${cmd}|${path}|${exp}`);
+    }
+
+    const design = readFileSync(DESIGN_PATH, 'utf8'), secStart = design.indexOf('### Builder coverage of cross-field rules');
+    const tableLines = design.slice(secStart, design.indexOf('\n### ', secStart + 1)).split('\n').filter((l) => l.startsWith('| `'));
+    const validHandlings = new Set(['derived', 'overridden-with-warning', 'refused', 'not applicable']);
+    const docKeys = tableLines.map((line) => {
+      const cells = line.split('|').slice(1, -1).map((c) => c.trim());
+      expect(validHandlings.has(cells[3]!), line).toBe(true);
+      return `${cells[0]!.slice(1, -1)}|${cells[1]!.slice(1, -1)}|${cells[2]!.slice(1, -1)}`;
+    });
+    expect(docKeys).toHaveLength(new Set(docKeys).size);
+    expect(new Set(docKeys)).toEqual(expectedSet);
   });
 });

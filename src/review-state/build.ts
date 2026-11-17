@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { closeSync, fsyncSync, lstatSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { DELEGATE_RUNNER_EXTRA_KEYS, HEX64_RE, isObj, isStr, SCHEMA_VERSION, STATE_KEYS, toPartLabel, truncate80, type CommandName, type DelegationPolicy, type EvidenceRef, type Violation } from './state.ts';
+import { DELEGATE_RUNNER_EXTRA_KEYS, HEX64_RE, isIsoZ, isObj, isStr, SCHEMA_VERSION, STATE_KEYS, toPartLabel, truncate80, type CommandName, type DelegationPolicy, type EvidenceRef, type Violation } from './state.ts';
 import { checkDirFile, executeCommand, makeEnvelope, readHelperVersion, unlinkQuiet, validateStateDir, writeAll, type StoreResult } from './store.ts';
 
 export const BUILD_COMMANDS = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'] as const satisfies readonly CommandName[];
@@ -220,8 +220,9 @@ export function buildHelp(): string {
   return `review-state build — request builder for /review-and-prep run state (${SCHEMA_VERSION})\nBuilds the canonical JSON request in --dir and records it in one call.\n\nUsage:\n  bin/review-state build <command> --dir DIR [flags]\n\n${sections}\n\nDocs: docs/designs/review-run-state.md\n`;
 }
 
+export type BuildOverride = { flag: string; sent: string | string[]; used: string | null; rule: string };
 export type BuildRequestResult =
-  | { ok: true; request: Record<string, unknown> }
+  | { ok: true; request: Record<string, unknown>; overrides: BuildOverride[] }
   | { ok: false; reason: 'usage' | 'invalid-input'; detail: Record<string, unknown> };
 
 const toIntOrString = (v: string): number | string => (/^\d+$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : v);
@@ -273,6 +274,13 @@ function hashEvidenceFiles(paths: readonly string[], realDir: string): { ok: tru
 }
 
 export function buildRequest(command: CommandName, args: readonly string[], realDir: string): BuildRequestResult {
+  const overrides: BuildOverride[] = [];
+  const over = (flag: string, sent: string | string[], used: string | null, rule: string) => overrides.push({ flag, sent, used, rule });
+  const keep = (map: Map<string, string> | Map<string, string[]>, flag: string, dropCond: boolean, rule: string) => {
+    if (!map.has(flag)) return false;
+    if (dropCond) { over(flag, map.get(flag)!, null, rule); return false; }
+    return true;
+  };
   if (command === 'record pass') {
     const pre = parseTableArgs(args, ALL_PASS_FLAGS);
     if (!pre.ok) return { ok: false, reason: 'usage', detail: { message: pre.message } };
@@ -302,10 +310,10 @@ export function buildRequest(command: CommandName, args: readonly string[], real
         cycle: toIntOrString(scalars.get('--cycle')!),
         coverage: scalars.get('--coverage')!,
       };
-      if (scalars.has('--delta-from')) req.delta_from = scalars.get('--delta-from')!;
+      if (keep(scalars, '--delta-from', req.coverage === 'full', 'null-when-full')) req.delta_from = scalars.get('--delta-from')!;
       req.candidate = candidate;
       req.required_voices = lists.get('--voice')!;
-      return { ok: true, request: req };
+      return { ok: true, request: req, overrides };
     }
 
     if (passState === 'attempt') {
@@ -324,19 +332,29 @@ export function buildRequest(command: CommandName, args: readonly string[], real
         delegateEntry = matches[0]!;
       }
 
-      let outcome = scalars.get('--outcome');
-      if (outcome === undefined && delegateEntry) {
-        if (delegateEntry.outcome === 'credited') outcome = 'completed';
-        else if (delegateEntry.outcome === 'fell-back') outcome = 'failed';
+      const expectedOutcome = delegateEntry?.outcome === 'credited' ? 'completed' : delegateEntry?.outcome === 'fell-back' ? 'failed' : undefined;
+      const sentOutcome = scalars.get('--outcome');
+      if (expectedOutcome && sentOutcome !== undefined && sentOutcome !== expectedOutcome) {
+        over('--outcome', sentOutcome, expectedOutcome, expectedOutcome === 'completed' ? 'credited-requires-completed-and-null-fallback_reason' : 'fell-back-requires-failed-and-fallback_reason');
       }
+      const outcome = expectedOutcome ?? sentOutcome;
       if (outcome === undefined) return failInvalid('--outcome', 'missing-flag', 'outcome');
 
-      const dispatchedAt = scalars.get('--dispatched-at') ?? (delegateEntry && typeof delegateEntry.dispatched_at === 'string' ? delegateEntry.dispatched_at : undefined);
-      const returnedAt = scalars.get('--returned-at') ?? (delegateEntry && typeof delegateEntry.returned_at === 'string' ? delegateEntry.returned_at : undefined);
+      const pickTime = (flag: '--dispatched-at' | '--returned-at', key: 'dispatched_at' | 'returned_at'): string | undefined => {
+        const sent = scalars.get(flag);
+        const entryVal = delegateEntry && typeof delegateEntry[key] === 'string' ? (delegateEntry[key] as string) : undefined;
+        if (sent !== undefined && isIsoZ(entryVal) && isIsoZ(sent) && entryVal !== sent) {
+          over(flag, sent, entryVal, `equal-to-attempt-${key}`);
+          return entryVal;
+        }
+        return sent ?? entryVal;
+      };
+      const dispatchedAt = pickTime('--dispatched-at', 'dispatched_at');
+      const returnedAt = pickTime('--returned-at', 'returned_at');
 
       const findingSpecs = lists.get('--finding') ?? [];
       if (outcome !== 'completed' && findingSpecs.length > 0) {
-        return failInvalid('--finding', 'invalid-value', 'none-when-outcome-not-completed');
+        over('--finding', findingSpecs, null, 'null-when-outcome-not-completed');
       }
       let findings: Array<Record<string, unknown>> | undefined;
       if (outcome === 'completed') {
@@ -388,10 +406,13 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       if (returnedAt !== undefined) req.returned_at = returnedAt;
       if (delegateEntry !== undefined) req.delegate = delegateEntry;
       if (findings !== undefined) req.findings = findings;
-      return { ok: true, request: req };
+      return { ok: true, request: req, overrides };
     }
 
     if (passState === 'voice-complete') {
+      if (scalars.has('--selected-attempt-id') && scalars.has('--not-applicable')) {
+        return failInvalid('--selected-attempt-id', 'invalid-value', 'exactly-one-of-selected_attempt_id-or-not_applicable');
+      }
       const req: Record<string, unknown> = {
         pass_id: scalars.get('--pass-id')!,
         state: 'voice-complete',
@@ -399,10 +420,10 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       };
       if (scalars.has('--selected-attempt-id')) req.selected_attempt_id = scalars.get('--selected-attempt-id')!;
       if (scalars.has('--not-applicable')) req.not_applicable = scalars.get('--not-applicable')!;
-      return { ok: true, request: req };
+      return { ok: true, request: req, overrides };
     }
 
-    return { ok: true, request: { pass_id: scalars.get('--pass-id')!, state: 'completed' } };
+    return { ok: true, request: { pass_id: scalars.get('--pass-id')!, state: 'completed' }, overrides };
   }
 
   const rows = FLAG_TABLES[command];
@@ -448,13 +469,14 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       source: scalars.get('--policy-source')!,
       delegation,
     };
+    const priorStops = scalars.has('--prior-stops') ? toIntOrString(scalars.get('--prior-stops')!) : 0;
     req.continuation = {
-      prior_stops: scalars.has('--prior-stops') ? toIntOrString(scalars.get('--prior-stops')!) : 0,
+      prior_stops: priorStops,
       max: toIntOrString(scalars.get('--max-continuations')!),
-      continues: scalars.get('--continues') ?? null,
+      continues: keep(scalars, '--continues', priorStops === 0, 'null-when-prior_stops===0') ? scalars.get('--continues')! : null,
     };
     if (scalars.has('--session-id')) req.session_id = scalars.get('--session-id')!;
-    return { ok: true, request: req };
+    return { ok: true, request: req, overrides };
   }
 
   if (command === 'record correction') {
@@ -468,11 +490,18 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       },
     };
     if (scalars.has('--adjudication')) req.adjudication = scalars.get('--adjudication')!;
-    if (scalars.has('--resolution')) req.resolution = scalars.get('--resolution')!;
+    if (scalars.get('--adjudication') === 'rejected') {
+      if (scalars.has('--resolution') && scalars.get('--resolution') !== 'unknown') {
+        over('--resolution', scalars.get('--resolution')!, 'unknown', 'unknown-when-rejected');
+      }
+      req.resolution = 'unknown';
+    } else if (scalars.has('--resolution')) {
+      req.resolution = scalars.get('--resolution')!;
+    }
     if (scalars.has('--receipt-class')) req.receipt_class = scalars.get('--receipt-class')!;
     if (scalars.has('--fixed-in')) req.fixed_in = scalars.get('--fixed-in')!;
     if (scalars.has('--supersedes')) req.supersedes = scalars.get('--supersedes')!;
-    return { ok: true, request: req };
+    return { ok: true, request: req, overrides };
   }
 
   if (command === 'record gate') {
@@ -481,26 +510,22 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     if (scalars.has('--base')) candidate.base = scalars.get('--base')!;
     if (scalars.has('--wtree')) candidate.wtree = scalars.get('--wtree')!;
 
-    const detailScalarFlags = ['--greptile-value', '--greptile-run', '--pregate-raw-verdict', '--pregate-wrapper-verdict', '--pregate-policy', '--pregate-record'] as const;
-    const hasDetailFlag = detailScalarFlags.some((f) => scalars.has(f)) || lists.has('--skipped-lane');
     let details: Record<string, unknown> | undefined;
-    if (name === 'greptile' || name === 'pregate' || hasDetailFlag) {
-      details = {};
-      if (scalars.has('--greptile-value')) details.value = scalars.get('--greptile-value')!;
-      if (scalars.has('--greptile-run')) details.run = scalars.get('--greptile-run')!;
-      if (scalars.has('--pregate-raw-verdict')) details.raw_verdict = scalars.get('--pregate-raw-verdict')!;
-      if (scalars.has('--pregate-wrapper-verdict')) details.wrapper_verdict = scalars.get('--pregate-wrapper-verdict')!;
-      if (scalars.has('--pregate-policy')) details.policy = scalars.get('--pregate-policy')!;
-      if (scalars.has('--pregate-record')) {
-        const recPath = scalars.get('--pregate-record')!;
-        const check = checkDirFile(realDir, recPath);
-        if (!check.ok) return failInvalid('--pregate-record', check.error, 'valid-evidence-file-in-dir');
-        details.record_path = recPath;
-        details.record_sha256 = check.sha256;
-      }
-      if (name === 'pregate' || lists.has('--skipped-lane')) {
-        details.skipped_lanes = lists.get('--skipped-lane') ?? [];
-      }
+    if (name === 'greptile' || name === 'pregate') details = {};
+    if (keep(scalars, '--greptile-value', name !== 'greptile', 'greptile-gate-only')) details!.value = scalars.get('--greptile-value')!;
+    if (keep(scalars, '--greptile-run', name !== 'greptile', 'greptile-gate-only')) details!.run = scalars.get('--greptile-run')!;
+    if (keep(scalars, '--pregate-raw-verdict', name !== 'pregate', 'pregate-gate-only')) details!.raw_verdict = scalars.get('--pregate-raw-verdict')!;
+    if (keep(scalars, '--pregate-wrapper-verdict', name !== 'pregate', 'pregate-gate-only')) details!.wrapper_verdict = scalars.get('--pregate-wrapper-verdict')!;
+    if (keep(scalars, '--pregate-policy', name !== 'pregate', 'pregate-gate-only')) details!.policy = scalars.get('--pregate-policy')!;
+    if (keep(scalars, '--pregate-record', name !== 'pregate', 'pregate-gate-only')) {
+      const recPath = scalars.get('--pregate-record')!;
+      const check = checkDirFile(realDir, recPath);
+      if (!check.ok) return failInvalid('--pregate-record', check.error, 'valid-evidence-file-in-dir');
+      details!.record_path = recPath;
+      details!.record_sha256 = check.sha256;
+    }
+    if (keep(lists, '--skipped-lane', name !== 'pregate', 'pregate-gate-only') || name === 'pregate') {
+      details!.skipped_lanes = lists.get('--skipped-lane') ?? [];
     }
 
     const evRes = hashEvidenceFiles(lists.get('--evidence') ?? [], realDir);
@@ -515,23 +540,23 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     req.candidate = candidate;
     if (details !== undefined) req.details = details;
     if (evRes.items.length > 0) req.evidence = evRes.items;
-    return { ok: true, request: req };
+    return { ok: true, request: req, overrides };
   }
 
   if (command === 'record audit') {
     const name = scalars.get('--name')!;
     const details: Record<string, unknown> = {};
-    if (scalars.has('--coverage-pct')) {
+    if (keep(scalars, '--coverage-pct', name === 'documentation', 'coverage-audit-only')) {
       const rawPct = scalars.get('--coverage-pct')!;
       details.pct = rawPct === 'null' ? null : toNumberOrString(rawPct);
     } else if (name === 'coverage') {
       details.pct = null;
     }
-    if (scalars.has('--coverage-threshold')) {
+    if (keep(scalars, '--coverage-threshold', name === 'documentation', 'coverage-audit-only')) {
       details.threshold = toNumberOrString(scalars.get('--coverage-threshold')!);
     }
-    if (scalars.has('--report-id')) details.report_id = scalars.get('--report-id')!;
-    if (scalars.has('--section')) {
+    if (keep(scalars, '--report-id', name === 'coverage', 'documentation-audit-only')) details.report_id = scalars.get('--report-id')!;
+    if (keep(scalars, '--section', name === 'coverage', 'documentation-audit-only')) {
       const secPath = scalars.get('--section')!;
       const check = checkDirFile(realDir, secPath);
       if (!check.ok) return failInvalid('--section', check.error, 'valid-evidence-file-in-dir');
@@ -554,7 +579,7 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       candidate,
     };
     if (evRes.items.length > 0) req.evidence = evRes.items;
-    return { ok: true, request: req };
+    return { ok: true, request: req, overrides };
   }
 
   if (command === 'checkpoint') {
@@ -566,9 +591,9 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     };
     if (scalars.has('--base')) req.base = scalars.get('--base')!;
     if (scalars.has('--wtree')) req.wtree = scalars.get('--wtree')!;
-    if (scalars.has('--session-id')) req.session_id = scalars.get('--session-id')!;
+    if (keep(scalars, '--session-id', req.kind !== 'resume', 'null-when-kind-not-resume')) req.session_id = scalars.get('--session-id')!;
     if (evRes.items.length > 0) req.evidence = evRes.items;
-    return { ok: true, request: req };
+    return { ok: true, request: req, overrides };
   }
 
   // finish
@@ -594,16 +619,16 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     outcome: scalars.get('--outcome')!,
     base: scalars.get('--base')!,
   };
-  if (scalars.has('--stop-reason')) req.stop_reason = scalars.get('--stop-reason')!;
-  if (scalars.has('--delta-base')) req.delta_base = scalars.get('--delta-base')!;
-  if (scalars.has('--stop-count')) req.stop_count = toIntOrString(scalars.get('--stop-count')!);
+  if (keep(scalars, '--stop-reason', req.outcome === 'prepared', 'null-when-prepared')) req.stop_reason = scalars.get('--stop-reason')!;
+  if (keep(scalars, '--delta-base', req.outcome !== 'stopped', 'null-when-not-stopped')) req.delta_base = scalars.get('--delta-base')!;
+  if (keep(scalars, '--stop-count', req.outcome !== 'stopped', 'null-when-not-stopped')) req.stop_count = toIntOrString(scalars.get('--stop-count')!);
   if (scalars.has('--wtree')) req.wtree = scalars.get('--wtree')!;
   if (presences.has('--review-restriction-resolved')) req.review_restriction_resolved = true;
   if (scalars.has('--readiness-confirmed-at')) req.readiness_confirmed_at = scalars.get('--readiness-confirmed-at')!;
   if (fullReviewEvidence !== undefined) req.full_review_evidence = fullReviewEvidence;
   if (lists.has('--user-facing-change')) req.user_facing_changes = lists.get('--user-facing-change')!;
   if (evRes.items.length > 0) req.evidence = evRes.items;
-  return { ok: true, request: req };
+  return { ok: true, request: req, overrides };
 }
 
 export function executeBuild(
@@ -611,6 +636,7 @@ export function executeBuild(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
   versionPath?: string,
+  stderr: (text: string) => void = (t) => process.stderr.write(t),
 ): StoreResult {
   const helperVersion = readHelperVersion(versionPath);
   const rest = argv[0] === 'build' ? argv.slice(1) : argv;
@@ -671,7 +697,10 @@ export function executeBuild(
 
   const bytes = Buffer.from(`${JSON.stringify(built.request)}\n`, 'utf8');
   const hash16 = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
-  const reqPath = join(realDir, `request-${validCommand.replace(/ /g, '-')}-${hash16}.json`);
+  const reqName = `request-${validCommand.replace(/ /g, '-')}-${hash16}.json`;
+  const reqPath = join(realDir, reqName);
+  const withOverrides = (res: StoreResult): StoreResult =>
+    built.overrides.length > 0 ? { ...res, detail: { ...res.detail, overrides: built.overrides } } : res;
 
   let createdRequest = false;
   try {
@@ -694,13 +723,28 @@ export function executeBuild(
         same = false;
       }
       if (!same) {
-        return makeEnvelope(validCommand, 'unwritable', { errno: 'EEXIST', syscall: 'open', path: truncate80(reqPath) }, validStatePath, null, undefined, helperVersion);
+        return withOverrides(makeEnvelope(validCommand, 'unwritable', { errno: 'EEXIST', syscall: 'open', path: truncate80(reqPath) }, validStatePath, null, undefined, helperVersion));
       }
     } else {
       if (createdRequest) unlinkQuiet(reqPath);
-      return makeEnvelope(validCommand, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(reqPath) }, validStatePath, null, undefined, helperVersion);
+      return withOverrides(makeEnvelope(validCommand, 'unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'open', path: truncate80(reqPath) }, validStatePath, null, undefined, helperVersion));
     }
   }
 
-  return executeCommand(validCommand, dirArg, reqPath, cwd, env, versionPath);
+  if (built.overrides.length > 0) {
+    const logBytes = Buffer.from(`${JSON.stringify({ v: 1, at: new Date().toISOString(), command: validCommand, request: reqName, overrides: built.overrides })}\n`, 'utf8');
+    try {
+      const fd = openSync(join(realDir, 'build-overrides.jsonl'), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+      try {
+        writeAll(fd, logBytes);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    } catch (err) {
+      stderr(`WARNING BUILD_OVERRIDE_LOG: ${(err as NodeJS.ErrnoException).code ?? 'EIO'}\n`);
+    }
+  }
+
+  return withOverrides(executeCommand(validCommand, dirArg, reqPath, cwd, env, versionPath));
 }

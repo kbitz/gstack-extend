@@ -1,5 +1,5 @@
 import { isAbsolute, join } from 'node:path';
-import { buildHelp, executeBuild } from './build.ts';
+import { buildHelp, executeBuild, type BuildOverride } from './build.ts';
 import { executeExport, EXPORT_SCHEMA } from './export.ts';
 import { executeRender, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
 import { executeShow, SHOW_SCHEMA } from './show.ts';
@@ -91,7 +91,11 @@ export function main(argv: string[], io: CliIo): number {
       io.stdout(buildHelp());
       return 0;
     }
-    return emitResult(executeBuild(argv, io.cwd, env, io.versionPath), io);
+    const res = executeBuild(argv, io.cwd, env, io.versionPath, io.stderr);
+    for (const ov of (res.detail.overrides as BuildOverride[] | undefined) ?? []) {
+      io.stderr(`WARNING BUILD_OVERRIDE: ${res.command} ${ov.flag} sent ${JSON.stringify(ov.sent)}; used ${JSON.stringify(ov.used)}; rule ${ov.rule}\n`);
+    }
+    return emitResult(res, io);
   }
   if (argv.length === 1 && argv[0] === '--version') {
     io.stdout(`review-state ${readHelperVersion(io.versionPath) ?? 'unknown'}\n`);
