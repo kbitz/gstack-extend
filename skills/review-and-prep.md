@@ -75,6 +75,8 @@ unset _ER_UNVERIFIED _ER_SKILL
 
 Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review and full-review then stop, because their tool and session-state steps need the root.
 
+In this skill, `<extend-root>` is the path on the preamble's `EXTEND_ROOT:` line; when no `EXTEND_ROOT:` line was printed, every `<extend-root>` helper or document counts as missing.
+
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
 
@@ -180,13 +182,10 @@ prints the ID that the new run (and its single run `begin`) uses, as
 **Segments** above says.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
-Under `run-state=record` (**Read an optional review policy**), read
-`<extend-root>/docs/review-run-state-calls.md` once at Step 1 and follow it
-instead of this section's run `begin` and `end`, pass, correction and
-context-override rules; spans, waits and decisions stay, with `GX_RUN` from
-derive's `current.run_step_id`, `GX_SID` from its `current.session_id`,
-`GX_CAPTURE=1` only when `current.run_begin` is `recorded` or `replayed`, and no
-context-override argument. Without the value this section applies unchanged.
+Under `run-state=record` (**Read an optional review policy**), spans, waits and
+decisions stay with `GX_RUN` from derive's `current.run_step_id`, `GX_SID` from
+its `current.session_id`, `GX_CAPTURE=1` only when `current.run_begin` is
+`recorded` or `replayed`, and no context-override argument.
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
 producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
@@ -485,11 +484,6 @@ for those routine actions. It also pre-approves the recommended option of a
 reversible fix-scope choice, under **Take recommended fix-scope options without
 asking** below. Creating or discussing this skill is not invoking it.
 
-This skill carries the shared upgrade-flow and telemetry blocks but excludes
-the shared protocol blocks used by the review and planning
-skills. It orchestrates installed skills and stores its evidence in the PR;
-protocol tests keep these memberships separate.
-
 ## Boundaries
 
 - `/ship` owns release version assignment, version-prefixed PR titles, release
@@ -673,7 +667,7 @@ Before invoking `/review`, determine whether Greptile applies:
   Use the repository's documented docs-only classification, read from the
   base tip, when available; if the PR modifies that documentation, treat it
   like a root-marker change. Otherwise apply the shared
-  [docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) (read `docs/docs-ship.md` under the absolute gstack-extend root recorded in this installed skill directory's `.extend-root`; use that installed version and stop if the pointer or contract is missing) without its `docs-ship:docs` opt-ins,
+  [docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) (read `<extend-root>/docs/docs-ship.md`; use that installed version and stop if the contract is missing) without its `docs-ship:docs` opt-ins,
   and inspect the changes for documentation/prose and supporting doc assets only. Behavior, configuration, build, or test changes make it a mixed
   PR. Skill/prompt instructions that drive agent behavior are implementation,
   even when stored in Markdown. Inspect the whole base-to-head PR diff plus
@@ -953,6 +947,17 @@ It is a phase-status line like the parsed policy: outside any copyable handoff,
 not a receipt line, and it changes no key, gate, outcome or continuation. A
 line read as `none supplied` prints no warning.
 
+An installation without the value reads the whole line as `none supplied`
+(exit 0 means supported) and omits the value otherwise, keeping its other keys;
+see the caller rollout in
+[workflow handoffs](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#grammar-h-e-continue)
+(`docs/workflow-handoffs.md#grammar-h-e-continue`). Omitted, an opt-in key or
+value leaves today's behavior unchanged and records nothing for it. The light
+review default never sets it unless **Use the light review default** names it
+below. Each opt-in key or value is independent of the others unless its bullet
+states an exclusion or precedence, waives no gate and never authorizes a
+continuation.
+
 - Keys after the version are optional and unordered. `max-continuations`
   defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.
   A repeated key, an unknown version, key or value, or a second policy line
@@ -973,64 +978,48 @@ line read as `none supplied` prints no warning.
   batches, as under `final`. After the last fix batch and the documentation
   audit, the skill freezes the final content and ends its turn at **Pause for
   an external full-suite gate**, leaving the PR unready, so the caller can run
-  the full suite on that head and tree outside this session. The value waives
-  no gate: the pregate still runs on an accepted pass, and an attested pass
-  never becomes a `tests` ledger record. `/ship-and-land` is unchanged and
-  never pauses; a recorded `full-suite=final` keeps its own full run.
-  When the attested command covers every test the diff selects, the pregate
-  narrows to its preflight stage as **Narrow the pregate after an accepted
-  pass** sets out; any other case runs the pregate as today.
-  A caller first checks the loaded copy with `grep -F 'full-suite=external'
-  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
-  otherwise, keeping its other keys, because an older installation reads the
-  whole line as `none supplied`. To see whether the loaded copy narrows, it runs
-  `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`; exit 1 means an older installation runs the
-  pregate as today, and the policy line stays unchanged.
-- `documentation-scope=contracts` (its only value) is opt-in. It bounds the
-  documentation audit's read list and its one re-audit as **Bound the
-  documentation audit** defines; omitted, the audit runs as today. It waives no
-  gate, keeps the audit's attempt bound and never authorizes a continuation. It
-  is independent of every other key, including `documentation-audit=final`: a
-  caller may pass either key without the other or both together. An installation
-  without this value reads a line carrying it as `none supplied`, so a caller
-  checks the loaded copy with `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
-  (exit 0 means supported) and omits the value otherwise, keeping its other
-  keys.
-- `post-audit=classify` (its only value) is opt-in. After the documentation
-  audit's last attempt, a change made after it takes **Classify changes after
-  the documentation audit's last attempt** before the owner is asked; omitted, a
-  change after the last attempt takes today's blocked recovery and nothing is
-  recorded. It is independent of every other key, including
-  `documentation-audit=final` and `documentation-scope=contracts`: a caller may
-  pass it alone or with either. It keeps upstream's attempt bound (never a third
-  audit attempt) and never upgrades a blocked audit. An installation without the
-  value reads the whole line as `none supplied`, so a caller first checks the
-  loaded copy with
-  `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"` (exit 0 means
-  supported) and omits the value otherwise, keeping its other keys. The value
-  waives no gate and never authorizes a continuation.
-- `parent-io=lean` (its only value) is opt-in. While a local command or
-  subagent this invocation started is live (a test lane, the pregate, an audit
-  or a reviewer), the parent waits in blocking calls, each up to the host's
-  cap, and makes no status or log reads of its own. A wait that returns at the
-  cap with the run still live is followed by another blocking wait, never a
-  read. The parent reads several files or diffs in one call. A host with no
-  blocking wait keeps today's reads. It changes no outcome, gate or bound, and
-  carves out **Bound Claude Code outside calls** (that rule's owned session is
-  still polled rather than killed at a short shell-tool timeout, and still runs
-  at least 1,100 seconds), Step 4's Greptile status reads, Step 6's `mergeable`
-  poll and the bounded-wait host rules above, which keep their own bounds. Its
-  older-install check is the same: `grep -F 'parent-io=lean'
-  "<installed skill dir>/SKILL.md"`, and omit the value when it fails.
+  the full suite on that head and tree outside this session. The pregate still
+  runs on an accepted pass, and an attested pass never becomes a `tests` ledger
+  record. `/ship-and-land` is unchanged and never pauses; a recorded
+  `full-suite=final` keeps its own full run. When the attested command covers
+  every test the diff selects, the pregate narrows to its preflight stage as
+  **Narrow the pregate after an accepted pass** sets out; any other case runs
+  the pregate as today. Capability check:
+  `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`; to see
+  whether the loaded copy narrows, run
+  `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`
+  (exit 1 means an older installation runs the pregate as today, and the policy
+  line stays unchanged).
+- `documentation-scope=contracts` (its only value) bounds the documentation
+  audit's read list and its one re-audit as **Bound the documentation audit**
+  defines, keeping the audit's attempt bound. Capability check:
+  `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`.
+- `post-audit=classify` (its only value) runs **Classify changes after the
+  documentation audit's last attempt** on a change made after the audit's last
+  attempt before the owner is asked, keeping upstream's attempt bound (never a
+  third audit attempt) and never upgrading a blocked audit. Capability check:
+  `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"`.
+- `parent-io=lean` (its only value) makes the parent wait in blocking calls,
+  each up to the host's cap, with no status or log reads of its own while a
+  local command or subagent this invocation started is live (a test lane, the
+  pregate, an audit or a reviewer). A wait that returns at the cap with the run
+  still live is followed by another blocking wait, never a read. The parent
+  reads several files or diffs in one call. A host with no blocking wait keeps
+  today's reads. It changes no outcome, gate or bound, and carves out **Bound
+  Claude Code outside calls** (that rule's owned session is still polled rather
+  than killed at a short shell-tool timeout, and still runs at least 1,100
+  seconds), Step 4's Greptile status reads, Step 6's `mergeable` poll and the
+  bounded-wait host rules above, which keep their own bounds. Capability check:
+  `grep -F 'parent-io=lean' "<installed skill dir>/SKILL.md"`.
 - `delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,
   `simplification`, `adversarial` and `red-team`, comma-separated, each at most
-  once) is opt-in. It sends those parts to a provider the caller configured, as
-  **Delegate named specialist parts** defines (`adversarial` is the native
-  adversarial pass and `red-team` is the Red Team), and a part whose delegate
-  fails runs on the host model instead. Security, state-machines, the outside
-  voices and the documentation and coverage audits always stay on the host
-  model: a value naming any other part (`native-adversarial` and every other
-  name) is an unknown value, so the line reads `none supplied` with the reason
+  once) sends those parts to a provider the caller configured, as **Delegate
+  named specialist parts** defines (`adversarial` is the native adversarial pass
+  and `red-team` is the Red Team), and a part whose delegate fails runs on the
+  host model instead. Security, state-machines, the outside voices and the
+  documentation and coverage audits always stay on the host model: a value
+  naming any other part (`native-adversarial` and every other name) is an
+  unknown value, so the line reads `none supplied` with the reason
   `delegate: <name> is not delegable`. It needs a `Review delegates: <absolute
   path>` line and matching upstream anchors; otherwise every part runs on the
   host as today and the receipt says so. The `Review delegates:` line is one
@@ -1038,131 +1027,84 @@ line read as `none supplied` prints no warning.
   `review-delegates/v1` file, its path is printed in chat and never written to a
   receipt (the receipt records the file's SHA-256 and the provider labels), and
   it is not part of a relayed prompt, so a caller supplies it again beside one.
-  An installation without the value reads the whole line as `none supplied`, so
-  a caller first checks the loaded copy with
-  `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
-  otherwise, keeping its other keys. A caller that names `adversarial` or
-  `red-team` also checks
+  Capability check:
+  `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"`; a caller that
+  names `adversarial` or `red-team` also checks
   `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
   (exit 0 means the loaded copy accepts both attacker parts) and drops them from
-  the value otherwise, keeping its other parts and keys. The value waives no
-  gate and never authorizes a continuation.
-- `red-team=ensure` (its only value) is opt-in. It runs **Run a red team where
-  /review has none** when the review text the host will execute contains neither
-  `Red Team` nor `red-team` and that section's upstream anchors still match;
-  otherwise the review runs as today and the receipt says so. Omitted, every
-  cycle runs as today and nothing is recorded. An installation without the value
-  reads the whole line as `none supplied`, so a caller first checks the loaded
-  copy with `grep -F 'red-team=ensure' "<installed skill dir>/SKILL.md"` (exit 0
-  means supported) and omits the value otherwise, keeping its other keys. The
-  value waives no gate, never authorizes a continuation, and combines with every
-  other key.
+  the value otherwise, keeping its other parts and keys.
+- `red-team=ensure` (its only value) runs **Run a red team where /review has
+  none** when the review text the host will execute contains neither `Red Team`
+  nor `red-team` and that section's upstream anchors still match; otherwise the
+  review runs as today and the receipt says so. Capability check:
+  `grep -F 'red-team=ensure' "<installed skill dir>/SKILL.md"`.
 - `final-gate-repair=tests-docs` (its only value) lets Step 2's **Repair a
-  test-only final-gate failure** run, once per invocation. Omitted, every
-  final-gate failure takes today's rule, which that section names. An older
-  installation without the key reads the whole line as `none supplied` (every
-  key lost, standard defaults, reason recorded), so a caller first checks the
-  loaded copy with `grep -F 'final-gate-repair=tests-docs' "<installed skill
-  dir>/SKILL.md"` (exit 0 means supported) and omits the key otherwise, keeping
-  its other keys. The key waives no gate: it swaps a review cycle for one
-  recorded repair chain that readiness still checks, and it never authorizes a
-  continuation.
-- `first-cycle=overlap` (its only value) is opt-in. In the original
-  invocation's full-scope cycle 1 the selected specialists, the native
-  adversarial pass and the outside pair run at the same time on one frozen
-  snapshot, as **Overlap independent first-cycle reviewers** defines, and every
-  reviewer, gate and bound stays. It is active only while that section's
-  anchors match and the host can run those parts at once; otherwise cycle 1 runs
-  in today's order and the receipt says so. Omitted, every cycle runs in today's
-  order. With `specialists=fold` or `delegate=` on the same line the line still
-  parses and cycle 1 runs in today's order, so each measured arm stays separate.
-  `/ship-and-land` is unchanged. An installation without the value reads the
-  whole line as `none supplied`, so a caller first checks
-  `grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"`
-  (exit 0 means supported) and omits the value otherwise, keeping its other
-  keys. The value waives no gate and never authorizes a continuation.
-- `specialists=fold` (its only value) is opt-in. It folds the original
-  invocation's full-scope cycle 1: the main review pass reads the selected
-  specialists' checklists itself and no specialist subagent is dispatched, as
-  **Fold specialist checklists into cycle 1** defines. It is active only while
-  that section's upstream anchors still match; otherwise cycle 1 dispatches
-  specialists as today and the receipt says so. Omitted, every cycle runs as
-  today. It and `delegate=` exclude each other: a line carrying both reads
-  `Review policy: none supplied` with the reason `specialists=fold excludes
-  delegate=`, so no part is reviewed twice or not at all. An installation
-  without the value reads the whole line as `none supplied`, so a caller first
-  checks the loaded copy with `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the
-  value otherwise, keeping its other keys. The value waives no gate and never
-  authorizes a continuation.
-- `test-gaps=record` (its only value) is opt-in. A test-gap finding with no
-  demonstrated defect is then recorded for the next Track that touches its
-  files instead of getting a test written in this invocation, as **Record
-  unproven test gaps** defines. It applies only while that section's upstream
-  anchors still match; otherwise today's behavior runs and the receipt says so.
-  Omitted, every gap takes today's handling and nothing is recorded. An
-  installation without the value reads the whole line as `none supplied`, so a
-  caller first checks the loaded copy with `grep -F 'test-gaps=record'
-  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
-  otherwise, keeping its other keys. The value waives no gate and never
-  authorizes a continuation.
-- `blocking=shown` (its only value) is opt-in. A finding then blocks readiness
-  only when shown, as **Block readiness only on shown findings** defines (that
-  section stays the single statement of the rule). It applies only while that
-  section's anchors still match; otherwise today's behavior runs and the receipt
-  says so. Omitted, every finding takes today's handling and nothing is
-  recorded. It is independent of every other key, and with `test-gaps=record` a
-  recordable gap still takes **Record unproven test gaps**. An installation without the value
-  reads the whole line as `none supplied`, so a caller first checks the loaded
-  copy with
-  `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"` (exit 0 means
-  supported) and omits the value otherwise, keeping its other keys. The value
-  waives no gate and never authorizes a continuation.
-- `repair-review=behavior-changing` (its only value) is opt-in. A repair that
-  changes no behavior then opens no further review cycle: targeted lanes and
-  the single final suite cover it, and only behavior-changing repairs feed the
-  next `in-cap=delta` cycle, as **Reopen review only for behavior-changing
-  repairs** defines. It applies only while that section's upstream anchors
+  test-only final-gate failure** run, once per invocation, swapping a review
+  cycle for one recorded repair chain that readiness still checks. On an older
+  installation without the key, every key on the line is lost (standard
+  defaults, reason recorded). Capability check:
+  `grep -F 'final-gate-repair=tests-docs' "<installed skill dir>/SKILL.md"`.
+- `first-cycle=overlap` (its only value) runs the original invocation's
+  full-scope cycle 1 selected specialists, native adversarial pass and outside
+  pair at the same time on one frozen snapshot, as **Overlap independent
+  first-cycle reviewers** defines, while that section's anchors match and the
+  host can run those parts at once; otherwise cycle 1 runs in today's order and
+  the receipt says so. With `specialists=fold` or `delegate=` on the same line
+  the line still parses and cycle 1 runs in today's order, so each measured arm
+  stays separate. `/ship-and-land` is unchanged. Capability check:
+  `grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"`.
+- `specialists=fold` (its only value) folds the original invocation's
+  full-scope cycle 1 so the main review pass reads the selected specialists'
+  checklists itself and no specialist subagent is dispatched, as **Fold
+  specialist checklists into cycle 1** defines, while that section's upstream
+  anchors still match; otherwise cycle 1 dispatches specialists as today and the
+  receipt says so. It and `delegate=` exclude each other: a line carrying both
+  reads `Review policy: none supplied` with the reason `specialists=fold
+  excludes delegate=`, so no part is reviewed twice or not at all. Capability
+  check:
+  `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"`.
+- `test-gaps=record` (its only value) is opt-in. It records a test-gap finding
+  with no demonstrated defect for the next Track that touches its files instead
+  of writing a test in this invocation, as **Record unproven test gaps**
+  defines, while that section's upstream anchors still match; otherwise today's
+  behavior runs and the receipt says so. Capability check:
+  `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`.
+- `blocking=shown` (its only value) is opt-in. It makes a finding block
+  readiness only when shown, as **Block readiness only on shown findings**
+  defines, while that section's anchors still match; otherwise today's behavior
+  runs and the receipt says so. With `test-gaps=record` a recordable gap still
+  takes **Record unproven test gaps**. Capability check:
+  `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`.
+- `repair-review=behavior-changing` (its only value) is opt-in. It opens no
+  further review cycle for a repair that changes no behavior (targeted lanes
+  and the single final suite cover it, and only behavior-changing repairs feed
+  the next `in-cap=delta` cycle), as **Reopen review only for
+  behavior-changing repairs** defines, while that section's upstream anchors
   still match; otherwise today's behavior runs and the receipt says so.
-  Omitted, every edited pass repeats as today. An installation without the
-  value reads the whole line as `none supplied`, so a caller first checks the
-  loaded copy with `grep -F 'repair-review=behavior-changing'
-  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
-  otherwise, keeping its other keys. The value waives no gate and never
-  authorizes a continuation.
-- `repair-cycles=light` (its only value) is opt-in, independent of
-  `repair-review` and needs no `review_default` config. It makes this
-  invocation take the repair-cycle skips that **Use the light review default**
-  states, which stays their single statement. Without `in-cap` it runs cycles
-  2–3 through the `in-cap=delta` procedure, including its anchor check and
-  full-scope fallbacks; an explicit `in-cap=full` wins, so nothing is skipped
-  and the receipt says so. A continuation's first pass counts as that
-  invocation's cycle 1, and Step 5's delta re-review is its own cycle 1, so
-  neither takes the skips. Record each skip as `skipped — light default repair
-  cycle; source: repair-cycles=light`, and when `in-cap=full` wins, record
+  Capability check:
+  `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`.
+- `repair-cycles=light` (its only value) is opt-in, needs no `review_default`
+  config and makes this invocation take the repair-cycle skips that **Use the
+  light review default** states. Without `in-cap` it runs cycles 2–3 through
+  the `in-cap=delta` procedure, including its anchor check and full-scope
+  fallbacks; an explicit `in-cap=full` wins, so nothing is skipped and the
+  receipt says so. A continuation's first pass counts as that invocation's
+  cycle 1, and Step 5's delta re-review is its own cycle 1, so neither takes
+  the skips. Record each skip as `skipped — light default repair cycle; source:
+  repair-cycles=light`, and when `in-cap=full` wins, record
   `repair-cycles=light: nothing skipped — in-cap=full`. It sets no other key.
-  An installation without the value reads the whole line as `none supplied`, so
-  a caller first checks the loaded copy with `grep -F 'repair-cycles=light'
-  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
-  otherwise, keeping its other keys. The value waives no gate and never
-  authorizes a continuation.
+  Capability check:
+  `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`.
 - `run-state=record` (its only value) is opt-in. It records this invocation's
   run state through the experimental `bin/review-state` helper as
-  `docs/review-run-state-calls.md` under the installed skill's extend root
-  defines (resolve `<extend-root>` from this installed skill's `.extend-root`,
-  as **Use the light review default** does), replacing the run `begin` and
-  `end`, pass, correction and context-override metrics writes in **Workflow
-  metrics (optional, local)** with that document's derive command. Every
-  run-state record is sent with `bin/review-state build` as the calls document
-  lists, never a hand-written request file. It waives no
-  gate, changes no finding, gate, readiness or handoff line (the full receipt
-  gains only the run-state lines that document names), never authorizes a
-  continuation and combines with every key. Omitted, nothing changes. The light
-  review default never sets it, because recording run state needs a caller that
-  opts in until Track 79A's default decision. An installation without the value
-  reads the whole line as `none supplied`, so a caller first checks the loaded
-  copy with
-  `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"` (exit 0 means
-  supported) and omits the value otherwise, keeping its other keys.
+  `<extend-root>/docs/review-run-state-calls.md` defines, replacing the run
+  `begin` and `end`, pass, correction and context-override metrics writes in
+  **Workflow metrics (optional, local)** with that document's derive command.
+  Every run-state record is sent with `bin/review-state build` as the calls
+  document lists, never a hand-written request file. It changes no finding,
+  gate, readiness or handoff line (the full receipt gains only the run-state
+  lines that document names). Capability check:
+  `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"`.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless
@@ -1180,8 +1122,7 @@ line read as `none supplied` prints no warning.
 ### Use the light review default
 
 A user can make hand-launched invocations lighter by default with
-`"<extend-root>/bin/config" set review_default light`, resolving
-`<extend-root>` from this installed skill's `.extend-root`. Read
+`"<extend-root>/bin/config" set review_default light`. Read
 `"<extend-root>/bin/config" get review_default` once in Step 1. The light
 default applies when it prints exactly `light` and the invocation prompt has no
 `Review policy:` line, or when the user asks for a light review in this session.
@@ -1199,39 +1140,12 @@ Under the light default:
   `skipped — light default repair cycle`. A full-scope or inactive cycle runs
   every reviewer as usual.
 - `documentation-audit=final` and `full-suite=final` apply.
-- It never sets `final-gate-repair`: a test-editing exception needs an explicit
-  caller opt-in, and no evidence for a public default change is recorded (SPEC
-  P1).
-- It never sets `delegate=`: sending review work to another model needs a
-  caller that configures that provider, so it is an explicit caller opt-in.
-- It never sets `red-team=ensure`: running a wrapper red team where `/review`
-  has none is an explicit caller opt-in until the acceptance record supports a
-  default (`SPEC P1`).
-- It never sets `specialists=fold`: comparing the folded first cycle with
-  dispatched specialists needs a caller that measures the two arms, so it is an
-  explicit caller opt-in.
-- It never sets `full-suite=external` or `parent-io=lean`: each needs a caller
-  that runs the suite or limits reads, so each is an explicit caller opt-in.
-- It never sets `repair-review=behavior-changing`: skipping a review cycle for
-  a classified repair needs a caller that accepts the classification risk, so
-  it is an explicit caller opt-in.
-- It never sets `test-gaps=record`: recording a gap instead of writing its test
-  needs a caller that accepts the coverage risk, so it is an explicit caller
-  opt-in.
-- It never sets `documentation-scope=contracts`: bounding the audit's reads
-  needs a caller that accepts the retained-quality risk until the acceptance
-  record supports a default (`SPEC P1`).
-- It never sets `first-cycle=overlap`: comparing the overlapped first cycle
-  with today's sequential order needs a caller that measures both orders and
-  opts in until the acceptance record supports a default (`SPEC P1`).
-- It never sets `blocking=shown`: letting an unshown finding pass readiness
-  needs a caller that accepts that risk, so it is an explicit caller opt-in.
-- It never sets `post-audit=classify`: letting a classified change skip the
-  owner stop needs a caller that accepts the classification risk until the
-  acceptance record supports a default (`SPEC P1`).
-- It sets no `continuation`, so the cycle-cap question still asks. It is never
-  written as a `Review policy:` line: the stopped receipt and its prompt carry
-  the actual policy or `none supplied`.
+- Those three (`in-cap=delta` behavior for cycles 2–3,
+  `documentation-audit=final` and `full-suite=final`) are the only policy
+  behaviors the light default sets; every other policy key or value needs a
+  caller that opts in (`SPEC P1`), so the cycle-cap question still asks and the
+  stopped receipt and its prompt carry the actual `Review policy:` line or
+  `none supplied`.
 - Record `Review default: light (config review_default=light)`,
   `Review default: light (user request <reference>)` or
   `Review default: standard (<reason>)` in the receipt, with each cycle's scope.
@@ -1285,8 +1199,7 @@ gates still apply. Never dispatch both this adapter and the replaced calls.
 Other providers and direct `/review` invocations retain their own path.
 
 Read [the adapter contract](https://github.com/kbitz/gstack-extend/blob/main/docs/outside-review.md)
-(`docs/outside-review.md`) before its first use. Resolve this extension's root
-from this installed skill's `.extend-root`, as in the telemetry resolver.
+(`<extend-root>/docs/outside-review.md`) before its first use.
 Use `<extend-root>/bin/outside-review`, never a helper from the reviewed repo.
 Resolve the upstream root from the installed `/review` used in Step 1.
 If the helper or upstream exports are missing, keep outside coverage unavailable
@@ -1524,12 +1437,11 @@ and `an Agent dispatch for the adversarial pass, its prompt including`
 Check each with `grep -F`.
 
 Read [the delegate contract](https://github.com/kbitz/gstack-extend/blob/main/docs/delegated-review.md)
-(`docs/delegated-review.md`) before the first use. This is a **wrapper
+(`<extend-root>/docs/delegated-review.md`) before the first use. This is a **wrapper
 override**, not an upstream fork: it changes who runs a part, never a gate of
 this skill, a checklist or `/review`'s own text; the one upstream contract item
 a credited part cannot meet is waived as **Upstream's dispatch item** states.
-Resolve this extension's root from this installed skill's `.extend-root`, and
-the upstream root from the installed `/review` used in Step 1.
+Resolve the upstream root from the installed `/review` used in Step 1.
 
 **Step 1.** Check the anchors above with the installed files, then run
 `"<extend-root>/bin/review-delegate" check --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <list>`
@@ -1632,23 +1544,21 @@ exit 1.
 **Upstream's dispatch item.** Where the installed `/review` declares the
 `specialists-dispatched` item in its `Done means`, a credited delegated
 specialist part (`testing`, `maintainability`, `performance`, `simplification`)
-has no Agent dispatch and cannot meet that item on its own. The
-`specialists-dispatched` waiver is scoped to credited specialist parts, so a
-credited `red-team` or `adversarial` alone waives nothing there. In each cycle
-where the delegate credited at least one specialist part, waive the item once
-after those parts are credited, using the waive command that `/review`'s `Done
-means` gives (`gstack-skill-contract waive specialists-dispatched --reason
-"<why>"`, with no `--skill` flag and a reason naming `delegate=` and the
-credited specialist parts). Specialist parts that run on the host model,
-including fell-back parts, keep their Agent dispatch, and a cycle with no
-credited specialist part waives nothing and meets the item as upstream defines
-it. Never print a narrowed or zero-count selection line or dispatch a
-placeholder Agent to satisfy the item. If upstream's opt-in contract hook blocks
-on the item, answer with the recorded waiver, never a late dispatch; upstream
-counts a waiver as a miss in its follow record. A failed waive call is recorded
-and changes nothing else. When the installed `/review` contains none of the item
-lines (as on the Codex sibling copy), waive nothing. While this section is
-active, record one line in the receipt:
+has no Agent dispatch and cannot meet that item on its own; a credited
+`red-team` or `adversarial` alone waives nothing there. In each cycle where the
+delegate credited at least one specialist part, waive the item once after those
+parts are credited with `gstack-skill-contract waive <item> --reason "<why>"`
+(no `--skill` flag; for `specialists-dispatched`, `<why>` names `delegate=` and
+the credited specialist parts). Parts that run on the host model, including
+fell-back parts, keep their Agent dispatch, and a cycle with no credited covered
+part waives nothing and meets the item as upstream defines it. Never print a
+narrowed or zero-count selection line or dispatch a placeholder Agent to satisfy
+an item. If upstream's opt-in contract hook blocks on the item, answer with the
+recorded waiver, never a late dispatch; upstream counts a waiver as a miss in
+its follow record. A failed waive call is recorded and changes nothing else.
+When the installed `/review` declares none of the item's lines (as on the Codex
+sibling copy), waive nothing. While this section is active, record one line in
+the receipt:
 `specialists-dispatched: waived (delegate; cycles=<n>[,<n>...]; parts=<part>[,<part>...])`,
 `specialists-dispatched: met (delegate; <reason>)`,
 `specialists-dispatched: not declared (delegate)` or
@@ -1656,31 +1566,27 @@ active, record one line in the receipt:
 The leading status reports the current upstream item result: a met selection
 outranks an earlier waiver. When cycles have different outcomes, append
 `; history=<cycle>:<outcome>[,...]` to that same line, retaining each successful
-waiver's parts and each failed call's cause. A later failed call does not erase
-an earlier successful waiver. This preserves the call history even when the
-current result is `met` or `waived`.
-Likewise, where `delegate=adversarial` is active and list (c) in **Activation
-(attacker parts)** is declared in `/review`'s `Done means`, in each pass where a
-delegated `adversarial` part was credited, waive once with
-`gstack-skill-contract waive adversarial-pass --reason "<why>"` (with no
-`--skill` flag and a reason naming `delegate=adversarial` and the provider
-label); a fallback pass meets the item through its host dispatch, and when list
-(c) is not declared, waive nothing. If upstream's opt-in contract hook blocks on
-the item, answer with the recorded waiver, never a late dispatch. While `delegate=adversarial` is active,
-record one line in the receipt under the same current-result and history rule:
+waiver's parts and each failed call's cause without erasing an earlier
+successful waiver. Under the same waiver, current-result and history procedure,
+when `delegate=adversarial` is active and list (c) in **Activation (attacker
+parts)** is declared, each pass with a credited delegated `adversarial` part
+waives `adversarial-pass` (reason naming `delegate=adversarial` and the provider
+label) and records:
 `adversarial-pass: waived (delegate; cycles=<n>[,<n>...])`,
 `adversarial-pass: met (delegate; <reason>)`,
 `adversarial-pass: not declared (delegate)` or
 `adversarial-pass: unmet (delegate; waive failed: <cause>)`.
 
-Record each part in `voices.jsonl` and the receipt as **Capture evidence and
-commit** describes, and in the workflow metrics as an attempt with the runner's
-`delegate` values. A fallback is the failed delegate attempt, then a host
-attempt that names it as its predecessor, then a `fallback` correction. Under
-`run-state=record`, the caller records the failed delegated attempt with
-`--delegate-file` and the host attempt with `--predecessor-attempt-id` naming it,
-`derive` writes the `fallback` correction, and no `record correction` is sent
-for it.
+Record each part in `voices.jsonl`, in the receipt as
+`Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>`
+(the receipt names the configuration's SHA-256 and labels, never its path) as
+**Capture evidence and commit** describes, and in the workflow metrics as an
+attempt with the runner's `delegate` values. A fallback is the failed delegate
+attempt, then a host attempt that names it as its predecessor, then a `fallback`
+correction. Under `run-state=record`, the caller records the failed delegated
+attempt with `--delegate-file` and the host attempt with
+`--predecessor-attempt-id` naming it, `derive` writes the `fallback` correction,
+and no `record correction` is sent for it.
 
 ### Run a red team where /review has none
 
@@ -1815,25 +1721,12 @@ change, record that there and stop; never edit an upstream file.
   Team when it ran) and is `{}` with none, as the host-omits-Review-Army lines
   above state. Folded checklist parts add no dispatch sample to upstream's
   adaptive gating; a dispatched Red Team still adds its own sample.
-- **Upstream's dispatch item.** Where the installed `/review` declares the
-  `specialists-dispatched` item in its `Done means` (the item list matches when
-  that `/review` contains all of its lines or none of them), a folded cycle 1
-  that applies at least one checklist dispatches no specialist Agent and cannot
-  meet that item on its own. Waive it once in that folded cycle 1, after Review
-  Army's selection line where one is printed, using the waive command that
-  `/review`'s `Done means` gives (`gstack-skill-contract waive
-  specialists-dispatched --reason "<why>"`, with no `--skill` flag and a reason
-  naming `specialists=fold` and the folded checklists). A nested selection of
-  zero specialists meets the item as upstream defines it and waives nothing. A
-  later cycle that dispatches specialists as today meets the item from its own,
-  later selection line, which upstream's checker reads first, and a met item
-  outranks an earlier waiver. Never print a narrowed or zero-count selection
-  line or dispatch a placeholder Agent to satisfy the item. If upstream's opt-in
-  contract hook blocks on the item, answer with the recorded waiver, never a
-  late dispatch; upstream counts a waiver as a miss in its follow record. A
-  failed waive call is recorded and changes nothing else. When the installed
-  `/review` contains none of the item lines (as on the Codex sibling copy),
-  waive nothing.
+- **Upstream's dispatch item.** Follow **Upstream's dispatch item** in
+  **Delegate named specialist parts** for `specialists-dispatched` in a folded
+  cycle 1 that applies at least one checklist (waive once after Review Army's
+  selection line where one is printed, with `<why>` naming `specialists=fold`
+  and the folded checklists; a zero-specialist selection or a later dispatched
+  cycle meets the item as upstream defines it).
 - **Red Team, restated.** Where the host's `/review` carries a Red Team (including
   sections resolved from its source installation in Step 1), it runs when DIFF_LINES > 200 or the folded pass reports a CRITICAL finding, since no
   specialist dispatch exists to produce one. It is dispatched as `/review`
@@ -1850,14 +1743,16 @@ change, record that there and stop; never edit an upstream file.
   A changed anchor
   records `Review arm: dispatch — anchor changed (<which>)`, cycle 1 runs as
   today, and no upstream file is edited.
-- **Receipt lines,** written only when the policy carries the value:
-  `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or
-  `Review arm: dispatch — <reason>`, plus one
+- **Receipt lines:** record the `Review arm:` line and every
   `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
-  line per checklist read. `<name>` is `testing`, `maintainability`,
-  `security`, `performance`, `data-migration`, `api-contract`, `simplification`,
-  `state-machines` or `design`; `sha256` is the SHA-256 of the file as read.
-  Also write one `specialists-dispatched:` line when the section is active:
+  line when the policy carries `specialists=fold`
+  (`Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or
+  `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per
+  checklist read).
+  `<name>` is `testing`, `maintainability`, `security`, `performance`,
+  `data-migration`, `api-contract`, `simplification`, `state-machines` or
+  `design`; `sha256` is the SHA-256 of the file as read. Also write one
+  `specialists-dispatched:` line when the section is active:
   `specialists-dispatched: waived (fold; cycles=1; parts=<checklist>[,<checklist>...])`,
   `specialists-dispatched: met (fold; <reason>)`,
   `specialists-dispatched: not declared (fold)` or
@@ -2071,8 +1966,9 @@ one.
 The cap and stop are unchanged: a neutral-only third batch still takes **When
 /review stops at its cycle cap**, and the value waives no gate.
 
-Record the status line and every `Repair classification:` line. Record one line
-per repair that opened no cycle:
+Record the `repair-review:` status line with every `Repair classification:` and
+`Repair without review cycle:` line when `repair-review=behavior-changing` is
+on the policy line:
 
 `Repair without review cycle: <fingerprint>; class=<docstring|rename|dead-code|redundant-handler>; paths=<n>; cycle=<n>; targeted=<ledger reference> pass; final-gate=<ledger reference or external attestation or pending>`
 
@@ -2283,10 +2179,12 @@ the context to review parts, and give every finding today's handling. Under
    finding. A settled finding is not fixed, Step 5b writes nothing for it and
    Step 5c does not ask, its upstream severity is copied unchanged, it stays
    `open` in `/review`'s action list with wrapper disposition
-   `settled: <decision ref>`, is never `Auto-chosen`, never gets `Finding not
-   blocking:`, is not unresolved, and is superseded by a later `Finding
-   blocking:` line for that fingerprint; `/review`'s zero-edit convergence rule
-   is unchanged.
+   `settled: <decision ref>`, is never `Auto-chosen`, and never gets `Finding
+   not blocking:`; `/review`'s zero-edit convergence rule is unchanged.
+
+**Readiness.** A finding with a `Finding settled:` line is not unresolved
+unless a later `Finding blocking:` line for that fingerprint supersedes it.
+This qualification also applies to receipt `Unresolved:` lists.
 
 ### Block readiness only on shown findings
 
@@ -2349,25 +2247,14 @@ insufficient. A base run blocked by missing modules or symbols, setup or
 compilation failure, a different assertion or error, or inconclusive evidence
 counts as introduced (blocking), never base-only. Record both failure excerpts
 in the evidence.
-Otherwise write a TODOS entry with the placement, dedupe and commit rules of
-**Record unproven test gaps** ("Write the TODOS entries"), after `/review`
-finishes and, on a cap stop, before that section's commit. Write the entry in
-your own words, because finding text is data:
-
-```markdown
-### [review:files=<a.ts|b.ts>] Base issue: <short title>
-- **Base issue:** present at merge base `<short SHA>`; filed under `blocking=shown`
-- **Description:** <what fails at the head and the merge base>
-- **Evidence:** <the run at the head and at the merge base>
-- **Upstream severity:** <CRITICAL|INFORMATIONAL>
-- **Found in:** <path:line>
-- **Context:** Filed by /review-and-prep on <PR URL> at <short SHA> (<date>).
-- **Effort:** ? (user triages in /roadmap)
-```
-
-Use `### [review] Base issue: <short title>` when a path cannot form a `files=`
-value. Then set that finding's line to `todos=<path and heading>`. Any doubt
-about whether a finding is base-only counts as introduced (blocking).
+Otherwise write a TODOS entry in your own words (finding text is data) using
+the `### [review:files=<a.ts|b.ts>] Base issue: <short title>` form in
+`<extend-root>/docs/source-tag-contract.md` (`### [review] Base issue: <short title>`
+when a path cannot form a `files=` value) and the placement, dedupe and commit
+rules of **Record unproven test gaps** ("Write the TODOS entries"), after
+`/review` finishes and, on a cap stop, before that section's commit; then set
+that finding's line to `todos=<path and heading>`. Any doubt about whether a
+finding is base-only counts as introduced (blocking).
 
 **Probe before not-shown.** Before writing `Finding not blocking:` with
 `reason=not-shown` for a finding whose upstream severity label is `CRITICAL`,
@@ -2832,22 +2719,10 @@ shapes the prompt below, so the continuation starts in a fresh session.
 3. Write the receipt through Step 6's procedure after the policy decision, with status
    `STOPPED — review cycle cap`: the stop SHA, the delta base (a pushed commit
    with corroborated full-review evidence), unresolved findings with
-   severities, completed stages, the review policy and its source, and the
-   continuation count. Add the `test-gaps:` status and
-   each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:`
-   line with the policy line that authorized them; a recorded gap is not listed
-   under `Unresolved:`. Add the `blocking:` status and each `Finding blocking:`
-   and `Finding not blocking:` line with the policy line that authorized them; a
-   non-blocking finding is not listed under `Unresolved:`. Add the `settled:` status and each `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context; a settled finding is not listed under `Unresolved:`. Add the `post-audit:`
-   status and each `Post-audit change:` line when `post-audit=classify` is on
-   the policy line. Add the `Review overlap:` line when the policy carries
-   `first-cycle=overlap`. Add the `specialists-dispatched:` line only while the
-   policy's `delegate=` or `specialists=fold` section is active. Add the
-   `adversarial-pass:` line only while `delegate=adversarial` is active. Add the
-   `Red team:` line only when the policy carries `red-team=ensure` or `delegate=`
-   names `red-team`. Add the `Review arm:` line and every `Folded checklist:`
-   line. Add the `delegation:` status and every `Delegated part:`
-   line. Post it once as a comment marked
+   severities, completed stages, the review policy and its source, the
+   continuation count, and every line marked `Stopped: yes` in Step 6's
+   **Readiness** receipt-line table (applying its `Unresolved:` exclusions).
+   Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
    credential/PII scan. A failed or uncertain post keeps the stop. Before a
    retry, look up that exact marker and reuse a corroborated existing comment;
@@ -2892,12 +2767,10 @@ shapes the prompt below, so the continuation starts in a fresh session.
    `Full-review evidence: unavailable`, say delta
    evidence is unavailable, and print
    `Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`
-   in the STOPPED chat output and the record. Choose the reason with the first
-   applicable condition in this order: no cycle 1 record, `record-missing`;
-   `anchor-changed`; an incomplete cycle 1, `reviewer-incomplete`;
-   `tree-differs`; a pending record without a matching `fix-reviewed=true`
-   fix-review record, `reviewer-incomplete`. For a non-continuation,
-   full-scope cycle 1, this table decides the stop row:
+   in the STOPPED chat output and the record. This table's rows are in
+   precedence order; for a non-continuation, full-scope cycle 1 it decides the
+   stop row, and its first matching row also decides the unavailable reason at a
+   continuation or delta re-review stop with no carried row:
 
    | `cycle-1-baseline` | `cycle-1-fix-review` | Stop row |
    |---|---|---|
@@ -3721,10 +3594,6 @@ the linked cause record; an unexplained or repeated failure follows the ordinary
 failure rule and cannot be cleared by retrying until green.
 The existing repair allowance and failure rules still apply.
 
-**Cost.** The pause adds a turn end, a resume message and a colder resume, and
-every head move after an accepted pass adds another full run. No saving is
-established by this section.
-
 ### Narrow the pregate after an accepted pass
 
 Only under `full-suite=external`, and only on a `pass` already persisted for the
@@ -3855,11 +3724,10 @@ Missing or uncorroborated allowance history on resume never establishes unused:
 take `interrupted`, conservatively retain `allowance=consumed`, and follow
 today's rule. An intact pause record with no repair history can establish unused.
 
-**Classification.** Read the classification contract from `docs/docs-ship.md`
-under the installed gstack-extend root (this installed skill directory's
-`.extend-root`), as the Greptile docs-only rule does, and the project's own
-docs-only rules and `docs-ship:` markers from the base tip, without
-`docs-ship:docs` opt-ins. Apply the contract's rules to each path of
+**Classification.** Read the classification contract from
+`<extend-root>/docs/docs-ship.md`, as the Greptile docs-only rule does, and the
+project's own docs-only rules and `docs-ship:` markers from the base tip,
+without `docs-ship:docs` opt-ins. Apply the contract's rules to each path of
 `git diff --no-renames --name-status B S`; do not run `bin/docs-ship classify`
 on that range. A missing pointer or contract is the fallback
 `classification-unreadable`, not a stop.
@@ -4137,8 +4005,7 @@ every title/body write (creation, later refreshes, and the Step 6 receipt,
 including the PAUSED, STOPPED and BLOCKED receipts and the prepared receipt),
 scan the exact bytes for credentials and PII: run
 `<extend-root>/bin/secret-dispositions scan-text --gstack-root <upstream-root> --from-file <file> --evidence-dir <this invocation's evidence directory> --pr-url <this PR's URL>`
-from the workspace root (omit `--pr-url` before the PR exists; resolve
-`<extend-root>` from `.extend-root`, as **Reviewed secret findings** does). It
+from the workspace root (omit `--pr-url` before the PR exists). It
 wraps the installed `gstack-redact --from-file` and marks as `known_safe` only
 the digits in this invocation's own evidence-directory path and the comment
 numbers in this PR's own `#issuecomment-` links. Handle its remaining findings
@@ -4196,16 +4063,10 @@ If required user testing remains, **stop this invocation after the draft push**.
 Use Step 6's receipt-writing and evidence-preservation procedure with status
 **PAUSED — manual testing required**, not `prepared`. Record the pushed HEAD,
 base, completed `/review` stages and local checks, the still-incomplete matrix,
-and the exact user actions/expected results left to test. When a final-gate
-repair ran, also record its `Final-gate repair` lines and the policy line that
-authorized it, so a resume accepts the chain from this corroborated record.
-Likewise record the `repair-review:` status and every `Repair classification:`,
-`Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
-voided:` line and any `neutral-only baseline:` outcome, with the policy line
-that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `blocking:` status and every `Finding blocking:` and `Finding not blocking:` line the same way (a non-blocking finding is not listed under `Unresolved:`). Record the `settled:` status and every `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context (a settled finding is not listed under `Unresolved:`). Record the `post-audit:` status and every `Post-audit change:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active. Record the `adversarial-pass:` line only while `delegate=adversarial` is active. Record the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`. Record the `Review arm:` line and every `Folded checklist:` line the same way.
-Record the `delegation:` status and every `Delegated part:` line the same way.
-When Greptile applies,
+and the exact user actions/expected results left to test, plus every line marked
+`Paused: yes` in Step 6's **Readiness** receipt-line table (with its authorizing
+policy line and `Unresolved:` exclusions, so a resume can corroborate any
+recorded chain). When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
 already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
@@ -4503,11 +4364,12 @@ Every exit question uses this template:
 - The options, recommended first, each with its consequence and any stated
   residual.
 - The line "This is asked once for this PR; your answer is recorded in the receipt."
+  for every question except E6, whose question ends with
+  "This is asked again only after the wait you choose; your answer is recorded in the receipt."
   A changed policy or conflicting values require a new scoped decision; that
   is the exception to asking once, not a reason to repeat an unchanged repair.
 
-Why each edge asks instead of taking a fixed default: each one changes behavior
-PR #102 specified. The answer is recorded per PR and reused. The same edge is
+The answer is recorded per PR and reused. The same edge is
 asked again only when its evidence changes or a chosen wait expires (E6 records
 `wait until <UTC>`). There is no E3 or E5, because the paused comment and the
 reservation comment are durability fixes, not user decisions. In practice a PR
@@ -4710,8 +4572,7 @@ with the PR still draft. Additional Greptile rounds are never the fix loop.
 
 ### Reviewed secret findings
 
-Read `<extend-root>/docs/secret-dispositions.md` in full, resolving
-`<extend-root>` from this installed skill's `.extend-root`. After upstream
+Read `<extend-root>/docs/secret-dispositions.md` in full. After upstream
 pregate runs, evaluate its untouched record with
 `<extend-root>/bin/secret-dispositions --gstack-root <trusted-gstack-root> --pregate <raw-record>`.
 Use the same trusted upstream installation that ran pregate. Run this even
@@ -4743,18 +4604,10 @@ the relevant base/head refs. Require all of the following:
   work is committed/pushed; no unreviewed staged, unstaged, or untracked work
   remains in scope. Unrelated preserved changes are explicitly identified.
 - Local review and all required local verification pass for the final content.
-  There are no unresolved actionable review findings or required decisions. A
-  finding with a `Test gap recorded:` line whose `todos=` names its entry is
-  recorded, not unresolved; `todos=pending` covers nothing.
-  A withdrawn fingerprint never satisfies this exception; verify that the entry
-  still exists and covers the gap's behavior and paths before excluding it from
-  unresolved findings. Under `blocking: active`, a finding with a `Finding not
-  blocking:` line (and, for `reason=base-only`, a verified existing `todos=`
-  entry; `todos=pending` covers nothing) is not unresolved unless a later
-  `Finding blocking:` line supersedes it (**Block readiness only on shown
-  findings**). A finding with a `Finding settled:` line is not unresolved unless
-  a later `Finding blocking:` line supersedes it (**Give review parts the
-  settled decisions**).
+  There are no unresolved actionable review findings or required decisions,
+  applying the **Readiness** rules in **Record unproven test gaps**, **Give
+  review parts the settled decisions** and **Block readiness only on shown
+  findings**.
 - Required user testing has current item-level evidence or explicit user
   deferrals under Step 2. If fixes or base changes invalidate it, return to
   Step 3's manual testing pause with the updated draft; preserve any consumed
@@ -4866,30 +4719,32 @@ and test evidence. Include required user-test outcomes, tested builds, and
 fix/retest evidence, or `manual testing: not required` with the scope rationale.
 Keep Git tree IDs and gstack `wtree` fingerprints distinctly
 labeled. Add the implementation summary, settled decisions/rationale, linked
-plan/spec, and finding dispositions/fix commits. Include the `Review default:`
-line, every `Auto-chosen (veto by replying on this PR):` line, the
-`Final-gate repair` lines when a repair ran, the `repair-review:` status line
-with every `Repair classification:` and `Repair without review cycle:` line when
-`repair-review=behavior-changing` is on the policy line, every `Repair evidence:`
-line, every `Repair chain voided:` line and any `neutral-only baseline:` outcome,
-and each sourced skip under
-`repair-cycles=light` (or `repair-cycles=light: nothing skipped — in-cap=full`),
-the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not
-recorded:` and `Test gap withdrawn:` line with the authorizing policy line (a
-recorded gap is not listed under `Unresolved:`),
-the `blocking:` status line and every `Finding blocking:` and `Finding not blocking:` line with the authorizing policy line (a non-blocking finding is not listed under `Unresolved:`),
-the `settled:` status line and every `Finding settled:` line when **Give review parts the settled decisions** built or checked settled context (a settled finding is not listed under `Unresolved:`),
-the `post-audit:` status line and every `Post-audit change:` line when `post-audit=classify` is on the policy line,
-the `delegation:` status line and every `Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>`
-line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
-review evidence; the receipt names the configuration's SHA-256 and labels,
-never its path), the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
-line when the policy carries `specialists=fold`, the `specialists-dispatched:`
-line only while the policy's `delegate=` or `specialists=fold` section is active, the `adversarial-pass:` line only while `delegate=adversarial` is active, the `Red team:` line only when the policy carries `red-team=ensure` or `delegate=` names `red-team`, the `Review overlap:` line when
-the policy carries `first-cycle=overlap`, every `External gate attestation:`
-row (each accepted result line adds one), the `pregate-narrowing:` status line and
-each `Pregate lane not run:` line, and the elapsed
-times from Boundaries. For each test run, include a `Test selection:` line from
+plan/spec, finding dispositions/fix commits, and the elapsed times from
+Boundaries. Include the `Review default:` line, every
+`Auto-chosen (veto by replying on this PR):` line, and every applicable row from
+this receipt-line table (templates live in each row's producing section):
+
+| Line | Condition | Final | Paused | Stopped |
+|---|---|---|---|---|
+| `Review default:` | always, with each cycle's scope (**Use the light review default**) | yes | no | no |
+| `Auto-chosen (veto by replying on this PR):` | each auto-chosen fix-scope option (**Take recommended fix-scope options without asking**) | yes | no | no |
+| `Final-gate repair:`, `Final-gate repair rerun:`, `Final-gate repair review:`, `Final-gate repair refusal:` | when `final-gate-repair=tests-docs` ran a repair or fallback, with the authorizing policy line (**Repair a test-only final-gate failure**) | yes | yes | no |
+| `repair-review:`, `Repair classification:`, `Repair without review cycle:`, `Repair evidence:`, `Repair chain voided:`, `neutral-only baseline:` | when `repair-review=behavior-changing` is on the policy line, with the authorizing policy line (**Reopen review only for behavior-changing repairs**) | yes | yes | yes |
+| `skipped — light default repair cycle; source: repair-cycles=light`, `repair-cycles=light: nothing skipped — in-cap=full` | when `repair-cycles=light` is on the policy line (**Read an optional review policy**) | yes | no | no |
+| the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line | when `test-gaps=record` is on the policy line; recorded gaps are omitted from `Unresolved:` (**Record unproven test gaps**) | yes | yes | yes |
+| `blocking:`, `Finding blocking:`, `Finding not blocking:` | when `blocking=shown` is on the policy line, with the authorizing policy line; non-blocking findings are omitted from `Unresolved:` (**Block readiness only on shown findings**) | yes | yes | yes |
+| `settled:`, `Finding settled:` | when **Give review parts the settled decisions** built or checked settled context; settled findings are omitted from `Unresolved:` | yes | yes | yes |
+| `post-audit:`, `Post-audit change:` | when `post-audit=classify` is on the policy line (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
+| the `delegation:` status line and every `Delegated part:` line | when `delegate=<part>` is on the policy line and the receipt carries Step 2 review evidence; name the configuration's SHA-256 and labels, never its path (**Delegate named specialist parts**) | yes | yes | yes |
+| `Review arm:`, `Folded checklist:` | when `specialists=fold` is on the policy line (**Fold specialist checklists into cycle 1**) | yes | yes | yes |
+| `specialists-dispatched:` | only while the policy's `delegate=` or `specialists=fold` section is active (**Delegate named specialist parts**, **Fold specialist checklists into cycle 1**) | yes | yes | yes |
+| `adversarial-pass:` | only while `delegate=adversarial` is active (**Delegate named specialist parts**) | yes | yes | yes |
+| `Red team:` | only when the policy carries `red-team=ensure` or `delegate=` names `red-team` (**Run a red team where /review has none**) | yes | yes | yes |
+| `Review overlap:` | when `first-cycle=overlap` is on the policy line (**Overlap independent first-cycle reviewers**) | yes | yes | yes |
+| `External gate attestation:` | each accepted external-gate result row (**Pause for an external full-suite gate**) | yes | no | no |
+| the `pregate-narrowing:` status line and each `Pregate lane not run:` line | when `full-suite=external` evaluated pregate narrowing on an accepted pass (**Narrow the pregate after an accepted pass**) | yes | no | no |
+
+For each test run, include a `Test selection:` line from
 the runner's or pregate's selection report when one is printed: the lanes or
 test files that ran, those skipped and why, and whether the run was the full
 suite. A skipped lane reads `skipped — <reason>`, never passed, and a selected

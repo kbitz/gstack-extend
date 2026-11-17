@@ -1129,6 +1129,37 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
     expect(routeSourceTag('[review:files=src/a.ts|src/b.ts]').action).toBe('KEEP');
   });
 
+  // Value: protects=the contract documents the Base issue TODOS heading form, fallback, producer, KEEP routing, and seven ordered bullet labels from blocking=shown; fails_when=the heading, fallback, label order, validator or router drifts; why_new=Track 86B T2; seam=none
+  test('the contract defines the review-tagged Base issue form and its ordered labels', () => {
+    const heading = '### [review:files=<a.ts|b.ts>] Base issue: <short title>';
+    expect(contract).toContain(heading);
+    expect(contract).toContain('### [review] Base issue: <short title>');
+    expect(contract).toContain('`/review-and-prep`');
+    expect(contract).toContain('`blocking=shown`');
+    const filled = heading.replace('<a.ts|b.ts>', 'src/a.ts|src/b.ts');
+    const tag = filled.match(/^### (\[[^\]]+\])/)![1]!;
+    expect(validateTagExpression(tag).ok).toBe(true);
+    expect(routeSourceTag(tag)).toMatchObject({ action: 'KEEP', source: 'review' });
+    expect(validateTagExpression('[review]').ok).toBe(true);
+    expect(routeSourceTag('[review]')).toMatchObject({ action: 'KEEP', source: 'review' });
+    const example = contract.match(/^### \[review:files=[^\]]+\] Base issue: [^\n]+\n([\s\S]*?)(?=\n\n### |\n```)/m)?.[1] ?? '';
+    const labels = [
+      '**Base issue:** present at merge base',
+      '**Description:**',
+      '**Evidence:**',
+      '**Upstream severity:**',
+      '**Found in:**',
+      '**Context:**',
+      '**Effort:** ? (user triages in /roadmap)',
+    ];
+    let prev = -1;
+    for (const label of labels) {
+      const idx = example.indexOf(label);
+      expect(idx, label).toBeGreaterThan(prev);
+      prev = idx;
+    }
+  });
+
   test.each(['critical', 'necessary', 'nice-to-have'])(
     'agent prompts define %s exactly as the contract does',
     (severity) => {

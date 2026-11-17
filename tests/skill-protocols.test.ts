@@ -939,20 +939,26 @@ describe('host-managed workspace lifecycle', () => {
 });
 
 describe('lifecycle wording beyond the primary workflow guards', () => {
-  test('review-and-prep base merge leaves lifecycle to the workspace host', () => {
-    // Value: protects=review-and-prep base merge defers branch and worktree lifecycle to the host in a host-managed workspace; fails_when=the ownership clause is removed or names specific hosts; why_new=primary prep guard does not cover the merge step; seam=none
-    const normalized = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
-    expect(normalized).toContain(
-      'existing feature branch; in a host-managed workspace the host still owns branch/worktree creation and cleanup.',
-    );
-  });
-
-  test('review-and-prep assigns blocked-push reconciliation to the user or host', () => {
-    // Value: protects=blocked-push reconciliation is owned by the user or workspace host; fails_when=the owner sentence is dropped or narrowed to a named host; why_new=primary prep guard does not cover blocked-push recovery; seam=none
-    const normalized = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
-    expect(normalized).toContain(
-      'The user or the workspace host owns reconciliation outside this workflow.',
-    );
+  test('review-and-prep base merge and blocked-push recovery name no specific workspace host', () => {
+    // Value: protects=Merge the latest base before review and blocked-push recovery remain host-neutral without naming specific workspace hosts; fails_when=either section names Conductor, Paseo, .context/ or SHARED:conductor-visibility-head, or is missing; why_new=Track 86B T4 replaces sentence locks with named-host pattern checks; seam=none
+    const skill = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+    const mergeSection = skill.match(/### Merge the latest base before review\n([\s\S]*?)(?=\n### )/)?.[1] ?? '';
+    const blockedPush = skill.match(/\*\*History divergence: stop and hand off to the user\.\*\*[\s\S]*?(?=\n\n)/)?.[0] ?? '';
+    expect(mergeSection.length).toBeGreaterThan(0);
+    expect(blockedPush.length).toBeGreaterThan(0);
+    const namedHostViolations = (text: string) => [
+      ...(text.includes('SHARED:conductor-visibility-head') ? ['SHARED:conductor-visibility-head'] : []),
+      ...(/conductor/i.test(text) ? ['/conductor/i'] : []),
+      ...(text.includes('.context/') ? ['.context/'] : []),
+      ...(/paseo/i.test(text) ? ['/paseo/i'] : []),
+    ];
+    expect(namedHostViolations(mergeSection)).toEqual([]);
+    expect(namedHostViolations(blockedPush)).toEqual([]);
+    expect(namedHostViolations(`${mergeSection}\nIn Conductor or Paseo (.context/).`)).toEqual([
+      '/conductor/i',
+      '.context/',
+      '/paseo/i',
+    ]);
   });
 
   test('pair-review keeps branch-keyed sessions independent across workspaces or worktrees', () => {
