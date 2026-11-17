@@ -5198,6 +5198,37 @@ describe('bin/review-state', () => {
     );
   });
 
+  test('legacy rejecting corrections keep omitted resolution on new calls and replay after upgrade', () => {
+    const target = { pass_id: uid(10), voice_id: 'core', attempt_id: uid(20), finding_id: 'F-1' };
+    const args = (dir: string, id: string, supersedes: string) => ['build', 'record', 'correction', '--dir', dir, '--correction-id', id, '--pass-id', target.pass_id, '--voice-id', target.voice_id, '--attempt-id', target.attempt_id, '--finding-id', target.finding_id, '--adjudication', 'rejected', '--supersedes', supersedes];
+    for (const legacyRecorded of [true, false]) {
+      const { dir: d, statePath } = dirFromSeed(ensureRefusalSeeds().attemptState);
+      const prior = uid(1001), id = uid(1002);
+      expect(callCmd(d, 'record correction', { correction_id: prior, target, resolution: 'unknown' }).json.reason).toBe('recorded');
+      // Exact pre-change builder request: resolution is absent, so the store inherits unknown.
+      const legacyRequest = { correction_id: id, target, adjudication: 'rejected', supersedes: prior };
+      const legacyBytes = `${JSON.stringify(legacyRequest)}\n`;
+      const requestName = `request-record-correction-${sha256(legacyBytes).slice(0, 16)}.json`;
+      if (legacyRecorded) {
+        writeFileSync(join(d, requestName), legacyBytes);
+        expect(runCli(['record', 'correction', '--dir', d, '--input', join(d, requestName)]).json.reason).toBe('recorded');
+      }
+      const before = readFileSync(statePath, 'utf8');
+      const r = runCli(args(d, id, prior));
+      expect([r.json.reason, r.err, r.json.detail.overrides]).toEqual([legacyRecorded ? 'replayed' : 'recorded', '', undefined]);
+      expect(readFileSync(join(d, requestName), 'utf8')).toBe(legacyBytes);
+      if (legacyRecorded) expect(readFileSync(statePath, 'utf8')).toBe(before);
+      const recorded = readFileSync(statePath, 'utf8');
+      expect(runCli(args(d, id, prior)).json.reason).toBe('replayed');
+      expect(readFileSync(statePath, 'utf8')).toBe(recorded);
+      expect(JSON.parse(recorded).corrections.at(-1).resolution).toBeNull();
+      expect(existsSync(join(d, 'build-overrides.jsonl'))).toBe(false);
+      // A later correction must not change how the earlier request is rebuilt for replay.
+      expect(callCmd(d, 'record correction', { correction_id: uid(1003), target, adjudication: 'accepted', resolution: 'open', supersedes: id }).json.reason).toBe('recorded');
+      expect(runCli(args(d, id, prior)).json.reason).toBe('replayed');
+    }
+  });
+
   test('build overrides a flag that contradicts a value the helper fixes, warns, logs and records', () => {
     const reqFiles = (dir: string) => readdirSync(dir).filter((f) => f.startsWith('request-') && f.endsWith('.json')).sort();
     const seedStart = newDir(), seedOpen = newDir(), passId = uid(981);

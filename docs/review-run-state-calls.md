@@ -29,6 +29,8 @@ Other commands:
 
 When a flag contradicts a value the helper sets from another flag (for example `--resolution open` on a rejecting correction, `--delta-from` with `--coverage full`, or `--session-id` on a checkpoint other than `resume`), `build` uses the helper's value, prints one `WARNING BUILD_OVERRIDE:` line per such flag on stderr, lists it in the result's `detail.overrides`, appends it to `build-overrides.jsonl` in `--dir`, and still records; continue without a retry. Missing caller facts and flags that conflict where neither side is determined are still refused. Design D13's **Builder coverage of cross-field rules** lists every rule.
 
+For compatibility with successful older requests, an omitted `--resolution` stays omitted when the finding's effective resolution is already `unknown`. A read-only lookup of the validated run state preserves that omission on new corrections and preserves each existing correction's recorded resolution shape on replay; otherwise the helper derives `unknown`. Explicit `--resolution unknown` and contradicting resolution flags still write `unknown`. The recorder remains authoritative under its state lock; the lookup never changes the validator, stored format or `--input` behavior.
+
 ## Example calls
 
 Prepared run sequence across `start`, `record pass` (`started`, `attempt`, delegated `attempt`, `voice-complete`, `completed`), `record correction`, `record gate` (`greptile`, `probe-<id>`, `pregate`), `record audit` (`coverage`, `documentation`), `checkpoint` (`ready`) and `finish` (`prepared`):

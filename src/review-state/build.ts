@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, fsyncSync, lstatSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { DELEGATE_RUNNER_EXTRA_KEYS, HEX64_RE, isIsoZ, isObj, isStr, SCHEMA_VERSION, STATE_KEYS, toPartLabel, truncate80, type CommandName, type DelegationPolicy, type EvidenceRef, type Violation } from './state.ts';
+import { DELEGATE_RUNNER_EXTRA_KEYS, HEX64_RE, isIsoZ, isObj, isStr, SCHEMA_VERSION, STATE_KEYS, toPartLabel, truncate80, validateStoredState, type CommandName, type CorrectionRecord, type DelegationPolicy, type EvidenceRef, type Violation } from './state.ts';
 import { checkDirFile, executeCommand, makeEnvelope, readHelperVersion, unlinkQuiet, validateStateDir, writeAll, type StoreResult } from './store.ts';
 
 export const BUILD_COMMANDS = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'] as const satisfies readonly CommandName[];
@@ -273,6 +273,31 @@ function hashEvidenceFiles(paths: readonly string[], realDir: string): { ok: tru
   return { ok: true, items };
 }
 
+function canOmitRejectedResolution(realDir: string, id: string, target: CorrectionRecord['target']): boolean {
+  // Preserve successful legacy requests and each existing correction's replay shape.
+  // This is a read-only hint; executeCommand still validates under the state lock.
+  let fd: number | undefined;
+  try {
+    const statePath = join(realDir, 'review-run-state.json');
+    fd = openSync(statePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!fstatSync(fd).isFile()) return false;
+    const parsed = validateStoredState(JSON.parse(readFileSync(fd, 'utf8')), statePath);
+    if (!parsed.ok) return false;
+    const state = parsed.state;
+    const existing = state.corrections.find((c) => c.correction_id === id);
+    if (existing) return existing.resolution === null;
+    const matches = (t: CorrectionRecord['target']) => t.pass_id === target.pass_id && t.voice_id === target.voice_id && t.attempt_id === target.attempt_id && t.finding_id === target.finding_id;
+    const finding = state.passes.find((p) => p.pass_id === target.pass_id)?.voices.find((v) => v.voice_id === target.voice_id)?.attempts.find((a) => a.attempt_id === target.attempt_id)?.findings?.find((f) => f.finding_id === target.finding_id);
+    let resolution = finding?.resolution;
+    for (const c of state.corrections) if (matches(c.target) && c.resolution !== null) resolution = c.resolution;
+    return resolution === 'unknown';
+  } catch {
+    return false; // Missing/corrupt state is refused by the recorder, never repaired here.
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 export function buildRequest(command: CommandName, args: readonly string[], realDir: string): BuildRequestResult {
   const overrides: BuildOverride[] = [];
   const over = (flag: string, sent: string | string[], used: string | null, rule: string) => overrides.push({ flag, sent, used, rule });
@@ -480,21 +505,22 @@ export function buildRequest(command: CommandName, args: readonly string[], real
   }
 
   if (command === 'record correction') {
+    const target = {
+      pass_id: scalars.get('--pass-id')!,
+      voice_id: scalars.get('--voice-id')!,
+      attempt_id: scalars.get('--attempt-id')!,
+      finding_id: scalars.get('--finding-id')!,
+    };
     const req: Record<string, unknown> = {
       correction_id: scalars.get('--correction-id')!,
-      target: {
-        pass_id: scalars.get('--pass-id')!,
-        voice_id: scalars.get('--voice-id')!,
-        attempt_id: scalars.get('--attempt-id')!,
-        finding_id: scalars.get('--finding-id')!,
-      },
+      target,
     };
     if (scalars.has('--adjudication')) req.adjudication = scalars.get('--adjudication')!;
     if (scalars.get('--adjudication') === 'rejected') {
       if (scalars.has('--resolution') && scalars.get('--resolution') !== 'unknown') {
         over('--resolution', scalars.get('--resolution')!, 'unknown', 'unknown-when-rejected');
       }
-      req.resolution = 'unknown';
+      if (scalars.has('--resolution') || !canOmitRejectedResolution(realDir, scalars.get('--correction-id')!, target)) req.resolution = 'unknown';
     } else if (scalars.has('--resolution')) {
       req.resolution = scalars.get('--resolution')!;
     }
