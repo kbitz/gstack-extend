@@ -32,9 +32,9 @@ helper hardening (81A, v0.94.0), the caller and call-shape fixes (82A, v0.94.4;
 on 2026-11-13 ("1 - approved", "2 - sounds good"); what remains of it is the
 measurement and default decision on real runs (Track 86A) and, only if that
 decision adopts the recorded path, the default-promotion items (88A) and the
-default with the slimmer skill (89A). The builder's first real use still fell
-back on a rejected correction's resolution, so its repair (85A, in flight) comes
-before 86A's after-runs, which cannot record while that refusal remains. On
+default with the slimmer skill (89A). The builder's repair (85A, v0.97.1) and two
+later builder fixes carded outside the roadmap (85E, v0.97.3; 85H, v0.98.1)
+have shipped; 86A's after-runs now wait only on real recorded runs. On
 2026-11-15 the owner approved a scoped clean-up pilot of `/review-and-prep`
 ("clean-up -- approve 1-4"; "5-7; approve as you recommend") and merged its
 cards ("merge 83A with 84A and 86A with 87A", "1 - yes", that day's labels): its
@@ -42,13 +42,13 @@ manifested fixes went first (83A and 84A, both shipped), then the skill diet,
 which loosens the wording locks before the prose cuts they block (86B) and moves
 the record fence into a helper (87A). The `blocking=shown` measurement (84D,
 v0.97.0) filed a **change** decision backed by findings that reached merge, so
-that rule change (85D) is a manifested fix and goes before the diet in the same
-order. The two-driver workflow qualification (Track 90A) stays behind the
+that rule change (85D, v0.97.2) went before the diet as a manifested fix; the
+diet's first Track (86B) is in review. The two-driver workflow qualification (Track 90A) stays behind the
 run-state and review Tracks, as the owner chose ("Wait for run-state"), then the
 O6 measurement and decisions (91A) beside the stable update channel the owner
 placed "right before 1.0" (91B), then aligning install and upgrade with gstack
-(92A). The owner-run records (Tracks 85B and 85C) can run whenever the owner has
-time; only 85B gates anything (Track 91B, which appends to its record). Owner,
+(92A). The owner-run records (Tracks 86C and 86D) can run whenever the owner has
+time; only 86C gates anything (Track 91B, which appends to its record). Owner,
 2026-11-08: "A but keep 72c and 78a for 1.0", approving a proposal that moved
 the review-finding records to Future and kept docs-only test selection (since
 shipped) and the gstack alignment (now Track 92A) as 1.0 work.
@@ -89,12 +89,14 @@ split on purpose (both Tracks have shipped, 33A in v0.55.0 and 51A in v0.59.0;
 the reason is on 51A's shipped receipt).
 
 
-**Labels.** This regeneration (2026-11-16) recorded Tracks 82A, 83A and 84A,
-numbered two merged changes that carried no Track ID as 84C and 84D, retired
-Groups 82, 83 and 84 by tombstone, gave the in-flight builder repair (the
-orchestrator's item 507f6f8e) Track 85A and relabelled the remaining work from
-Group 85 in packer order; the renames are in its commit message. Shipped numbers
-through 84 are reserved by tombstones; 64 was never a roadmap Group.
+**Labels.** This regeneration (2026-11-17) recorded Tracks 85A and 85D,
+numbered four merged changes that carried no Track ID as 85E–85H (PRs #267,
+#268, #269 and #270), retired Group 85 by tombstone and kept Group 86's label,
+because its Track 86B (the orchestrator's item a4488ab9) is in flight. The
+owner-run records labelled 85B and 85C on 2026-11-16 joined that Group as 86C
+and 86D, and the acceptance-record clean-up is new Track 86E; the renames are in its commit
+message. Shipped numbers through 85 are reserved by tombstones; 64 was never a
+roadmap Group.
 
 Target: [SPEC](SPEC.md) O1–O6, 1.0.0 as the owner's own real use by hand and
 through an orchestrator; audience ceiling potentially-public. No workspace host
@@ -105,72 +107,13 @@ distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-Track 85A (the orchestrator's item 507f6f8e) is in flight, declared active by the manager on 2026-11-16. Its Group's other three Tracks share no file with it: two owner-run records and the `blocking=shown` probe rule. Tracks 82A, 83A and 84A, and two merged changes without a Track ID (now 84C and 84D), shipped since the last regeneration and are recorded in shipped history. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
+Track 86B (the orchestrator's item a4488ab9) is in flight, declared active by the manager on 2026-11-17; no PR was open at this regeneration. Its Group's other four Tracks share no file with it: the run-state measurement, two owner-run records and a one-file acceptance-record clean-up. Tracks 85A and 85D, and four merged changes without a Track ID (now 85E–85H), shipped since the last regeneration and are recorded in shipped history. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
 
-### Group 85: Run-state builder repair ∥ blocking=shown probe ∥ owner-run install and review records
+### Group 86: Run-state measurement ∥ review lock loosening ∥ owner-run install and review records ∥ acceptance-record clean-up
 
 _Depends on: none_
 
-**This group delivers:** Recorded reviews whose request builder cannot send a value the validator derives from another field, `blocking=shown` reviews that probe a concrete `CRITICAL` attacker or outside finding before leaving it unshown, and, whenever the owner runs them, the install/upgrade/recovery qualification and the remaining dated records of real review runs.
-
-##### Track 85A: Make review-state build derive cross-field values the validator ties together
-_3 tasks . ~200 LOC incl. tests . medium risk_
-**Outcome:** An opted-in review that sends its run-state records through `bin/review-state build` no longer loses its recorded state to a value the validator derives from another field: a rejected correction records with resolution `unknown`, and a flag that contradicts a determined value is refused, naming the rule, before any write.
-**Supports:** [SPEC](SPEC.md) O6.1 (complete stage records, unavailable values explicit) and P1 (Track 86A's after-runs need recordings that complete); the owner's approval to card it after the builder's first real use failed (2026-11-16: "2- yes"). In progress as the orchestrator's item 507f6f8e (planning on 2026-11-16); declared active by the manager, so this regeneration records it and does not re-place it.
-**Done when:** The item's card holds: (1) a rejected correction built without `--resolution` records with resolution `unknown`, and one built with a conflicting `--resolution` is refused before any write with an error that names the rule; (2) every cross-field rule in the validator is listed in the design's builder coverage table with its handling (derived, refused or not applicable), and a test checks the table against the validator's rules; (3) a regression test replays the failing PR #263 request shape and shows it records; (4) without `run-state=record` every review output, including the byte-exact rendered lines, is unchanged; (5) the head changes no CHANGELOG.md, VERSION or package file.
-_touches: src/review-state/build.ts, src/review-state/state.ts, tests/review-state.test.ts, docs/designs/review-run-state.md, docs/review-run-state-calls.md_
-**Scheduling:** Declared active (pinned). Track 86A's after-runs wait on it; Tracks 86B, 87A and 88A edit its files after it.
-_Source: the orchestrator's item 507f6f8e and its card (2026-11-16). The first review that routed every record through `build` (PR #263's, 2026-11-16) still fell back: `Run state: unavailable (invalid-input: record correction resolution invalid-value; expected unknown-when-rejected)`._
-- **Derive or refuse each cross-field value** -- List the validator's cross-field rules; derive each fully determined value in the builder and refuse a contradicting flag with a typed `invalid-input`, leaving adjudication to the caller. _~110 lines incl. tests._ (M)
-- **Builder coverage table and its check** -- The design's table of cross-field rules and their handling, and a test that compares it with the validator. _~50 lines incl. tests._ (S)
-- **Replay the failing request** -- A regression case from PR #263's request shape. _~40 lines incl. tests._ (S)
-
-
-##### Track 85B: Qualify install, upgrade and recovery on the owner's machines
-_2 tasks . ~160 LOC . medium risk_
-**Outcome:** The owner can install, onboard, upgrade and recover a working skill set on a fresh machine from the published instructions, with evidence of what was actually installed.
-**Supports:** [SPEC](SPEC.md) O1 (all three criteria) and O5.2; the preserved published three-part upgrade obligation from Track 28A planning (2026-10-23), whose trigger was met by v0.48.0.
-**Done when:** A dated record names the OS, host, harnesses and versions of a fresh install and project onboarding on the owner's machine, actionable failures for a missing prerequisite, an upgrade with user-owned files preserved and stale copies reported, a working recovery path, and a real legacy four-part install upgraded through the default remote with offered and installed commit/tag identity, reader compatibility and unchanged user state; it records the actual installed commit and discloses that upgrade offers follow main rather than a release identity; failures stay open; the owner confirms before O1 counts.
-_touches: docs/acceptance/install-upgrade.md (new)_
-_blocked-by: Track 70A, Track 28A_
-**Scheduling:** Technical edge on Track 70A (shipped, v0.72.0): the qualified upgrade includes removing the retired skill. Candidate or file-remote proof does not satisfy the published-upgrade obligation. It waits on the owner's time and gates only the stable-channel Track 91B, which appends to its record.
-_read-first: docs/installation.md, docs/acceptance/release-compatibility.md_
-- **Fresh install, onboarding, upgrade and recovery** -- Run them on the owner's machine from the published instructions and record each step, intervention and result. _~90 lines._ (M)
-- **Published three-part upgrade from a legacy install** -- Upgrade a real four-part install through the default remote and record offered and installed identity, reader compatibility, recovery and unchanged state beside `docs/acceptance/release-compatibility.md`. _~70 lines._ (M)
-
-##### Track 85C: Record the owner's remaining real review runs
-_2 tasks . ~90 LOC . low risk_
-**Outcome:** The owner can see from dated records that a by-hand review with no caller lines still runs as before, that the attacker parts run with per-part models when an orchestrator delegates them, and that tools-mode delegation works on an installed release.
-**Supports:** [SPEC](SPEC.md) O6 and P1, O3.3 (the by-hand driver's evidence) and O4.4. The remainder of the earlier Track 80D (PR #256, v0.94.2), which recorded and qualified the hand-use rows (`docs/acceptance/hand-use-telemetry.md`, `Status: qualified`, 2026-11-15) and left attacker-parts PM1 and PM2 and tools-mode PM1 pending; the open acceptance of Track 72B (PR #221) and the post-release PM1 of the owner-approved tools-mode plan (PR #229).
-**Done when:** (1) `docs/acceptance/attacker-parts.md` records PM1 (one real by-hand `/review-and-prep` with no `Review policy:` or `Review delegates:` line, read back as unchanged, with its invocation and receipt retained) and PM2 (one orchestrated run with `delegate=adversarial,red-team` mapping the two parts to different providers or models, with its `Delegated part:` lines, v3 attempts, `found_by` labels and any fallbacks), each with date, revision, host and harness versions and PR. (2) `docs/acceptance/delegate-tools-mode.md` records its PM1 installed paired run and names the exact reviewed content its earlier dry-run evidence covers. (3) A failed, unavailable or wrongly read-back run stays recorded as open, never as passed, and a wrong read-back is filed as a defect.
-_touches: docs/acceptance/attacker-parts.md, docs/acceptance/delegate-tools-mode.md_
-**Scheduling:** No edges; it gates no other Track. PM2 already has partial observations (PRs #250 and #253 and a consumer repository's review) and waits only on harness CLI version provenance, which the run's operator can record from the harness at run time; tools-mode PM1 waits on the orchestrator's paired tools-mode run, requested on 2026-11-15.
-_Source: PR #256's receipt (2026-11-15: "attacker PM1/PM2 and paired tools-mode qualification remain pending"); `docs/acceptance/attacker-parts.md` and `docs/acceptance/delegate-tools-mode.md` (PM rows pending)._
-_read-first: docs/delegated-review.md_
-- **Attacker parts PM1 and PM2** -- Run and read back one by-hand review with no caller lines, and finish PM2's harness version provenance. _~50 lines._ (S)
-- **Tools-mode PM1 and provenance** -- Record the installed paired run and name the content the dry-run record covers. _~40 lines._ (S)
-
-##### Track 85D: Probe a concrete CRITICAL attacker or outside finding before leaving it unshown
-_2 tasks . ~140 LOC incl. tests . medium risk_
-**Outcome:** Under `blocking=shown`, a `CRITICAL` finding from an attacker part or an outside voice that names a concrete input and failure on changed code gets one bounded host reproduction probe before it is recorded as not blocking, so a real defect blocks readiness instead of being left unshown and reaching merge.
-**Supports:** [SPEC](SPEC.md) P1 (an optimization keeps review quality, and caller-specific behavior stays opt-in) and O6.3 (the measured decision on `blocking=shown`). Manifested: `docs/acceptance/review-unshown-findings.md` (Track 84D, 2026-11-16) measured 386 unshown findings across 50 PRs, and 9 of the 100 unshown `CRITICAL` findings were later confirmed; on one consumer PR, 8 confirmed findings (3 `CRITICAL`) were left `reason=not-shown` without a host probe, one escaped to the Greptile stage and seven reached merge and needed a follow-up fix PR. The record's decision is **change**, with this rule.
-**Done when:** (1) In `### Block readiness only on shown findings`, before a `CRITICAL` (`CRITICAL`/`P0`/`P1`) finding from `adversarial`, `red-team` or `outside` that names a concrete input state and failure on changed code, and is neither disproved by source inspection nor settled by `Finding settled:`, is recorded `Finding not blocking:` with `reason=not-shown`, the skill runs one bounded host reproduction probe against that input state (the plan sets the bound); a probe that reproduces the failure makes it a shown, blocking finding, and one that does not keeps `reason=not-shown` with the probe's evidence reference in `evidence=`. (2) The `attacker-not-rerun`, `base-only` and `INFORMATIONAL` `not-shown` rules and the safety-class rule are unchanged, and a review without `blocking=shown` is byte-unchanged. (3) `docs/workflow-handoffs.md`'s `blocking=shown` description states the probe. (4) Tests lock the rule's contract tokens, not its sentences (Track 86B's direction). (5) The recorded test gaps in its tasks have tests. (6) The release notes disclose the changed opt-in value.
-_touches: skills/review-and-prep.md, docs/workflow-handoffs.md, tests/skill-protocols-review-and-prep.test.ts_
-**Scheduling:** No technical prerequisite. Placed before the lock loosening (Track 86B, which edits the same skill and test file) because it is a manifested fix, the order the owner set for the clean-up pilot (2026-11-15: fixes first, then the diet).
-_Source: inbox `[review:severity=necessary,files=skills/review-and-prep.md|docs/workflow-handoffs.md]` "Require one targeted host probe before leaving a concrete CRITICAL attacker or outside finding not-shown" (PR #263's change decision, 2026-11-16); recorded test gaps `[review:files=tests/skill-protocols-review-and-prep.test.ts]` "Resume guard uses current builder flag names" (PR #262's review, 2026-11-16) and "Anchor baseline token checks to their owning bullets" (PR #261's review, 2026-11-16)._
-_read-first: docs/acceptance/review-unshown-findings.md, docs/workflow-handoffs.md_
-- **Probe rule** -- The bounded probe, its two outcomes and its evidence reference in the not-shown rule, the handoff description and contract-token tests. _~100 lines incl. tests._ (M)
-- **Recorded test gaps** -- Extend the negative Resume-authority assertion from the old `details.value` wording to the current `--greptile-value` spelling, and search each full-scope and checkpoint baseline token in its owning bullet instead of the whole baseline section; re-verify the authority rules and published requirements first. _~40 lines._ (S)
-
-## Current Plan
-
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84_
-
-### Group 86: Run-state measurement and default decision ∥ review lock loosening
-
-_Depends on: Group 85_
-
-**This group delivers:** A measured adopt, reject or insufficient-evidence decision on making the recorded run state the review default, and a `/review-and-prep` whose tests lock contracts, not wording, and whose rules are each stated once.
+**This group delivers:** A measured adopt, reject or insufficient-evidence decision on making the recorded run state the review default; a `/review-and-prep` whose tests lock contracts, not wording, and whose rules are each stated once; whenever the owner runs them, the install/upgrade/recovery qualification and the remaining dated records of real review runs; and a review-concurrency record that names no personal tooling.
 
 ##### Track 86A: Measure the recorded run-state path on real runs and decide its default
 _2 tasks . ~120 LOC . low risk_
@@ -179,7 +122,7 @@ _2 tasks . ~120 LOC . low risk_
 **Done when:** (1) `docs/acceptance/review-run-state.md` records E15's before figures and after figures from real opted-in runs within E15's bound (at least four, two by hand by the owner and two orchestrated, within six weeks of Track 78A's release in v0.92.0, so by about 2026-12-25), measured with the same caller-owned scripts identified by digest, with sample size, unknowns, each segment's record completeness and the adoption threshold the owner set before the after-runs started; it also reports what the opted-in reviews asked to measure: capture lost when the first derive cannot bind, whether a helper-missing activation suppresses Step 1's spans, the always-loaded pointer and fence overhead, and the installed caller journey (activation, start and derive, voice and probe records, pause and resume, degraded capture, finish) with unchanged outward lines, and whether three consecutive orchestrated reviews with delegated parts recorded their state through `build` (D15's success target). (2) The record states adopt (the recorded path becomes the default through Tracks 88A and 89A), reject, or insufficient evidence naming the missing data and a bounded next measurement, and decides whether a default needs per-record `seq` and `input_sha256` or records them as dropped with the reason. No default changes in this Track.
 _touches: docs/acceptance/review-run-state.md (new), docs/designs/workflow-efficiency-program.md_
 _blocked-by: Track 85A, Track 83A, Track 80A, Track 79A_
-**Scheduling:** Technical edge on Track 85A, in flight: the first review that routed every record through `build` (PR #263's, 2026-11-16) still fell back, and after-runs cannot record while that refusal remains. The earlier run-state fixes (Tracks 82A, 83A and 84C) have shipped. Run state stood at 0 of the 3 consecutive recorded reviews on 2026-11-16, so this Track is not ready on schedule alone: it also waits on real runs, which no Track supplies (the orchestrator's opted-in reviews and the owner's by-hand ones), and the after-runs measure the path as it stands after the builder (v0.96.0), which changed how requests are made. If the window closes short of the bound, the record says insufficient evidence. It shares no file with Track 86B and runs beside it.
+**Scheduling:** Its technical prerequisites have shipped: the builder repair (Track 85A, v0.97.1) and the earlier run-state fixes (Tracks 82A, 83A and 84C); two later builder fixes (Tracks 85E, v0.97.3, and 85H, v0.98.1) changed how corrections and coverage audits record. Run state stood at 1 of the 3 consecutive recorded reviews on 2026-11-17 (PR #270's review recorded), so this Track is not ready on schedule alone: it waits on real runs, which no Track supplies (the orchestrator's opted-in reviews and the owner's by-hand ones), and the after-runs measure the path as it stands after those fixes. If the window closes short of the bound, the record says insufficient evidence. It shares no file with Track 86B and runs beside it.
 _Source: owner-approved card "Track 79A (part 2)", items 1, 2 and 5 (2026-11-13); E15 in `docs/designs/workflow-efficiency-program.md`; the opted-in reviews' measurement requests `[review:files=docs/review-run-state-calls.md|skills/review-and-prep.md]` and `[review:files=skills/review-and-prep.md|docs/designs/review-run-state.md]` (PR #244, owner "accept the reviews", 2026-11-12); recorded test gap `[review:files=skills/review-and-prep.md|docs/designs/review-run-state.md]` "Installed builder delegated-review success target" (PR #262's review, 2026-11-16)._
 _read-first: docs/designs/workflow-efficiency-program.md, docs/designs/review-run-state.md_
 - **Record before and after on real runs** -- The acceptance record with every figure, unknown and requested measurement. _~90 lines._ (M)
@@ -192,13 +135,51 @@ _4 tasks . ~210 LOC authored, plus ~1,800 deleted test lines and ~330 deleted sk
 **Done when:** (1) Plain duplicate locks are gone: host-placeholder slice checks that audit-compliance group E already covers, repeated long literals, the repeated policy-line, H-B and `Delegated part` assertions, and capability tests that only test `grep`. (2) Following the consistency auditor's loosen list, sentence locks are deleted or anchored, while every contract lock it names (comment markers, the H-B, H-E and H-C fences, the policy grammar line, capability `grep -F` lines, upstream anchors, receipt templates, Greptile status strings, executable fences and frontmatter) still fails when its contract is mutated; `/ship-and-land` and calls-document sentences are no longer locked from this suite; the stale Track 79A references in the skill, the calls document and D14, and their locks, name Track 86A or drop the Track ID. (3) One receipt-line table (line, condition, receipt kinds) replaces the three lists, after checking whether the stop and pause omissions are intentional; the light default has one allow-list sentence; one opt-in-value preamble points to `docs/workflow-handoffs.md`'s caller rollout; readiness points to each section's **Readiness** paragraph; the waiver procedure, the upstream anchor lists, the run-state rules and `<extend-root>` are each defined once; the stop table replaces its prose ordering; the E6 template says "asked once" only when it was. (4) Maintainer and history notes move to the design record or acceptance documents, and the `Base issue:` TODOS form is defined in `docs/source-tag-contract.md`, with the skill pointing there; `docs/acceptance/review-fix-policy.md`'s `post-audit=classify` description also names the `test-tooling` class and the full-scope fix review that v0.95.0 added (it still lists five no-owner classes and delta-only fix-review scope, as Track 84A's plan noted). (5) Every kept contract lock passes unedited after the cuts, and the PR states the suite's test and line counts and the skill's line and byte counts before and after (`wc -lc skills/review-and-prep.md`).
 _touches: tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols.test.ts, skills/review-and-prep.md, docs/review-run-state-calls.md, docs/designs/review-run-state.md, docs/source-tag-contract.md, tests/audit-compliance.test.ts, docs/acceptance/review-fix-policy.md_
 _blocked-by: Track 85D, Track 84A_
-**Scheduling:** The pilot requires the lock loosening before the prose cuts it blocks; the owner merged the two into one card (2026-11-15: "merge 86A with 87A", "1 - yes", that day's labels), so the locks go first within it. It follows the manifested fixes because they change locked sentences in the same files (technical edge on Track 85D; Track 84A's has shipped). Tracks 84C and 84D added locks to the same suite on contract tokens, as their plans asked, so re-measure the line counts above at planning. Deletions are cheap (weight S); session weight 6.
-_Source: inbox `[full-review:necessary]` "Drift-lock suite mostly freezes wording; two locks keep stale Track refs alive", `[full-review:nice-to-have]` "Rules duplicated across sites have drifted" and items 2 and 4 of "Content the skill restates or carries instead of pointing to its owner" (owner approved, 2026-11-15); the loosen list in that `/full-review` session's report._
+**Scheduling:** Declared active (pinned). The pilot requires the lock loosening before the prose cuts it blocks; the owner merged the two into one card (2026-11-15: "merge 86A with 87A", "1 - yes", that day's labels), so the locks go first within it. It follows the manifested fixes because they change locked sentences in the same files (technical edge on Track 85D; Track 84A's has shipped). Tracks 84C and 84D added locks to the same suite on contract tokens, as their plans asked, so re-measure the line counts above at planning. Deletions are cheap (weight S); session weight 6.
+_Source: inbox `[full-review:necessary]` "Drift-lock suite mostly freezes wording; two locks keep stale Track refs alive", `[full-review:nice-to-have]` "Rules duplicated across sites have drifted" and items 2 and 4 of "Content the skill restates or carries instead of pointing to its owner" (owner approved, 2026-11-15); the loosen list in that `/full-review` session's report. In progress as the orchestrator's item a4488ab9 (in review on 2026-11-17, no PR open yet); declared active by the manager, so this regeneration records it and does not re-place it._
 _read-first: docs/workflow-handoffs.md_
 - **Delete duplicate and wording locks** -- Plain duplicates (~285 lines) and the sentence locks on the loosen list (~1,500 lines), keeping the named contract tokens. _~1,800 lines (del)._ (S)
 - **Mutation-check the kept contracts and fix stale Track references** -- Each kept contract lock fails on a mutation of its contract; the shared suite's sentence locks become a negative named-host check; the 79A references and their locks. _~150 lines._ (M)
 - **Delete the duplicate statements** -- Repeated lists, bullets, boilerplate and procedures in the skill. _~330 lines (del)._ (S)
 - **One statement per rule** -- The receipt-line table, the allow-list sentence, the opt-in preamble, readiness pointers, the single waiver, anchor, run-state and `<extend-root>` definitions, the conditional E6 template, and the history notes and `Base issue:` form moved to their owners. _~110 lines._ (M)
+
+##### Track 86C: Qualify install, upgrade and recovery on the owner's machines
+_2 tasks . ~160 LOC . medium risk_
+**Outcome:** The owner can install, onboard, upgrade and recover a working skill set on a fresh machine from the published instructions, with evidence of what was actually installed.
+**Supports:** [SPEC](SPEC.md) O1 (all three criteria) and O5.2; the preserved published three-part upgrade obligation from Track 28A planning (2026-10-23), whose trigger was met by v0.48.0.
+**Done when:** A dated record names the OS, host, harnesses and versions of a fresh install and project onboarding on the owner's machine, actionable failures for a missing prerequisite, an upgrade with user-owned files preserved and stale copies reported, a working recovery path, and a real legacy four-part install upgraded through the default remote with offered and installed commit/tag identity, reader compatibility and unchanged user state; it records the actual installed commit and discloses that upgrade offers follow main rather than a release identity; failures stay open; the owner confirms before O1 counts.
+_touches: docs/acceptance/install-upgrade.md (new)_
+_blocked-by: Track 70A, Track 28A_
+**Scheduling:** Technical edge on Track 70A (shipped, v0.72.0): the qualified upgrade includes removing the retired skill. Candidate or file-remote proof does not satisfy the published-upgrade obligation. It waits on the owner's time and gates only the stable-channel Track 91B, which appends to its record.
+_read-first: docs/installation.md, docs/acceptance/release-compatibility.md_
+- **Fresh install, onboarding, upgrade and recovery** -- Run them on the owner's machine from the published instructions and record each step, intervention and result. _~90 lines._ (M)
+- **Published three-part upgrade from a legacy install** -- Upgrade a real four-part install through the default remote and record offered and installed identity, reader compatibility, recovery and unchanged state beside `docs/acceptance/release-compatibility.md`. _~70 lines._ (M)
+
+##### Track 86D: Record the owner's remaining real review runs
+_2 tasks . ~90 LOC . low risk_
+**Outcome:** The owner can see from dated records that a by-hand review with no caller lines still runs as before, that the attacker parts run with per-part models when an orchestrator delegates them, and that tools-mode delegation works on an installed release.
+**Supports:** [SPEC](SPEC.md) O6 and P1, O3.3 (the by-hand driver's evidence) and O4.4. The remainder of the earlier Track 80D (PR #256, v0.94.2), which recorded and qualified the hand-use rows (`docs/acceptance/hand-use-telemetry.md`, `Status: qualified`, 2026-11-15) and left attacker-parts PM1 and PM2 and tools-mode PM1 pending; the open acceptance of Track 72B (PR #221) and the post-release PM1 of the owner-approved tools-mode plan (PR #229).
+**Done when:** (1) `docs/acceptance/attacker-parts.md` records PM1 (one real by-hand `/review-and-prep` with no `Review policy:` or `Review delegates:` line, read back as unchanged, with its invocation and receipt retained) and PM2 (one orchestrated run with `delegate=adversarial,red-team` mapping the two parts to different providers or models, with its `Delegated part:` lines, v3 attempts, `found_by` labels and any fallbacks), each with date, revision, host and harness versions and PR. (2) `docs/acceptance/delegate-tools-mode.md` records its PM1 installed paired run and names the exact reviewed content its earlier dry-run evidence covers. (3) A failed, unavailable or wrongly read-back run stays recorded as open, never as passed, and a wrong read-back is filed as a defect.
+_touches: docs/acceptance/attacker-parts.md, docs/acceptance/delegate-tools-mode.md_
+**Scheduling:** No edges; it gates no other Track. PM2 already has partial observations (PRs #250 and #253 and a consumer repository's review) and waits only on harness CLI version provenance, which the run's operator can record from the harness at run time; tools-mode PM1 waits on the orchestrator's paired tools-mode run, requested on 2026-11-15.
+_Source: PR #256's receipt (2026-11-15: "attacker PM1/PM2 and paired tools-mode qualification remain pending"); `docs/acceptance/attacker-parts.md` and `docs/acceptance/delegate-tools-mode.md` (PM rows pending)._
+_read-first: docs/delegated-review.md_
+- **Attacker parts PM1 and PM2** -- Run and read back one by-hand review with no caller lines, and finish PM2's harness version provenance. _~50 lines._ (S)
+- **Tools-mode PM1 and provenance** -- Record the installed paired run and name the content the dry-run record covers. _~40 lines._ (S)
+
+##### Track 86E: Replace the personal-tooling path in the review-concurrency acceptance record
+_1 task . ~5 LOC . low risk_
+**Outcome:** A reader of the published review-concurrency record sees each run's host described generically, with no path that names the maintainer's personal tooling, as the repository's consumer-independence rule requires.
+**Supports:** `CLAUDE.md` "Consumer independence" (no shipped docs name or require personal tooling) under [SPEC](SPEC.md)'s potentially-public audience ceiling; the same correction PR #269 made in the attacker-parts and hand-use records (Track 85G, 2026-11-17).
+**Done when:** (1) The `#202` and `#207` rows' Host / harness cells in `docs/acceptance/review-concurrency.md` describe the state root generically (for example `macOS (private state root)`), keeping every other fact in those rows; (2) a repository-wide search of shipped docs, tests and skills finds no other personal-tooling path (on 2026-11-17 these two rows were the only ones); (3) the change is documentation only.
+_touches: docs/acceptance/review-concurrency.md_
+**Scheduling:** No edges; it gates no other Track. Documentation only, so `/docs-ship` can carry it in one session.
+_Source: the TODO filed by PR #269's documentation-fix session (2026-11-17), relayed by the manager: the record's `#202` and `#207` rows cite a local path under the maintainer's personal tooling directory._
+- **Generic host description** -- Replace the two personal state-root paths with a generic description and confirm no other occurrence remains. _~4 lines._ (S)
+
+## Current Plan
+
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85_
 
 ### Group 87: Full-review record fence helper
 
@@ -274,13 +255,13 @@ _2 tasks . ~240 LOC . medium risk_
 **Done when:** A dated record names host, harness and versions for real runs by both drivers (the owner by hand, and one real external orchestrator), each run read back in telemetry with the correct run mode, covering, between them, a complete plan-to-authorized-release workflow, interrupted resume, manual-testing pause/resume, `/full-review` finish/restart, an explicit negative hold, an external-consumer handoff consumed from artifacts, a cross-session handoff and stale/partial/held handoffs; it counts operator interventions and keeps pending approvals or failures as holds; it includes the installed `/docs-ship` acceptance below; no unexercised combination is claimed.
 _touches: docs/acceptance/workflow-drivers.md (new)_
 _blocked-by: Track 70A, Track 72C, Track 71E, Track 74A, Track 76A, Track 75A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 79A, Track 80B, Track 87A, Track 89A_
-**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changes them, including the run-state Tracks (through 89A, whose last one may change `/review-and-prep`'s default), the review fixes, the `blocking=shown` probe and the skill diet (Tracks 82A–84D, 85D, 86B and 87A) and the secret-disposition requalification (80B, shipped); qualifying before them would spend the owner's by-hand runs on behavior about to change (owner, 2026-11-10: wait for the run-state Tracks). If Track 86A does not adopt the default, the regeneration that records it moves Tracks 88A and 89A to Future and this Track follows 86A. The Tracks that only record real runs of shipped code (85B, 85C) do not gate this one; a run here can supply their rows. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
+**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changes them, including the run-state Tracks (through 89A, whose last one may change `/review-and-prep`'s default), the review fixes, the `blocking=shown` probe and the skill diet (Tracks 82A–84D, 85D, 86B and 87A) and the secret-disposition requalification (80B, shipped); qualifying before them would spend the owner's by-hand runs on behavior about to change (owner, 2026-11-10: wait for the run-state Tracks). If Track 86A does not adopt the default, the regeneration that records it moves Tracks 88A and 89A to Future and this Track follows 86A. The Tracks that only record real runs of shipped code (86C, 86D) do not gate this one; a run here can supply their rows. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
 - **Exercise both drivers** -- Use real host-managed workspaces and approved accounts with the harnesses the owner uses for each stage; retain the bound PR and workspace, test stale/partial/held handoffs, confirm next-stage consumption from artifacts across sessions, include the host-attribution check deferred from Track 26A, and count operator interventions. _~200 documentation lines._ (L)
 - **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging, and its interactive merge question; include one Sonnet-class run and one `/roadmap` handoff, and compare work/wait wall time with a recent docs PR shipped through the ordinary path. _~40 lines._ (S)
 
 ### Group 91: Measured stage cost ∥ stable update channel
 
-_Depends on: Group 85, Group 86, Group 90_
+_Depends on: Group 86, Group 90_
 
 **This group delivers:** Expected cost per stage with an adopt, reject or insufficient-evidence decision for every candidate optimization, the opted-in policy records' after fields filled, and upgrades that follow a stable release channel with a non-interactive auto-upgrade switch.
 
@@ -305,7 +286,7 @@ _4 tasks . ~280 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) O1 (install, update and recover) and O5 (release promise). Required before 1.0. Owner, 2026-11-07: "Another we need here for 1.0 (if not already done) - on install, we should check for gstack and extend and install them if missing + turn on auto upgrade on stable for both — they are dependencies" and "This can be deferred to be done right before 1.0".
 **Done when:** An `update_channel` setting selects a stable channel (release tags, or a stable branch the release step advances, chosen in the plan) and keeps today's main-tracking behavior available, with existing main-tracking installs and the rollback recipe documented in `docs/installation.md`; `bin/update-check` offers and `bin/update-run` installs the same release identity, or reports the mismatch; a documented non-interactive command enables auto-upgrade on the channel; `setup` reports a missing gstack install actionably (installing it stays the bootstrap's job unless the plan shows otherwise); the Bun 1.3.3 launcher lists in `docs/installation.md` and `CLAUDE.md` name every launcher that needs it (both omit `bin/review-state`, and the installation guide also `bin/review-delegate` and `bin/upstream-check`; verified 2026-11-13); `bin/update-check`'s published output and install-safety stay compatible; the compatibility catalog lists the setting; a dated upgrade through the stable channel on the owner's machine is added to the install qualification record.
 _touches: bin/update-check, bin/update-run, bin/config, setup, docs/installation.md, docs/compatibility.md, tests/update.test.ts, docs/acceptance/install-upgrade.md, CLAUDE.md_
-_blocked-by: Track 90A, Track 77A, Track 85B_
+_blocked-by: Track 90A, Track 77A, Track 86C_
 **Scheduling:** Placed "right before 1.0" (owner): the edge on the workflow qualification is a priority choice; the edges on the catalog (shipped) and install qualification Tracks are technical (it adds the setting to the catalog and appends to the install record). Facts rechecked 2026-11-13: `bin/update-run` fast-forwards `origin main`; there is no channel setting; `setup` checks only that `bun` exists; `bin/config set auto_upgrade true` is honored only by interactive upgrade flows, and spawned sessions never upgrade. An orchestrator's bootstrap does its own install-if-missing; this repository owes the channel, the setting and the non-interactive enable path.
 _Source: owner-approved card (2026-11-07); merges the Future entry "Bind upgrade offers to the installed release identity" (raised during Track 28A planning, 2026-10-23), which the owner's word pulls into 1.0._
 _read-first: docs/installation.md, docs/acceptance/release-compatibility.md_
@@ -343,33 +324,30 @@ Track shares a file with a Track in an earlier Group, the packer has already
 turned that into an edge here. The adjacency below is the packer's DEPENDS
 output with bin numbers replaced by Group numbers; the Track IDs after each set
 are the packer's own list of the Tracks that cause the edge, so a Group never
-waits on a blocker's siblings. In particular, the owner-run Tracks 85B and 85C
-gate only Track 91B (through Track 85B), Track 86A's after-runs wait on the
-builder repair (85A) and on real runs, and Tracks 88A and 89A run only if
+waits on a blocker's siblings. In particular, the owner-run Tracks 86C and 86D
+gate only Track 91B (through Track 86C), Track 86A's after-runs wait on real
+recorded runs, Track 86E gates nothing, and Tracks 88A and 89A run only if
 Track 86A adopts the default. Document order is priority, not a gate. The cards
 label priority choices separately from technical prerequisites.
 
 ```
-- Group 85 ← {}
-- Group 86 ← {85}: Tracks 85A, 85D
+- Group 86 ← {}
 - Group 87 ← {86}: Track 86B
 - Group 88 ← {86, 87}: Tracks 86A, 87A
 - Group 89 ← {88}: Track 88A
 - Group 90 ← {87, 89}: Tracks 87A, 89A
-- Group 91 ← {85, 86, 90}: Tracks 85B, 86A, 90A
+- Group 91 ← {86, 90}: Tracks 86C, 86A, 90A
 - Group 92 ← {91}: Track 91B
 ```
 
 Track detail per group:
 ```
-Group 85: Builder repair ∥ blocking=shown probe ∥ owner-run records   (in progress)
-  +-- Track 85A ........... ~M . 3 tasks   (in progress)
-  +-- Track 85B ........... ~M . 2 tasks   (owner's runs)
-  +-- Track 85C ........... ~S . 2 tasks   (owner's runs)
-  +-- Track 85D ........... ~M . 2 tasks
-Group 86: Run-state measurement ∥ review lock loosening
-  +-- Track 86A ........... ~M . 2 tasks   (waits on 85A and real runs)
-  +-- Track 86B ........... ~L . 4 tasks
+Group 86: Run-state measurement ∥ lock loosening ∥ owner-run records ∥ record clean-up   (in progress)
+  +-- Track 86A ........... ~M . 2 tasks   (waits on real recorded runs)
+  +-- Track 86B ........... ~L . 4 tasks   (in progress)
+  +-- Track 86C ........... ~M . 2 tasks   (owner's runs)
+  +-- Track 86D ........... ~S . 2 tasks   (owner's runs)
+  +-- Track 86E ........... ~S . 1 task
 Group 87: Full-review record fence helper
   +-- Track 87A ........... ~L . 3 tasks
 Group 88: Default-promotion prerequisites (only on adopt)
@@ -385,14 +363,13 @@ Group 92: Install and upgrade aligned with upstream gstack
   +-- Track 92A ........... ~M . 3 tasks
 ```
 
-**8 Groups / 13 Tracks remaining**, one in progress; Tracks 88A and 89A are conditional on Track 86A.
+**7 Groups / 13 Tracks remaining**, one in progress; Tracks 88A and 89A are conditional on Track 86A.
 
 Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
-
 ## Future
 
-Deferred: docs/roadmap-future.md (88 items)
+Deferred: docs/roadmap-future.md (92 items)
 
 ## Shipped
 
