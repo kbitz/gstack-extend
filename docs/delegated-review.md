@@ -132,8 +132,8 @@ A delegated part is one bounded call:
   also collects added, modified and type-changed regular text blobs (`100644` or
   `100755`, valid UTF-8 without NUL bytes, each at most `ATTACH_LIMIT` bytes) at
   `--candidate`, excluding any path with a directory segment `test`, `tests`,
-  `__tests__`, `spec` or `specs` or containing `fixture`, a basename matching
-  `*.test.*`, `*.spec.*`, `test_*` or `*_test.*`, an extension `.md`,
+  `__tests__`, `spec` or `specs`, or a directory segment containing `fixture`,
+  a basename matching `*.test.*`, `*.spec.*`, `test_*` or `*_test.*`, an extension `.md`,
   `.markdown`, `.rst`, `.txt` or `.lock`, or a basename `package-lock.json`,
   `pnpm-lock.yaml` or `go.sum`. When the prompt without `sources` already
   exceeds `ATTACH_LIMIT` (180 KiB = 184320 UTF-8 bytes of the whole prompt,
