@@ -72,6 +72,39 @@
 - **Context:** Filed by /review-and-prep before draft PR creation at b2c1a1f (2026-11-16).
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: supersedes hint fallback
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The correction-builder tests cover missing state but do not directly cover invalid, unreadable or nonregular state while preserving an explicit supersedes flag.
+- **Hypothesis (untested):** Extend the existing chain fixture with those hint failures and verify no supersedes override is emitted; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:284
+- **Evidence:** Read-only coverage audit found no direct fixture for this branch; the required chain, override and C17 checks pass, and no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at 1dcf1a4 (2026-11-17).
+- **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: supersedes absent-target passthrough
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The new builder tests use existing target findings; they do not directly exercise explicit supersedes passthrough for an absent pass, voice, attempt or finding.
+- **Hypothesis (untested):** Extend the existing CLI fixture with each absent-target component and verify the supplied flag remains intact with no override; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:312
+- **Evidence:** Read-only coverage audit found no direct fixture for this branch; the required chain, override and C17 checks pass, and no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at 1dcf1a4 (2026-11-17).
+- **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=tests/review-state.test.ts|src/review-state/build.ts] Test gap: supersedes four-field target isolation
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The new chain test uses one target tuple and does not interleave corrections differing in each of the four target fields.
+- **Hypothesis (untested):** Extend the existing chain fixture with interleaved targets and verify the latest correction is selected only for the complete matching tuple; re-verify the gap first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/review-state/build.ts:276
+- **Evidence:** Read-only coverage audit found no direct fixture for this branch; the required chain, override and C17 checks pass, and no failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft PR creation at 1dcf1a4 (2026-11-17).
+- **Revisit when:** The next Track touches `src/review-state/build.ts` or `tests/review-state.test.ts`.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

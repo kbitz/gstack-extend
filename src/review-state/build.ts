@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { DELEGATE_RUNNER_EXTRA_KEYS, HEX64_RE, isIsoZ, isObj, isStr, SCHEMA_VERSION, STATE_KEYS, toPartLabel, truncate80, validateStoredState, type CommandName, type CorrectionRecord, type DelegationPolicy, type EvidenceRef, type Violation } from './state.ts';
+import { DELEGATE_RUNNER_EXTRA_KEYS, HEX64_RE, isIsoZ, isObj, isStr, SCHEMA_VERSION, STATE_KEYS, toPartLabel, truncate80, validateStoredState, type CommandName, type CorrectionRecord, type DelegationPolicy, type EvidenceRef, type ReviewRunState, type Violation } from './state.ts';
 import { checkDirFile, executeCommand, makeEnvelope, readHelperVersion, unlinkQuiet, validateStateDir, writeAll, type StoreResult } from './store.ts';
 
 export const BUILD_COMMANDS = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'] as const satisfies readonly CommandName[];
@@ -273,29 +273,47 @@ function hashEvidenceFiles(paths: readonly string[], realDir: string): { ok: tru
   return { ok: true, items };
 }
 
-function canOmitRejectedResolution(realDir: string, id: string, target: CorrectionRecord['target']): boolean {
-  // Preserve successful legacy requests and each existing correction's replay shape.
+const sameTarget = (a: CorrectionRecord['target'], b: CorrectionRecord['target']) =>
+  a.pass_id === b.pass_id && a.voice_id === b.voice_id && a.attempt_id === b.attempt_id && a.finding_id === b.finding_id;
+
+const findTargetFinding = (state: ReviewRunState, target: CorrectionRecord['target']) =>
+  state.passes.find((p) => p.pass_id === target.pass_id)?.voices.find((v) => v.voice_id === target.voice_id)?.attempts.find((a) => a.attempt_id === target.attempt_id)?.findings?.find((f) => f.finding_id === target.finding_id);
+
+function readStateHint(realDir: string): ReviewRunState | null {
   // This is a read-only hint; executeCommand still validates under the state lock.
   let fd: number | undefined;
   try {
     const statePath = join(realDir, 'review-run-state.json');
     fd = openSync(statePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    if (!fstatSync(fd).isFile()) return false;
+    if (!fstatSync(fd).isFile()) return null;
     const parsed = validateStoredState(JSON.parse(readFileSync(fd, 'utf8')), statePath);
-    if (!parsed.ok) return false;
-    const state = parsed.state;
-    const existing = state.corrections.find((c) => c.correction_id === id);
-    if (existing) return existing.resolution === null;
-    const matches = (t: CorrectionRecord['target']) => t.pass_id === target.pass_id && t.voice_id === target.voice_id && t.attempt_id === target.attempt_id && t.finding_id === target.finding_id;
-    const finding = state.passes.find((p) => p.pass_id === target.pass_id)?.voices.find((v) => v.voice_id === target.voice_id)?.attempts.find((a) => a.attempt_id === target.attempt_id)?.findings?.find((f) => f.finding_id === target.finding_id);
-    let resolution = finding?.resolution;
-    for (const c of state.corrections) if (matches(c.target) && c.resolution !== null) resolution = c.resolution;
-    return resolution === 'unknown';
+    return parsed.ok ? parsed.state : null;
   } catch {
-    return false; // Missing/corrupt state is refused by the recorder, never repaired here.
+    return null; // Missing/corrupt state is refused by the recorder, never repaired here.
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+function canOmitRejectedResolution(state: ReviewRunState | null, id: string, target: CorrectionRecord['target']): boolean {
+  // Preserve successful legacy requests and each existing correction's replay shape.
+  if (!state) return false;
+  const existing = state.corrections.find((c) => c.correction_id === id);
+  if (existing) return existing.resolution === null;
+  const finding = findTargetFinding(state, target);
+  let resolution = finding?.resolution;
+  for (const c of state.corrections) if (sameTarget(c.target, target) && c.resolution !== null) resolution = c.resolution;
+  return resolution === 'unknown';
+}
+
+function expectedSupersedes(state: ReviewRunState | null, id: string, target: CorrectionRecord['target']): string | null | undefined {
+  if (!state) return undefined;
+  const existing = state.corrections.find((c) => c.correction_id === id);
+  if (existing) return existing.supersedes;
+  if (!findTargetFinding(state, target)) return undefined;
+  let latest: string | null = null;
+  for (const c of state.corrections) if (sameTarget(c.target, target)) latest = c.correction_id;
+  return latest;
 }
 
 export function buildRequest(command: CommandName, args: readonly string[], realDir: string): BuildRequestResult {
@@ -505,20 +523,22 @@ export function buildRequest(command: CommandName, args: readonly string[], real
   }
 
   if (command === 'record correction') {
+    const id = scalars.get('--correction-id')!;
     const target = {
       pass_id: scalars.get('--pass-id')!,
       voice_id: scalars.get('--voice-id')!,
       attempt_id: scalars.get('--attempt-id')!,
       finding_id: scalars.get('--finding-id')!,
     };
+    const state = readStateHint(realDir);
     const req: Record<string, unknown> = {
-      correction_id: scalars.get('--correction-id')!,
+      correction_id: id,
       target,
     };
     if (scalars.has('--adjudication')) req.adjudication = scalars.get('--adjudication')!;
     if (scalars.get('--adjudication') === 'rejected') {
       const sent = scalars.get('--resolution');
-      const omit = sent !== 'unknown' && canOmitRejectedResolution(realDir, scalars.get('--correction-id')!, target);
+      const omit = sent !== 'unknown' && canOmitRejectedResolution(state, id, target);
       if (sent !== undefined && sent !== 'unknown') {
         over('--resolution', sent, omit ? null : 'unknown', 'unknown-when-rejected');
       }
@@ -528,7 +548,16 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     }
     if (scalars.has('--receipt-class')) req.receipt_class = scalars.get('--receipt-class')!;
     if (scalars.has('--fixed-in')) req.fixed_in = scalars.get('--fixed-in')!;
-    if (scalars.has('--supersedes')) req.supersedes = scalars.get('--supersedes')!;
+    const expectedSup = expectedSupersedes(state, id, target);
+    if (expectedSup === undefined) {
+      if (scalars.has('--supersedes')) req.supersedes = scalars.get('--supersedes')!;
+    } else {
+      const sentSup = scalars.get('--supersedes');
+      if (sentSup !== undefined && sentSup !== expectedSup) {
+        over('--supersedes', sentSup, expectedSup, 'latest-correction-on-finding');
+      }
+      if (expectedSup !== null) req.supersedes = expectedSup;
+    }
     return { ok: true, request: req, overrides };
   }
 
