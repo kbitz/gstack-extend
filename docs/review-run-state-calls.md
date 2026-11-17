@@ -6,7 +6,7 @@ Experimental until Track 86A's default decision, like `bin/review-state` ([desig
 
 ## Activation
 
-Active when the review policy parsed with `run-state=record` and `"<extend-root>/bin/review-state" --version` exits 0 (`src/review-state/cli.ts` prints `review-state <version|unknown>` and exits 0), resolving `<extend-root>` from the installed skill's `.extend-root`. Otherwise the full receipt says `Run state: unavailable (helper-missing)` and the invocation runs today's inline path in full, the **Workflow metrics (optional, local)** section included.
+Active when the review policy parsed with `run-state=record` and `"<extend-root>/bin/review-state" --version` exits 0 (`src/review-state/cli.ts` prints `review-state <version|unknown>` and exits 0), using the skill's single `<extend-root>` definition after its preamble. Otherwise the full receipt says `Run state: unavailable (helper-missing)` and the invocation runs today's inline path in full, the **Workflow metrics (optional, local)** section included.
 
 ## Directory, inputs and IDs
 
