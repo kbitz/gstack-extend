@@ -949,9 +949,13 @@ readiness only when evidence the host ran at the reviewed head shows it (a faili
 command, test or reproduction with its evidence reference, or a documentation line
 the PR's diff made wrong); a base-only finding goes to TODOS (or to
 `test-gaps=record` when it is a recordable gap); an attacker-part finding blocks
-only once the host's rerun shows it; a safety-class finding keeps today's
-handling, overriding the attacker-part, base-only and not-shown rules; and
-non-blocking findings stay in the receipt with their attribution. It
+only once the host's rerun shows it; before a `CRITICAL` finding from an
+attacker part or an outside voice that names a concrete input state and failure
+on changed code is left not shown, the host runs one bounded reproduction probe
+against that state (a reproduced failure is shown, and an unreproduced one stays
+non-blocking with the probe's evidence reference); a safety-class finding keeps
+today's handling, overriding the attacker-part, base-only and not-shown rules;
+and non-blocking findings stay in the receipt with their attribution. It
 waives no gate and never authorizes a continuation. While the anchors it relies on
 drift, every finding takes today's handling and the receipt says so.
 
