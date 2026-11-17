@@ -3970,6 +3970,7 @@ describe('bin/review-state', () => {
       'candidate.tree',
       'findings[0].severity_rubric',
       'findings',
+      'details.threshold',
     ]) {
       expect(d15, causePath).toContain('`' + causePath + '`');
     }
@@ -3978,6 +3979,8 @@ describe('bin/review-state', () => {
       '| C8 | `record pass` (`started`) `candidate.tree` | keys copied from another tool |',
       '| C14 | `record pass` (`attempt`) `findings[0].severity_rubric` | enum spelling |',
       '| C15 | `record pass` (`attempt`) `findings` | conditional nullability |',
+      '| C18 |',
+      '| C19 |',
     ]) {
       expect(d15, row).toContain(row);
     }
@@ -5553,5 +5556,188 @@ describe('bin/review-state', () => {
     });
     expect(docKeys).toHaveLength(new Set(docKeys).size);
     expect(new Set(docKeys)).toEqual(expectedSet);
+  });
+
+  test('coverage audit requests that record today keep byte-identical request bytes', () => {
+    const d = newDir();
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1020), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('t1-bytes'), '--policy-source', 'none supplied', '--max-continuations', '1']).json.reason).toBe('recorded');
+    const a64 = 'a'.repeat(64);
+    const cases: Array<{ id: string; flags: string[]; result: string; detailsJson: string }> = [
+      { id: uid(1021), flags: ['--result', 'passed', '--coverage-pct', '92', '--coverage-threshold', '80'], result: 'passed', detailsJson: '{"pct":92,"threshold":80}' },
+      { id: uid(1022), flags: ['--result', 'pass', '--coverage-threshold', 'pass'], result: 'pass', detailsJson: '{"pct":null,"threshold":"pass"}' },
+      { id: uid(1023), flags: ['--result', 'completed', '--coverage-pct', 'null', '--coverage-threshold', 'skipped \u2014 zero application executable paths'], result: 'completed', detailsJson: '{"pct":null,"threshold":"skipped \u2014 zero application executable paths"}' },
+      { id: uid(1024), flags: ['--result', 'passed', '--coverage-pct', 'null', '--coverage-threshold', 'null'], result: 'passed', detailsJson: '{"pct":null,"threshold":"null"}' },
+      { id: uid(1025), flags: ['--result', 'passed', '--coverage-pct', '83.33', '--coverage-threshold', 'PASS target 80%; gaps recorded under test-gaps=record (3)'], result: 'passed', detailsJson: '{"pct":83.33,"threshold":"PASS target 80%; gaps recorded under test-gaps=record (3)"}' },
+      { id: uid(1026), flags: ['--result', 'passed', '--coverage-pct', 'null', '--coverage-threshold', a64], result: 'passed', detailsJson: `{"pct":null,"threshold":"${a64}"}` },
+    ];
+    for (const c of cases) {
+      const res = runCli(['build', 'record', 'audit', '--dir', d, '--audit-id', c.id, '--name', 'coverage', ...c.flags, '--commit', headSha]);
+      expect(res.json.reason, c.id).toBe('recorded');
+      expect(res.err, c.id).toBe('');
+      expect(res.json.detail.overrides, c.id).toBeUndefined();
+      expect(existsSync(join(d, 'build-overrides.jsonl')), c.id).toBe(false);
+      const expectedBytes = `{"audit_id":"${c.id}","name":"coverage","result":"${c.result}","details":${c.detailsJson},"candidate":{"commit":"${headSha}"}}\n`;
+      const reqName = `request-record-audit-${sha256(expectedBytes).slice(0, 16)}.json`;
+      expect(readFileSync(join(d, reqName), 'utf8'), c.id).toBe(expectedBytes);
+    }
+  });
+
+  test("replays PR #266's and PR #267's coverage audits (C18): build moves an over-long threshold explanation into result, warns and records", () => {
+    const d = newDir();
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1030), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('c18-plan'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    writeFileSync(join(d, 'cov-ev1.txt'), 'evidence-1\n');
+    writeFileSync(join(d, 'cov-ev2.txt'), 'evidence-2\n');
+
+    const d2 = newDir();
+    copyFileSync(join(d, 'review-run-state.json'), join(d2, 'review-run-state.json'));
+    writeFileSync(join(d2, 'cov-ev1.txt'), 'evidence-1\n');
+    writeFileSync(join(d2, 'cov-ev2.txt'), 'evidence-2\n');
+
+    const pr266Id = 'fe04b191-dfef-4da0-9b54-c5faab6ca595';
+    const pr266Text = 'skipped \u2014 no application executable paths; null coverage; static contract tests protect approved boundary';
+    expect(pr266Text).toHaveLength(105);
+    const pr266Composed = `passed \u2014 ${pr266Text}`;
+    const pr266Argv = [
+      'build', 'record', 'audit', '--dir', d,
+      '--audit-id', pr266Id, '--name', 'coverage', '--result', 'passed',
+      '--coverage-pct', 'null', '--coverage-threshold', pr266Text,
+      '--commit', headSha, '--base', baseSha,
+      '--evidence', 'cov-ev1.txt', '--evidence', 'cov-ev2.txt',
+    ];
+    const r266 = runCli(pr266Argv);
+    expect(r266.json.reason).toBe('recorded');
+    const expectedOverrides266 = [
+      { flag: '--coverage-threshold', sent: pr266Text, used: 'see result', rule: 'threshold-explanation-in-result' },
+      { flag: '--result', sent: 'passed', used: pr266Composed, rule: 'threshold-explanation-in-result' },
+    ];
+    expect(r266.err).toBe(
+      `WARNING BUILD_OVERRIDE: record audit --coverage-threshold sent ${JSON.stringify(pr266Text)}; used "see result"; rule threshold-explanation-in-result\n` +
+      `WARNING BUILD_OVERRIDE: record audit --result sent "passed"; used ${JSON.stringify(pr266Composed)}; rule threshold-explanation-in-result\n`,
+    );
+    expect(r266.json.detail.overrides).toEqual(expectedOverrides266);
+    const logLines = readFileSync(join(d, 'build-overrides.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(logLines).toHaveLength(1);
+    expect(logLines[0]).toMatchObject({ v: 1, command: 'record audit', overrides: expectedOverrides266 });
+
+    const st266 = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const stored266 = st266.audits.find((a) => a.audit_id === pr266Id);
+    expect(stored266).toMatchObject({
+      audit_id: pr266Id,
+      name: 'coverage',
+      result: pr266Composed,
+      details: { pct: null, threshold: 'see result' },
+    });
+    expect(runCli(pr266Argv).json.reason).toBe('replayed');
+
+    const raw266 = callCmd(d2, 'record audit', {
+      audit_id: pr266Id,
+      name: 'coverage',
+      result: 'passed',
+      details: { pct: null, threshold: pr266Text },
+      candidate: { commit: headSha, base: baseSha },
+      evidence: [
+        { path: 'cov-ev1.txt', sha256: sha256('evidence-1\n') },
+        { path: 'cov-ev2.txt', sha256: sha256('evidence-2\n') },
+      ],
+    });
+    expect(raw266.code).toBe(1);
+    expect(raw266.json.reason).toBe('invalid-input');
+    expect(raw266.json.detail.violations).toEqual([
+      { path: 'details.threshold', rule: 'invalid-value', expected: 'number-0..100|string-1..64' },
+    ]);
+
+    const pr267Id = uid(1031);
+    const pr267Text = 'PASS target 80%; 3 gaps recorded; reused byte-identical behavior after nonconflicting base merge';
+    expect(pr267Text).toHaveLength(96);
+    const pr267Composed = `passed \u2014 ${pr267Text}`;
+    const r267 = runCli([
+      'build', 'record', 'audit', '--dir', d,
+      '--audit-id', pr267Id, '--name', 'coverage', '--result', 'passed',
+      '--coverage-pct', '83.33', '--coverage-threshold', pr267Text,
+      '--commit', headSha, '--base', baseSha,
+    ]);
+    expect(r267.json.reason).toBe('recorded');
+    const st267 = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(st267.audits.find((a) => a.audit_id === pr267Id)).toMatchObject({
+      audit_id: pr267Id,
+      name: 'coverage',
+      result: pr267Composed,
+      details: { pct: 83.33, threshold: 'see result' },
+    });
+
+    const beforeOver200 = readFileSync(join(d, 'review-run-state.json'), 'utf8');
+    const rOver200 = runCli([
+      'build', 'record', 'audit', '--dir', d,
+      '--audit-id', uid(1032), '--name', 'coverage', '--result', 'r'.repeat(150),
+      '--coverage-pct', '83.33', '--coverage-threshold', pr267Text,
+      '--commit', headSha,
+    ]);
+    expect(rOver200.code).toBe(1);
+    expect(rOver200.json.reason).toBe('invalid-input');
+    expect(rOver200.json.detail.violations).toEqual([
+      { path: 'details.threshold', rule: 'invalid-value', expected: 'number-0..100|string-1..64' },
+    ]);
+    expect(readFileSync(join(d, 'review-run-state.json'), 'utf8')).toBe(beforeOver200);
+  });
+
+  test('a skipped or not-applicable coverage audit records through build with its reason in --result and threshold n/a', () => {
+    const d1 = newDir(), d2 = newDir();
+    for (const dir of [d1, d2]) {
+      expect(runCli(['build', 'start', '--dir', dir, '--run-id', uid(1033), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('skip-cov'), '--policy-source', 'none supplied', '--max-continuations', '1']).json.reason).toBe('recorded');
+    }
+    const skipId = uid(1034);
+    const skipRes = 'skipped \u2014 no application executable paths';
+    const argvOmit = ['build', 'record', 'audit', '--dir', d1, '--audit-id', skipId, '--name', 'coverage', '--result', skipRes, '--commit', headSha];
+    const rOmit = runCli(argvOmit);
+    expect([rOmit.json.reason, rOmit.err, rOmit.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    expect(existsSync(join(d1, 'build-overrides.jsonl'))).toBe(false);
+    const st1 = JSON.parse(readFileSync(join(d1, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(st1.audits[0]).toMatchObject({
+      audit_id: skipId,
+      name: 'coverage',
+      result: skipRes,
+      details: { pct: null, threshold: 'n/a' },
+    });
+    expect(runCli(argvOmit).json.reason).toBe('replayed');
+
+    const rNull = runCli(['build', 'record', 'audit', '--dir', d2, '--audit-id', skipId, '--name', 'coverage', '--result', skipRes, '--coverage-pct', 'null', '--commit', headSha]);
+    expect([rNull.json.reason, rNull.err, rNull.json.detail.overrides]).toEqual(['recorded', '', undefined]);
+    const req1 = readdirSync(d1).find((f) => f.startsWith('request-record-audit-'))!;
+    const req2 = readdirSync(d2).find((f) => f.startsWith('request-record-audit-'))!;
+    expect(req1).toBe(req2);
+    expect(readFileSync(join(d1, req1), 'utf8')).toBe(readFileSync(join(d2, req2), 'utf8'));
+
+    const beforeNum = readFileSync(join(d1, 'review-run-state.json'), 'utf8');
+    const rNumNoThresh = runCli(['build', 'record', 'audit', '--dir', d1, '--audit-id', uid(1035), '--name', 'coverage', '--result', 'passed', '--coverage-pct', '92', '--commit', headSha]);
+    expect(rNumNoThresh.code).toBe(1);
+    expect(rNumNoThresh.json.reason).toBe('invalid-input');
+    expect(rNumNoThresh.json.detail.violations).toEqual([
+      { path: 'details.threshold', rule: 'missing-key', expected: 'threshold' },
+    ]);
+    expect(readFileSync(join(d1, 'review-run-state.json'), 'utf8')).toBe(beforeNum);
+  });
+
+  test("replays PR #268's record call (C19): build accepts --dir between record and its subtype", () => {
+    const d1 = newDir(), d2 = newDir(), d3 = newDir();
+    for (const dir of [d1, d2, d3]) {
+      expect(runCli(['build', 'start', '--dir', dir, '--run-id', uid(1036), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('c19-plan'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    }
+    const gateId = uid(1037);
+    const tail = ['--gate-id', gateId, '--name', 'greptile', '--result', 'not-run', '--reason', 'no root configuration', '--commit', headSha, '--base', baseSha, '--greptile-value', 'skipped \u2014 no root configuration; do not run it'];
+    const rCanon = runCli(['build', 'record', 'gate', '--dir', d1, ...tail]);
+    const rPr268 = runCli(['build', 'record', '--dir', d2, 'gate', ...tail]);
+    expect([rCanon.json.reason, rCanon.err]).toEqual(['recorded', '']);
+    expect([rPr268.json.reason, rPr268.err]).toEqual(['recorded', '']);
+    const req1 = readdirSync(d1).find((f) => f.startsWith('request-record-gate-'))!;
+    const req2 = readdirSync(d2).find((f) => f.startsWith('request-record-gate-'))!;
+    expect(req1).toBe(req2);
+    expect(readFileSync(join(d1, req1), 'utf8')).toBe(readFileSync(join(d2, req2), 'utf8'));
+
+    const rBogus = runCli(['build', 'record', '--dir', d3, 'bogus', '--gate-id', gateId]);
+    expect(rBogus.code).toBe(2);
+    expect(rBogus.json.reason).toBe('usage');
+    expect(rBogus.json.command).toBe('record');
+    expect(rBogus.json.detail).toEqual({ message: 'unknown command "record"' });
+    expect(readdirSync(d3).filter((f) => f.startsWith('request-record-'))).toEqual([]);
   });
 });
