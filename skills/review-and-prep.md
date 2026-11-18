@@ -2530,7 +2530,7 @@ paragraph's inventory already covers this one). A missing anchor writes
   contract stays the `Full-review evidence:` row and its dedicated comment.
   Never infer a baseline from HEAD or the stop commit.
 
-Write and check `cycle-1-baseline` and `cycle-1-fix-review` with this helper
+Write and check `cycle-1-baseline` and `cycle-1-fix-review` with this fence
 (`<evidence-directory>` is this invocation's directory from **Evidence
 directory**, which already exists; `<action>` is `write` or `check`; `<kind>` is
 `cycle-1-baseline` or `cycle-1-fix-review`; `<record-file-or-boundary>` is the
@@ -2538,148 +2538,18 @@ assembled JSON file for `write`, or `before-fix`, `next-cycle` or `stop` for
 `check`):
 
 ```bash
-bun --no-env-file --config=/dev/null --no-install -e '
-const fs = require("node:fs");
-const path = require("node:path");
-const {createHash} = require("node:crypto");
-const {execFileSync} = require("node:child_process");
-const [ws, evDir, action, kind, arg] = process.argv.slice(1);
-const out = (msg, code) => { console.log("FULL_REVIEW_RECORD: " + msg); process.exit(code); };
-const hex40 = s => typeof s === "string" && /^[0-9a-f]{40}$/.test(s);
-const hex64 = s => typeof s === "string" && /^[0-9a-f]{64}$/.test(s);
-const sha256 = buf => createHash("sha256").update(buf).digest("hex");
-const gitTree = rev => {
-  try { return execFileSync("git", ["-C", ws, "rev-parse", rev + "^{tree}"], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim(); }
-  catch { return null; }
-};
-if (kind !== "cycle-1-baseline" && kind !== "cycle-1-fix-review") out("invalid " + kind + ": kind", 3);
-const isBase = kind === "cycle-1-baseline";
-const schema = isBase ? "review-and-prep-cycle-1-baseline/v1" : "review-and-prep-cycle-1-fix-review/v1";
-const recPath = path.join(evDir, kind + ".json");
-const missPath = path.join(evDir, kind + ".missed.json");
-const readMiss = () => {
-  if (!fs.existsSync(missPath)) return null;
-  try {
-    const raw = fs.readFileSync(missPath), data = JSON.parse(raw.toString("utf8"));
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("invalid miss record");
-    return {raw, data};
-  }
-  catch { return {raw: Buffer.alloc(0), data: {boundary: "unreadable"}}; }
-};
-const validate = (r, mode) => {
-  if (!r || typeof r !== "object" || Array.isArray(r)) return "record";
-  if (r.schema !== schema) return "schema";
-  if (r.provenance !== "write-point" && r.provenance !== "late") return "provenance";
-  if (!Array.isArray(r.stages) || r.stages.length === 0 || !r.stages.every(s => s && typeof s.name === "string" && s.name && typeof s.result === "string" && s.result)) return "stages";
-  if (!Array.isArray(r.probes) || !r.probes.every(p => p && typeof p.id === "string" && /^[0-9a-f]{12}$/.test(p.id) && typeof p.key === "string" && p.key && typeof p.outcome === "string" && /^(passed|reproduced|blocked|inconclusive|not-run)\b/.test(p.outcome) && (!p.outcome.startsWith("reproduced") || (typeof p.fingerprint === "string" && p.fingerprint)) && (isBase || p.evidence === undefined || (typeof p.evidence === "string" && p.evidence)))) return "probes";
-  if (isBase) {
-    if (r.completed !== "true" && r.completed !== "pending-fix-review" && r.completed !== "false") return "completed";
-    if (r.completed === "true" && r.probes.some(p => !p.outcome.startsWith("passed"))) return "completed";
-    if (r.completed === "pending-fix-review" && (!r.probes.some(p => p.outcome.startsWith("reproduced")) || r.probes.some(p => !/^(passed|reproduced)\b/.test(p.outcome)))) return "completed";
-    if (!hex40(r.b)) return "b";
-    if (!hex40(r.t)) return "t";
-    if (!(hex40(r.snapshot) || (r.snapshot === null && r.completed === "false"))) return "snapshot";
-    if (typeof r.snapshot_tree_equals_t !== "boolean") return "snapshot_tree_equals_t";
-    if (r.review_read_row !== undefined && r.review_read_row !== null && typeof r.review_read_row !== "string" && typeof r.review_read_row !== "object") return "review_read_row";
-    if (r.completed !== "true" && (typeof r.cause !== "string" || !r.cause)) return "cause";
-    if (r.snapshot !== null) {
-      const bt = gitTree(r.b), st = gitTree(r.snapshot);
-      if (bt !== r.t) return "t";
-      if (!st || (st === r.t) !== r.snapshot_tree_equals_t) return "snapshot_tree_equals_t";
-    }
-  } else {
-    if (!hex40(r.cycle_1_snapshot)) return "cycle_1_snapshot";
-    if (!hex40(r.cycle_2_snapshot)) return "cycle_2_snapshot";
-    if (typeof r.scope !== "string" || (r.scope !== "full" && !r.scope.startsWith("delta from "))) return "scope";
-    if (r.fix_reviewed !== "true" && r.fix_reviewed !== "false") return "fix_reviewed";
-    if (r.fix_reviewed === "true" && r.probes.some(p => !/^(passed|reproduced)\b/.test(p.outcome))) return "fix_reviewed";
-    if (r.fix_reviewed !== "true" && (typeof r.cause !== "string" || !r.cause)) return "cause";
-  }
-  if (mode === "check" && r.provenance === "late") {
-    if (!r.late || typeof r.late !== "object" || r.late.boundary !== "next-cycle" || !hex64(r.late.miss_sha256) || !Array.isArray(r.late.sources) || r.late.sources.length === 0 || !r.late.sources.every(s => s && typeof s.path === "string" && s.path && hex64(s.sha256))) return "late";
-  }
-  return null;
-};
-if (action === "write") {
-  let r;
-  try { r = JSON.parse(fs.readFileSync(arg, "utf8")); } catch { out("invalid " + kind + ": json", 3); }
-  const bad = validate(r, "write");
-  if (bad) out("invalid " + kind + ": " + bad, 3);
-  const stateDir = process.env.REVIEW_STATE_DIR;
-  if (isBase && typeof stateDir === "string" && stateDir.length > 0) {
-    let st;
-    try { st = JSON.parse(fs.readFileSync(path.join(stateDir, "review-run-state.json"), "utf8")); } catch { out("refused " + kind + ": write point not reached (run-state unreadable)", 3); }
-    if (!st || typeof st !== "object" || Array.isArray(st) || st.schema !== "review-run-state/v1" || !Array.isArray(st.passes) || !Array.isArray(st.gates)) out("refused " + kind + ": write point not reached (run-state unreadable)", 3);
-    const pass = st.passes.find(x => x && typeof x === "object" && x.scope === "local" && x.cycle === 1 && x.coverage === "full");
-    if (!pass || !Array.isArray(pass.required_voices) || !Array.isArray(pass.voices) || !pass.candidate || typeof pass.candidate.commit !== "string") out("refused " + kind + ": write point not reached (cycle-1-pass)", 3);
-    for (const vid of pass.required_voices) {
-      const v = pass.voices.find(x => x && x.voice_id === vid);
-      if (!v || (v.selected_attempt_id === null && v.not_applicable === null && (!Array.isArray(v.attempts) || v.attempts.length === 0))) out("refused " + kind + ": write point not reached (" + vid + ")", 3);
-    }
-    for (const p of r.probes) {
-      if (!st.gates.some(g => g && g.name === "probe-" + p.id && g.candidate && g.candidate.commit === pass.candidate.commit)) out("refused " + kind + ": write point not reached (" + p.id + ")", 3);
-    }
-  }
-  const miss = readMiss();
-  if (miss && r.provenance !== "late") out("refused " + kind + ": missed at " + (miss.data.boundary || "unknown"), 3);
-  if (r.provenance === "late") {
-    if (!miss || miss.data.schema !== "review-and-prep-record-miss/v1" || miss.data.kind !== kind || miss.data.boundary !== "next-cycle") out("refused " + kind + ": requires next-cycle miss record", 3);
-    if (!Array.isArray(r.sources) || r.sources.length === 0 || !r.sources.every(s => typeof s === "string" && s)) out("refused " + kind + ": sources required", 3);
-    const snap = isBase ? r.snapshot : r.cycle_2_snapshot;
-    if (!hex40(snap)) out("refused " + kind + ": snapshot required", 3);
-    const evRoot = fs.existsSync(evDir) ? fs.realpathSync(evDir) : path.resolve(evDir);
-    const sources = [];
-    for (const src of r.sources) {
-      const abs = path.resolve(evRoot, src);
-      const rel = path.relative(evRoot, abs);
-      if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) out("refused " + kind + ": source " + src + " missing", 3);
-      const real = fs.realpathSync(abs);
-      const realRel = path.relative(evRoot, real);
-      if (!realRel || realRel === ".." || realRel.startsWith(".." + path.sep) || path.isAbsolute(realRel)) out("refused " + kind + ": source " + src + " outside the evidence directory", 3);
-      if (real === fs.realpathSync(arg) || /^cycle-1-(baseline|fix-review)(\.missed)?\.json$/.test(path.basename(real))) out("refused " + kind + ": source " + src + " is not review evidence", 3);
-      const buf = fs.readFileSync(real);
-      if (!buf.toString("utf8").includes(snap)) out("refused " + kind + ": source " + src + " does not name the snapshot", 3);
-      sources.push({path: src, sha256: sha256(buf)});
-    }
-    delete r.sources;
-    r.late = {boundary: "next-cycle", miss_sha256: sha256(miss.raw), sources};
-  } else if (r.sources !== undefined || r.late !== undefined) {
-    out("invalid " + kind + ": provenance", 3);
-  }
-  const body = Buffer.from(JSON.stringify(r, null, 2) + "\n", "utf8");
-  try { fs.writeFileSync(recPath, body, {flag: "wx"}); } catch (e) {
-    if (e && e.code === "EEXIST") out("exists " + kind, 2);
-    out("invalid " + kind + ": record write (" + ((e && e.code) || "unknown") + ")", 3);
-  }
-  out("written " + kind + "; provenance=" + r.provenance + "; sha256=" + sha256(body), 0);
-} else if (action === "check") {
-  if (arg !== "before-fix" && arg !== "next-cycle" && arg !== "stop") out("invalid " + kind + ": boundary", 3);
-  if (fs.existsSync(recPath)) {
-    let r;
-    try { r = JSON.parse(fs.readFileSync(recPath, "utf8")); } catch { out("unreadable " + kind + ": json", 1); }
-    const bad = validate(r, "check");
-    if (bad) out("unreadable " + kind + ": " + bad, 1);
-    const tail = isBase ? "completed=" + r.completed : "fix-reviewed=" + r.fix_reviewed;
-    out("present " + kind + "; provenance=" + r.provenance + "; " + tail, 0);
-  }
-  const miss = readMiss();
-  if (arg === "next-cycle") {
-    if (!miss) {
-      const m = JSON.stringify({schema: "review-and-prep-record-miss/v1", kind, boundary: "next-cycle", detected_at: new Date().toISOString()}, null, 2) + "\n";
-      try { fs.writeFileSync(missPath, m, {flag: "wx"}); } catch (e) {
-        if (!e || e.code !== "EEXIST") out("unreadable " + kind + ": miss record (" + ((e && e.code) || "unknown") + ")", 1);
-      }
-    }
-    out("missed " + kind + " at " + ((miss && miss.data.boundary) || "next-cycle"), 1);
-  }
-  if (miss) out("missed " + kind + " at " + (miss.data.boundary || "unknown"), 1);
-  out("missing " + kind, 1);
-} else {
-  out("invalid " + kind + ": action", 3);
-}
-' "<workspace>" "<evidence-directory>" "<action>" "<kind>" "<record-file-or-boundary>"
+"<extend-root>/bin/review-state" full-review-record "<workspace>" "<evidence-directory>" "<action>" "<kind>" "<record-file-or-boundary>"
 ```
+
+The fence prints one `FULL_REVIEW_RECORD:` line, read as above (`--help` lists
+its messages and exit codes). That line is not a review-state result envelope,
+so the run-state retry and fallback rules in `docs/review-run-state-calls.md` do
+not apply to it (under `run-state=record`, that document's `REVIEW_STATE_DIR`
+prefix still applies). When the helper is missing (no `EXTEND_ROOT:` line, or
+`<extend-root>/bin/review-state` is not executable), the invocation writes no
+full-review record and runs no record checkpoint, so no record checkpoint holds
+a fix or a reader, and the cap stop reads both records as missing
+(`record-missing`).
 
 Worked example, with placeholders: one `reproduced` probe, then a cycle 2 that
 reviewed its fix.
