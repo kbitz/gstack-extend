@@ -6056,6 +6056,7 @@ describe('bin/review-state', () => {
     expect(readdirSync(d3).filter((f) => f.startsWith('request-record-'))).toEqual([]);
   });
 
+  // Value: protects=voice selection after a failed attempt, explicit deferral and absent lookup targets; fails_when=derivation counts failed attempts, overrides deferral or dereferences a missing target; why_new=the original C20 cases use completed or empty histories and readable matching state; seam=none; no_claim=filesystem faults or concurrent state changes
   test("replays PR #277's voice-complete (C20): build fills in the voice's only completed attempt", () => {
     const d = newDir(), passId = '22521534-98a2-4e70-a725-905abb3c06ac', attId = '2e2b72d4-6548-4e4d-8340-0257b66a6a40';
     const voices = ['core', 'specialist:maintainability', 'red-team', 'qa', 'native-adversarial', 'outside:challenge', 'outside:structured'];
@@ -6104,6 +6105,18 @@ describe('bin/review-state', () => {
 
     const rD = runCli([...vcBase, '--voice-id', 'qa', '--selected-attempt-id', 'null', '--selected-attempt-id', attId]);
     expect([rD.code, rD.json.reason, rD.json.detail]).toEqual([2, 'usage', { message: 'duplicate --selected-attempt-id flag' }]);
+    const qaAttempt = ['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'qa', '--part', 'qa'];
+    expect(runCli([...qaAttempt, '--attempt-id', uid(1041), '--outcome', 'failed']).json.reason).toBe('recorded');
+    expect(runCli([...vcBase, '--voice-id', 'qa']).json.detail).toEqual({ violations: expViol });
+    expect(runCli([...qaAttempt, '--attempt-id', uid(1042), '--outcome', 'completed', '--predecessor-attempt-id', uid(1041)]).json.reason).toBe('recorded');
+    const { dir: deferredDir, statePath } = dirFromSeed(join(d, 'review-run-state.json'));
+    const explicit = runCli(['build', 'record', 'pass', '--dir', deferredDir, '--pass-id', passId, '--state', 'voice-complete', '--voice-id', 'qa', '--not-applicable', 'user-deferred']);
+    const deferredVoice = (JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState).passes[0]!.voices.find((v) => v.voice_id === 'qa');
+    expect([explicit.json.reason, explicit.json.detail.derived, deferredVoice?.selected_attempt_id, deferredVoice?.not_applicable]).toEqual(['recorded', undefined, null, 'user-deferred']);
+    expect(runCli([...vcBase, '--voice-id', 'qa']).json).toMatchObject({ reason: 'recorded', detail: { derived: [{ flag: '--selected-attempt-id', used: uid(1042), rule: 'only-completed-attempt-on-voice' }] } });
+    for (const [dir, pass, voice] of [[newDir(), passId, 'qa'], [d, uid(1043), 'qa'], [d, passId, 'missing-voice']] as const) {
+      expect(runCli(['build', 'record', 'pass', '--dir', dir, '--pass-id', pass, '--state', 'voice-complete', '--voice-id', voice]).json.detail).toEqual({ violations: expViol });
+    }
   });
 
   // Value: protects=separation of Git execution failures (timeout, spawn, signal), uncaught errors, and missing-Bun runtime from invalid-input; fails_when=Git execution failure returns commit-not-found or not-in-worktree, trace file is written before --dir validation or leaks payload, lock/tmp remains on throw, or missing Bun prints no envelope; why_new=Track 88A T1; seam=subprocess mock.module and /bin/sh launcher
