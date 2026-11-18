@@ -220,6 +220,17 @@ amendment to cut; writing `defer=true` does not supply that approval.
 - **Context:** Filed by /review-and-prep on https://github.com/example-org/example-repo/pull/42 at a1b2c3d (2026-11-01).
 - **Effort:** ? (user triages in /roadmap)
 
+Under `blocking=shown`, `/review-and-prep` writes `### [review:files=<a.ts|b.ts>] Base issue: <short title>` (or `### [review] Base issue: <short title>` when a path cannot form a `files=` value) for a finding already present at the merge base; it routes KEEP with source `review`.
+
+### [review:files=src/export.ts|src/export-format.ts] Base issue: header row lacks newline on empty input
+- **Base issue:** present at merge base `a0b1c2d`; filed under `blocking=shown`
+- **Description:** `formatHeader` omits the trailing newline when the row list is empty, failing the CSV parser check at both the head and the merge base.
+- **Evidence:** `bun test tests/export.test.ts` fails at `a1b2c3d` and at merge base `a0b1c2d`.
+- **Upstream severity:** CRITICAL
+- **Found in:** src/export-format.ts:18
+- **Context:** Filed by /review-and-prep on https://github.com/example-org/example-repo/pull/42 at a1b2c3d (2026-11-01).
+- **Effort:** ? (user triages in /roadmap)
+
 ### [manual] Explore webhook outbound events for v1.1
 - **Why:** customer ask from two accounts.
 - **Effort:** L (human: ~1 week / CC: ~1 hr)

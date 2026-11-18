@@ -211,7 +211,8 @@ run backs it: a static prose test is not installed-agent acceptance
   default. After the documentation audit's attempts are spent, each post-audit
   change gets one bounded parent-side re-audit of its delta before the owner is
   asked. A change touching no documented behavior (`rename`, `tests-only`,
-  `todos-only`, `mechanical-correction` or `already-documented`) proceeds with
+  `test-tooling`, `todos-only`, `mechanical-correction` or `already-documented`)
+  proceeds with
   its `Post-audit change:` line recorded (`owner=not-needed`), while a
   `documented-behavior` change keeps today's owner stop (`owner=needed`). A
   blocked audit is never upgraded, and upstream's attempt bound is unchanged.
@@ -219,7 +220,10 @@ run backs it: a static prose test is not installed-agent acceptance
   records `post-audit: not applied — <reason>`.
 
 Omitted, every default is unchanged. Neither value waives a gate or authorizes a
-continuation.
+continuation. As of v0.95.0 (2026-11-16), `test-tooling` joins the no-owner
+classes above and a full-scope cycle 2 (`cycle-1-fix-review` with scope `full`)
+also satisfies a `pending-fix-review` cycle-1 baseline when it reruns each
+reproduced probe by its key.
 
 ### Before: what recorded runs show
 

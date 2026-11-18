@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.98.2] - 2026-11-17
+
+### Changed
+
+- `/review-and-prep` now states each of its rules once, so the skill is shorter, its stopped and paused receipts follow the same table of conditional lines as the final receipt, and the Greptile question for a run that is still incomplete no longer says it is asked only once.
+- `/review-and-prep` uses one conditional-line table for final, paused and stopped receipts.
+- The Greptile wait question now explains that it repeats only after the wait you choose.
+- `/review-and-prep` treats helpers and referenced docs as unavailable when its preamble prints no `EXTEND_ROOT:`.
+
+### Upgrade notes
+
+- A caller that reads a stopped or paused full receipt may now find conditional lines there, such as the `repair-review:` lines, that only the final receipt listed before, in the same grammar.
+
 ## [0.98.1] - 2026-11-17
 
 ### Added

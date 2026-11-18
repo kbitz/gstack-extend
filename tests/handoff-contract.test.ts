@@ -2476,7 +2476,7 @@ describe('(H) delegate', () => {
     expect(body).toContain('delegation: active (');
     expect(body).toContain('Delegated part:');
     expect(fixtureText(FIX.cases['B-DELEGATED-HEAD'])).not.toContain('Delegated part:');
-    const template = prep.match(/`Delegated part: ([^`]+)`/)![1];
+    const template = SKILLS['review-and-prep'].match(/^Delegated part: (.+)$/m)![1];
     const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
     const rows = body.split('\n').filter((l) => l.startsWith('Delegated part: '));
     expect(rows).toHaveLength(2);
