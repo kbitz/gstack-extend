@@ -42,7 +42,7 @@ function runUpstreamRedact(redactBin: string, targetFile: string): { exit: 0 | 2
   } catch { return null; }
 }
 
-function validateEvidenceDir(dir: string): string[] {
+function validateEvidenceDir(dir: string): { dirs: string[]; names: string[] } {
   if (!dir.startsWith('/') || dir.endsWith('/') || dir.slice(1).split('/').some(s => !s || s === '.' || s === '..' || /[\x00-\x1f\x7f]/.test(s))) {
     throw new Error('invalid evidence-dir path');
   }
@@ -79,7 +79,7 @@ function validateEvidenceDir(dir: string): string[] {
       if (strictlyBelow(realHome, realDir)) spellings.push(`~/${relative(realHome, realDir)}`);
     } catch {}
   }
-  return [...new Set(spellings)];
+  return { dirs: [...new Set(spellings)], names: [...new Set([basename(dir), basename(realDir)].filter(Boolean))] };
 }
 
 function scanText(args: string[]): number {
@@ -104,13 +104,13 @@ function scanText(args: string[]): number {
   let fileStat;
   try { fileStat = lstatSync(file); } catch { throw new Error('from-file does not exist'); }
   if (fileStat.isSymbolicLink() || !fileStat.isFile()) throw new Error('from-file must be a regular file and not a symlink');
-  const evidenceDirs = flags.has('--evidence-dir') ? validateEvidenceDir(flags.get('--evidence-dir')!) : [];
+  const { dirs: evidenceDirs, names: evidenceNames } = flags.has('--evidence-dir') ? validateEvidenceDir(flags.get('--evidence-dir')!) : { dirs: [], names: [] };
   const prUrl = flags.get('--pr-url');
   if (prUrl !== undefined && !PR_URL_RE.test(prUrl)) throw new Error('invalid pr-url');
   const text = readFileSync(file, 'utf8');
   const firstRun = runUpstreamRedact(redactBin, file);
   if (!firstRun) throw new Error('upstream gstack-redact scan failed');
-  const components = knownComponents(text, { evidenceDirs, prUrl });
+  const components = knownComponents(text, { evidenceDirs, evidenceNames, prUrl });
   let secondData: RedactJson | undefined;
   if (!firstRun.data.oversize && firstRun.data.findings.some(f => eligibleComponent(text, components, f) !== undefined)) {
     let tmpDir: string | undefined;

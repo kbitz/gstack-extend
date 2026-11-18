@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.99.0] - 2026-11-17
+
+### Changed
+
+- `/review-and-prep` and `/ship-and-land` now name their evidence files in pull request bodies and receipt comments by a path relative to their evidence roots, so published pull request text no longer shows where local state is kept.
+- Pull request receipts from `/review-and-prep` and `/ship-and-land` now use locators relative to the producing skill’s evidence root.
+- `scan-text` recognizes the current run’s directory name in evidence locators.
+
+### Upgrade notes
+
+- A tool that opened the `Full receipt:`, `record:`, `section:` or `Evidence:` paths from pull request text as local files, including the `Full receipt:` line in the `## Ship and land` section, must now resolve them under the matching evidence root, as the receipt locators section of `docs/workflow-handoffs.md` describes; receipts written before this release keep their old paths and still read as before.
+
 ## [0.98.2] - 2026-11-17
 
 ### Changed

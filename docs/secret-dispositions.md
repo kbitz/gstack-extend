@@ -197,7 +197,10 @@ root through `scan-text`:
   empty values count as unset and relative values are ignored) or
   `$HOME/scratch/review-and-prep/`. The scanner matches the exact supplied and
   canonical absolute paths and their `~/` spellings when under the corresponding
-  `$HOME` spelling, including when HOME and the path use different aliases.
+  `$HOME` spelling, including when HOME and the path use different aliases. The
+  scanner also matches the directory's final segment where it begins a relative
+  path (followed by `/`), which is the evidence locator `/review-and-prep`
+  publishes.
 - `--pr-url <url>` must match `^https://github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$`.
   Only `<prUrl>#issuecomment-<digits>` occurrences are matched; nothing else in
   the URL is a component.

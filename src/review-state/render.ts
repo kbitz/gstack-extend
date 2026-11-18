@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { RECEIPT_KEYS } from '../review-delegate/delegate.ts';
 import { loadStoredState } from './export.ts';
 import { isHttpUrl, isObj, isStr, R, STATE_KEYS, truncate80, validateFields, type CandidateBinding, type DelegationPolicy, type EvidenceRef, type FieldRule, type PrInfo, type ReviewRunState, type Violation } from './state.ts';
@@ -41,6 +41,10 @@ export const normalizeDir = (dir: string): string => (dir.length > 1 ? dir.repla
 export function tilde(p: string, home: string = homedir()): string {
   const h = home.replace(/\/+$/, '');
   return h.length > 1 && p.startsWith(`${h}/`) ? `~/${p.slice(h.length + 1)}` : p;
+}
+function evidenceLocator(dir: string, rel: string): string {
+  const name = basename(normalizeDir(dir));
+  return name ? `${name}/${rel}` : rel;
 }
 
 export function exitState(state: ReviewRunState): RenderExitState {
@@ -109,7 +113,7 @@ const reqPr = (s: ReviewRunState, pr?: PrInfo | null): PrInfo => {
 
 export type RenderCtx = RenderFinalInput & {
   state: ReviewRunState; exit: Exclude<RenderExitState, 'not-renderable'>; b: ActiveBinding;
-  dir: string; home: string; fullReceipt?: EvidenceRef; summaryText?: string; resolved?: boolean;
+  dir: string; home: string; fullReceipt?: EvidenceRef; summaryText?: string; resolved?: boolean; localEvidencePaths?: boolean;
 };
 
 export function renderDelegationPolicyLine(d: DelegationPolicy | null): string | null {
@@ -160,18 +164,21 @@ export const FIELD_FMT = {
     return `Checks not run: ${notRun.length > 0 ? notRun.join(', ') : 'none'}`;
   },
   shipGates: (c: RenderCtx) => {
-    const nd = normalizeDir(c.dir), pre = lastByName(c.state.gates, 'pregate');
+    const pathFor = c.localEvidencePaths
+      ? (rel: string) => tilde(`${normalizeDir(c.dir)}/${rel}`, c.home)
+      : (rel: string) => evidenceLocator(c.dir, rel);
+    const pre = lastByName(c.state.gates, 'pregate');
     const cov = lastByName(c.state.audits, 'coverage'), doc = lastByName(c.state.audits, 'documentation');
     return [
       `Ship gates: head=${c.b.head}; tree=${c.b.tree}; base=${c.b.base}`,
       pre && pre.result !== 'not-run' && isFreshForBinding(pre.candidate, c.b)
-        ? `- pregate: ${String(pre.details.raw_verdict)}; wrapper: ${String(pre.details.wrapper_verdict)}; policy: ${String(pre.details.policy)}; record: ${tilde(`${nd}/${String(pre.details.record_path)}`, c.home)}; sha256: ${String(pre.details.record_sha256)}`
+        ? `- pregate: ${String(pre.details.raw_verdict)}; wrapper: ${String(pre.details.wrapper_verdict)}; policy: ${String(pre.details.policy)}; record: ${pathFor(String(pre.details.record_path))}; sha256: ${String(pre.details.record_sha256)}`
         : '- pregate: not-run',
       cov && cov.result !== 'not-run' && isFreshForBinding(cov.candidate, c.b)
         ? `- coverage: ${cov.result}; pct: ${cov.details.pct != null ? `${String(cov.details.pct)}%` : 'n/a'}; threshold: ${String(cov.details.threshold)}`
         : '- coverage: not-run',
       doc && doc.result !== 'not-run' && isFreshForBinding(doc.candidate, c.b)
-        ? `- documentation: ${doc.result}; audit: ${String(doc.details.report_id)}; section: ${tilde(`${nd}/${String(doc.details.section_path)}`, c.home)}; sha256: ${String(doc.details.section_sha256)}`
+        ? `- documentation: ${doc.result}; audit: ${String(doc.details.report_id)}; section: ${pathFor(String(doc.details.section_path))}; sha256: ${String(doc.details.section_sha256)}`
         : '- documentation: not-run',
     ];
   },
@@ -212,7 +219,7 @@ export const FIELD_FMT = {
   },
   restrictionResolved: (c: RenderCtx) => (c.resolved ? ['reviewRestrictionResolved: true'] : []),
   pauseResumeHint: () => 'Resume with /review-and-prep resume; do not run /ship on this draft.',
-  fullReceiptLine: (c: RenderCtx) => `Full receipt: ${tilde(`${normalizeDir(c.dir)}/${c.fullReceipt!.path}`, c.home)}; sha256: ${c.fullReceipt!.sha256}`,
+  fullReceiptLine: (c: RenderCtx) => `Full receipt: ${evidenceLocator(c.dir, c.fullReceipt!.path)}; sha256: ${c.fullReceipt!.sha256}`,
   runStateLine: (c: RenderCtx) => `Run state: recorded (${tilde(`${normalizeDir(c.dir)}/review-run-state.json`, c.home)}; rev ${c.state.rev})`,
   hbHeader: (c: RenderCtx) => {
     const pr = reqPr(c.state, c.pr);
@@ -244,10 +251,11 @@ export const FIELD_FMT = {
   heHeader: (c: RenderCtx) => { const pr = reqPr(c.state, c.pr); return `Run /review-and-prep continue for PR ${pr.url} on ${pr.repo}, branch ${pr.head_branch}.`; },
   heFooter: () => ['Keep the PR draft.', 'Do not run /ship on this PR.'],
   hfBlock: (c: RenderCtx) => [`Evidence directory: ${normalizeDir(c.dir)}`, ...(c.autoChoiceLines ?? []), `External gate: external-gate/v1; head: ${c.b.head}; tree: ${c.b.tree}; base: ${c.b.base}`],
-  bodyLines: (c: RenderCtx) => {
-    const nd = normalizeDir(c.dir);
-    return ['## Review and prep', '', EXIT_MATRIX[c.exit].bodyPhrase!, '', c.summaryText!.replace(/\r\n?/g, '\n').replace(/\n+$/, ''), '', `Receipt: ${c.commentUrl ?? 'none yet'}`, `Evidence: ${tilde(nd, c.home)}; full receipt: ${tilde(`${nd}/${c.fullReceipt!.path}`, c.home)}; sha256: ${c.fullReceipt!.sha256}`];
-  },
+  bodyLines: (c: RenderCtx) => [
+    '## Review and prep', '', EXIT_MATRIX[c.exit].bodyPhrase!, '', c.summaryText!.replace(/\r\n?/g, '\n').replace(/\n+$/, ''), '',
+    `Receipt: ${c.commentUrl ?? 'none yet'}`,
+    `Evidence: ${evidenceLocator(c.dir, c.fullReceipt!.path)}; sha256: ${c.fullReceipt!.sha256}`,
+  ],
   stageLine: (c: RenderCtx) => {
     const st = EXIT_MATRIX[c.exit].stage;
     return st ? [`Stage handoff: stage-handoff/v1; stage: review; next: ${st[0]}; status: ${st[1]}; head: ${c.b.head}; plan-sha256: ${c.state.plan.sha256 || 'none'}`] : [];
@@ -304,7 +312,7 @@ export function renderFullReceipt(state: ReviewRunState, input: { sectionsText?:
   const exit = exitState(state), key = `full:${exit}`;
   if (!(key in LINE_GRAMMARS) || (exit === 'blocked' && state.finish?.stop_reason !== 'provider-failures')) throw new Error(`not-renderable: full-receipt on ${exit}`);
   const resolved = exit === 'ready' || exit === 'paused' ? Boolean(input.reviewRestrictionResolved) : state.finish?.review_restriction_resolved === true;
-  const lines = evalGrammar(key, state, { dir, home, resolved });
+  const lines = evalGrammar(key, state, { dir, home, resolved, localEvidencePaths: true });
   const secs = (input.sectionsText ?? []).map((s) => s.replace(/\r\n?/g, '\n').replace(/\n+$/, ''));
   return secs.length > 0 ? `${lines.join('\n')}\n\n${secs.join('\n\n')}\n` : `${lines.join('\n')}\n`;
 }
@@ -465,14 +473,14 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
       content = renderFullReceipt(state, { sectionsText: sectionsRefs.map((_, i) => checkedBytes.get(`sections[${i}]`)!.toString('utf8')), reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
     } else if (output === 'comment') {
       prefix = `comment-${exit === 'ready' ? 'receipt' : exit === 'paused' ? 'paused' : 'stopped'}`;
-      content = renderComment(state, { fullReceipt: fullRef!, reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
+      content = renderComment(state, { fullReceipt: fullRef!, reviewRestrictionResolved: canon.review_restriction_resolved === true }, realDir, home);
     } else if (output === 'body') {
       prefix = 'pr-body';
       const commentUrl = canon.comment_url as string | null;
       if (commentUrl === null && exit !== 'blocked') return fail('invalid-input', { violations: [{ path: 'comment_url', rule: 'invalid-value', expected: 'http-url-for-non-blocked-body' }] });
       const summaryText = checkedBytes.get('summary')!.toString('utf8'), sumErr = validateSummaryText(summaryText, exit);
       if (sumErr) return fail('invalid-input', { violations: [{ path: 'summary', rule: 'invalid-value', expected: sumErr }] });
-      content = renderBody(state, { fullReceipt: fullRef!, summaryText, commentUrl }, dirArg, home);
+      content = renderBody(state, { fullReceipt: fullRef!, summaryText, commentUrl }, realDir, home);
     } else {
       const effPr = state.run.pr ?? inputPr, effLogin = state.run.gh_login ?? inputGhLogin, autoLines = (canon.auto_choice_lines as string[]) ?? [];
       const hasPreparedExtras = Boolean(fullRef || comRef || canon.comment_url !== null || canon.save_before_shipping !== null);
@@ -485,7 +493,7 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
         if (canon.required_user_checks !== null) v.push({ path: 'required_user_checks', rule: 'forbidden-for-exit', expected: 'null' });
         if (autoLines.length > 0) v.push({ path: 'auto_choice_lines', rule: 'forbidden-for-exit', expected: 'empty' });
         if (v.length > 0) return fail('invalid-input', { violations: v.slice(0, 20) });
-        const expectedReceipt = `${evalGrammar('compact', state, { dir: dirArg, home, fullReceipt: fullRef!, resolved: state.finish!.review_restriction_resolved === true }).join('\n')}\n`;
+        const expectedReceipt = `${evalGrammar('compact', state, { dir: realDir, home, fullReceipt: fullRef!, resolved: state.finish!.review_restriction_resolved === true }).join('\n')}\n`;
         if (checkedBytes.get('comment_file')!.toString('utf8') !== expectedReceipt) return fail('invalid-input', { violations: [{ path: 'comment_file', rule: 'receipt-mismatch', expected: 'matches-finished-state' }] });
       } else if (exit === 'paused') {
         if (typeof canon.required_user_checks !== 'string') v.push({ path: 'required_user_checks', rule: 'missing-key', expected: 'string-1..2000' });

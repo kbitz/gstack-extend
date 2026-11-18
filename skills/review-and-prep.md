@@ -793,7 +793,7 @@ recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.
 
 `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.
 
-Create this invocation's evidence directory — a unique branch-and-invocation subdirectory under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active), before Step 1 ends (`start` when `run-state=record` is active) and before Step 2's first review, probe, baseline or gate file is written; never overwrite another invocation's directory. On a resume, reuse the paused or interrupted invocation's existing evidence directory from the corroborated `Full receipt:` path, `Evidence directory:` line or newest matching invocation directory under the evidence root (`docs/review-run-state-calls.md`, `## Resume`).
+Create this invocation's evidence directory — a unique branch-and-invocation subdirectory directly under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active), before Step 1 ends (`start` when `run-state=record` is active) and before Step 2's first review, probe, baseline or gate file is written; never overwrite another invocation's directory. An evidence locator is `<evidence directory name>/<file>` inside this directory (for example `inv-1/full-receipt-1.md`), resolved under the evidence root (`docs/workflow-handoffs.md#receipt-locators`). Pull request text (the body section and the receipt, paused and stopped comments) names a file in this directory only by its evidence locator, while chat output and local files keep the absolute or `~/` path. On a resume, reuse the paused or interrupted invocation's existing evidence directory from the corroborated `Full receipt:` locator (its first segment, resolved under the evidence root by the reader rule in `docs/workflow-handoffs.md#receipt-locators`; a legacy `~/` or absolute path names the directory directly), the external-gate pause's `Evidence directory:` line or the newest matching invocation directory under the evidence root (`docs/review-run-state-calls.md`, `## Resume`).
 
 The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation's `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.
 
@@ -2738,7 +2738,7 @@ shapes the prompt below, so the continuation starts in a fresh session.
    `Unresolved:`, `Continuation: <k> of <n>`, its one `Skipped pregate lanes:`
    or `Ship gates:` line, every `Delegated part:` line,
    `reviewRestrictionResolved: true` when applicable, and
-   `Full receipt: <~-relative path>; sha256: <64 hex>`; the other listed lines
+   `Full receipt: <evidence locator>; sha256: <64 hex>`; the other listed lines
    live in `full-receipt-<n>.md`, and the dedicated full-review evidence comment
    procedure below is unchanged.
    For H-E, retain the newest corroborated full-review base across repair-only continuations;
@@ -4087,7 +4087,7 @@ checkpoint), `Review policy:`, `Greptile:` (the postponed or skip value),
 every `Delegated part:` line and `Unresolved:` in their exact grammar,
 `reviewRestrictionResolved: true` when applicable, one line:
 `Resume with /review-and-prep resume; do not run /ship on this draft.`, and
-`Full receipt: <~-relative path>; sha256: <64 hex>`. The marker is distinct
+`Full receipt: <evidence locator>; sha256: <64 hex>`. The marker is distinct
 from `review-and-prep:receipt:`, so `/ship-and-land` never reads a paused
 receipt as prepared. If posting the paused comment fails, keep the pause and
 keep preparation incomplete until the compact comment is confirmed; report its
@@ -4828,13 +4828,13 @@ Plan: <path, link or "agreed task in the receipt">; SHA-256: <64 hex>
 Greptile: <the H-B Greptile value>; run: <link|none>
 Checks not run: <none|comma-separated checks>
 Ship gates: head=<40 hex>; tree=<40 hex>; base=<40 hex>
-- pregate: <raw verdict>; wrapper: <verdict>; policy: <base|head>; record: <path>; sha256: <64 hex>
+- pregate: <raw verdict>; wrapper: <verdict>; policy: <base|head>; record: <evidence locator>; sha256: <64 hex>
 - coverage: <status or waiver>; pct: <value|n/a>; threshold: <decision>
-- documentation: <status or named-risk decision>; audit: <id>; section: <path>; sha256: <64 hex>
+- documentation: <status or named-risk decision>; audit: <id>; section: <evidence locator>; sha256: <64 hex>
 Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>
 Unresolved: <finding IDs and severities, or "none recorded">
 reviewRestrictionResolved: true
-Full receipt: <~-relative path>; sha256: <64 hex>
+Full receipt: <evidence locator>; sha256: <64 hex>
 ```
 
 `Delegated part:` appears once per delegated part for each review cycle that ran
@@ -4844,7 +4844,7 @@ records unresolved findings or `none recorded`; keep both in the compact receipt
 comment as machine-read lines in their exact grammar rather than moving them
 only to `full-receipt-<n>.md`.
 `reviewRestrictionResolved: true` appears only when the rule above requires it.
-Write paths under `$HOME` as `~/…`.
+Write each path under the evidence root as its evidence locator (**Evidence directory**), and any other path under `$HOME` as `~/…`.
 
 The PR body's `## Review and prep` section carries only: the status line
 (`prepared`, `PAUSED — manual testing required`, `STOPPED — review cycle cap`,
@@ -4854,8 +4854,8 @@ the `Review default:` line and every
 other decisions open to veto; one `Tests:` line (suite result and selection,
 pregate verdict, Greptile state); risks and open checks (pending user checks on
 a pause); and `Receipt:` the receipt, paused or stopped comment permalink (none
-yet on a BLOCKED exit) and `Evidence:` the evidence directory and
-`full-receipt-<n>.md` path with its SHA-256. Keep every PR body at or under the
+yet on a BLOCKED exit) and `Evidence:` the full receipt's evidence locator
+(`full-receipt-<n>.md`) and its SHA-256. Keep every PR body at or under the
 3,000-character budget measured by Step 3's `PR_BODY_SIZE` check. When the body
 exceeds 3,000 characters, shorten producer text by leaving detail to
 `full-receipt-<n>.md`. Never shorten: the `## Review and prep` heading and

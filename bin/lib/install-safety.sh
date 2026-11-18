@@ -18,7 +18,7 @@
 # Cross-platform: macOS BSD stat takes -f, Linux GNU stat takes -c.
 # Numeric uid via id -u (NOT $USER, which is unset under `set -u` and
 # lies under sudo). Inside-$HOME check via slash-delimited case match
-# (NOT naive prefix, which matches /Users/kb2 against /Users/kb*).
+# (NOT naive prefix, which matches /Users/alice2 against /Users/alice*).
 # World-writable via find -perm -o+w (portable across BSD and GNU find).
 #
 # Non-existent paths: walks up to nearest existing ancestor and validates
@@ -122,7 +122,7 @@ is_safe_install_path() {
   fi
 
   # Inside-$HOME check via slash-delimited case match. Naive prefix
-  # ("$resolved" == "$HOME"*) would match /Users/kb2 against /Users/kb*.
+  # ("$resolved" == "$HOME"*) would match /Users/alice2 against /Users/alice*.
   local resolved_home
   if ! resolved_home=$(_resolve_path "$HOME"); then
     echo "Error: cannot resolve \$HOME ($HOME)" >&2

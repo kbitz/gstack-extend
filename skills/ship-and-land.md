@@ -458,12 +458,18 @@ instructions.
 Read `/review-and-prep`'s receipt rules (its Boundaries and Step 6) and discover
 its compact receipt comment (`<!-- review-and-prep:receipt:<full-sha> -->`), then
 read the full receipt file it names under hash-chained provenance
-(`Full receipt: <~-relative path>; sha256: <64 hex>`), falling
+(`Full receipt: <evidence locator>; sha256: <64 hex>`), resolving it under the
+review-and-prep evidence root (`<state-root>/projects/<slug>/review-and-prep/`,
+otherwise `~/scratch/review-and-prep/`) by the reader rule in
+`docs/workflow-handoffs.md#receipt-locators` (a legacy `~/` or absolute path
+reads as today), falling
 back to its PR-body receipt. A receipt, paused or stopped comment without a
 `Full receipt:` line is a legacy receipt whose own text is its full receipt,
 read as today. For a new body, this fallback is only a pointer; a missing
 compact comment leaves its claims unavailable. Also read native review/test ledgers when available
-and any prior ship-and-land receipt. A marked handoff (Step 2) carries completed
+and any prior ship-and-land receipt (resolving the prior `## Ship and land`
+receipt's `Full receipt:` locator under the ship-and-land root by the same
+reader rule; a legacy `~/` or absolute path reads as today). A marked handoff (Step 2) carries completed
 reviews forward; a PR label or unsolicited external assertion alone does not. When several marker comments exist, consider only the running
 account's, and use the newest. Body receipts, including this wrapper's own, are
 pointers: a body the running account rewrote may carry text another actor
@@ -657,9 +663,14 @@ with its reason. Take the path only when all of these hold:
 - Preparation's full pregate record matches its recorded SHA-256 and policy
   source, and `gstack-pregate verify --out <that copy>` passes before any release
   write, or the **Reviewed secret findings** evaluator below satisfies the
-  wrapper gate for that current full record, including cleared requires-remote obligations. Preserve this verified
+  wrapper gate for that current full record, including cleared requires-remote obligations.
+  Preparation's full pregate record (`record:`) is located under the
+  review-and-prep root by the same reader rule (`docs/workflow-handoffs.md#receipt-locators`;
+  an unresolvable locator makes that evidence unavailable and selects the `FULL`
+  path) before its SHA-256 check. Preserve this verified
   full record as an immutable copy distinct from the final preflight record.
-- The documentation section's bytes match its receipt SHA-256. If its durable
+- The documentation section (`section:`) is located under the review-and-prep
+  root the same way before its SHA-256 check, and its bytes match its receipt SHA-256. If its durable
   file is absent, reconstruct it from authenticated receipt text only when the
   resulting bytes match that hash; otherwise its evidence is unavailable.
   Authenticated receipt text is the hash-verified full receipt, or a legacy
@@ -1262,7 +1273,7 @@ the bound identity, final head/tree/base, scope hash, profile and path
 (release-only or why not), version, one `Tests:` line, Greptile status/allowance
 (keeping any reservation or submitted request recorded above), limitations and
 open checks (including `first-run setup unconfirmed (<token>): the landing run confirms it`
-when applicable), `Full receipt: <~-relative path>; sha256: <64 hex>` pointing
+when applicable), `Full receipt: <evidence locator>; sha256: <64 hex>` pointing
 to the full ship receipt file (`full-receipt-<n>.md`) written under the
 supplementary location below, and the wall time from the invocation start to the push.
 Write the full detail into `full-receipt-<n>.md`:
@@ -1282,9 +1293,21 @@ unavailable detail follows the existing unavailable-evidence branch.
 Store supplementary durable artifacts (including `full-receipt-<n>.md`) outside
 ephemeral workspaces: an existing
 `<state-root>/projects/<slug>/ship-and-land/`, otherwise `~/scratch/ship-and-land/`.
-Use a unique branch/invocation subdirectory; create each full receipt exclusively,
+Use a unique branch/invocation subdirectory directly under that location; create each full receipt exclusively,
 never overwrite it, and number writes `full-receipt-1.md`, `full-receipt-2.md`, …
-within that invocation. Reuse that directory and continue its numbering on resume.
+within that invocation. On resume, locate the directory from the prior
+`## Ship and land` receipt's `Full receipt:` locator under the ship-and-land
+root, or from a legacy path. Before reusing it for writes, require the PR
+body's author and every editor in `userContentEdits` to be the running
+account. Require a locally owned, non-symlink invocation directory whose
+canonical parent is a documented ship-and-land root. Verify that its regular,
+non-symlink receipt file matches the recorded SHA-256 and binds to this PR
+and branch. Continue numbering in the verified directory or create a fresh
+invocation directory if any check fails. Pull request text names files in
+this directory only by their evidence locator (`<evidence directory name>/<file>`,
+`docs/workflow-handoffs.md#receipt-locators`), while chat output (the readiness
+report and the exit message) and the local full receipt keep the absolute or
+`~/` path.
 Keep temporary files outside the repository.
 
 ## 4. Land and verify

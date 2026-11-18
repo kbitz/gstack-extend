@@ -611,6 +611,13 @@ describe('scan-text pure core (T1)', () => {
     for (const s of [dir, `${dir}/full-receipt-1.md`, `${tilde}. Next`, `${dir}-note`, `${dir} ok`, `${dir})`, `${dir}). Next`, `${dir}(note`]) {
       expect(knownComponents(s, { evidenceDirs: [dir, tilde] })).toHaveLength(2);
     }
+    expect(knownComponents(`${tsReal}/full-receipt-1.md`, { evidenceNames: [tsReal] })).toEqual([
+      { start: 0, end: 8, context: 'evidence-dir' },
+      { start: 9, end: 15, context: 'evidence-dir' },
+    ]);
+    for (const nonMatch of [`a${tsReal}/x`, `/${tsReal}/x`, `${tsReal}x/`]) {
+      expect(knownComponents(nonMatch, { evidenceNames: [tsReal] })).toEqual([]);
+    }
     expect(knownComponents(cLink, { prUrl })).toEqual([{ start: `${prUrl}#issuecomment-`.length, end: cLink.length, context: 'pr-comment' }]);
     // Value: protects=outside digits never clear through phone parentheses; fails_when=the after-rule allows joined spans;
     // why_new=previous cases covered only single ASCII separators; seam=none; no_claim=installed patterns are checked in (h).
@@ -757,6 +764,21 @@ if (mode === 'wrong-exit-second' && call === 2) process.exitCode = 3;
     expect(out.counts).toEqual({ HIGH: 0, MEDIUM: 0, LOW: 0, WARN: 0 });
     expect(out.known_safe.map((k: { id: string; context: string }) => [k.id, k.context])).toEqual([
       ['pii.cc', 'evidence-dir'], ['pii.cc', 'evidence-dir'], ['pii.cc', 'evidence-dir'], ['pii.cc', 'evidence-dir'], ['pii.phone.e164', 'pr-comment'],
+    ]);
+  });
+
+  test('(a-locator) evidence locator with directory basename is marked known_safe with exit 0', () => {
+    const repo = makeEmptyRepo(temp), homeDir = mkdtempSync(join(temp, 'home-a-loc-'));
+    const evDir = join(homeDir, '.gstack/projects/acme/review-and-prep', tsReal);
+    mkdirSync(evDir, { recursive: true });
+    const bodyFile = join(temp, `body-a-loc-${crypto.randomUUID()}.md`);
+    writeFileSync(bodyFile, `Evidence: ${tsReal}/full-receipt-1.md; sha256: ${'a'.repeat(64)}\n`);
+    const r = runScanText(repo, homeDir, ['--gstack-root', fakeUpstream, '--from-file', bodyFile, '--evidence-dir', evDir]);
+    const out = JSON.parse(r.stdout);
+    expect([r.status, out.version, out.status, out.upstream_exit, out.findings.length]).toEqual([0, 1, 'applied', 2, 0]);
+    expect(out.counts).toEqual({ HIGH: 0, MEDIUM: 0, LOW: 0, WARN: 0 });
+    expect(out.known_safe.map((k: { id: string; context: string }) => [k.id, k.context])).toEqual([
+      ['pii.cc', 'evidence-dir'],
     ]);
   });
 

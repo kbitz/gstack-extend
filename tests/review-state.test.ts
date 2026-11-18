@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, buildHelp, buildRequest, parseDelegationLine, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
 import { main } from '../src/review-state/cli.ts';
@@ -1508,6 +1508,98 @@ describe('bin/review-state', () => {
     callCmd(dNeeds, 'start', mkStart(8));
     callCmd(dNeeds, 'finish', { outcome: 'needs-context', base: baseSha, stop_reason: 'missing spec' });
     expect(readFileSync(runRender(dNeeds, 'n-final.json', { output: 'final' }).json.files[0].path, 'utf8')).toContain('status: needs-context;');
+  });
+
+  test('render outputs evidence locators in published PR comments and bodies while keeping local paths for full-receipt, CLI display, and H-F final', () => {
+    const commentUrl = 'https://github.com/kbitz/gstack-extend/pull/240#issuecomment-1001';
+    const pregateBytes = '{"ok":true}\n';
+    const docSecBytes = '## Documentation\n- Current.\n';
+    const summaryBytes = 'Summary of changes.\n';
+
+    const dReady = newDir(), dPause = newDir(), dStop = newDir(), dBlocked = newDir();
+    for (const d of [dReady, dPause, dStop, dBlocked]) writeFileSync(join(d, 'summary.md'), summaryBytes);
+    writeFileSync(join(dReady, 'pregate.json'), pregateBytes);
+    writeFileSync(join(dReady, 'doc-sec.md'), docSecBytes);
+
+    callCmd(dReady, 'start', mkStart(9, { wtree: 'e5e5e5e5e5e5e5e5' }));
+    callCmd(dReady, 'record gate', {
+      gate_id: uid(43), name: 'pregate', result: 'passed', candidate: { commit: headSha, base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' },
+      details: { raw_verdict: 'pass', wrapper_verdict: 'pass', policy: 'base', record_path: 'pregate.json', record_sha256: sha256(pregateBytes), skipped_lanes: [] },
+    });
+    callCmd(dReady, 'record gate', {
+      gate_id: uid(44), name: 'greptile', result: 'passed', candidate: { commit: baseSha, base: baseSha },
+      details: { value: 'completed; 0 open', run: 'https://github.com/kbitz/gstack-extend/pull/240#pullrequestreview-1' },
+    });
+    callCmd(dReady, 'record audit', {
+      audit_id: uid(52), name: 'documentation', result: 'accepted',
+      details: { report_id: 'doc-1', section_path: 'doc-sec.md', section_sha256: sha256(docSecBytes) },
+      candidate: { commit: headSha, base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' },
+    });
+    callCmd(dReady, 'checkpoint', { checkpoint_id: uid(67), kind: 'ready', base: baseSha, wtree: 'e5e5e5e5e5e5e5e5' });
+
+    callCmd(dPause, 'start', mkStart(10));
+    callCmd(dPause, 'record gate', { gate_id: uid(45), name: 'greptile', result: 'not-run', candidate: { commit: headSha, base: baseSha }, details: { value: 'postponed — awaiting manual testing', run: null } });
+    callCmd(dPause, 'checkpoint', { checkpoint_id: uid(68), kind: 'pause', base: baseSha, wtree: 'wt:pause' });
+
+    callCmd(dStop, 'start', mkStart(11));
+    callCmd(dStop, 'finish', { outcome: 'stopped', base: baseSha, stop_reason: 'cycle cap', delta_base: baseSha, stop_count: 1 });
+
+    callCmd(dBlocked, 'start', mkStart(12));
+    callCmd(dBlocked, 'finish', { outcome: 'blocked', base: baseSha, stop_reason: 'provider-failures' });
+
+    const runs = [
+      { dir: dReady, hasComment: true, commentUrl },
+      { dir: dPause, hasComment: true, commentUrl },
+      { dir: dStop, hasComment: true, commentUrl },
+      { dir: dBlocked, hasComment: false, commentUrl: null },
+    ] as const;
+
+    const fullRefs = new Map<string, { path: string; sha256: string }>();
+    for (const r of runs) {
+      const name = basename(r.dir);
+      const res = runCli(['render', '--dir', r.dir, '--input', writeJson(r.dir, 'full.json', { output: 'full-receipt' })], { env: { HOME: baseTmp } });
+      expect(res.code).toBe(0);
+      expect(res.json.files[0].display).toBe(`~/${name}/full-receipt-1.md`);
+      const fullText = readFileSync(res.json.files[0].path, 'utf8');
+      expect(fullText).toMatch(new RegExp(`^Run state: recorded \\(~/${name}/review-run-state\\.json; rev \\d+\\)$`, 'm'));
+      if (r.dir === dReady) {
+        expect(fullText).toContain(`record: ~/${name}/pregate.json; sha256: ${sha256(pregateBytes)}`);
+        expect(fullText).toContain(`section: ~/${name}/doc-sec.md; sha256: ${sha256(docSecBytes)}`);
+      }
+      fullRefs.set(r.dir, { path: 'full-receipt-1.md', sha256: res.json.files[0].sha256 });
+    }
+
+    for (const [envIdx, envOpt] of [{}, { HOME: baseTmp }, {}].entries()) {
+      const homeStr = (envOpt.HOME ?? process.env.HOME ?? '').replace(/\/+$/, '');
+      for (const r of runs) {
+        const cliDir = envIdx === 2 ? r.dir + '/.' : r.dir;
+        const name = basename(r.dir), fullRef = fullRefs.get(r.dir)!;
+        if (r.hasComment) {
+          const cRes = runCli(['render', '--dir', cliDir, '--input', writeJson(r.dir, `c-${envIdx}.json`, { output: 'comment', full_receipt: fullRef })], { env: envOpt });
+          expect(cRes.code).toBe(0);
+          if (envOpt.HOME === baseTmp) expect(cRes.json.files[0].display).toMatch(new RegExp(`^~/${name}/comment-(receipt|paused|stopped)-\\d+\\.md$`));
+          const cText = readFileSync(cRes.json.files[0].path, 'utf8');
+          expect(cText).not.toContain(r.dir);
+          expect(cText).not.toContain('~/');
+          if (homeStr.length > 1) expect(cText).not.toContain(homeStr);
+          expect(cText).toContain(`Full receipt: ${name}/full-receipt-1.md; sha256: ${fullRef.sha256}`);
+          if (r.dir === dReady) {
+            expect(cText).toContain(`record: ${name}/pregate.json; sha256: ${sha256(pregateBytes)}`);
+            expect(cText).toContain(`section: ${name}/doc-sec.md; sha256: ${sha256(docSecBytes)}`);
+          }
+        }
+        const bRes = runCli(['render', '--dir', cliDir, '--input', writeJson(r.dir, `b-${envIdx}.json`, {
+          output: 'body', comment_url: r.commentUrl, full_receipt: fullRef, summary: { path: 'summary.md', sha256: sha256(summaryBytes) },
+        })], { env: envOpt });
+        expect(bRes.code).toBe(0);
+        if (envOpt.HOME === baseTmp) expect(bRes.json.files[0].display).toMatch(new RegExp(`^~/${name}/pr-body-\\d+\\.md$`));
+        const bText = readFileSync(bRes.json.files[0].path, 'utf8');
+        expect(bText).not.toContain(r.dir);
+        expect(bText).not.toContain('~/');
+        if (homeStr.length > 1) expect(bText).not.toContain(homeStr);
+        expect(bText).toContain(`Evidence: ${name}/full-receipt-1.md; sha256: ${fullRef.sha256}`);
+      }
+    }
   });
 
   // Value: protects=digest-pinned evidence and exclusive output ownership; fails_when=render reopens checked paths, removes an unowned file after open fails, or rounds an existing numeric suffix; why_new=review reproductions; seam=child-local filesystem mocks; no_claim=OS sandboxing
