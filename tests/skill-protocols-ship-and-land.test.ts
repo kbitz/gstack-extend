@@ -855,7 +855,11 @@ describe('ship-and-land compact PR body receipt and full receipt file', () => {
       'If its durable file is absent, reconstruct it from authenticated receipt text only when the resulting bytes match that hash; otherwise its evidence is unavailable. Authenticated receipt text is the hash-verified full receipt, or a legacy receipt comment; an unavailable full receipt makes that evidence unavailable and selects the `FULL` path.',
       'A line in a full receipt file (`full-receipt-<n>.md`) inherits the naming comment\'s provenance only when that comment passes this author and `userContentEdits` check and the file\'s bytes match its `Full receipt:` SHA-256.',
       'Use a unique branch/invocation subdirectory directly under that location; create each full receipt exclusively, never overwrite it',
-      "Reuse that directory (found from the prior `## Ship and land` receipt's `Full receipt:` locator under the ship-and-land root, or from a legacy path) and continue its numbering on resume.",
+      "On resume, locate the directory from the prior `## Ship and land` receipt's `Full receipt:` locator under the ship-and-land root, or from a legacy path.",
+      "Before reusing it for writes, require the PR body's author and every editor in `userContentEdits` to be the running account.",
+      'non-symlink invocation directory whose canonical parent is a documented ship-and-land root',
+      'receipt file matches the recorded SHA-256 and binds to this PR and branch',
+      'create a fresh invocation directory if any check fails',
       'Pull request text names files in this directory only by their evidence locator (`<evidence directory name>/<file>`, `docs/workflow-handoffs.md#receipt-locators`), while chat output (the readiness report and the exit message) and the local full receipt keep the absolute or `~/` path.',
       'Measure the section as a JavaScript string before each body write',
     ]) {

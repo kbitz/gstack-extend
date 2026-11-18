@@ -473,14 +473,14 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
       content = renderFullReceipt(state, { sectionsText: sectionsRefs.map((_, i) => checkedBytes.get(`sections[${i}]`)!.toString('utf8')), reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
     } else if (output === 'comment') {
       prefix = `comment-${exit === 'ready' ? 'receipt' : exit === 'paused' ? 'paused' : 'stopped'}`;
-      content = renderComment(state, { fullReceipt: fullRef!, reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
+      content = renderComment(state, { fullReceipt: fullRef!, reviewRestrictionResolved: canon.review_restriction_resolved === true }, realDir, home);
     } else if (output === 'body') {
       prefix = 'pr-body';
       const commentUrl = canon.comment_url as string | null;
       if (commentUrl === null && exit !== 'blocked') return fail('invalid-input', { violations: [{ path: 'comment_url', rule: 'invalid-value', expected: 'http-url-for-non-blocked-body' }] });
       const summaryText = checkedBytes.get('summary')!.toString('utf8'), sumErr = validateSummaryText(summaryText, exit);
       if (sumErr) return fail('invalid-input', { violations: [{ path: 'summary', rule: 'invalid-value', expected: sumErr }] });
-      content = renderBody(state, { fullReceipt: fullRef!, summaryText, commentUrl }, dirArg, home);
+      content = renderBody(state, { fullReceipt: fullRef!, summaryText, commentUrl }, realDir, home);
     } else {
       const effPr = state.run.pr ?? inputPr, effLogin = state.run.gh_login ?? inputGhLogin, autoLines = (canon.auto_choice_lines as string[]) ?? [];
       const hasPreparedExtras = Boolean(fullRef || comRef || canon.comment_url !== null || canon.save_before_shipping !== null);
@@ -493,7 +493,7 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
         if (canon.required_user_checks !== null) v.push({ path: 'required_user_checks', rule: 'forbidden-for-exit', expected: 'null' });
         if (autoLines.length > 0) v.push({ path: 'auto_choice_lines', rule: 'forbidden-for-exit', expected: 'empty' });
         if (v.length > 0) return fail('invalid-input', { violations: v.slice(0, 20) });
-        const expectedReceipt = `${evalGrammar('compact', state, { dir: dirArg, home, fullReceipt: fullRef!, resolved: state.finish!.review_restriction_resolved === true }).join('\n')}\n`;
+        const expectedReceipt = `${evalGrammar('compact', state, { dir: realDir, home, fullReceipt: fullRef!, resolved: state.finish!.review_restriction_resolved === true }).join('\n')}\n`;
         if (checkedBytes.get('comment_file')!.toString('utf8') !== expectedReceipt) return fail('invalid-input', { violations: [{ path: 'comment_file', rule: 'receipt-mismatch', expected: 'matches-finished-state' }] });
       } else if (exit === 'paused') {
         if (typeof canon.required_user_checks !== 'string') v.push({ path: 'required_user_checks', rule: 'missing-key', expected: 'string-1..2000' });

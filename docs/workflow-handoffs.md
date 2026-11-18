@@ -1711,13 +1711,17 @@ Orchestrator readers parse only the kept marker set above. Under the experimenta
   releases published, and it still reads as before; version 2 is the evidence
   locator.
 - **Why H-B keeps `review-and-prep/v1`.** The H-B prompt bytes, every marker,
-  every label and its order, and every case outcome are unchanged. Only the
-  path value inside the labeled lines (`Full receipt:`, `record:`, `section:`
-  and the body's `Evidence:`) changes, and its reader verifies it by SHA-256.
+  every label in the compact comment and its order, and every case outcome are
+  unchanged. The path values in `Full receipt:`, `record:` and `section:`
+  change and still carry a SHA-256. The body's version-1
+  `Evidence: <directory>; full receipt: <path>; sha256: <hash>` becomes
+  `Evidence: <evidence locator>; sha256: <hash>` in version 2.
 - **Migration.** A caller or an external orchestrator that opened these values
-  as local paths resolves version 2 under the producing skill's evidence root;
-  on another machine without the evidence directory, the existing
-  unavailable-evidence branch applies.
+  as local paths resolves version 2 under the producing skill's evidence root.
+  A caller that read the old body's directory field can get the invocation
+  directory from the locator's first segment. If neither documented root
+  contains the file, including when a reader uses a different state root, the
+  existing unavailable-evidence branch applies.
 
 ## Versioning and compatibility
 

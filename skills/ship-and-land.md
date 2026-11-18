@@ -1295,9 +1295,15 @@ ephemeral workspaces: an existing
 `<state-root>/projects/<slug>/ship-and-land/`, otherwise `~/scratch/ship-and-land/`.
 Use a unique branch/invocation subdirectory directly under that location; create each full receipt exclusively,
 never overwrite it, and number writes `full-receipt-1.md`, `full-receipt-2.md`, …
-within that invocation. Reuse that directory (found from the prior `## Ship and land`
-receipt's `Full receipt:` locator under the ship-and-land root, or from a legacy
-path) and continue its numbering on resume. Pull request text names files in
+within that invocation. On resume, locate the directory from the prior
+`## Ship and land` receipt's `Full receipt:` locator under the ship-and-land
+root, or from a legacy path. Before reusing it for writes, require the PR
+body's author and every editor in `userContentEdits` to be the running
+account. Require a locally owned, non-symlink invocation directory whose
+canonical parent is a documented ship-and-land root. Verify that its regular,
+non-symlink receipt file matches the recorded SHA-256 and binds to this PR
+and branch. Continue numbering in the verified directory or create a fresh
+invocation directory if any check fails. Pull request text names files in
 this directory only by their evidence locator (`<evidence directory name>/<file>`,
 `docs/workflow-handoffs.md#receipt-locators`), while chat output (the readiness
 report and the exit message) and the local full receipt keep the absolute or

@@ -1569,12 +1569,13 @@ describe('bin/review-state', () => {
       fullRefs.set(r.dir, { path: 'full-receipt-1.md', sha256: res.json.files[0].sha256 });
     }
 
-    for (const [envIdx, envOpt] of [{}, { HOME: baseTmp }].entries()) {
+    for (const [envIdx, envOpt] of [{}, { HOME: baseTmp }, {}].entries()) {
       const homeStr = (envOpt.HOME ?? process.env.HOME ?? '').replace(/\/+$/, '');
       for (const r of runs) {
+        const cliDir = envIdx === 2 ? r.dir + '/.' : r.dir;
         const name = basename(r.dir), fullRef = fullRefs.get(r.dir)!;
         if (r.hasComment) {
-          const cRes = runCli(['render', '--dir', r.dir, '--input', writeJson(r.dir, `c-${envIdx}.json`, { output: 'comment', full_receipt: fullRef })], { env: envOpt });
+          const cRes = runCli(['render', '--dir', cliDir, '--input', writeJson(r.dir, `c-${envIdx}.json`, { output: 'comment', full_receipt: fullRef })], { env: envOpt });
           expect(cRes.code).toBe(0);
           if (envOpt.HOME === baseTmp) expect(cRes.json.files[0].display).toMatch(new RegExp(`^~/${name}/comment-(receipt|paused|stopped)-\\d+\\.md$`));
           const cText = readFileSync(cRes.json.files[0].path, 'utf8');
@@ -1587,7 +1588,7 @@ describe('bin/review-state', () => {
             expect(cText).toContain(`section: ${name}/doc-sec.md; sha256: ${sha256(docSecBytes)}`);
           }
         }
-        const bRes = runCli(['render', '--dir', r.dir, '--input', writeJson(r.dir, `b-${envIdx}.json`, {
+        const bRes = runCli(['render', '--dir', cliDir, '--input', writeJson(r.dir, `b-${envIdx}.json`, {
           output: 'body', comment_url: r.commentUrl, full_receipt: fullRef, summary: { path: 'summary.md', sha256: sha256(summaryBytes) },
         })], { env: envOpt });
         expect(bRes.code).toBe(0);
