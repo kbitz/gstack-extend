@@ -1995,14 +1995,16 @@ describe('bin/review-state', () => {
     expect(rBodyPausedPhrase.code).toBe(0);
 
     // 7. Output-name collisions and owned-write failures via allocateExclusiveFile
-    const dAlloc = newDir();
+    // Exercise the diagnostic path bound regardless of the host's TMPDIR.
+    const dAlloc = join(newDir(), 'render-diagnostic-path-'.repeat(4));
+    mkdirSync(dAlloc);
     // readdir failure
     const rReaddirFail = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
       readdir: () => { throw Object.assign(new Error('permission denied'), { code: 'EACCES' }); },
     });
     expect(rReaddirFail).toEqual({
       ok: false,
-      detail: { errno: 'EACCES', syscall: 'readdir', path: dAlloc },
+      detail: { errno: 'EACCES', syscall: 'readdir', path: dAlloc.slice(0, 80) },
     });
 
     // EEXIST retry landing on the next number
@@ -2031,16 +2033,17 @@ describe('bin/review-state', () => {
     expect(exhaustCalls).toBe(64);
     expect(rExhaust).toEqual({
       ok: false,
-      detail: { errno: 'EEXIST', syscall: 'open', path: join(dAlloc, 'full-receipt-*.md') },
+      detail: { errno: 'EEXIST', syscall: 'open', path: join(dAlloc, 'full-receipt-*.md').slice(0, 80) },
     });
 
     // Write failure removes only the file this call created
+    const targetPath = join(dAlloc, 'full-receipt-3.md');
     const rWriteFail = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
       write: () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC', syscall: 'write' }); },
     });
     expect(rWriteFail).toEqual({
       ok: false,
-      detail: { errno: 'ENOSPC', syscall: 'write', path: join(dAlloc, 'full-receipt-3.md') },
+      detail: { errno: 'ENOSPC', syscall: 'write', path: targetPath.slice(0, 80) },
     });
     expect(existsSync(join(dAlloc, 'full-receipt-3.md'))).toBe(false);
     expect(existsSync(join(dAlloc, 'full-receipt-2.md'))).toBe(true);
@@ -2051,12 +2054,11 @@ describe('bin/review-state', () => {
     });
     expect(rFsyncFail).toEqual({
       ok: false,
-      detail: { errno: 'EIO', syscall: 'fsync', path: join(dAlloc, 'full-receipt-3.md') },
+      detail: { errno: 'EIO', syscall: 'fsync', path: targetPath.slice(0, 80) },
     });
     expect(existsSync(join(dAlloc, 'full-receipt-3.md'))).toBe(false);
 
     // Replaced inode during fsync failure is left alone
-    const targetPath = join(dAlloc, 'full-receipt-3.md');
     const rReplacedInode = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
       fsync: () => {
         unlinkSync(targetPath);

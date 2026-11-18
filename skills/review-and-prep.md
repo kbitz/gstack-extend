@@ -173,12 +173,11 @@ Step/pass capture for this workflow lives beside the legacy telemetry above and
 never changes it. The SHARED prohibition on copying session values governs
 legacy start/finish calls only. As the one metrics-only exception, retain the
 opaque session ID this invocation's start printed (`GE_TELEMETRY: session=…`)
-solely as the `session_id` of `metrics` calls in this invocation. Never replay
-or alter a legacy start/finish call, never use an ID from another invocation,
-and never start a new legacy run to feed metrics. If the ID is unavailable,
-metrics capture is unavailable; continue the workflow. A resume prints its own
-ID and records its own metrics run. After a pause, the continuation's new start
-prints the ID that the new run (and its single run `begin`) uses, as
+solely to bind this segment's metrics through the `--session-id` flag for
+`start` or `checkpoint resume`. When legacy start supplies no ID, omit the
+flag and use the binding returned by `derive`. Never replay or alter a legacy
+start/finish call, never use an ID from another invocation, and never start a
+new legacy run to feed metrics. Each resume records its own metrics run as
 **Segments** above says.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
@@ -186,14 +185,17 @@ While the run state is recorded (the default), `derive` writes the run `begin`
 and `end`, pass and correction records; spans, waits and decisions use `GX_RUN`
 from derive's `current.run_step_id`, `GX_SID` from its `current.session_id`,
 `GX_CAPTURE=1` only when `current.run_begin` is `recorded` or `replayed`, and no
-context-override argument. While it is unavailable, this invocation writes no
-run, pass or correction record.
+context-override argument. While recording is unavailable, set `GX_CAPTURE=0`
+and skip metrics writes, including raw decisions. Keep any records already
+written and report capture as the calls document defines.
 
-Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
-inline producer is `gstack-extend-telemetry metrics <begin|end|decision>` (`decision` for raw `REUSE`/`N/A`, and the span library's `begin`/`end`), plus `metrics read`,
+Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Each
+inline producer (`decision` for raw `REUSE`/`N/A`, and the span library's
+`begin`/`end`) calls `gstack-extend-telemetry metrics <begin|end|decision>`
 with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
 `session_id`, a fresh lowercase UUID `event_id` you keep stable for that
-event) on stdin. Every ID you mint is lowercase and random (below).
+event) on stdin. `metrics read` takes the flags listed below. Every ID you
+mint is lowercase and random (below).
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
 state and preserve the wrapped work's own exit status separately. A
 disabled, unavailable, conflicting or unconfirmed capture is recorded as
@@ -287,10 +289,9 @@ library and both call forms are in
   in later calls; any `begin=`, `end=` or `decision=` value other than
   `recorded`, `replayed`, `match`, `pending` or `skipped` makes the receipt carry
   `capture=partial (<reason>)`.
-- derive writes the run `begin`; in the call that runs the first derive of a
-  segment, resolve the library path to retain as `GX_LIB` (resolve the launcher
-  through the telemetry helper and print the library path to retain as
-  `GX_LIB`):
+- derive writes the run `begin`. In the call that runs the first derive of a
+  segment, resolve the launcher through the telemetry helper and
+  print the library path to retain as `GX_LIB`:
 
   ```bash
   _GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
@@ -1069,19 +1070,25 @@ continuation.
   `<extend-root>/docs/review-run-state-calls.md` defines, when the preamble
   printed an `EXTEND_ROOT:` line, `"<extend-root>/bin/review-state" --version`
   exits 0 and that document is readable; read the document at Step 1 except its
-  **Inline outputs** section, which is read by heading only when the Degraded
-  path starts or a render is refused. When no `EXTEND_ROOT:` line was printed or
+  **Inline outputs** section. Read that section by heading only for the inline
+  paths named below and under **When /review stops at its cycle cap**. When no
+  `EXTEND_ROOT:` line was printed or
   `"<extend-root>/bin/review-state" --version` fails, record nothing, add
   `Run state: unavailable (helper-missing)` and
   `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: helper-missing).`
-  to the full receipt, write every output inline from the skill's templates and
-  **Inline outputs** when readable, and run the fence without
+  to the full receipt, write every output inline, and run the fence without
   `REVIEW_STATE_DIR`. When `<extend-root>/docs/review-run-state-calls.md` is
   missing or unreadable (an install older than the loaded skill), record
   nothing, add `Run state: unavailable (calls-document-missing)` and
   `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: calls-document-missing).`
-  to the full receipt, write every output inline from the skill's templates, and
-  run the fence without `REVIEW_STATE_DIR`. While recording, `derive` writes the
+  to the full receipt, write every output inline, and run the fence without
+  `REVIEW_STATE_DIR`. For any inline output, use the skill's templates and
+  **Inline outputs** when readable. When that section is unavailable, use the
+  templates and the published [handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md):
+  **Receipt layout and kept marker set**, **Grammar stage line**, and
+  **Release disclosures** (`docs/workflow-handoffs.md`). This also covers an
+  older readable calls document without **Inline outputs**.
+  While recording, `derive` writes the
   run `begin` and `end`, pass and correction metrics records in **Workflow
   metrics (optional, local)**, and every run-state record goes through
   `bin/review-state build` as the calls document lists, never a hand-written
@@ -2523,9 +2530,9 @@ assembled JSON file for `write`, or `before-fix`, `next-cycle` or `stop` for
 
 The fence prints one `FULL_REVIEW_RECORD:` line, read as above (`--help` lists
 its messages and exit codes). That line is not a review-state result envelope,
-so the run-state retry and fallback rules in `docs/review-run-state-calls.md` do
-not apply to it (while the run state is recorded, that document's `REVIEW_STATE_DIR`
-prefix still applies). Before the first fence use in an invocation, confirm its
+so use the fence's own recovery rules. While recording, follow **The baseline
+fence** in `docs/review-run-state-calls.md` for `REVIEW_STATE_DIR` and each
+fence refusal. Before the first fence use in an invocation, confirm its
 launcher is executable and `"<extend-root>/bin/review-state" full-review-record --help`
 exits 0. When the helper is missing (no `EXTEND_ROOT:` line, the launcher is
 not executable, or the help command fails), the invocation writes no
@@ -2578,13 +2585,20 @@ shapes the prompt below, so the continuation starts in a fresh session.
    severities, completed stages, the review policy and its source, the
    continuation count, and every line marked `Stopped: yes` in Step 6's
    **Readiness** receipt-line table (applying its `Unresolved:` exclusions).
+   While the run state is recorded, follow the calls document's **Fixed
+   points** for the stop. Use `"<extend-root>/bin/review-state" render --help`
+   for the full receipt, stopped comment, PR body and final handoff. When the
+   stop changes the recorded policy value or source, write the affected
+   outputs inline as **Fixed points** directs. Use the inline fallback when
+   recording is unavailable or a render is refused.
    Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
-   credential/PII scan. A failed or uncertain post keeps the stop. Before a
+   credential/PII scan. Keep its one `Skipped pregate lanes:` or `Ship gates:`
+   line and `Full receipt: <evidence locator>; sha256: <64 hex>`. A failed or
+   uncertain post keeps the stop. Before a
    retry, look up that exact marker and reuse a corroborated existing comment;
    post only if absent. Conflicting or unverifiable duplicates hold for repair.
    Step 1's corroboration and restriction rules treat it like a pause.
-   Render the full receipt, stopped comment (`<!-- review-and-prep:stopped:<full-sha> -->`, carrying its one `Skipped pregate lanes:` or `Ship gates:` line and `Full receipt: <evidence locator>; sha256: <64 hex>`), PR body and final handoff with `"<extend-root>/bin/review-state" render` (`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**; inline line order in **Inline outputs**), while the dedicated full-review evidence comment procedure below is unchanged.
    For H-E, retain the newest corroborated full-review base across repair-only continuations;
    review the cumulative delta from that base, including earlier continuation repairs.
    Do not replace it with a delta-reviewed invocation start or call partial coverage full.
@@ -3325,11 +3339,13 @@ supply a new policy or result line.
 
 **Pause.** Write the line below and the policy line to the evidence directory.
 Open a wait span with category `checks` and end it `paused` at the actual pause,
-not earlier. Record `checkpoint external-gate` and `checkpoint pause`, run
-`derive`, and render `final` (`"<extend-root>/bin/review-state" render --help`,
-calls doc **Fixed points**), then run Telemetry finish with `--outcome blocked`.
-Print `Evidence directory: <absolute path>` and every auto-choice line, then
-print this line, unfenced, as the last line of the turn:
+not earlier. While the run state is recorded, record `checkpoint external-gate`
+and `checkpoint pause`, run `derive`, and render `final`
+(`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**).
+Run Telemetry finish with `--outcome blocked`. If rendering succeeded, end
+the turn with the rendered file's bytes. Otherwise print
+`Evidence directory: <absolute path>` and every auto-choice line, followed by
+this line, unfenced, as the last line of the turn:
 
 `External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`
 
@@ -3923,15 +3939,16 @@ Greptile wait timer, mark ready, or emit the `/ship-and-land` handoff.
 
 The PAUSED body uses Step 6's `## Review and prep` body-section shape, listing
 pending user checks under open checks, and every line this section says to
-record goes to the full receipt (`full-receipt-<n>.md`). Post the PAUSED receipt once per pause as a PR comment. Before posting, scan
-the comment bytes with the same scan (`scan-text`, wrapping
-`gstack-redact --from-file`), or a manual inspection. Render the full receipt,
-paused comment (`<!-- review-and-prep:paused:<full-sha> -->`, carrying
+record goes to the full receipt (`full-receipt-<n>.md`). While the run state
+is recorded, render the full receipt and paused comment, then the PR body and
+final handoff at the calls document's **Fixed points**
+(`"<extend-root>/bin/review-state" render --help`). Use the inline fallback
+when recording is unavailable or a render is refused. The paused comment
+carries `<!-- review-and-prep:paused:<full-sha> -->`,
 `Resume with /review-and-prep resume; do not run /ship on this draft.` and
-`Full receipt: <evidence locator>; sha256: <64 hex>`), PR body and final handoff
-with `"<extend-root>/bin/review-state" render`
-(`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**;
-inline line order in **Inline outputs**). The marker is distinct
+`Full receipt: <evidence locator>; sha256: <64 hex>`. Before posting the
+comment once per pause, scan its bytes with `scan-text` (wrapping
+`gstack-redact --from-file`) or a manual inspection. The marker is distinct
 from `review-and-prep:receipt:`, so `/ship-and-land` never reads a paused
 receipt as prepared. If posting the paused comment fails, keep the pause and
 keep preparation incomplete until the compact comment is confirmed; report its
@@ -4548,16 +4565,16 @@ the relevant base/head refs. Require all of the following:
   relabel its original base/SHA as current.
 - Version assignment and release work remain for `/ship`.
 
-Once every readiness gate passes, run `checkpoint ready`, render the full
-receipt (`full-receipt-<n>.md` in the invocation's evidence directory, created
-exclusively, never rewritten and never posted to GitHub) from sections files
-holding the content this section lists, render the `comment` and post it with
-`--body-file`, and render the `body` (`## Review and prep`) with its permalink
-and splice that section into the PR body, preserving the rest of the
-description, then recheck, run `gh pr ready`, read back, run `finish`
-`prepared`, run `derive`, and render `final`
-(`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**;
-inline assembly in **Inline outputs**). Record the body's last-edited time and editor,
+Once every readiness gate passes, prepare the full receipt
+(`full-receipt-<n>.md` in the invocation's evidence directory, created
+exclusively, never rewritten and never posted to GitHub). While the run state
+is recorded, run `checkpoint ready`, render `full-receipt` from sections files
+holding the content below, and render `comment` for the `--body-file` post.
+After the post, render `body` with the comment permalink
+(`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**).
+Use the inline fallback when recording is unavailable or a render is refused.
+Splice the one `## Review and prep` section into the PR body, preserving the
+rest of the description. Record the body's last-edited time and editor,
 re-read the body immediately before each edit, apply the receipt to that fresh
 text, and re-read after writing; if another actor edited in that window,
 re-apply the receipt onto their version and note the collision in the receipt.
@@ -4741,6 +4758,10 @@ discrepancy instead of a success handoff. If the command times out, query state
 before deciding what happened; do not blindly repeat it. Apply the draft-once
 rule if a concurrent change invalidates preparation: report it and stop.
 
+After successful readback, while the run state is recorded, run `finish`
+`prepared` with the disclosure values from Step 7, then `derive` and render
+`final` as the calls document's **Fixed points** directs.
+
 Finish with the PR URL, **DONE** (or **BLOCKED**, with evidence), final reviewed
 SHA, a brief local-test/Greptile summary, and the Step 7 copyable prompt. Every
 exit, including PAUSED and STOPPED, links the receipt comment and names the
@@ -4801,15 +4822,21 @@ Save before shipping: <unrelated paths preparation preserved>; move them out of
 this checkout without committing them, since they block release work until then.
 ```
 
-End every final message except the external-gate pause with this stage line, after
-any handoff fence and outside it, with nothing after it (`render` `final` produces the handoff fence, any `User-facing change:` lines and this stage line; `"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points** and **Inline outputs**):
+End every final message except the external-gate pause with this stage line,
+after any handoff fence and outside it, with nothing after it. While the run
+state is recorded, `render` `final` produces the handoff fence, any
+`User-facing change:` lines and this stage line
+(`"<extend-root>/bin/review-state" render --help`, calls document **Fixed
+points**). Use the inline fallback when recording is unavailable or the render
+is refused.
 
 Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
 
 When the prepared diff changes user-visible behavior, CLI flags, configuration,
-skill inputs or outputs, or upgrade requirements, pass one
-`--user-facing-change` value per change to `finish` `prepared` (rendered as
-`User-facing change: <one plain sentence>`; see
+skill inputs or outputs, or upgrade requirements, write a disclosure value per
+change. While the run state is recorded, pass each value as
+`--user-facing-change` to `finish` `prepared`. The renderer and the inline
+fallback use the same values as `User-facing change: <one plain sentence>` (see
 [release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures),
 `docs/workflow-handoffs.md`, and inline placement in calls doc **Inline outputs**).
 Omit `--user-facing-change` entirely when the diff has no user-facing change

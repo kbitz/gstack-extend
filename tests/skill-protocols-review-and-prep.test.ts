@@ -1695,7 +1695,7 @@ describe('review-and-prep run-state=record', () => {
     }
   });
 
-  // Value: protects=recording is the default in the policy bullet and calls doc Activation, with both unavailable reasons and the capability check; fails_when=the default sentence, an unavailable reason or an activation condition is dropped or the bullet reverts to opt-in; why_new=Track 89A T1; seam=none
+  // Value: protects=default activation, unavailable reasons, capability check and the fallback to the published handoff contract; fails_when=any is dropped or the bullet reverts to opt-in; why_new=Track 89A T1 and T4; seam=none
   test('the policy bullet and calls document make recording the default and lock both unavailable reasons', () => {
     const policyRaw = skillSection(prep, '### Read an optional review policy');
     const bulletStart = policyRaw.indexOf('- `run-state=record`');
@@ -1711,11 +1711,15 @@ describe('review-and-prep run-state=record', () => {
       if (!b.includes('`Run state: unavailable (helper-missing)`')) violations.push('missing helper-missing');
       if (!b.includes('`Run state: unavailable (calls-document-missing)`')) violations.push('missing calls-document-missing');
       if (!b.includes('`grep -F \'run-state=record\' "<installed skill dir>/SKILL.md"`')) violations.push('missing capability check');
+      for (const heading of ['Receipt layout and kept marker set', 'Grammar stage line', 'Release disclosures']) {
+        if (!b.includes(`**${heading}**`)) violations.push(`missing fallback: ${heading}`);
+      }
       return violations;
     };
 
     expect(checkDefaultBullet(bullet)).toEqual([]);
     expect(checkDefaultBullet(bullet.replace(defaultSentence, ''))).toContain('missing default sentence');
+    expect(checkDefaultBullet(bullet.replace('**Grammar stage line**', ''))).toContain('missing fallback: Grammar stage line');
 
     const actStart = callsRaw.indexOf('## Activation');
     const actEnd = callsRaw.indexOf('\n## ', actStart + 1);
@@ -1748,7 +1752,7 @@ describe('review-and-prep run-state=record', () => {
   });
 
   // Value: protects=moved line-assembly rules live in calls doc ## Inline outputs and the skill carries render --help pointers at Readiness, the paused comment, the stopped comment and Step 7; fails_when=an Inline outputs rule or a render --help pointer is dropped; why_new=Track 89A T3; seam=none
-  test('calls doc Inline outputs carries the moved assembly rules and the skill carries render --help pointers at all four sites', () => {
+  test('calls doc Inline outputs carries the moved rules and the skill guards each render site', () => {
     const inlineStart = callsRaw.indexOf('## Inline outputs');
     expect(inlineStart).toBeGreaterThan(-1);
     const inlineFlat = callsRaw.slice(inlineStart).replace(/\s+/g, ' ');
@@ -1769,10 +1773,12 @@ describe('review-and-prep run-state=record', () => {
         ['Readiness', '### Readiness'],
         ['paused comment', H_MANUAL_CHECKPOINT],
         ['stopped comment', H_CYCLE_STOP],
+        ['external gate', '### Pause for an external full-suite gate'],
         ['Step 7', H_STEP_7],
       ] as const) {
         const sec = skillSection(skillText, heading).replace(/\s+/g, ' ');
         if (!sec.includes('render --help')) violations.push(`missing render --help at ${label}`);
+        if (!sec.includes('While the run state is recorded')) violations.push(`unguarded render at ${label}`);
       }
       return violations;
     };
@@ -1783,7 +1789,10 @@ describe('review-and-prep run-state=record', () => {
     ).toContain('missing inline rule: The stopped comment uses Step 6\'s compact shape:');
     expect(
       checkInlineAndPointers(prep.replaceAll('render --help', 'render'), inlineFlat).length,
-    ).toBe(4);
+    ).toBe(5);
+    expect(
+      checkInlineAndPointers(prep.replace('While the run state is recorded, record `checkpoint external-gate`', 'Record `checkpoint external-gate`'), inlineFlat),
+    ).toContain('unguarded render at external gate');
   });
 
   // Value: protects=no-ID baseline fence refusal recovery and version-skew fallbacks (calls-document-missing and derive-missing); fails_when=a refusal string, reason code, without REVIEW_STATE_DIR instruction, replacement-pass ban or skew reason is dropped; why_new=Track 89A T4; seam=none
@@ -1818,6 +1827,7 @@ describe('review-and-prep run-state=record', () => {
       const tokens = [
         'derive-missing',
         'capture=unavailable (derive-missing)',
+        'Report explicit non-`ok` results other than `usage` with their actual reason in chat.',
       ];
       return tokens.filter((t) => !d.includes(t));
     };
@@ -1826,6 +1836,7 @@ describe('review-and-prep run-state=record', () => {
     expect(checkCallsDocSkew(policySec)).toEqual([]);
     expect(checkDeriveSkew(deriveSec)).toEqual([]);
 
+    expect(checkFenceRule(fenceSec.replace('fence-run-state-unreadable', ''))).toContain('fence-run-state-unreadable');
     expect(checkFenceRule(fenceSec.replace('fence-cycle-1-pass-missing', ''))).toContain('fence-cycle-1-pass-missing');
     expect(checkCallsDocSkew(policySec.replaceAll('calls-document-missing', ''))).toContain('calls-document-missing');
     expect(checkDeriveSkew(deriveSec.replaceAll('derive-missing', ''))).toContain('derive-missing');
