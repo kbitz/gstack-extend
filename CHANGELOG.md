@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.101.0] - 2026-11-18
+
+### Changed
+
+- The experimental review-state helper now reclaims a lock left behind by a crashed writer on the same machine, refuses a run state recorded on another host, moves a corrupt run state aside when a new run starts in its directory, and reports Git execution failures and unexpected errors as a separate internal-error result with exit code 5.
+- `review-state` automatically reclaims eligible stale locks and refuses valid state bound to a different hostname.
+- `review-state start` can preserve eligible corrupt state in a named backup before starting a new run.
+- `review-state` reports execution failures as `internal-error` with exit code 5 and includes a trace when the evidence directory can accept it.
+
+### Upgrade notes
+
+- Review-state helpers from earlier releases read a run state written by this release as a newer schema and fall back to the inline review path, so a machine with an older install must be upgraded before it resumes such a run.
+
 ## [0.100.0] - 2026-11-18
 
 ### Changed
