@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
-import { CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, truncate80, validateStoredState, VOICE_RE, type ReasonCode, type ReviewRunState } from './state.ts';
+import { CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, storedWriterOrderKnown, truncate80, validateStoredState, VOICE_RE, type ReasonCode, type ReviewRunState } from './state.ts';
 import { makeEnvelope, readHelperVersion, runGit, validateStateDir, type StoreResult } from './store.ts';
 
 export const NAMESPACE = '9aa572eb-215f-452f-99e8-2bfdf0329cf3';
@@ -457,7 +457,7 @@ export function loadStoredState(
 
   const validated = validateStoredState(parsedState, statePath, helperVersion);
   if (!validated.ok) {
-    const customFix = validated.reason === 'corrupt' && !validated.canMoveAside ? CORRUPT_ORDER_FIX : undefined;
+    const customFix = validated.reason === 'corrupt' && !storedWriterOrderKnown(parsedState, helperVersion) ? CORRUPT_ORDER_FIX : undefined;
     return fail(validated.reason, validated.detail, statePath, null, customFix);
   }
   const storedState = validated.state;

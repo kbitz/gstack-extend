@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeSync, type Stats } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { applyCommand, collectEvidenceItems, CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, isVersion, REASONS, serializeState, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
+import { applyCommand, collectEvidenceItems, CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, isVersion, REASONS, serializeState, storedWriterOrderKnown, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
 
 export const DEFAULT_VERSION_PATH = resolve(import.meta.dir, '..', '..', 'VERSION');
 
@@ -586,10 +586,11 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       } else {
         const validated = validateStoredState(parsedState, statePath!, helperVersion);
         if (!validated.ok) {
-          if (validated.reason === 'corrupt' && command === 'start' && validated.canMoveAside) {
+          const orderKnown = storedWriterOrderKnown(parsedState, helperVersion);
+          if (validated.reason === 'corrupt' && command === 'start' && orderKnown) {
             moveCorruptStateAside = true;
           } else {
-            const customFix = validated.reason === 'corrupt' && !validated.canMoveAside ? CORRUPT_ORDER_FIX : undefined;
+            const customFix = validated.reason === 'corrupt' && !orderKnown ? CORRUPT_ORDER_FIX : undefined;
             return reply(validated.reason, validated.detail, statePath, null, customFix);
           }
         } else {
