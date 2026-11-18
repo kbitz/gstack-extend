@@ -2015,11 +2015,14 @@ describe('execution provenance', () => {
       run_mode_source: 'no-harness',
     });
 
-    // Absolute XDG_DATA_HOME relocates the store; relative XDG_DATA_HOME is ignored and HOME/.local/share is read.
+    // An absolute XDG_DATA_HOME can have a relocated Muse store; a relative XDG_DATA_HOME uses HOME/.local/share.
     const customXdg = join(fix.home, 'custom-xdg-data');
+    const storedXdg = join(fix.home, 'relocated-muse-data');
     const relocated = provenanceRun(fix, { MUSE_SESSION_ID: 'muse-xdg-abs', XDG_DATA_HOME: customXdg }, () => {
       const now = Date.now() / 1000;
-      museLog(fix.home, 'muse-xdg-abs', [museTurn(now, 3, 'muse-xdg-abs', 'muse-fixture-1.0')], undefined, customXdg);
+      museLog(fix.home, 'muse-xdg-abs', [museTurn(now, 3, 'muse-xdg-abs', 'muse-fixture-1.0')], undefined, storedXdg);
+      mkdirSync(customXdg);
+      symlinkSync(join(storedXdg, 'muse'), join(customXdg, 'muse'), 'dir');
     }).row;
     expect(relocated).toMatchObject({ agent: 'muse', model: 'muse-fixture-1.0', model_source: 'detected' });
 

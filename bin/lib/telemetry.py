@@ -1175,7 +1175,7 @@ def muse_logs(session_id, data_home=None):
     if data_home is None:
         xdg = os.environ.get("XDG_DATA_HOME")
         data_home = xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
-    store = Path(data_home).resolve() / "muse/sessions"
+    store = (Path(data_home) / "muse/sessions").resolve()
     found = []
     for path in store.glob(f"*/*/*/{session_id}/session.jsonl"):
         try:
