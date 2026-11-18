@@ -1485,6 +1485,47 @@ const claudeTurn = (at: number, id: string, model: string, effort: string | null
   ({ type: 'assistant', timestamp: iso(at), effort, message: { id, model, role: 'assistant' }, ...extra });
 const codexTurn = (at: number, model: string, effort: string) =>
   ({ timestamp: iso(at), type: 'turn_context', payload: { model, effort } });
+const museRecord = (atSeconds: number | string, sequence: number, sessionId: string, payloadType: string, payload: object, extra: object = {}) => ({
+  schema_version: 1,
+  id: `muse-rec-${sequence}`,
+  stream: { kind: 'session', id: sessionId },
+  sequence,
+  recorded_at: typeof atSeconds === 'number' ? Math.round(atSeconds * 1_000_000) : atSeconds,
+  record_type: 'event',
+  durability: 'durable',
+  causation_id: null,
+  payload_type: payloadType,
+  payload_schema_version: 1,
+  payload,
+  ...extra,
+});
+const museTurn = (atSeconds: number | string, sequence: number, sessionId: string, model?: string) =>
+  museRecord(atSeconds, sequence, sessionId, 'runtime.session', {
+    kind: 'run',
+    event: {
+      kind: 'model_completed',
+      ...(model !== undefined ? { model } : {}),
+      finish_reason: 'tool_calls',
+      duration_ms: 420,
+      usage: { input_tokens: 120, output_tokens: 45, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  });
+const museLog = (home: string, sessionId: string, records: object[], subagent?: string, dataHome?: string) => {
+  const base = dataHome ?? join(home, '.local/share');
+  const rel = subagent ? join(sessionId, 'subagent', subagent, 'session.jsonl') : join(sessionId, 'session.jsonl');
+  writeJsonl(join(base, 'muse/sessions/2026/11/18', rel), [
+    museRecord(1, 1, sessionId, 'runtime.session.metadata', { record: { model_id: 'muse-fixture-meta' } }),
+    museRecord(1, 2, sessionId, 'runtime.session', {
+      kind: 'run',
+      event: {
+        kind: 'model_request_configured',
+        provider_request_options_configured: ['meta.reasoning.effort'],
+        reminder_roster: { agents: [{ model: 'same-as-main', reasoning_effort: 'low' }] },
+      },
+    }),
+    ...records,
+  ]);
+};
 
 /** start, then write harness logs (given the start epoch), then finish; returns the newest provenance row. */
 function provenanceRun(fix: TelemetryFixture, env: Record<string, string> = {}, logs: (start: number) => void = () => {},
@@ -1917,6 +1958,156 @@ describe('execution provenance', () => {
       run_mode_source: 'harness-unqualified',
     });
     expect(validRow(missingNamed)).toBe(true);
+  }, 30_000);
+
+  test('Muse: reads model from the named session log, ignores sibling and subagent logs, and keeps effort null unless requested', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = 'muse-session-100';
+    const { row } = provenanceRun(fix, { MUSE_SESSION_ID: sid }, start => {
+      const now = Date.now() / 1000;
+      museLog(fix.home, sid, [
+        museTurn(start - 30, 3, sid, 'muse-fixture-old'),
+        museTurn(now, 4, sid, 'muse-fixture-1.0'),
+        museRecord(now, 5, sid, 'runtime.batch', {}, { children: [museTurn(now, 51, sid, 'muse-fixture-1.0')] }),
+        museTurn(now, 6, sid, 'muse-fixture-single'),
+        museTurn(iso(now), 7, sid, 'muse-bad-ts'),
+        museTurn(now, 8, sid, undefined),
+      ]);
+      // Sibling top-level session and subagent logs with more in-window turns must not outvote the named session log.
+      museLog(fix.home, 'muse-session-sibling', [
+        museTurn(now, 3, 'muse-session-sibling', 'muse-other'),
+        museTurn(now, 4, 'muse-session-sibling', 'muse-other'),
+        museTurn(now, 5, 'muse-session-sibling', 'muse-other'),
+      ]);
+      museLog(fix.home, sid, [
+        museTurn(now, 3, 'muse-child-1', 'muse-sub'),
+        museTurn(now, 4, 'muse-child-1', 'muse-sub'),
+        museTurn(now, 5, 'muse-child-1', 'muse-sub'),
+      ], 'muse-child-1');
+    });
+    expect(row).toMatchObject({
+      agent: 'muse',
+      agent_source: 'detected',
+      model: 'muse-fixture-1.0',
+      model_source: 'detected',
+      effort: null,
+      effort_source: 'unknown',
+      route: 'unknown',
+    });
+    expect(validRow(row)).toBe(true);
+
+    // Missing named log keeps agent: 'muse' with null model and effort; invalid MUSE_SESSION_ID is no-harness.
+    const missing = provenanceRun(fix, { MUSE_SESSION_ID: 'muse-missing-session' }).row;
+    expect(missing).toMatchObject({
+      agent: 'muse',
+      agent_source: 'detected',
+      model: null,
+      model_source: 'unknown',
+      effort: null,
+      effort_source: 'unknown',
+    });
+    expect(validRow(missing)).toBe(true);
+    const invalidId = provenanceRun(fix, { MUSE_SESSION_ID: '../bad' }).row;
+    expect(invalidId).toMatchObject({
+      agent: null,
+      agent_source: 'unknown',
+      run_mode: 'unknown',
+      run_mode_source: 'no-harness',
+    });
+
+    // Absolute XDG_DATA_HOME relocates the store; relative XDG_DATA_HOME is ignored and HOME/.local/share is read.
+    const customXdg = join(fix.home, 'custom-xdg-data');
+    const relocated = provenanceRun(fix, { MUSE_SESSION_ID: 'muse-xdg-abs', XDG_DATA_HOME: customXdg }, () => {
+      const now = Date.now() / 1000;
+      museLog(fix.home, 'muse-xdg-abs', [museTurn(now, 3, 'muse-xdg-abs', 'muse-fixture-1.0')], undefined, customXdg);
+    }).row;
+    expect(relocated).toMatchObject({ agent: 'muse', model: 'muse-fixture-1.0', model_source: 'detected' });
+
+    const relXdg = provenanceRun(fix, { MUSE_SESSION_ID: 'muse-xdg-rel', XDG_DATA_HOME: 'relative/xdg' }, () => {
+      const now = Date.now() / 1000;
+      museLog(fix.home, 'muse-xdg-rel', [museTurn(now, 3, 'muse-xdg-rel', 'muse-fixture-1.0')]);
+    }).row;
+    expect(relXdg).toMatchObject({ agent: 'muse', model: 'muse-fixture-1.0', model_source: 'detected' });
+
+    // String recorded_at and record without model alone leave model null.
+    const skippedOnly = provenanceRun(fix, { MUSE_SESSION_ID: 'muse-skipped' }, () => {
+      const now = Date.now() / 1000;
+      museLog(fix.home, 'muse-skipped', [
+        museTurn(iso(now), 3, 'muse-skipped', 'muse-fixture-1.0'),
+        museTurn(String(Math.round(now * 1_000_000)), 4, 'muse-skipped', 'muse-fixture-1.0'),
+        museTurn(now, 5, 'muse-skipped', undefined),
+      ]);
+    }).row;
+    expect(skippedOnly).toMatchObject({ agent: 'muse', model: null, model_source: 'unknown', effort: null });
+
+    // GSTACK_EXTEND_EFFORT supplies requested effort.
+    const requestedEffort = provenanceRun(fix, { MUSE_SESSION_ID: sid, GSTACK_EXTEND_EFFORT: 'high' }, () => {
+      museLog(fix.home, sid, [museTurn(Date.now() / 1000, 3, sid, 'muse-fixture-1.0')]);
+    }).row;
+    expect(requestedEffort).toMatchObject({
+      agent: 'muse',
+      model: 'muse-fixture-1.0',
+      effort: 'high',
+      effort_source: 'requested',
+    });
+
+    // Under Paseo: MUSE_SESSION_ID + PASEO_AGENT_ID detects Muse with harness-unqualified; PASEO_AGENT_ID alone is no-harness.
+    const paseoMuse = provenanceRun(fix, { MUSE_SESSION_ID: sid, PASEO_AGENT_ID: 'paseo-muse-1' }, () => {
+      museLog(fix.home, sid, [museTurn(Date.now() / 1000, 3, sid, 'muse-fixture-1.0')]);
+    }).row;
+    expect(paseoMuse).toMatchObject({
+      agent: 'muse',
+      agent_source: 'detected',
+      model: 'muse-fixture-1.0',
+      model_source: 'detected',
+      effort: null,
+      effort_source: 'unknown',
+      run_mode: 'unknown',
+      run_mode_source: 'harness-unqualified',
+    });
+    expect(validRow(paseoMuse)).toBe(true);
+    const paseoAlone = provenanceRun(fix, { PASEO_AGENT_ID: 'paseo-muse-only' }).row;
+    expect(paseoAlone).toMatchObject({
+      agent: null,
+      agent_source: 'unknown',
+      run_mode: 'unknown',
+      run_mode_source: 'no-harness',
+    });
+  }, 30_000);
+
+  test('Muse nested with Claude markers resolves by latest turn, and harness_ancestor recognizes muse and muse-bin*', () => {
+    const fix = makeTelemetryFixture('off');
+    const claudeSid = 'claude-outer-muse-test';
+    const museSid = 'muse-inner-claude-test';
+    const transcript = join(fix.home, '.claude/projects/-outer', claudeSid + '.jsonl');
+    const both = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: claudeSid, MUSE_SESSION_ID: museSid };
+
+    const museLatest = provenanceRun(fix, both, start => {
+      const now = Date.now() / 1000;
+      writeJsonl(transcript, [claudeTurn(start - 20, 'c1', 'claude-opus-5', 'xhigh')]);
+      museLog(fix.home, museSid, [museTurn(now, 3, museSid, 'muse-fixture-1.0')]);
+    }).row;
+    expect(museLatest).toMatchObject({ agent: 'muse', model: 'muse-fixture-1.0', effort: null });
+
+    const claudeLatest = provenanceRun(fix, both, start => {
+      writeJsonl(transcript, [claudeTurn(Date.now() / 1000, 'c2', 'claude-opus-5', 'xhigh')]);
+      museLog(fix.home, museSid, [museTurn(start - 20, 3, museSid, 'muse-fixture-1.0')]);
+    }).row;
+    expect(claudeLatest).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
+
+    const ancestry = spawnSync('python3', ['-B', '-I', '-c',
+      'import json, sys\n'
+      + 'sys.path.insert(0, sys.argv[1])\n'
+      + 'import telemetry\n'
+      + 'cands = {"muse", "claude"}\n'
+      + 't_bin = {300: (200, "/bin/bash", "bash"), 200: (100, "/opt/x/muse-bin-9.9.9", "muse-bin-9.9.9"), 100: (1, "/usr/bin/claude", "claude")}\n'
+      + 't_exact = {300: (200, "/bin/bash", "bash"), 200: (100, "/usr/local/bin/muse", "muse"), 100: (1, "/usr/bin/claude", "claude")}\n'
+      + 't_false = {300: (200, "/usr/bin/museum", "musescore"), 200: (100, "/usr/bin/musescore", "museum"), 100: (1, "/usr/bin/claude", "claude")}\n'
+      + 'print(json.dumps([telemetry.harness_ancestor(cands, table=t_bin, pid=300), telemetry.harness_ancestor(cands, table=t_exact, pid=300), telemetry.harness_ancestor(cands, table=t_false, pid=300)]))\n',
+      join(ROOT, 'bin/lib'),
+    ], { env: fix.env, encoding: 'utf8' });
+    expect([ancestry.status, ancestry.stderr]).toEqual([0, '']);
+    expect(JSON.parse(ancestry.stdout)).toEqual(['muse', 'muse', 'claude']);
   }, 30_000);
 
   test('an unreadable provenance config records nothing', () => {
@@ -2655,6 +2846,22 @@ describe('handoff adoption', () => {
     const counted = makeTelemetryFixture('community', 'stub');
     runHelper({ ...counted.env, GROK_AGENT: '1', GROK_SESSION_ID: 'grok-session-1' }, ['start', '--skill', 'extend:roadmap']);
     expect(readHandoff(counted).harness).toBe(sessionFingerprint([['GROK_SESSION_ID', 'grok-session-1']]));
+
+    const muse = makeTelemetryFixture('community', 'stub');
+    runHelper({ ...muse.env, MUSE_SESSION_ID: 'muse-session-1' }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(muse).harness).toBe(sessionFingerprint([['MUSE_SESSION_ID', 'muse-session-1']]));
+    const foreignMuse = runHelper({ ...muse.env, ...DEBUG, MUSE_SESSION_ID: 'muse-session-2' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(foreignMuse.stderr, 'handoff from another session');
+    expect(runHelper({ ...muse.env, MUSE_SESSION_ID: 'muse-session-1' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(muse.readLedger()).toHaveLength(1);
+    expect(muse.readLedger()[0]).toMatchObject({ agent: 'muse', agent_source: 'detected', run_mode: 'unknown', run_mode_source: 'harness-unqualified' });
+
+    const invalidMuse = makeTelemetryFixture('community', 'stub');
+    runHelper({ ...invalidMuse.env, MUSE_SESSION_ID: '../bad' }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(invalidMuse).harness).toBeNull();
+    const bothMuseClaude = makeTelemetryFixture('community', 'stub');
+    runHelper({ ...bothMuseClaude.env, CLAUDE_CODE_SESSION_ID: 'claude-session-1', MUSE_SESSION_ID: 'muse-session-1' }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(bothMuseClaude).harness).toBe(sessionFingerprint([['CLAUDE_CODE_SESSION_ID', 'claude-session-1'], ['MUSE_SESSION_ID', 'muse-session-1']]));
   });
 
   test('--help names the adoption rule', () => {
@@ -4976,6 +5183,24 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'harness-unqualified',
       },
       {
+        name: 'muse markers only gives harness-unqualified',
+        finishEnv: { MUSE_SESSION_ID: 'muse-rm-1' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'muse session id under Paseo gives harness-unqualified',
+        finishEnv: { MUSE_SESSION_ID: 'muse-rm-paseo', PASEO_AGENT_ID: 'paseo-muse-rm' },
+        mode: 'unknown',
+        source: 'harness-unqualified',
+      },
+      {
+        name: 'orchestrated Muse worker with spawned session kind and work item gives session-kind',
+        finishEnv: { MUSE_SESSION_ID: 'muse-rm-spawned', PASEO_AGENT_ID: 'paseo-muse-spawned', GSTACK_SESSION_KIND: 'spawned', GSTACK_EXTEND_WORK_ITEM: 'item-muse-1' },
+        mode: 'orchestrated',
+        source: 'session-kind',
+      },
+      {
         name: '--agent codex override on Claude cli gives harness-unqualified',
         finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         finishArgs: ['--agent', 'codex'],
@@ -4997,6 +5222,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
       ['Cursor', { CURSOR_AGENT: '1' }],
       ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
+      ['Muse', { MUSE_SESSION_ID: 'synthetic-muse' }],
     ] as Array<[string, Record<string, string>]>) {
       for (const owner of ['', 'fixture-owner']) {
         cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
@@ -5308,6 +5534,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     for (const [agent, unsupportedEnv] of [
       ['grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok-session' }],
       ['cursor', { CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent', CURSOR_CONVERSATION_ID: 'synthetic-cursor-session' }],
+      ['muse', { MUSE_SESSION_ID: 'synthetic-muse-session' }],
     ] as Array<[string, Record<string, string>]>) {
       const unsupported = provenanceRun(fix, unsupportedEnv, () => {}, ['--outcome', 'success']);
       expect(unsupported.row).toMatchObject({

@@ -143,10 +143,23 @@ limitations were identified in the `2026-11-15` provider-parity audit:
    presence can identify a Grok session when `CreateTerminalRequest.env` omits
    Grok's markers.
 
-When Grok, Codex or Cursor is detected, by-hand mode remains `unknown` with
+When Grok, Codex, Cursor or Muse is detected, by-hand mode remains `unknown` with
 source `harness-unqualified` by design until a trustworthy launch signal
 exists. Only `CLAUDE_CODE_ENTRYPOINT` currently proves the qualified Claude
 by-hand launch types.
+
+On `2026-11-18`, the owner ran `full-review` (started `17:52:10Z`) and
+`gstack-extend-upgrade` (started `18:18:53Z`) by hand in Muse, launched from the
+Paseo app on host C (the same host ledger that holds the `2026-11-09T16:22:59Z`
+host C row above), with `producer_version: "0.101.0"`. Both rows recorded
+`agent: null`, `run_mode: "unknown"`, and `run_mode_source: "no-harness"`. The
+cause was in this repository rather than upstream: `SESSION_MARKERS` and
+`detect()` had no Muse marker. This change adds `MUSE_SESSION_ID` to
+`SESSION_MARKERS` and `detect()` (plus `muse` in `HARNESSES`, `muse_logs()`,
+`muse_turns()`, and `harness_ancestor()`). Under Paseo, Muse exports
+`MUSE_SESSION_ID` to its shell, so no Paseo-specific fallback is needed;
+by-hand mode stays `unknown` / `harness-unqualified`. Rows already written are
+not rewritten.
 
 When no primary orchestration signal (`session-kind`, `work-item`,
 `run-mode-env`) applies, `run_mode` is `"unknown"` for every case below, with
@@ -159,7 +172,7 @@ When no primary orchestration signal (`session-kind`, `work-item`,
 | Malformed non-empty `GSTACK_SESSION_KIND` or `GSTACK_EXTEND_WORK_ITEM`, or relative non-empty `GSTACK_HOME` | `unknown` | `malformed-signal` |
 | Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER` (even whitespace-only or malformed) with no orchestration signal | `unknown` | `host-managed-workspace` |
 | No harness detected, regardless of a final `--agent` override | `unknown` | `no-harness` |
-| A detected harness exists, and the detected or final harness is not Claude (`codex`, `cursor`, `grok`, or `--agent` override to/from another harness) | `unknown` | `harness-unqualified` |
+| A detected harness exists, and the detected or final harness is not Claude (`codex`, `cursor`, `grok`, `muse`, or `--agent` override to/from another harness) | `unknown` | `harness-unqualified` |
 | Detected Claude with missing, empty, or unclean `CLAUDE_CODE_ENTRYPOINT` | `unknown` | `entrypoint-unavailable` |
 | Detected Claude with any `CLAUDE_CODE_ENTRYPOINT` other than `cli` or `Paseo` (`sdk-cli`, `sdk-ts`, `sdk-py`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, …) | `unknown` | `entrypoint-unqualified` |
 
@@ -182,11 +195,14 @@ qualified for `user-directed`; the existing Claude readbacks above still stand.
 | `grok 1.0.77` | Terminal CLI (`grok`), hook/MCP child processes, Paseo ACP (`paseo 0.15.2` `GenericACPAgentClient` → `grok acp`) | Local shell (`xai-grok-tools`): `GROK_AGENT="1"` (`GROK_AGENT` is also a user-configurable agent profile variable when set to a profile name); hook/MCP spawners (`xai-grok-hooks`, `xai-grok-mcp`): `GROK_SESSION_ID` (`valid_session` UUID shape); Paseo ACP `terminal/create` (`xai-grok-shell-terminal` → `ACPAgentClient.createTerminal`): exports `PASEO_AGENT_ID`, `PASEO_AGENT_CWD`, `CARGO_TERM_PROGRESS_WHEN`, `CARGO_TERM_PROGRESS_WIDTH`, `NPM_CONFIG_PROGRESS` and omits both `GROK_SESSION_ID` and `GROK_AGENT` | `$GROK_HOME/sessions/<url-encoded-cwd>/<session>/events.jsonl` (`type="turn_started"`, `ts`, `model_id`, `role`, `turn_id`) and `summary.json` (`id`, `created_at`, `updated_at`, `current_model_id`, `reasoning_effort`, `last_message_id`, `turn_count`, `git_branch`). Note: Paseo's `fetchCatalog` probe creates zero-turn `summary.json` directories via `grok acp` whenever a workspace opens for any provider | Detection supported when valid `GROK_SESSION_ID` or `GROK_AGENT=1` is present (session-ID-only path fixture-qualified); unmarked under Paseo ACP `terminal/create` (`run_mode_source="no-harness"` until `GROK_SESSION_ID` or `GROK_AGENT=1` is forwarded) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"` when detected; neither env vars nor `summary.json`/`events.jsonl` records a launch entrypoint) |
 | `codex-cli 0.169.0` | Terminal CLI (`codex`), non-interactive (`codex exec`), Paseo app-server (`paseo 0.15.2` `CodexAppServerAgentClient` → `codex app-server`) | `CODEX_THREAD_ID` (`valid_session` UUID shape), `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_MANAGED_BY_NPM`/`CODEX_MANAGED_BY_BUN` (installer origin only). Under Paseo, `PASEO_AGENT_ID` and `PASEO_AGENT_CWD` are also present | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`: `session_meta` (`payload.id`, `payload.timestamp`, `payload.cwd`, `payload.originator`, `payload.cli_version`, `payload.source`, `payload.model_provider`) and `turn_context` (`payload.model`, `payload.effort`). Observed `(originator, source)` pairs across 798 local logs on host B: `("codex_cli_rs", "vscode")` (747), `("codex_exec", "exec")` (43), and subagent review/spawn entries (8) | Qualified (`agent="codex"`, `model` and `effort` detected) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"`; neither `CODEX_*` env vars nor `session_meta.payload.originator`/`source` distinguishes a by-hand session from an orchestrated worker, and Paseo passes hardcoded `clientInfo.name="codex_app_server_daemon"`) |
 | `cursor-agent 2026.11.13-eacade1` | Terminal CLI (`cursor-agent`), Paseo ACP (`paseo 0.15.2` `GenericACPAgentClient` → `cursor-agent acp`) | `CURSOR_AGENT="1"`, `CURSOR_CONVERSATION_ID` (`valid_session` shape), `CURSOR_INVOKED_AS` (`"cursor-agent"` or `"agent"`), `CURSOR_COMPILE_CACHE_IPC_PORT`, `CURSOR_TRACE_ID` | `.cursor/projects/<slug>/agent-transcripts/<id>.txt` or `<id>/<id>.jsonl`: `role` and `message.content` only (no model, effort, or entrypoint metadata) | Qualified when `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` is present (`agent="cursor"`; model/effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT`) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"`; neither `CURSOR_*` env vars nor agent transcripts expose an entrypoint distinguishing interactive by-hand use from ACP or headless worker launches) |
+| `muse 1.4.23` | Paseo-launched sessions (`client_info_name="paseo"` in the session log; Paseo version `unknown`), inspected `2026-11-18` on an Omarchy Linux machine; terminal launch not inspected at runtime | `MUSE_SESSION_ID` (`valid_session` UUID-shaped and equal to the session directory name), `MUSE_THREAD_ID` (equal to the session id in the observed main session), `MUSE_TOOL_USE_ID` (changes per tool call), and under Paseo `PASEO_AGENT_ID` and `PASEO_AGENT_CWD` (observed in a filtered environment listing captured by a Paseo-launched Muse 1.4.20 session on `2026-11-15`; the 1.4.23 binary still names `MUSE_SESSION_ID` and `MUSE_THREAD_ID` for shell launches and contains no `CLAUDECODE` or `CLAUDE_CODE_SESSION_ID`) | `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`), with subagent logs at `<session>/subagent/<child>/session.jsonl`: `recorded_at` (epoch microseconds) and `payload_type`; `runtime.session` `model_completed` (`model`, `usage`); `runtime.session.metadata` (`model_id`, `provider_id`, `build.semver`); `session.opened.observed` (`client_info_name`); no effort value (only the key `meta.reasoning.effort` appears) | Detection supported when a valid `MUSE_SESSION_ID` is present (`agent="muse"`, `model` detected from `model_completed`, `effort` `null`; fixture-qualified) | Unqualified (`run_mode="unknown"`, `run_mode_source="harness-unqualified"`; Muse exports no entrypoint variable, no terminal-launch log was available to qualify `client_info_name`, and Paseo launches both by-hand and orchestrated sessions) |
 
 ## Drafted upstream requests
 
 Each limitation above that cannot be closed inside `gstack-extend` without
-sacrificing attribution accuracy has a concrete upstream request below:
+sacrificing attribution accuracy has a concrete upstream request below. No
+upstream request is drafted for Muse, because its session markers reach shell
+commands under Paseo and the owner asked for no upstream requests.
 
 1. **Grok CLI (`grok` / `xai-grok-shell-terminal`) — forward `GROK_SESSION_ID` and `GROK_AGENT=1` in ACP `terminal/create` requests and record launch entrypoint:**
    - *Missing signal:* `CreateTerminalRequest.env` in `xai-grok-shell-terminal/src/adapter.rs` currently forwards only `CARGO_TERM_PROGRESS_WHEN`, `CARGO_TERM_PROGRESS_WIDTH`, and `NPM_CONFIG_PROGRESS`, omitting `GROK_SESSION_ID` and `GROK_AGENT=1`. Neither the shell environment nor `$GROK_HOME/sessions/<encoded-cwd>/<session>/summary.json` records how Grok was entered (for example, `GROK_ENTRYPOINT=cli|acp|<clientInfo.name>`).

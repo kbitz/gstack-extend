@@ -2537,6 +2537,18 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'harness-unqualified',
       },
       {
+        name: 'Muse yields harness-unqualified',
+        env: { MUSE_SESSION_ID: 'muse-session-contract' },
+        expectedMode: 'unknown',
+        expectedSource: 'harness-unqualified',
+      },
+      {
+        name: 'Muse under Paseo yields harness-unqualified',
+        env: { MUSE_SESSION_ID: 'muse-session-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
+        expectedMode: 'unknown',
+        expectedSource: 'harness-unqualified',
+      },
+      {
         name: 'no harness yields no-harness',
         env: {},
         expectedMode: 'unknown',
@@ -2551,6 +2563,7 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
       ['Cursor', { CURSOR_AGENT: '1' }],
       ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
+      ['Muse', { MUSE_SESSION_ID: 'synthetic-muse' }],
     ] as Array<[string, Record<string, string>]>) {
       for (const owner of ['', 'fixture-owner']) {
         cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
@@ -2726,7 +2739,7 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `cursor` |']) {
+    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `cursor` |', '| `muse` |']) {
       expect(runModeSection).toContain(h);
     }
     // Value: protects=qualification needs three real readbacks, not candidate labels; fails_when=incomplete evidence clears pending or complete evidence stays pending; why_new=Track 80D now has all three readbacks; seam=none
