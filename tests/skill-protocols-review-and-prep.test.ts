@@ -1154,6 +1154,8 @@ describe('review-and-prep final-gate repair', () => {
     }
 
     expect(baseline).toContain('not a review-state result envelope');
+    expect(baseline).toContain('"<extend-root>/bin/review-state" full-review-record --help` exits 0');
+    expect(baseline).toContain('or the help command fails');
     expect(baseline).toContain('writes no full-review record and runs no record checkpoint');
     expect(baseline).toContain('no record checkpoint holds a fix or a reader');
     expect(baseline).toContain('reads both records as missing (`record-missing`)');
@@ -1939,7 +1941,7 @@ describe('kept contract locks fail on mutation', () => {
       citedNegativeTest: 'review-and-prep PR body size budget > body fence enforces 3000 JS characters, counts astral chars as 2, and rejects a missing file',
     },
     {
-      name: 'executable fences: drop <kind> placeholder or rename full-review-record in record fence call line',
+      name: 'executable fences: drop <kind> placeholder from the full-review-record call line',
       lock: checkExecutableFenceContractsLock,
       mutate: (t) => t.replace('"<action>" "<kind>"', '"<action>"'),
     },

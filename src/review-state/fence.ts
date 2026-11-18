@@ -47,8 +47,8 @@ Files in DIR:
 
 Environment:
   REVIEW_STATE_DIR  When set on a cycle-1-baseline write, reads REVIEW_STATE_DIR/review-run-state.json
-                    through validateStoredState and requires the cycle-1 local full pass, its completed
-                    required voices, and each probe-<id> gate on that pass's candidate commit.
+                    through validateStoredState and requires the cycle-1 local full pass, a recorded
+                    result for each required voice, and each probe-<id> gate on that pass's candidate commit.
 
 Output (one line on stdout; this line is not a review-state result envelope):
   FULL_REVIEW_RECORD: written <kind>; provenance=<write-point|late>; sha256=<64 hex>
@@ -68,9 +68,9 @@ Docs: skills/review-and-prep.md (### Record cycle 1's full-review baseline), doc
 
 export function runFullReviewRecord(args: readonly string[], env: NodeJS.ProcessEnv): FullReviewRecordResult {
   const [ws, evDir, action, kind, arg] = args;
-  const out = (msg: string, code: 0 | 1 | 2 | 3): never => {
+  function out(msg: string, code: 0 | 1 | 2 | 3): never {
     throw new FenceExit(msg, code);
-  };
+  }
   const hex40 = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
   const hex64 = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
   const sha256 = (buf: Buffer | string): string => createHash('sha256').update(buf).digest('hex');

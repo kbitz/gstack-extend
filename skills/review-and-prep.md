@@ -2545,8 +2545,10 @@ The fence prints one `FULL_REVIEW_RECORD:` line, read as above (`--help` lists
 its messages and exit codes). That line is not a review-state result envelope,
 so the run-state retry and fallback rules in `docs/review-run-state-calls.md` do
 not apply to it (under `run-state=record`, that document's `REVIEW_STATE_DIR`
-prefix still applies). When the helper is missing (no `EXTEND_ROOT:` line, or
-`<extend-root>/bin/review-state` is not executable), the invocation writes no
+prefix still applies). Before the first fence use in an invocation, confirm its
+launcher is executable and `"<extend-root>/bin/review-state" full-review-record --help`
+exits 0. When the helper is missing (no `EXTEND_ROOT:` line, the launcher is
+not executable, or the help command fails), the invocation writes no
 full-review record and runs no record checkpoint, so no record checkpoint holds
 a fix or a reader, and the cap stop reads both records as missing
 (`record-missing`).
