@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.101.1] - 2026-11-18
+
+### Changed
+
+- `bin/review-state build` now treats `null` on a flag that takes an ID, commit, timestamp, enum value, URL, session ID, part label or count as an omitted flag, and fills in a voice's only completed attempt when a `voice-complete` call names neither an attempt nor a `--not-applicable` reason.
+- Review-state treats literal `null` as omission on eligible nullable flags and reports the sole completed attempt it selects when both selection flags are absent.
+- Literal `null` on eligible flags now omits the flag without an override warning.
+
+### Upgrade notes
+
+- A literal `null` on a flag that `build` used to drop with an override warning, such as `--delta-from` on a full pass, is now dropped silently and adds no `build-overrides.jsonl` entry.
+
 ## [0.101.0] - 2026-11-18
 
 ### Changed

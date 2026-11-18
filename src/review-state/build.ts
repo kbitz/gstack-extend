@@ -8,7 +8,8 @@ export const BUILD_COMMANDS = ['start', 'record pass', 'record correction', 'rec
 export const PASS_STATES = ['started', 'attempt', 'voice-complete', 'completed'] as const;
 export type PassState = (typeof PASS_STATES)[number];
 export type FlagKind = 'string' | 'int' | 'number-or-string' | 'list' | 'presence' | 'file';
-export type FlagRow = { flag: string; key: string; kind: FlagKind; required: boolean; repeatable?: boolean };
+// nullOmits: the validator accepts null for this key and refuses the text "null", so a literal "null" reads as the omitted flag.
+export type FlagRow = { flag: string; key: string; kind: FlagKind; required: boolean; repeatable?: boolean; nullOmits?: true };
 
 export const START_FLAGS: readonly FlagRow[] = [
   { flag: '--run-id', key: 'run_id', kind: 'string', required: true },
@@ -25,11 +26,11 @@ export const START_FLAGS: readonly FlagRow[] = [
   { flag: '--plan-sha256', key: 'plan.sha256', kind: 'string', required: true },
   { flag: '--policy-value', key: 'policy.value', kind: 'string', required: false },
   { flag: '--policy-source', key: 'policy.source', kind: 'string', required: true },
-  { flag: '--delegation-line', key: 'policy.delegation', kind: 'string', required: false },
+  { flag: '--delegation-line', key: 'policy.delegation', kind: 'string', required: false, nullOmits: true },
   { flag: '--prior-stops', key: 'continuation.prior_stops', kind: 'int', required: false },
   { flag: '--max-continuations', key: 'continuation.max', kind: 'int', required: true },
-  { flag: '--continues', key: 'continuation.continues', kind: 'string', required: false },
-  { flag: '--session-id', key: 'session_id', kind: 'string', required: false },
+  { flag: '--continues', key: 'continuation.continues', kind: 'string', required: false, nullOmits: true },
+  { flag: '--session-id', key: 'session_id', kind: 'string', required: false, nullOmits: true },
 ];
 
 export const PASS_STATE_FLAGS: Record<PassState, readonly FlagRow[]> = {
@@ -39,9 +40,9 @@ export const PASS_STATE_FLAGS: Record<PassState, readonly FlagRow[]> = {
     { flag: '--scope', key: 'scope', kind: 'string', required: true },
     { flag: '--cycle', key: 'cycle', kind: 'int', required: true },
     { flag: '--coverage', key: 'coverage', kind: 'string', required: true },
-    { flag: '--delta-from', key: 'delta_from', kind: 'string', required: false },
+    { flag: '--delta-from', key: 'delta_from', kind: 'string', required: false, nullOmits: true },
     { flag: '--commit', key: 'candidate.commit', kind: 'string', required: true },
-    { flag: '--base', key: 'candidate.base', kind: 'string', required: false },
+    { flag: '--base', key: 'candidate.base', kind: 'string', required: false, nullOmits: true },
     { flag: '--wtree', key: 'candidate.wtree', kind: 'string', required: false },
     { flag: '--voice', key: 'required_voices', kind: 'list', required: true, repeatable: true },
   ],
@@ -49,12 +50,12 @@ export const PASS_STATE_FLAGS: Record<PassState, readonly FlagRow[]> = {
     { flag: '--pass-id', key: 'pass_id', kind: 'string', required: true },
     { flag: '--state', key: 'state', kind: 'string', required: true },
     { flag: '--voice-id', key: 'voice_id', kind: 'string', required: true },
-    { flag: '--part', key: 'part', kind: 'string', required: false },
+    { flag: '--part', key: 'part', kind: 'string', required: false, nullOmits: true },
     { flag: '--attempt-id', key: 'attempt_id', kind: 'string', required: true },
     { flag: '--outcome', key: 'outcome', kind: 'string', required: false },
-    { flag: '--predecessor-attempt-id', key: 'predecessor_attempt_id', kind: 'string', required: false },
-    { flag: '--dispatched-at', key: 'dispatched_at', kind: 'string', required: false },
-    { flag: '--returned-at', key: 'returned_at', kind: 'string', required: false },
+    { flag: '--predecessor-attempt-id', key: 'predecessor_attempt_id', kind: 'string', required: false, nullOmits: true },
+    { flag: '--dispatched-at', key: 'dispatched_at', kind: 'string', required: false, nullOmits: true },
+    { flag: '--returned-at', key: 'returned_at', kind: 'string', required: false, nullOmits: true },
     { flag: '--delegate-file', key: 'delegate', kind: 'file', required: false },
     { flag: '--finding', key: 'findings', kind: 'list', required: false, repeatable: true },
   ],
@@ -62,8 +63,8 @@ export const PASS_STATE_FLAGS: Record<PassState, readonly FlagRow[]> = {
     { flag: '--pass-id', key: 'pass_id', kind: 'string', required: true },
     { flag: '--state', key: 'state', kind: 'string', required: true },
     { flag: '--voice-id', key: 'voice_id', kind: 'string', required: true },
-    { flag: '--selected-attempt-id', key: 'selected_attempt_id', kind: 'string', required: false },
-    { flag: '--not-applicable', key: 'not_applicable', kind: 'string', required: false },
+    { flag: '--selected-attempt-id', key: 'selected_attempt_id', kind: 'string', required: false, nullOmits: true },
+    { flag: '--not-applicable', key: 'not_applicable', kind: 'string', required: false, nullOmits: true },
   ],
   completed: [
     { flag: '--pass-id', key: 'pass_id', kind: 'string', required: true },
@@ -77,11 +78,11 @@ export const CORRECTION_FLAGS: readonly FlagRow[] = [
   { flag: '--voice-id', key: 'target.voice_id', kind: 'string', required: true },
   { flag: '--attempt-id', key: 'target.attempt_id', kind: 'string', required: true },
   { flag: '--finding-id', key: 'target.finding_id', kind: 'string', required: true },
-  { flag: '--adjudication', key: 'adjudication', kind: 'string', required: false },
-  { flag: '--resolution', key: 'resolution', kind: 'string', required: false },
-  { flag: '--receipt-class', key: 'receipt_class', kind: 'string', required: false },
-  { flag: '--fixed-in', key: 'fixed_in', kind: 'string', required: false },
-  { flag: '--supersedes', key: 'supersedes', kind: 'string', required: false },
+  { flag: '--adjudication', key: 'adjudication', kind: 'string', required: false, nullOmits: true },
+  { flag: '--resolution', key: 'resolution', kind: 'string', required: false, nullOmits: true },
+  { flag: '--receipt-class', key: 'receipt_class', kind: 'string', required: false, nullOmits: true },
+  { flag: '--fixed-in', key: 'fixed_in', kind: 'string', required: false, nullOmits: true },
+  { flag: '--supersedes', key: 'supersedes', kind: 'string', required: false, nullOmits: true },
 ];
 
 export const GATE_FLAGS: readonly FlagRow[] = [
@@ -90,10 +91,10 @@ export const GATE_FLAGS: readonly FlagRow[] = [
   { flag: '--result', key: 'result', kind: 'string', required: true },
   { flag: '--reason', key: 'reason', kind: 'string', required: false },
   { flag: '--commit', key: 'candidate.commit', kind: 'string', required: true },
-  { flag: '--base', key: 'candidate.base', kind: 'string', required: false },
+  { flag: '--base', key: 'candidate.base', kind: 'string', required: false, nullOmits: true },
   { flag: '--wtree', key: 'candidate.wtree', kind: 'string', required: false },
   { flag: '--greptile-value', key: 'details.value', kind: 'string', required: false },
-  { flag: '--greptile-run', key: 'details.run', kind: 'string', required: false },
+  { flag: '--greptile-run', key: 'details.run', kind: 'string', required: false, nullOmits: true },
   { flag: '--pregate-raw-verdict', key: 'details.raw_verdict', kind: 'string', required: false },
   { flag: '--pregate-wrapper-verdict', key: 'details.wrapper_verdict', kind: 'string', required: false },
   { flag: '--pregate-policy', key: 'details.policy', kind: 'string', required: false },
@@ -106,12 +107,12 @@ export const AUDIT_FLAGS: readonly FlagRow[] = [
   { flag: '--audit-id', key: 'audit_id', kind: 'string', required: true },
   { flag: '--name', key: 'name', kind: 'string', required: true },
   { flag: '--result', key: 'result', kind: 'string', required: true },
-  { flag: '--coverage-pct', key: 'details.pct', kind: 'number-or-string', required: false },
+  { flag: '--coverage-pct', key: 'details.pct', kind: 'number-or-string', required: false, nullOmits: true },
   { flag: '--coverage-threshold', key: 'details.threshold', kind: 'number-or-string', required: false },
   { flag: '--report-id', key: 'details.report_id', kind: 'string', required: false },
   { flag: '--section', key: 'details.section_path', kind: 'file', required: false },
   { flag: '--commit', key: 'candidate.commit', kind: 'string', required: true },
-  { flag: '--base', key: 'candidate.base', kind: 'string', required: false },
+  { flag: '--base', key: 'candidate.base', kind: 'string', required: false, nullOmits: true },
   { flag: '--wtree', key: 'candidate.wtree', kind: 'string', required: false },
   { flag: '--evidence', key: 'evidence', kind: 'file', required: false, repeatable: true },
 ];
@@ -119,9 +120,9 @@ export const AUDIT_FLAGS: readonly FlagRow[] = [
 export const CHECKPOINT_FLAGS: readonly FlagRow[] = [
   { flag: '--checkpoint-id', key: 'checkpoint_id', kind: 'string', required: true },
   { flag: '--kind', key: 'kind', kind: 'string', required: true },
-  { flag: '--base', key: 'base', kind: 'string', required: false },
+  { flag: '--base', key: 'base', kind: 'string', required: false, nullOmits: true },
   { flag: '--wtree', key: 'wtree', kind: 'string', required: false },
-  { flag: '--session-id', key: 'session_id', kind: 'string', required: false },
+  { flag: '--session-id', key: 'session_id', kind: 'string', required: false, nullOmits: true },
   { flag: '--evidence', key: 'evidence', kind: 'file', required: false, repeatable: true },
 ];
 
@@ -129,11 +130,11 @@ export const FINISH_FLAGS: readonly FlagRow[] = [
   { flag: '--outcome', key: 'outcome', kind: 'string', required: true },
   { flag: '--base', key: 'base', kind: 'string', required: true },
   { flag: '--stop-reason', key: 'stop_reason', kind: 'string', required: false },
-  { flag: '--delta-base', key: 'delta_base', kind: 'string', required: false },
-  { flag: '--stop-count', key: 'stop_count', kind: 'int', required: false },
+  { flag: '--delta-base', key: 'delta_base', kind: 'string', required: false, nullOmits: true },
+  { flag: '--stop-count', key: 'stop_count', kind: 'int', required: false, nullOmits: true },
   { flag: '--wtree', key: 'wtree', kind: 'string', required: false },
   { flag: '--review-restriction-resolved', key: 'review_restriction_resolved', kind: 'presence', required: false },
-  { flag: '--readiness-confirmed-at', key: 'readiness_confirmed_at', kind: 'string', required: false },
+  { flag: '--readiness-confirmed-at', key: 'readiness_confirmed_at', kind: 'string', required: false, nullOmits: true },
   { flag: '--full-review-commit', key: 'full_review_evidence.commit', kind: 'string', required: false },
   { flag: '--full-review-tree', key: 'full_review_evidence.tree', kind: 'string', required: false },
   { flag: '--full-review-source', key: 'full_review_evidence.source', kind: 'string', required: false },
@@ -221,8 +222,9 @@ export function buildHelp(): string {
 }
 
 export type BuildOverride = { flag: string; sent: string | string[]; used: string | null; rule: string };
+export type BuildDerived = { flag: string; used: string; rule: string };
 export type BuildRequestResult =
-  | { ok: true; request: Record<string, unknown>; overrides: BuildOverride[] }
+  | { ok: true; request: Record<string, unknown>; overrides: BuildOverride[]; derived?: BuildDerived[] }
   | { ok: false; reason: 'usage' | 'invalid-input'; detail: Record<string, unknown> };
 
 const toIntOrString = (v: string): number | string => (/^\d+$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : v);
@@ -237,7 +239,7 @@ function parseTableArgs(
   rows: readonly FlagRow[],
 ): { ok: true; scalars: Map<string, string>; lists: Map<string, string[]>; presences: Set<string> } | { ok: false; message: string } {
   const rowByFlag = new Map(rows.map((r) => [r.flag, r]));
-  const scalars = new Map<string, string>();
+  const scalars = new Map<string, string>(), seenScalars = new Set<string>();
   const lists = new Map<string, string[]>();
   const presences = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -256,8 +258,9 @@ function parseTableArgs(
       arr.push(val);
       lists.set(arg, arr);
     } else {
-      if (scalars.has(arg)) return { ok: false, message: `duplicate ${arg} flag` };
-      scalars.set(arg, val);
+      if (seenScalars.has(arg)) return { ok: false, message: `duplicate ${arg} flag` };
+      seenScalars.add(arg);
+      if (!(row.nullOmits && val === 'null')) scalars.set(arg, val);
     }
   }
   return { ok: true, scalars, lists, presences };
@@ -461,9 +464,17 @@ export function buildRequest(command: CommandName, args: readonly string[], real
         state: 'voice-complete',
         voice_id: scalars.get('--voice-id')!,
       };
+      const derived: BuildDerived[] = [];
       if (scalars.has('--selected-attempt-id')) req.selected_attempt_id = scalars.get('--selected-attempt-id')!;
-      if (scalars.has('--not-applicable')) req.not_applicable = scalars.get('--not-applicable')!;
-      return { ok: true, request: req, overrides };
+      else if (scalars.has('--not-applicable')) req.not_applicable = scalars.get('--not-applicable')!;
+      else {
+        const completed = readStateHint(realDir)?.passes.find((p) => p.pass_id === req.pass_id)?.voices.find((v) => v.voice_id === req.voice_id)?.attempts.filter((a) => a.outcome === 'completed');
+        if (completed?.length === 1) {
+          req.selected_attempt_id = completed[0]!.attempt_id;
+          derived.push({ flag: '--selected-attempt-id', used: completed[0]!.attempt_id, rule: 'only-completed-attempt-on-voice' });
+        }
+      }
+      return { ok: true, request: req, overrides, ...(derived.length > 0 ? { derived } : {}) };
     }
 
     return { ok: true, request: { pass_id: scalars.get('--pass-id')!, state: 'completed' }, overrides };
@@ -605,8 +616,7 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     let result = scalars.get('--result')!;
     const details: Record<string, unknown> = {};
     if (keep(scalars, '--coverage-pct', name === 'documentation', 'coverage-audit-only')) {
-      const rawPct = scalars.get('--coverage-pct')!;
-      details.pct = rawPct === 'null' ? null : toNumberOrString(rawPct);
+      details.pct = toNumberOrString(scalars.get('--coverage-pct')!);
     } else if (name === 'coverage') {
       details.pct = null;
     }
@@ -783,8 +793,10 @@ export function executeBuild(
   const hash16 = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
   const reqName = `request-${validCommand.replace(/ /g, '-')}-${hash16}.json`;
   const reqPath = join(realDir, reqName);
-  const withOverrides = (res: StoreResult): StoreResult =>
-    built.overrides.length > 0 ? { ...res, detail: { ...res.detail, overrides: built.overrides } } : res;
+  const withOverrides = (res: StoreResult): StoreResult => {
+    const extra = { ...(built.overrides.length > 0 ? { overrides: built.overrides } : {}), ...(built.derived?.length ? { derived: built.derived } : {}) };
+    return Object.keys(extra).length > 0 ? { ...res, detail: { ...res.detail, ...extra } } : res;
+  };
 
   let createdRequest = false;
   try {
