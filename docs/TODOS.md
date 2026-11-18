@@ -23,6 +23,50 @@
 - **Effort:** ? (triage in `/roadmap`)
 - **Revisit when:** The prepared receipt comparison or renderer path tests next change.
 
+### [review:files=src/review-state/fence.ts|tests/review-state.test.ts] Test gap: malformed assembled record input
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The tests cover corrupt stored JSON and invalid fields in assembled input. They do not directly check malformed JSON in the assembled write input.
+- **Hypothesis (untested):** Confirm that malformed input returns `invalid …: json` with exit 3 and leaves the record absent.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/fence.ts:175`
+- **Evidence:** Track 87A coverage audit. Both affected suites passed 272 tests at `96f9ffe`.
+- **Context:** Filed by /review-and-prep on Track 87A at `96f9ffe` (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/fence.ts|tests/review-state.test.ts] Test gap: probe gate on another candidate
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The tests supply an absent gate and a matching gate. They do not isolate a gate with the same name on another commit.
+- **Hypothesis (untested):** Confirm that a same-name gate from another candidate leaves the baseline write refused.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/fence.ts:213`
+- **Evidence:** Track 87A coverage audit. Both affected suites passed 272 tests at `96f9ffe`.
+- **Context:** Filed by /review-and-prep on Track 87A at `96f9ffe` (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/fence.ts|tests/review-state.test.ts] Test gap: write and read a pending fix-review baseline
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The current pending-baseline case covers refusal when the probe list has no reproduced result.
+- **Hypothesis (untested):** Confirm that a valid baseline with a reproduced probe can be written and checked as `pending-fix-review`.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/fence.ts:135`
+- **Evidence:** Track 87A coverage audit. Both affected suites passed 272 tests at `96f9ffe`.
+- **Context:** Filed by /review-and-prep on Track 87A at `96f9ffe` (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/review-state/fence.ts|tests/review-state.test.ts] Test gap: malformed late provenance at stop
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The stop tests cover valid late provenance and corrupt record JSON. They do not isolate malformed late metadata in an otherwise valid JSON record.
+- **Hypothesis (untested):** Confirm that the stop check reports the record unreadable when its late provenance fails validation.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/fence.ts:160`
+- **Evidence:** Track 87A coverage audit. Both affected suites passed 272 tests at `96f9ffe`.
+- **Context:** Filed by /review-and-prep on Track 87A at `96f9ffe` (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
