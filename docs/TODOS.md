@@ -12,6 +12,17 @@
 - **Context:** Filed by /review-and-prep before draft PR creation at 59ae31c (2026-11-17).
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: prepared handoff through a directory alias
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The CLI tests cover alias paths when writing a PR comment and body. The prepared handoff check compares the comment bytes using a canonical directory, but its test uses only the canonical path.
+- **Hypothesis (untested):** Extend the prepared-handoff case to pass an equivalent `/.` directory spelling and verify the same handoff.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:496`
+- **Evidence:** The coverage audit inspected the canonical comparison and passing renderer tests. No current failure was found.
+- **Context:** Filed by `/review-and-prep` before draft creation at `271c8fa` (2026-11-18).
+- **Effort:** ? (triage in `/roadmap`)
+- **Revisit when:** The prepared receipt comparison or renderer path tests next change.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
