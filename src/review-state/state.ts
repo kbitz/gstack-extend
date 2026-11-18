@@ -894,9 +894,13 @@ function applyAdditiveV1Defaults(raw: Record<string, unknown>): void {
   }
 }
 
+export const CORRUPT_ORDER_FIX = 'Inspect review-run-state.json manually (writer version ordering could not be established, so start will not move it aside), or continue this review run inline (D1).';
+export const CORRUPT_READ_FIX = 'Make review-run-state.json readable before attempting recovery, or continue this review run inline (D1).';
+
 export type StoredValidationResult =
   | { ok: true; state: ReviewRunState }
-  | { ok: false; reason: 'corrupt' | 'newer-schema'; detail: Record<string, unknown> };
+  | { ok: false; reason: 'newer-schema'; detail: Record<string, unknown> }
+  | { ok: false; reason: 'corrupt'; detail: Record<string, unknown>; canMoveAside: boolean };
 
 export function validateStoredState(raw: unknown, statePath: string = 'review-run-state.json', helperVersion: string | null = null): StoredValidationResult {
   if (isObj(raw) && typeof raw.schema === 'string') {
@@ -1050,7 +1054,12 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
         detail: { path: truncate80(statePath), schema: SCHEMA_VERSION, writer: raw.writer as string, message: msg },
       };
     }
-    return { ok: false, reason: 'corrupt', detail: { path: truncate80(statePath), message: msg } };
+    return {
+      ok: false,
+      reason: 'corrupt',
+      detail: { path: truncate80(statePath), message: msg },
+      canMoveAside: writerOrderKnown(isObj(raw) ? raw.writer : undefined, helperVersion),
+    };
   }
   return { ok: true, state: raw as ReviewRunState };
 }

@@ -6265,17 +6265,19 @@ describe('bin/review-state', () => {
     expect(readdirSync(d1).filter((n) => n.startsWith('review-run-state.json.tmp-'))).toEqual([]);
     unlinkSync(lock1);
 
-    // 7. Rename, verify and restore: mock lock renameSync so stale lock is replaced by a live lock with a new inode before rename
+    // 7. Rename, verify and restore even when a new holder has identical stat identity.
     writeFileSync(lock1, `${JSON.stringify({ pid: deadPid, host: hostname(), started_at: '2026-11-10T18:00:00Z', token: 'e'.repeat(32) })}\n`);
     const liveReplacementBytes = `${JSON.stringify({ pid: process.pid, host: hostname(), started_at: '2026-11-10T18:06:00Z', token: 'f'.repeat(32) })}\n`;
+    const fixedLockTime = new Date(1700000000000);
+    utimesSync(lock1, fixedLockTime, fixedLockTime);
     const restoreScript = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
       const lock = ${JSON.stringify(lock1)}, liveBytes = ${JSON.stringify(liveReplacementBytes)};
       let once = true;
       mock.module('node:fs', () => ({...fs, renameSync(a, b) {
         if (once && String(a) === lock && String(b).includes('.lock.stale-')) {
           once = false;
-          fs.unlinkSync(lock);
           fs.writeFileSync(lock, liveBytes);
+          fs.utimesSync(lock, new Date(${fixedLockTime.getTime()}), new Date(${fixedLockTime.getTime()}));
         }
         return fs.renameSync(a, b);
       }}));
@@ -6393,7 +6395,7 @@ describe('bin/review-state', () => {
   });
 
   // Value: protects=moving a corrupt state aside at start when writer ordering is known and preserving corrupt/newer-schema bytes otherwise; fails_when=start fails to move garbage or older/equal/null-writer corrupt states, overwrites an existing corrupt backup, moves on invalid start input or newer-schema, or loses original state on failed second rename; why_new=Track 88A T4; seam=CLI and node:fs renameSync mock
-  test('start moves a corrupt state aside when writer ordering is known and restores on failed second rename', () => {
+  test('start moves a corrupt state aside when writer ordering is known and preserves it on failed publication', () => {
     expect(writerOrderKnown(null, null)).toBe(true);
     expect(writerOrderKnown(undefined, null)).toBe(true);
     expect(writerOrderKnown('0.86.1', '0.86.1')).toBe(true);
@@ -6465,7 +6467,7 @@ describe('bin/review-state', () => {
       expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-')).sort()).toEqual(movedBeforeInvalid);
     }
 
-    // 5. Failed second rename (tmpPath -> statePath) returns unwritable and restores the original corrupt file
+    // 5. Failed publication leaves the original corrupt file in place.
     const restoreCorruptBytes = '{corrupt-restore-on-rename-fault\n';
     writeFileSync(statePath, restoreCorruptBytes);
     const startFile = writeJson(d, 'start-fault.json', mkStart(1155));
@@ -6485,6 +6487,75 @@ describe('bin/review-state', () => {
     expect(faultRes.reason).toBe('unwritable');
     expect(readFileSync(statePath, 'utf8')).toBe(restoreCorruptBytes);
     expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-')).sort()).toEqual(movedBeforeInvalid);
+
+    // 6. Recovery leaves files that an older corrupt state may reference.
+    const legacyTmp = 'review-run-state.json.tmp-56-beef';
+    writeFileSync(join(d, legacyTmp), 'legacy evidence\n');
+    const recovery = callCmd(d, 'start', mkStart(1156), opts);
+    expect(recovery.json).toMatchObject({
+      reason: 'recorded',
+      detail: { warnings: ['skipped leftover temporary-file sweep: recorded evidence could not be resolved'] },
+    });
+    expect(readFileSync(join(d, legacyTmp), 'utf8')).toBe('legacy evidence\n');
+  });
+
+  // Value: protects=bounded corrupt-state recovery; fails_when=archive errors loop instead of returning unwritable and releasing the lock; why_new=publication rename faults did not cover claiming the backup name.
+  test('start returns unwritable on a corrupt backup destination error and releases the lock', () => {
+    const dir = newDir();
+    const statePath = join(dir, 'review-run-state.json');
+    const corrupt = '{invalid state\n';
+    writeFileSync(statePath, corrupt);
+    const input = writeJson(dir, 'input.json', mkStart(1157));
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const prefix = ${JSON.stringify(statePath + '.corrupt-')};
+      const fault = (syscall) => Object.assign(new Error('backup name fault'), { code: 'EIO', syscall });
+      mock.module('node:fs', () => ({...fs,
+        linkSync(a, b) {
+          if (String(b).startsWith(prefix)) throw fault('link');
+          return fs.linkSync(a, b);
+        },
+        lstatSync(path, ...rest) {
+          if (String(path).startsWith(prefix)) throw fault('lstat');
+          return fs.lstatSync(path, ...rest);
+        },
+      }));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify(executeCommand('start', ${JSON.stringify(dir)}, ${JSON.stringify(input)}, ${JSON.stringify(repo)})));`;
+    const result = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8', timeout: 5000 });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 3, reason: 'unwritable', detail: { errno: 'EIO' } });
+    expect(readFileSync(statePath, 'utf8')).toBe(corrupt);
+    expect(readdirSync(dir).sort()).toEqual(['input.json', 'review-run-state.json']);
+  });
+
+  // Value: protects=bounded lock wait and old unreadable lock retention; fails_when=a failed lock read retries indefinitely or treats unread bytes as stale; why_new=existing stale tests read their locks successfully.
+  test.each(['ENOENT', 'EIO'])('a failed lock inspection returns busy without touching the lock (%s)', (errno) => {
+    const dir = newDir();
+    const lock = join(dir, 'review-run-state.json.lock');
+    const input = writeJson(dir, 'input.json', mkStart(1116));
+    const bytes = JSON.stringify({ pid: process.pid, host: hostname(), started_at: '2026-11-10T18:00:00Z' });
+    writeFileSync(lock, bytes);
+    const past = new Date(Date.now() - 120_000);
+    utimesSync(lock, past, past);
+    const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const lock = ${JSON.stringify(lock)}, fault = () => Object.assign(new Error('lock read fault'), { code: ${JSON.stringify(errno)} });
+      mock.module('node:fs', () => ({...fs,
+        openSync(path, flags, ...rest) {
+          if (path === lock && flags !== 'wx') throw fault();
+          return fs.openSync(path, flags, ...rest);
+        },
+        readFileSync(path, ...rest) {
+          if (path === lock) throw fault();
+          return fs.readFileSync(path, ...rest);
+        },
+      }));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify(executeCommand('start', ${JSON.stringify(dir)}, ${JSON.stringify(input)}, ${JSON.stringify(repo)}, { ...process.env, GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' })));`;
+    const result = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8', timeout: 5000 });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 4, reason: 'busy', detail: { holder: { unknown: true } } });
+    expect(readFileSync(lock, 'utf8')).toBe(bytes);
+    expect(existsSync(join(dir, 'review-run-state.json'))).toBe(false);
   });
 });
 
