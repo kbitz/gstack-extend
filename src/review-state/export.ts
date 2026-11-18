@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { truncate80, validateStoredState, VOICE_RE, type ReasonCode, type ReviewRunState } from './state.ts';
 import { makeEnvelope, readHelperVersion, runGit, validateStateDir, type StoreResult } from './store.ts';
@@ -459,6 +460,19 @@ export function loadStoredState(
     return fail(validated.reason, validated.detail, statePath);
   }
   const storedState = validated.state;
+
+  const actualHost = hostname();
+  if (storedState.host !== null && storedState.host !== actualHost) {
+    return fail(
+      'cross-host',
+      {
+        expected_host: truncate80(storedState.host),
+        actual_host: truncate80(actualHost),
+      },
+      statePath,
+      storedState.rev,
+    );
+  }
 
   if (storedState.run.repo !== actualRepo) {
     return fail(

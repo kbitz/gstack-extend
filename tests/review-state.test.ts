@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, buildHelp, buildRequest, parseDelegationLine, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
@@ -9,8 +10,8 @@ import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
 import { FIELD_FMT, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
-import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, WTREE_RE, type CommandName, type DelegationPolicy, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
-import { readHelperVersion } from '../src/review-state/store.ts';
+import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, writerOrderKnown, WTREE_RE, type CommandName, type DelegationPolicy, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
+import { classifyLockHolder, readHelperVersion, readLocalBootId, readLocalPidNs } from '../src/review-state/store.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -372,6 +373,7 @@ describe('bin/review-state', () => {
   });
   test('launcher exec line and --help reason parity with REASON_TABLE and design anchors', () => {
     const launcher = readFileSync(BIN_PATH, 'utf8');
+    expect(launcher).toContain('if ! command -v bun >/dev/null 2>&1; then');
     expect(launcher).toContain('exec bun --no-env-file --no-install --config=/dev/null');
     const design = readFileSync(DESIGN_PATH, 'utf8');
     const anchors = [...design.matchAll(/<a id="reason-([a-z-]+)"><\/a>/g)].map((m) => m[1]);
@@ -456,7 +458,7 @@ describe('bin/review-state', () => {
 
     const rawBytes = readFileSync(join(d, 'review-run-state.json'), 'utf8');
     const parsed = JSON.parse(rawBytes) as ReviewRunState;
-    expect(Object.keys(parsed)).toEqual(['schema', 'rev', 'writer', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish']);
+    expect(Object.keys(parsed)).toEqual(['schema', 'rev', 'writer', 'host', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish']);
     expect(Object.keys(parsed)).toEqual([...STATE_KEYS.root]);
     expect(Object.keys(parsed.passes[0]!)).toEqual([...STATE_KEYS.pass]);
     expect(Object.keys(parsed.corrections[0]!)).toEqual([...STATE_KEYS.correction]);
@@ -812,6 +814,40 @@ describe('bin/review-state', () => {
     expect(okRes.code).toBe(0);
     expect(okRes.json.reason).toBe('recorded');
     expect(JSON.parse(readFileSync(statePath, 'utf8')).writer).toBe('0.86.1');
+
+    // 5. Unavailable helper version (missing versionPath) with unknown key and writer 9.9.9 returns corrupt, not newer-schema, and start does not move it
+    const missingVerOpts = { versionPath: join(baseTmp, 'no-such-version-file') };
+    const unknownWith999 = JSON.stringify({ ...baseline, writer: '9.9.9', future_v1_field: true });
+    writeFileSync(statePath, unknownWith999);
+    const noVerCp = callCmd(d, 'checkpoint', { checkpoint_id: uid(62), kind: 'stop' }, missingVerOpts);
+    expect(noVerCp.code).toBe(1);
+    expect(noVerCp.json.reason).toBe('corrupt');
+    expect(readFileSync(statePath, 'utf8')).toBe(unknownWith999);
+    const noVerStart = callCmd(d, 'start', mkStart(2), missingVerOpts);
+    expect(noVerStart.code).toBe(1);
+    expect(noVerStart.json.reason).toBe('corrupt');
+    expect(readFileSync(statePath, 'utf8')).toBe(unknownWith999);
+    expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-'))).toEqual([]);
+
+    // 6. Helper 0.86.1 and unsafe-integer writer 9007199254740993.0.0 + unknown key returns corrupt, not newer-schema, and start does not move it; valid structure still records
+    const unsafeWriter = '9007199254740993.0.0';
+    const unsafeUnknown = JSON.stringify({ ...baseline, writer: unsafeWriter, future_v1_field: true });
+    writeFileSync(statePath, unsafeUnknown);
+    const unsafeCp = callCmd(d, 'checkpoint', { checkpoint_id: uid(63), kind: 'stop' }, options);
+    expect(unsafeCp.code).toBe(1);
+    expect(unsafeCp.json.reason).toBe('corrupt');
+    expect(readFileSync(statePath, 'utf8')).toBe(unsafeUnknown);
+    const unsafeStart = callCmd(d, 'start', mkStart(3), options);
+    expect(unsafeStart.code).toBe(1);
+    expect(unsafeStart.json.reason).toBe('corrupt');
+    expect(readFileSync(statePath, 'utf8')).toBe(unsafeUnknown);
+    expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-'))).toEqual([]);
+
+    writeFileSync(statePath, JSON.stringify({ ...baseline, writer: unsafeWriter }));
+    const unsafeValidRes = callCmd(d, 'checkpoint', { checkpoint_id: uid(64), kind: 'stop' }, options);
+    expect(unsafeValidRes.code).toBe(0);
+    expect(unsafeValidRes.json.reason).toBe('recorded');
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).writer).toBe('0.86.1');
   });
 
   test('stored v0.86.0 state without writer or segment reads cleanly and gains both on the next write', () => {
@@ -841,21 +877,26 @@ describe('bin/review-state', () => {
     const statePath = join(d, 'review-run-state.json');
     const v086State = JSON.parse(readFileSync(statePath, 'utf8'));
     delete v086State.writer;
+    delete v086State.host;
     for (const coll of ['passes', 'corrections', 'gates', 'audits', 'checkpoints'] as const) {
       for (const rec of v086State[coll]) delete rec.segment;
     }
     writeFileSync(statePath, `${JSON.stringify(v086State, null, 2)}\n`);
+    const v086Validated = validateStoredState(JSON.parse(readFileSync(statePath, 'utf8')), statePath);
+    expect(v086Validated.ok).toBe(true);
+    if (v086Validated.ok) expect(v086Validated.state.host).toBeNull();
 
     // Replay against v0.86.0 state works cleanly without conflict
     expect(callCmd(d, 'start', mkStart(1)).json.reason).toBe('replayed');
     expect(callCmd(d, 'record pass', mkPassStarted(10)).json.reason).toBe('replayed');
     expect(callCmd(d, 'record gate', { gate_id: uid(40), name: 'tests', result: 'passed', candidate: { commit: headSha } }).json.reason).toBe('replayed');
 
-    // Next write stamps root writer, preserves null segment on pre-existing records, and stamps segment=1 on new record
+    // Next write stamps root writer, keeps null host and null segment on pre-existing records, and stamps segment=1 on new record
     const nextCp = callCmd(d, 'checkpoint', { checkpoint_id: uid(61), kind: 'stop' });
     expect(nextCp.json.reason).toBe('recorded');
     const upgraded = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
     expect(upgraded.writer).toBe(readHelperVersion());
+    expect(upgraded.host).toBeNull();
     expect(upgraded.passes[0]?.segment).toBeNull();
     expect(upgraded.corrections[0]?.segment).toBeNull();
     expect(upgraded.gates[0]?.segment).toBeNull();
@@ -868,8 +909,8 @@ describe('bin/review-state', () => {
     for (const entry of REASON_TABLE) {
       expect(entry.side_effects, entry.reason).toBe(entry.reason === 'recorded' ? 'committed' : 'none');
       const retry = ['recorded', 'replayed'].includes(entry.reason) ? 'no'
-        : ['busy', 'unwritable'].includes(entry.reason) ? 'same-input'
-        : ['worktree-mismatch', 'finished', 'exists', 'corrupt', 'newer-schema'].includes(entry.reason) ? 'never'
+        : ['busy', 'unwritable', 'internal-error'].includes(entry.reason) ? 'same-input'
+        : ['worktree-mismatch', 'cross-host', 'finished', 'exists', 'corrupt', 'newer-schema'].includes(entry.reason) ? 'never'
         : 'after-fix';
       expect(entry.retry, entry.reason).toBe(retry);
     }
@@ -2776,13 +2817,28 @@ describe('bin/review-state', () => {
     });
   });
 
-  test.each(['grow', 'same-size', 'delete', 'pinned-detail', 'none'] as const)('rechecks evidence under lock and refuses evidence-changed (%s)', (mode) => {
+  test.each(['grow', 'same-size', 'delete', 'pinned-detail', 'symlink-retarget', 'replace-same-size-mtime', 'none'] as const)('rechecks evidence under lock and refuses evidence-changed (%s)', (mode) => {
     const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
+    const fixedTime = new Date(1700000000000);
     writeFileSync(join(dir, 'ev.txt'), 'abc\n');
     writeFileSync(join(dir, 'rec.json'), '{"ok":true}\n');
+    if (mode === 'symlink-retarget') {
+      writeFileSync(join(dir, 'a.txt'), 'abc\n');
+      writeFileSync(join(dir, 'b.txt'), 'xyz\n');
+      utimesSync(join(dir, 'a.txt'), fixedTime, fixedTime);
+      utimesSync(join(dir, 'b.txt'), fixedTime, fixedTime);
+      symlinkSync('a.txt', join(dir, 'ev-link'));
+    }
+    if (mode === 'replace-same-size-mtime') {
+      utimesSync(join(dir, 'ev.txt'), fixedTime, fixedTime);
+      writeFileSync(join(dir, 'ev-replacement.txt'), 'xyz\n');
+      utimesSync(join(dir, 'ev-replacement.txt'), fixedTime, fixedTime);
+    }
     const payload = mode === 'pinned-detail'
       ? { gate_id: uid(501), name: 'pregate', result: 'passed', candidate: { commit: headSha, base: baseSha }, details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: 'rec.json', record_sha256: sha256('{"ok":true}\n'), skipped_lanes: [] } }
-      : { gate_id: uid(501), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: 'ev.txt', sha256: sha256('abc\n') }] };
+      : mode === 'symlink-retarget'
+        ? { gate_id: uid(501), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: 'ev-link', sha256: sha256('abc\n') }] }
+        : { gate_id: uid(501), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: 'ev.txt', sha256: sha256('abc\n') }] };
     const input = writeJson(dir, 'gate.json', payload);
     const lockPath = join(dir, 'review-run-state.json.lock');
     const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
@@ -2795,6 +2851,8 @@ describe('bin/review-state', () => {
           if (mode === 'same-size') { const t = new Date(Date.now() + 60000); fs.writeFileSync(dir + '/ev.txt', 'xyz\\n'); fs.utimesSync(dir + '/ev.txt', t, t); }
           if (mode === 'delete') fs.unlinkSync(dir + '/ev.txt');
           if (mode === 'pinned-detail') fs.writeFileSync(dir + '/rec.json', '{"ok":false,"more":1}\\n');
+          if (mode === 'symlink-retarget') { fs.unlinkSync(dir + '/ev-link'); fs.symlinkSync('b.txt', dir + '/ev-link'); }
+          if (mode === 'replace-same-size-mtime') { fs.renameSync(dir + '/ev-replacement.txt', dir + '/ev.txt'); }
         }
         return fs.openSync(p, flags, ...rest);
       }}));
@@ -2818,10 +2876,12 @@ describe('bin/review-state', () => {
     const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
     expect(callCmd(dir, 'record pass', mkPassStarted(10)).json.reason).toBe('recorded');
     const matching = 'review-run-state.json.tmp-42-beef';
+    const tmpSymlink = 'review-run-state.json.tmp-8-face';
     const nonMatching = ['review-run-state.json.tmp-12-ABCD', 'review-run-state.json.tmp-x-ab', 'review-run-state.json.tmp-1-ab.bak'];
     writeFileSync(join(dir, matching), 'stale');
     for (const f of nonMatching) writeFileSync(join(dir, f), 'keep');
     mkdirSync(join(dir, 'review-run-state.json.tmp-7-ab'));
+    symlinkSync(nonMatching[0]!, join(dir, tmpSymlink));
 
     expect(callCmd(dir, 'record pass', mkPassStarted(10, { cycle: 2 })).json.reason).toBe('conflict');
     expect(existsSync(join(dir, matching))).toBe(true);
@@ -2831,31 +2891,66 @@ describe('bin/review-state', () => {
     const rec = callCmd(dir, 'checkpoint', { checkpoint_id: uid(510), kind: 'stop' });
     expect(rec.json).toMatchObject({ reason: 'recorded', detail: { warnings: ['removed 1 leftover temporary file(s)'] } });
     expect(existsSync(join(dir, matching))).toBe(false);
-    for (const kept of [...nonMatching, 'review-run-state.json.tmp-7-ab']) {
+    for (const kept of [...nonMatching, 'review-run-state.json.tmp-7-ab', tmpSymlink]) {
       expect(existsSync(join(dir, kept))).toBe(true);
     }
   });
 
-  test.each(['unlink-eacces', 'dir-fsync-order', 'dir-fsync-eio'] as const)('sweep unlink failure and post-rename directory fsync ordering and failure (%s)', (mode) => {
+  test.each(['unlink-eacces', 'dir-fsync-order', 'dir-fsync-eio', 'readdir-eio', 'stat-eacces', 'lstat-enoent', 'combined-warnings'] as const)('sweep unlink failure and post-rename directory fsync ordering and failure (%s)', (mode) => {
     const { dir } = dirFromSeed(ensureRefusalSeeds().startState);
+    if (mode === 'stat-eacces') {
+      writeFileSync(join(dir, 'ev-prior.txt'), 'prior-ev\n');
+      expect(callCmd(dir, 'record gate', {
+        gate_id: uid(509), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha },
+        evidence: [{ path: 'ev-prior.txt', sha256: sha256('prior-ev\n') }],
+      }).json.reason).toBe('recorded');
+    }
     const planted = join(dir, 'review-run-state.json.tmp-55-cafe');
-    if (mode === 'unlink-eacces') writeFileSync(planted, 'stale');
+    const removableTmp = join(dir, 'review-run-state.json.tmp-56-beef');
+    if (mode === 'unlink-eacces' || mode === 'readdir-eio' || mode === 'stat-eacces' || mode === 'lstat-enoent' || mode === 'combined-warnings') {
+      writeFileSync(planted, 'stale');
+    }
+    if (mode === 'combined-warnings') {
+      writeFileSync(removableTmp, 'remove-me');
+    }
     const input = writeJson(dir, 'pass.json', mkPassStarted(10));
     const script = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
       const realDir = fs.realpathSync(${JSON.stringify(dir)}), planted = ${JSON.stringify(planted)}, mode = ${JSON.stringify(mode)};
+      const lockPath = realDir + '/review-run-state.json.lock', priorEv = realDir + '/ev-prior.txt';
       const dirFds = new Set(), events = [];
+      let inSweep = false;
       mock.module('node:fs', () => ({...fs,
         openSync(p, ...rest) { const fd = fs.openSync(p, ...rest); if (String(p) === realDir) dirFds.add(fd); return fd; },
+        readdirSync(p, ...rest) {
+          if (String(p) === realDir) {
+            if (mode === 'readdir-eio') throw Object.assign(new Error('eio'), { code: 'EIO', syscall: 'scandir' });
+            inSweep = true;
+          }
+          return fs.readdirSync(p, ...rest);
+        },
+        statSync(p, ...rest) {
+          if (mode === 'stat-eacces' && String(p) === priorEv) throw Object.assign(new Error('eacces'), { code: 'EACCES', syscall: 'stat' });
+          return fs.statSync(p, ...rest);
+        },
+        lstatSync(p, ...rest) {
+          if (mode === 'lstat-enoent' && inSweep && String(p) === planted) {
+            inSweep = false;
+            fs.unlinkSync(planted);
+            throw Object.assign(new Error('enoent'), { code: 'ENOENT', syscall: 'lstat' });
+          }
+          return fs.lstatSync(p, ...rest);
+        },
         renameSync(a, b) { fs.renameSync(a, b); events.push('rename'); },
         fsyncSync(fd) {
           if (dirFds.has(fd)) {
             events.push('dir-fsync');
-            if (mode === 'dir-fsync-eio') throw Object.assign(new Error('eio'), { code: 'EIO', syscall: 'fsync' });
+            if (mode === 'dir-fsync-eio' || mode === 'combined-warnings') throw Object.assign(new Error('eio'), { code: 'EIO', syscall: 'fsync' });
           }
           return fs.fsyncSync(fd);
         },
         unlinkSync(p) {
-          if (mode === 'unlink-eacces' && String(p) === planted) throw Object.assign(new Error('eacces'), { code: 'EACCES', syscall: 'unlink' });
+          if ((mode === 'unlink-eacces' || mode === 'combined-warnings') && String(p) === planted) throw Object.assign(new Error('eacces'), { code: 'EACCES', syscall: 'unlink' });
+          if (mode === 'combined-warnings' && String(p) === lockPath) throw Object.assign(new Error('eacces'), { code: 'EACCES', syscall: 'unlink' });
           return fs.unlinkSync(p);
         },
       }));
@@ -2864,9 +2959,34 @@ describe('bin/review-state', () => {
     const r = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', script], { encoding: 'utf8' });
     expect(r.status, r.stderr).toBe(0);
     const { res, events } = JSON.parse(r.stdout);
-    expect(res).toMatchObject({ reason: 'recorded', rev: 2 });
-    expect(existsSync(join(dir, 'review-run-state.json.lock'))).toBe(false);
+    expect(res).toMatchObject({ reason: 'recorded', rev: mode === 'stat-eacces' ? 3 : 2 });
+    if (mode === 'combined-warnings') {
+      expect(existsSync(join(dir, 'review-run-state.json.lock'))).toBe(true);
+      unlinkSync(join(dir, 'review-run-state.json.lock'));
+      expect(existsSync(removableTmp)).toBe(false);
+      expect(existsSync(planted)).toBe(true);
+      expect(res.detail.warnings).toEqual([
+        'removed 1 leftover temporary file(s)',
+        'failed to remove leftover temporary file: EACCES',
+        'failed to sync directory: EIO',
+        'failed to remove lock: EACCES',
+      ]);
+    } else {
+      expect(existsSync(join(dir, 'review-run-state.json.lock'))).toBe(false);
+    }
     if (mode === 'unlink-eacces') expect(res.detail.warnings).toEqual(['failed to remove leftover temporary file: EACCES']);
+    if (mode === 'readdir-eio') {
+      expect(res.detail.warnings).toEqual(['failed to list leftover temporary files: EIO']);
+      expect(existsSync(planted)).toBe(true);
+    }
+    if (mode === 'stat-eacces') {
+      expect(res.detail.warnings).toEqual(['skipped leftover temporary-file sweep: recorded evidence could not be resolved']);
+      expect(existsSync(planted)).toBe(true);
+    }
+    if (mode === 'lstat-enoent') {
+      expect(res.detail.warnings).toBeUndefined();
+      expect(existsSync(planted)).toBe(false);
+    }
     if (mode === 'dir-fsync-order') {
       expect(res.detail.warnings).toBeUndefined();
       expect(events).toEqual(['rename', 'dir-fsync']);
@@ -3153,27 +3273,49 @@ describe('bin/review-state', () => {
     if (kind === 'pregate') payload = { gate_id: uid(601), name: 'pregate', result: 'passed', candidate, details: { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: ev.path, record_sha256: ev.sha256, skipped_lanes: [] } };
     if (kind === 'documentation') { cmd = 'record audit'; payload = { audit_id: uid(601), name: 'documentation', result: 'passed', candidate, details: { report_id: 'doc-1', section_path: ev.path, section_sha256: ev.sha256 } }; }
     if (kind === 'checkpoint') { cmd = 'checkpoint'; payload = { checkpoint_id: uid(601), kind: 'stop', evidence: [ev] }; }
-    if (kind === 'finish') { cmd = 'finish'; payload = { outcome: 'blocked', stop_reason: 'fixture', base: baseSha, evidence: [ev] }; }
+    if (kind === 'finish') {
+      cmd = 'finish';
+      payload = { outcome: 'blocked', stop_reason: 'fixture', base: baseSha, evidence: [ev] };
+      linkSync(join(dir, 'evidence.txt'), join(dir, 'review-run-state.json.tmp-45-cafe'));
+    }
     expect(callCmd(dir, cmd, payload, { file: 'live-input.json' }).json.reason).toBe('recorded');
+    if (kind === 'finish') {
+      expect(existsSync(join(dir, 'review-run-state.json.tmp-45-cafe'))).toBe(true);
+      expect(readFileSync(join(dir, 'review-run-state.json.tmp-45-cafe'), 'utf8')).toBe('retained evidence\n');
+    }
     unlinkSync(join(dir, 'evidence-link')); symlinkSync(evidenceName, join(dir, 'evidence-link'));
     writeFileSync(join(dir, evidenceName), 'retained evidence\n');
+    if (kind === 'explicit') {
+      linkSync(join(dir, evidenceName), join(dir, 'review-run-state.json.tmp-46-babe'));
+    }
     expect(runCli([...cmd.split(' '), '--dir', dir, '--input', join(dir, 'live-input.json')]).json.reason).toBe('replayed');
     if (kind !== 'finish') {
       writeFileSync(join(dir, 'review-run-state.json.tmp-44-dead'), 'orphan');
       expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(602), kind: 'stop' }).json.detail.warnings).toEqual(['removed 1 leftover temporary file(s)']);
       expect(readFileSync(join(dir, evidenceName), 'utf8')).toBe('retained evidence\n');
+      if (kind === 'explicit') {
+        expect(existsSync(join(dir, 'review-run-state.json.tmp-46-babe'))).toBe(true);
+        expect(readFileSync(join(dir, 'review-run-state.json.tmp-46-babe'), 'utf8')).toBe('retained evidence\n');
+      }
     }
   });
   test('helper temporary names refuse new input and evidence without deleting either file', () => {
     const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
     const name = 'review-run-state.json.tmp-43-cafe', path = join(dir, name);
-    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(603), kind: 'stop' }, { file: name }).code).toBe(2);
+    const inRes = callCmd(dir, 'checkpoint', { checkpoint_id: uid(603), kind: 'stop' }, { file: name });
+    expect(inRes.code).toBe(2);
+    expect(inRes.json).toMatchObject({ reason: 'usage', detail: { message: '--input must not use helper temporary-file names' } });
+    for (const [idx, nearMiss] of ['review-run-state.json.tmp-1-ab.bak', 'x-review-run-state.json.tmp-1-ab'].entries()) {
+      expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(650 + idx), kind: 'stop' }, { file: nearMiss }).json.reason).toBe('recorded');
+    }
+    const afterNearMissBytes = readFileSync(statePath, 'utf8');
     writeFileSync(path, 'evidence'); symlinkSync(name, join(dir, 'alias'));
     for (const evPath of [name, 'alias']) {
       const r = callCmd(dir, 'record gate', { gate_id: uid(604), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha }, evidence: [{ path: evPath, sha256: sha256('evidence') }] });
       expect(r.json.detail.violations).toEqual([{ path: 'evidence[0]', rule: 'evidence-reserved-path', expected: 'valid-evidence-file-in-dir' }]);
-      expect(readFileSync(path, 'utf8')).toBe('evidence'); expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+      expect(readFileSync(path, 'utf8')).toBe('evidence'); expect(readFileSync(statePath, 'utf8')).toBe(afterNearMissBytes);
     }
+    expect(beforeBytes).not.toBe(afterNearMissBytes);
   });
 
   // Value: protects=regression coverage across all six observed invalid-input causes (C1–C6) from the seven opted-in factory runs; fails_when=a fixed legitimate payload (C1, C5, C6) is refused or fails to replay, or a rightly refused caller error (C2, C3, C4) records or drops its violation/message; why_new=reliability Track T3(a) end-to-end evidence replay table; seam=CLI and state file
@@ -5832,6 +5974,517 @@ describe('bin/review-state', () => {
     expect(rBogus.json.command).toBe('record');
     expect(rBogus.json.detail).toEqual({ message: 'unknown command "record"' });
     expect(readdirSync(d3).filter((f) => f.startsWith('request-record-'))).toEqual([]);
+  });
+
+  // Value: protects=separation of Git execution failures (timeout, spawn, signal), uncaught errors, and missing-Bun runtime from invalid-input; fails_when=Git execution failure returns commit-not-found or not-in-worktree, trace file is written before --dir validation or leaks payload, lock/tmp remains on throw, or missing Bun prints no envelope; why_new=Track 88A T1; seam=subprocess mock.module and /bin/sh launcher
+  test('internal-error separates Git execution failures, uncaught throws, and missing-Bun launcher guard from invalid-input', () => {
+    const { dir, statePath, beforeBytes } = dirFromSeed(ensureRefusalSeeds().startState);
+    const missingSha = sha256('nonexistent-commit').slice(0, 40);
+    const gatePayload = { gate_id: uid(1101), name: 'tests', result: 'passed', candidate: { commit: missingSha, base: baseSha } };
+    const gateInput = writeJson(dir, 'gate-in.json', gatePayload);
+
+    // 1. Without mock, missing commit stays invalid-input (commit-not-found)
+    const noMockRes = runCli(['record', 'gate', '--dir', dir, '--input', gateInput]);
+    expect(noMockRes.code).toBe(1);
+    expect(noMockRes.json.reason).toBe('invalid-input');
+    expect(noMockRes.json.detail.violations).toContainEqual({ path: 'candidate.commit', rule: 'commit-not-found', expected: 'existing-git-commit' });
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+
+    // 2. With spawnSync mocked to return ETIMEDOUT + SIGTERM on cat-file: exit 5, internal-error, trace file mode 0600 with stack, no lock/tmp left
+    const catFileScript = `import { mock } from 'bun:test'; const cp = {...await import('node:child_process')};
+      mock.module('node:child_process', () => ({...cp, spawnSync(file, args, options) {
+        if (file === 'git' && Array.isArray(args) && args.includes('cat-file')) {
+          const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT', syscall: 'spawnSync git' });
+          return { pid: 123, output: [null, '', ''], stdout: '', stderr: '', status: null, signal: 'SIGTERM', error: err };
+        }
+        return cp.spawnSync(file, args, options);
+      }}));
+      const { main } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/cli.ts'))});
+      let out = '', err = '';
+      const code = main(['record', 'gate', '--dir', ${JSON.stringify(dir)}, '--input', ${JSON.stringify(gateInput)}], {
+        stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: ${JSON.stringify(repo)}, env: process.env,
+      });
+      console.log(JSON.stringify({ code, out: out.trim(), err }));`;
+    const rCat = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', catFileScript], { encoding: 'utf8' });
+    expect(rCat.status, rCat.stderr).toBe(0);
+    const catOut = JSON.parse(rCat.stdout);
+    expect(catOut.code).toBe(5);
+    const catEnv = JSON.parse(catOut.out);
+    expect(catEnv).toMatchObject({
+      v: 1,
+      command: 'record gate',
+      status: 'error',
+      reason: 'internal-error',
+      side_effects: 'none',
+      retry: 'same-input',
+      retry_after_ms: null,
+      detail: {
+        cause: 'git-execution',
+        git: 'cat-file',
+        errno: 'ETIMEDOUT',
+        signal: 'SIGTERM',
+      },
+    });
+    expect(typeof catEnv.detail.trace).toBe('string');
+    expect(catEnv.detail.trace).toMatch(/^review-state-error-\d{8}T\d{6}Z-\d+-[0-9a-f]{8}\.txt$/);
+    const tracePath = join(dir, catEnv.detail.trace);
+    expect(existsSync(tracePath)).toBe(true);
+    expect(statSync(tracePath).mode & 0o777).toBe(0o600);
+    const traceContent = readFileSync(tracePath, 'utf8');
+    expect(traceContent).toContain('cause: git-execution');
+    expect(traceContent).toContain('git: cat-file');
+    expect(traceContent).toContain('GitExecutionError');
+    expect(traceContent).not.toContain(uid(1101));
+    expect(catOut.err).toContain('ERROR INTERNAL_ERROR:');
+    expect(catOut.err).toContain('FIX: Rerun the identical command once');
+    const errFrameLines = catOut.err.split('\n').filter((l: string) => /^\s*at\s/.test(l));
+    expect(errFrameLines.length).toBeGreaterThanOrEqual(1);
+    expect(errFrameLines.length).toBeLessThanOrEqual(3);
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+    expect(existsSync(join(dir, 'review-run-state.json.lock'))).toBe(false);
+    expect(readdirSync(dir).filter((n) => n.startsWith('review-run-state.json.tmp-'))).toEqual([]);
+
+    // 3. Spawn failure (ENOENT, status: null) on rev-parse --show-toplevel: internal-error with trace: null and no file created in --dir; outside worktree still returns not-in-worktree
+    const emptyDir = newDir();
+    const startIn = writeJson(emptyDir, 'start.json', mkStart(1102));
+    const beforeFiles = readdirSync(emptyDir).sort();
+    const enoentScript = `import { mock } from 'bun:test'; const cp = {...await import('node:child_process')};
+      mock.module('node:child_process', () => ({...cp, spawnSync(file, args, options) {
+        if (file === 'git' && Array.isArray(args) && args.includes('--show-toplevel')) {
+          const err = Object.assign(new Error('spawnSync git ENOENT'), { code: 'ENOENT', syscall: 'spawnSync git' });
+          return { pid: 0, output: [null, '', ''], stdout: '', stderr: '', status: null, signal: null, error: err };
+        }
+        return cp.spawnSync(file, args, options);
+      }}));
+      const { main } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/cli.ts'))});
+      let out = '', err = '';
+      const code = main(['start', '--dir', ${JSON.stringify(emptyDir)}, '--input', ${JSON.stringify(startIn)}], {
+        stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: ${JSON.stringify(repo)}, env: process.env,
+      });
+      console.log(JSON.stringify({ code, env: JSON.parse(out.trim()) }));`;
+    const rEnoent = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', enoentScript], { encoding: 'utf8' });
+    expect(rEnoent.status, rEnoent.stderr).toBe(0);
+    const enoentOut = JSON.parse(rEnoent.stdout);
+    expect(enoentOut.code).toBe(5);
+    expect(enoentOut.env).toMatchObject({
+      command: 'start',
+      status: 'error',
+      reason: 'internal-error',
+      detail: { cause: 'git-execution', git: 'rev-parse', errno: 'ENOENT', signal: null, trace: null },
+    });
+    expect(readdirSync(emptyDir).sort()).toEqual(beforeFiles);
+    expect(runCli(['start', '--dir', emptyDir, '--input', startIn], { cwd: baseTmp }).json.reason).toBe('not-in-worktree');
+
+    // 4. Signal (SIGKILL, status: null) on export's rev-parse --git-common-dir: internal-error with command: "export"
+    const sigkillScript = `import { mock } from 'bun:test'; const cp = {...await import('node:child_process')};
+      mock.module('node:child_process', () => ({...cp, spawnSync(file, args, options) {
+        if (file === 'git' && Array.isArray(args) && args.includes('--git-common-dir')) {
+          return { pid: 456, output: [null, '', ''], stdout: '', stderr: '', status: null, signal: 'SIGKILL' };
+        }
+        return cp.spawnSync(file, args, options);
+      }}));
+      const { main } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/cli.ts'))});
+      let out = '', err = '';
+      const code = main(['export', '--dir', ${JSON.stringify(dir)}], {
+        stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: ${JSON.stringify(repo)}, env: process.env,
+      });
+      console.log(JSON.stringify({ code, env: JSON.parse(out.trim()) }));`;
+    const rKill = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', sigkillScript], { encoding: 'utf8' });
+    expect(rKill.status, rKill.stderr).toBe(0);
+    const killOut = JSON.parse(rKill.stdout);
+    expect(killOut.code).toBe(5);
+    expect(killOut.env).toMatchObject({
+      command: 'export',
+      status: 'error',
+      reason: 'internal-error',
+      detail: { cause: 'git-execution', git: 'rev-parse', errno: null, signal: 'SIGKILL' },
+    });
+
+    // 5. Uncaught error (node:crypto randomBytes mocked to throw) on record pass: exit 5, cause: "uncaught", lock removed, state unchanged
+    const passIn = writeJson(dir, 'pass-in.json', mkPassStarted(1103));
+    const uncaughtScript = `import { mock } from 'bun:test'; const crypto = {...await import('node:crypto')};
+      mock.module('node:crypto', () => ({...crypto, randomBytes() {
+        throw new Error('entropy pool unavailable');
+      }}));
+      const { main } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/cli.ts'))});
+      let out = '', err = '';
+      const code = main(['record', 'pass', '--dir', ${JSON.stringify(dir)}, '--input', ${JSON.stringify(passIn)}], {
+        stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: ${JSON.stringify(repo)}, env: process.env,
+      });
+      console.log(JSON.stringify({ code, env: JSON.parse(out.trim()) }));`;
+    const rUncaught = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', uncaughtScript], { encoding: 'utf8' });
+    expect(rUncaught.status, rUncaught.stderr).toBe(0);
+    const uncaughtOut = JSON.parse(rUncaught.stdout);
+    expect(uncaughtOut.code).toBe(5);
+    expect(uncaughtOut.env).toMatchObject({
+      command: 'record pass',
+      status: 'error',
+      reason: 'internal-error',
+      detail: { cause: 'uncaught', message: 'entropy pool unavailable' },
+    });
+    expect(existsSync(join(dir, 'review-run-state.json.lock'))).toBe(false);
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+
+    // 6. Launcher with empty PATH: exit 5, runtime-missing envelope on stdout, ERROR INTERNAL_ERROR on stderr
+    const emptyPathDir = newDir();
+    const rLauncher = spawnSync('/bin/sh', [BIN_PATH, 'start', '--dir', emptyDir, '--input', startIn], {
+      cwd: repo,
+      env: { PATH: emptyPathDir },
+      encoding: 'utf8',
+    });
+    expect(rLauncher.status).toBe(5);
+    const stdoutLines = rLauncher.stdout.trim().split('\n');
+    expect(stdoutLines).toHaveLength(1);
+    expect(JSON.parse(stdoutLines[0]!)).toEqual({
+      v: 1,
+      command: 'unknown',
+      status: 'error',
+      reason: 'internal-error',
+      detail: { cause: 'runtime-missing', message: 'bun not found on PATH', trace: null },
+      fix: REASON_TABLE.find((r) => r.reason === 'internal-error')!.fix,
+      state_path: null,
+      rev: null,
+      helper_version: null,
+      side_effects: 'none',
+      retry: 'same-input',
+      retry_after_ms: null,
+    });
+    expect(rLauncher.stderr).toContain('ERROR INTERNAL_ERROR: bun not found on PATH\nFIX: ');
+  });
+
+  // Value: protects=automatic stale-lock reclamation, live/other-host/pid_ns preservation, 60s unparseable grace, writer own-token recheck, and rename-verify-restore; fails_when=a live or other-host lock is broken, a dead same-host lock stays busy, or a displaced writer overwrites state; why_new=Track 88A T2; seam=CLI, child process pid, and node:fs mocks
+  test('stale-lock reclamation reclaims dead same-host, boot-changed, and aged unparseable locks while preserving live, other-host, and displaced locks', () => {
+    const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8' });
+    const deadPid = deadChild.pid!;
+    expect(deadPid).toBeGreaterThan(0);
+
+    // 1. Same-host lock with full content and exited pid is reclaimed with wait 0
+    const d1 = newDir();
+    const lock1 = join(d1, 'review-run-state.json.lock');
+    writeFileSync(lock1, `${JSON.stringify({
+      pid: deadPid,
+      host: hostname(),
+      started_at: '2026-11-10T18:00:00Z',
+      token: 'a'.repeat(32),
+      boot_id: readLocalBootId(),
+      pid_ns: readLocalPidNs(),
+    })}\n`);
+    const r1 = callCmd(d1, 'start', mkStart(1110), { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(r1.code).toBe(0);
+    expect(r1.json).toMatchObject({
+      reason: 'recorded',
+      rev: 1,
+      detail: { warnings: ['reclaimed stale lock (process-exited)'] },
+    });
+    expect(existsSync(lock1)).toBe(false);
+
+    // 2. Legacy {pid, host, started_at} same-host lock with exited pid is reclaimed
+    writeFileSync(lock1, `${JSON.stringify({ pid: deadPid, host: hostname(), started_at: '2026-11-10T18:00:00Z' })}\n`);
+    const r2 = callCmd(d1, 'record pass', mkPassStarted(1111), { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(r2.code).toBe(0);
+    expect(r2.json).toMatchObject({
+      reason: 'recorded',
+      rev: 2,
+      detail: { warnings: ['reclaimed stale lock (process-exited)'] },
+    });
+    expect(existsSync(lock1)).toBe(false);
+
+    // 3. Same-host lock held by live pid of the test runner returns busy with lock bytes unchanged
+    const liveLockBytes = `${JSON.stringify({
+      pid: process.pid,
+      host: hostname(),
+      started_at: '2026-11-10T18:00:00Z',
+      token: 'b'.repeat(32),
+      boot_id: readLocalBootId(),
+      pid_ns: readLocalPidNs(),
+    })}\n`;
+    writeFileSync(lock1, liveLockBytes);
+    const rLive = callCmd(d1, 'checkpoint', { checkpoint_id: uid(1112), kind: 'stop' }, { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(rLive.code).toBe(4);
+    expect(rLive.json.reason).toBe('busy');
+    expect(rLive.json.detail.holder).not.toHaveProperty('token');
+    expect(readFileSync(lock1, 'utf8')).toBe(liveLockBytes);
+
+    // 4. Other-host lock with exited pid returns busy with lock bytes unchanged
+    const otherHostBytes = `${JSON.stringify({
+      pid: deadPid,
+      host: `other-${hostname()}`,
+      started_at: '2026-11-10T18:00:00Z',
+      token: 'c'.repeat(32),
+    })}\n`;
+    writeFileSync(lock1, otherHostBytes);
+    const rOther = callCmd(d1, 'checkpoint', { checkpoint_id: uid(1112), kind: 'stop' }, { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(rOther.code).toBe(4);
+    expect(rOther.json.reason).toBe('busy');
+    expect(readFileSync(lock1, 'utf8')).toBe(otherHostBytes);
+    unlinkSync(lock1);
+
+    // 5. Unparseable lock: aged 120s in the past is reclaimed; fresh one returns busy
+    writeFileSync(lock1, '{truncated');
+    const past = new Date(Date.now() - 120_000);
+    utimesSync(lock1, past, past);
+    const rAged = callCmd(d1, 'checkpoint', { checkpoint_id: uid(1113), kind: 'stop' }, { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(rAged.code).toBe(0);
+    expect(rAged.json).toMatchObject({
+      reason: 'recorded',
+      rev: 3,
+      detail: { warnings: ['reclaimed stale lock (unparseable-aged)'] },
+    });
+    expect(existsSync(lock1)).toBe(false);
+
+    writeFileSync(lock1, '{fresh-unparseable');
+    const rFresh = callCmd(d1, 'checkpoint', { checkpoint_id: uid(1114), kind: 'stop' }, { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(rFresh.code).toBe(4);
+    expect(rFresh.json.reason).toBe('busy');
+    expect(readFileSync(lock1, 'utf8')).toBe('{fresh-unparseable');
+    unlinkSync(lock1);
+
+    // 6. Token recheck: mock openSync of temporary file to replace lock with another token -> busy, state unchanged, replacement lock intact
+    const statePath1 = join(d1, 'review-run-state.json');
+    const beforeTokenRecheck = readFileSync(statePath1, 'utf8');
+    const cpIn = writeJson(d1, 'cp-token.json', { checkpoint_id: uid(1115), kind: 'stop' });
+    const replacementBytes = `${JSON.stringify({ pid: process.pid, host: hostname(), started_at: '2026-11-10T18:05:00Z', token: 'd'.repeat(32) })}\n`;
+    const tokenScript = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const lock = ${JSON.stringify(lock1)}, rep = ${JSON.stringify(replacementBytes)};
+      mock.module('node:fs', () => ({...fs, openSync(p, flags, ...rest) {
+        const fd = fs.openSync(p, flags, ...rest);
+        if (String(p).includes('review-run-state.json.tmp-') && flags === 'wx') {
+          fs.writeFileSync(lock, rep);
+        }
+        return fd;
+      }}));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify(executeCommand('checkpoint', ${JSON.stringify(d1)}, ${JSON.stringify(cpIn)}, ${JSON.stringify(repo)}, { ...process.env, GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' })));`;
+    const rTok = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', tokenScript], { encoding: 'utf8' });
+    expect(rTok.status, rTok.stderr).toBe(0);
+    const tokRes = JSON.parse(rTok.stdout);
+    expect(tokRes.exitCode).toBe(4);
+    expect(tokRes.reason).toBe('busy');
+    expect(readFileSync(statePath1, 'utf8')).toBe(beforeTokenRecheck);
+    expect(readFileSync(lock1, 'utf8')).toBe(replacementBytes);
+    expect(readdirSync(d1).filter((n) => n.startsWith('review-run-state.json.tmp-'))).toEqual([]);
+    unlinkSync(lock1);
+
+    // 7. Rename, verify and restore: mock lock renameSync so stale lock is replaced by a live lock with a new inode before rename
+    writeFileSync(lock1, `${JSON.stringify({ pid: deadPid, host: hostname(), started_at: '2026-11-10T18:00:00Z', token: 'e'.repeat(32) })}\n`);
+    const liveReplacementBytes = `${JSON.stringify({ pid: process.pid, host: hostname(), started_at: '2026-11-10T18:06:00Z', token: 'f'.repeat(32) })}\n`;
+    const restoreScript = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      const lock = ${JSON.stringify(lock1)}, liveBytes = ${JSON.stringify(liveReplacementBytes)};
+      let once = true;
+      mock.module('node:fs', () => ({...fs, renameSync(a, b) {
+        if (once && String(a) === lock && String(b).includes('.lock.stale-')) {
+          once = false;
+          fs.unlinkSync(lock);
+          fs.writeFileSync(lock, liveBytes);
+        }
+        return fs.renameSync(a, b);
+      }}));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify(executeCommand('checkpoint', ${JSON.stringify(d1)}, ${JSON.stringify(cpIn)}, ${JSON.stringify(repo)}, { ...process.env, GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' })));`;
+    const rRestore = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', restoreScript], { encoding: 'utf8' });
+    expect(rRestore.status, rRestore.stderr).toBe(0);
+    const restoreRes = JSON.parse(rRestore.stdout);
+    expect(restoreRes.exitCode).toBe(4);
+    expect(restoreRes.reason).toBe('busy');
+    expect(readFileSync(lock1, 'utf8')).toBe(liveReplacementBytes);
+    expect(readdirSync(d1).filter((n) => n.includes('.lock.stale-'))).toEqual([]);
+    unlinkSync(lock1);
+  });
+
+  // Value: protects=Linux boot_id and pid_ns lock classification; fails_when=a live pid from a prior boot_id is not reclaimed or a different pid_ns is broken; why_new=Track 88A T2 Linux-specific check; seam=CLI and /proc
+  test.skipIf(readLocalBootId() === null)('Linux boot_id mismatch reclaims lock as boot-changed while pid_ns mismatch stays busy', () => {
+    const d = newDir();
+    const lockPath = join(d, 'review-run-state.json.lock');
+    writeFileSync(lockPath, `${JSON.stringify({
+      pid: process.pid,
+      host: hostname(),
+      started_at: '2026-11-10T18:00:00Z',
+      token: '1'.repeat(32),
+      boot_id: '00000000-0000-0000-0000-000000000000',
+      pid_ns: readLocalPidNs(),
+    })}\n`);
+    const rBoot = callCmd(d, 'start', mkStart(1120), { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+    expect(rBoot.code).toBe(0);
+    expect(rBoot.json).toMatchObject({
+      reason: 'recorded',
+      rev: 1,
+      detail: { warnings: ['reclaimed stale lock (boot-changed)'] },
+    });
+    expect(existsSync(lockPath)).toBe(false);
+
+    if (readLocalPidNs() !== null) {
+      const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8' });
+      const nsLockBytes = `${JSON.stringify({
+        pid: deadChild.pid,
+        host: hostname(),
+        started_at: '2026-11-10T18:00:00Z',
+        token: '2'.repeat(32),
+        boot_id: readLocalBootId(),
+        pid_ns: 'pid:[9999999999]',
+      })}\n`;
+      writeFileSync(lockPath, nsLockBytes);
+      const rNs = callCmd(d, 'checkpoint', { checkpoint_id: uid(1121), kind: 'stop' }, { env: { GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '0' } });
+      expect(rNs.code).toBe(4);
+      expect(rNs.json.reason).toBe('busy');
+      expect(readFileSync(lockPath, 'utf8')).toBe(nsLockBytes);
+      unlinkSync(lockPath);
+    }
+    expect(classifyLockHolder('', Date.now(), Date.now(), hostname(), 'b1', 'ns1').status).toBe('unverifiable');
+  });
+
+  // Value: protects=single-host state binding and legacy host:null compatibility; fails_when=start omits host, another host's state is accepted by write/replay/show/export/render, or host:null is backfilled; why_new=Track 88A T3; seam=CLI and stored state
+  test('start stamps host, cross-host refuses every write/replay/show/export/render without mutating state, and host:null stays null', () => {
+    const d = newDir();
+    const startPayload = mkStart(1130);
+    expect(callCmd(d, 'start', startPayload).json.reason).toBe('recorded');
+    const statePath = join(d, 'review-run-state.json');
+    const st = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(st.host).toBe(hostname());
+
+    // Edit to host: "other-host": every write command (including replay of identical start), show, export, and render refuse with cross-host
+    const otherHostState = { ...st, host: `other-${hostname()}` };
+    const otherBytes = `${JSON.stringify(otherHostState, null, 2)}\n`;
+    writeFileSync(statePath, otherBytes);
+    for (const [cmd, payload] of [
+      ['start', startPayload],
+      ['record pass', mkPassStarted(1131)],
+      ['record correction', { correction_id: uid(1132), target: { pass_id: uid(1131), voice_id: 'core', attempt_id: uid(1133), finding_id: 'F-1' }, resolution: 'fixed' }],
+      ['record gate', { gate_id: uid(1134), name: 'tests', result: 'passed', candidate: { commit: headSha, base: baseSha } }],
+      ['record audit', { audit_id: uid(1135), name: 'coverage', result: 'passed', details: { pct: 90, threshold: 80 }, candidate: { commit: headSha, base: baseSha } }],
+      ['checkpoint', { checkpoint_id: uid(1136), kind: 'stop' }],
+      ['finish', { outcome: 'prepared', base: baseSha }],
+    ] as const) {
+      const res = callCmd(d, cmd, payload);
+      expect(res.code, cmd).toBe(1);
+      expect(res.json, cmd).toMatchObject({
+        command: cmd,
+        status: 'refused',
+        reason: 'cross-host',
+        rev: 1,
+        detail: { expected_host: `other-${hostname()}`.slice(0, 80), actual_host: hostname().slice(0, 80) },
+      });
+      expect(readFileSync(statePath, 'utf8')).toBe(otherBytes);
+    }
+    for (const roArgs of [
+      ['show', '--dir', d],
+      ['export', '--dir', d],
+      ['render', '--dir', d, '--input', writeJson(d, 'render-in.json', { output: 'full-receipt' })],
+    ]) {
+      const res = runCli(roArgs);
+      expect(res.code, roArgs[0]).toBe(1);
+      expect(res.json, roArgs[0]).toMatchObject({
+        command: roArgs[0],
+        status: 'refused',
+        reason: 'cross-host',
+        rev: 1,
+      });
+      expect(readFileSync(statePath, 'utf8')).toBe(otherBytes);
+    }
+
+    // host: null records, replays, and keeps null
+    const nullHostState = { ...st, host: null };
+    writeFileSync(statePath, `${JSON.stringify(nullHostState, null, 2)}\n`);
+    expect(callCmd(d, 'start', startPayload).json.reason).toBe('replayed');
+    expect(callCmd(d, 'checkpoint', { checkpoint_id: uid(1137), kind: 'stop' }).json.reason).toBe('recorded');
+    expect(runCli(['show', '--dir', d]).code).toBe(0);
+    expect(runCli(['export', '--dir', d]).code).toBe(0);
+    const afterNullWrite = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(afterNullWrite.host).toBeNull();
+  });
+
+  // Value: protects=moving a corrupt state aside at start when writer ordering is known and preserving corrupt/newer-schema bytes otherwise; fails_when=start fails to move garbage or older/equal/null-writer corrupt states, overwrites an existing corrupt backup, moves on invalid start input or newer-schema, or loses original state on failed second rename; why_new=Track 88A T4; seam=CLI and node:fs renameSync mock
+  test('start moves a corrupt state aside when writer ordering is known and restores on failed second rename', () => {
+    expect(writerOrderKnown(null, null)).toBe(true);
+    expect(writerOrderKnown(undefined, null)).toBe(true);
+    expect(writerOrderKnown('0.86.1', '0.86.1')).toBe(true);
+    expect(writerOrderKnown('0.86.1', null)).toBe(false);
+    expect(writerOrderKnown('9007199254740993.0.0', '0.86.1')).toBe(false);
+
+    const verFile = join(baseTmp, 'ver-move-aside');
+    writeFileSync(verFile, '0.86.1\n');
+    const opts = { versionPath: verFile };
+
+    const d = newDir();
+    const statePath = join(d, 'review-run-state.json');
+
+    // 1. start on garbage JSON moves it aside and records rev 1; a second corrupt start in the same second gets a distinct name
+    const garbage1 = '{not valid json 1\n';
+    writeFileSync(statePath, garbage1);
+    const r1 = callCmd(d, 'start', mkStart(1140), opts);
+    expect(r1.code).toBe(0);
+    expect(r1.json).toMatchObject({ reason: 'recorded', rev: 1 });
+    const moved1 = r1.json.detail.moved_aside as string;
+    expect(moved1).toMatch(/^review-run-state\.json\.corrupt-\d{8}T\d{6}Z-[0-9a-f]{8}$/);
+    expect(readFileSync(join(d, moved1), 'utf8')).toBe(garbage1);
+    const validBase = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(validBase.rev).toBe(1);
+
+    const garbage2 = '{not valid json 2\n';
+    writeFileSync(statePath, garbage2);
+    const r2 = callCmd(d, 'start', mkStart(1141), opts);
+    expect(r2.code).toBe(0);
+    const moved2 = r2.json.detail.moved_aside as string;
+    expect(moved2).toMatch(/^review-run-state\.json\.corrupt-\d{8}T\d{6}Z-[0-9a-f]{8}$/);
+    expect(moved2).not.toBe(moved1);
+    expect(readFileSync(join(d, moved1), 'utf8')).toBe(garbage1);
+    expect(readFileSync(join(d, moved2), 'utf8')).toBe(garbage2);
+
+    // 2. start on a v1 state with an unknown key and older, equal, or null writer moves it aside
+    for (const [idx, writer] of (['0.85.0', '0.86.1', null] as const).entries()) {
+      const corruptV1 = JSON.stringify({ ...validBase, writer, unknown_key: idx });
+      writeFileSync(statePath, corruptV1);
+      const res = callCmd(d, 'start', mkStart(1142 + idx), opts);
+      expect(res.code, String(writer)).toBe(0);
+      expect(res.json.reason).toBe('recorded');
+      expect(res.json.rev).toBe(1);
+      const movedName = res.json.detail.moved_aside as string;
+      expect(movedName).toMatch(/^review-run-state\.json\.corrupt-\d{8}T\d{6}Z-[0-9a-f]{8}$/);
+      expect(readFileSync(join(d, movedName), 'utf8')).toBe(corruptV1);
+    }
+
+    // 3. start with invalid input on a corrupt state returns invalid-input and moves nothing
+    const beforeInvalid = '{corrupt-stay-put\n';
+    writeFileSync(statePath, beforeInvalid);
+    const movedBeforeInvalid = readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-')).sort();
+    const rInvalid = callCmd(d, 'start', { run_id: 'bad' }, opts);
+    expect(rInvalid.code).toBe(1);
+    expect(rInvalid.json.reason).toBe('invalid-input');
+    expect(readFileSync(statePath, 'utf8')).toBe(beforeInvalid);
+    expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-')).sort()).toEqual(movedBeforeInvalid);
+
+    // 4. start on schema v2, and on an unknown key with a newer writer, returns newer-schema and moves nothing
+    for (const newerBytes of [
+      JSON.stringify({ ...validBase, schema: 'review-run-state/v2' }),
+      JSON.stringify({ ...validBase, writer: '0.87.0', unknown_future: true }),
+    ]) {
+      writeFileSync(statePath, newerBytes);
+      const rNewer = callCmd(d, 'start', mkStart(1150), opts);
+      expect(rNewer.code).toBe(1);
+      expect(rNewer.json.reason).toBe('newer-schema');
+      expect(readFileSync(statePath, 'utf8')).toBe(newerBytes);
+      expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-')).sort()).toEqual(movedBeforeInvalid);
+    }
+
+    // 5. Failed second rename (tmpPath -> statePath) returns unwritable and restores the original corrupt file
+    const restoreCorruptBytes = '{corrupt-restore-on-rename-fault\n';
+    writeFileSync(statePath, restoreCorruptBytes);
+    const startFile = writeJson(d, 'start-fault.json', mkStart(1155));
+    const faultScript = `import { mock } from 'bun:test'; const fs = {...await import('node:fs')};
+      mock.module('node:fs', () => ({...fs, renameSync(a, b) {
+        if (String(a).includes('review-run-state.json.tmp-')) {
+          throw Object.assign(new Error('injected rename failure'), { code: 'EIO', syscall: 'rename' });
+        }
+        return fs.renameSync(a, b);
+      }}));
+      const { executeCommand } = await import(${JSON.stringify(join(REPO_ROOT, 'src/review-state/store.ts'))});
+      console.log(JSON.stringify(executeCommand('start', ${JSON.stringify(d)}, ${JSON.stringify(startFile)}, ${JSON.stringify(repo)}, process.env, ${JSON.stringify(verFile)})));`;
+    const rFault = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', '-e', faultScript], { encoding: 'utf8' });
+    expect(rFault.status, rFault.stderr).toBe(0);
+    const faultRes = JSON.parse(rFault.stdout);
+    expect(faultRes.exitCode).toBe(3);
+    expect(faultRes.reason).toBe('unwritable');
+    expect(readFileSync(statePath, 'utf8')).toBe(restoreCorruptBytes);
+    expect(readdirSync(d).filter((n) => n.startsWith('review-run-state.json.corrupt-')).sort()).toEqual(movedBeforeInvalid);
   });
 });
 

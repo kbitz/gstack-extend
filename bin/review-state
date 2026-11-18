@@ -1,3 +1,8 @@
 #!/bin/sh
 # Internal review-and-prep run-state helper. Upstream gstack remains unmodified.
+if ! command -v bun >/dev/null 2>&1; then
+  printf '%s\n' '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"runtime-missing","message":"bun not found on PATH","trace":null},"fix":"Rerun the identical command once (replay makes a rerun safe); if it fails again, continue inline (D1) and keep the trace file named in detail.trace.","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}'
+  printf '%s\n' 'ERROR INTERNAL_ERROR: bun not found on PATH' 'FIX: Rerun the identical command once (replay makes a rerun safe); if it fails again, continue inline (D1) and keep the trace file named in detail.trace.' >&2
+  exit 5
+fi
 exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/review-state/cli.ts" "$@"
