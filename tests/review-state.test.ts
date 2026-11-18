@@ -381,6 +381,7 @@ describe('bin/review-state', () => {
     const h = runCli(['--help'], { cwd: empty });
     expect(h.code).toBe(0);
     expect(h.out).toContain('Experimental until Track 79A');
+    expect(h.out).toContain('bin/review-state full-review-record WORKSPACE DIR write|check KIND FILE|BOUNDARY');
     const helpReasons = [...h.out.matchAll(/^ {2}([a-z-]+) \(status=/gm)].map((m) => m[1]);
     expect(helpReasons).toEqual(REASON_TABLE.map((r) => r.reason));
     for (const sub of [['start', '--help'], ['record', 'pass', '--help'], ['checkpoint', '-h'], ['finish', '--help']]) {
@@ -5831,5 +5832,618 @@ describe('bin/review-state', () => {
     expect(rBogus.json.command).toBe('record');
     expect(rBogus.json.detail).toEqual({ message: 'unknown command "record"' });
     expect(readdirSync(d3).filter((f) => f.startsWith('request-record-'))).toEqual([]);
+  });
+});
+
+describe('full-review-record', () => {
+  const MISSED_NEXT_CYCLE = 'FULL_REVIEW_RECORD: missed cycle-1-baseline at next-cycle';
+  const REFUSED_PREFIX = 'FULL_REVIEW_RECORD: refused cycle-1-baseline:';
+  const REFUSED_UNREADABLE = 'FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (run-state unreadable)';
+  const REFUSED_PROBE = 'FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (0123456789ab)';
+  const POLICY_RUN_STATE = 'review-and-prep-policy/v1; run-state=record';
+
+  let s1 = '';
+  let dirtySnap = '';
+
+  beforeAll(() => {
+    const baseTree = git(repo, ['rev-parse', `${baseSha}^{tree}`]);
+    s1 = git(repo, ['commit-tree', treeSha, '-p', headSha, '-m', 's1']);
+    dirtySnap = git(repo, ['commit-tree', baseTree, '-p', headSha, '-m', 'dirty']);
+  });
+
+  const writeInput = (data: unknown): string => writeJson(baseTmp, `frec-in-${++dirSeq}.json`, data);
+
+  const runRecord = (action: string, kind: string, arg: string, dir: string, extraEnv?: NodeJS.ProcessEnv) =>
+    runCli(['full-review-record', repo, dir, action, kind, arg], extraEnv ? { env: extraEnv } : {});
+
+  const baseRecord = (overrides: Record<string, unknown> = {}) => ({
+    schema: 'review-and-prep-cycle-1-baseline/v1',
+    provenance: 'write-point',
+    b: headSha,
+    t: treeSha,
+    snapshot: s1,
+    snapshot_tree_equals_t: true,
+    stages: [{ name: 'core', result: 'completed' }],
+    probes: [{ id: '0123456789ab', key: 'cli:bun test', outcome: 'passed' }],
+    completed: 'true',
+    ...overrides,
+  });
+
+  test('missed write caught at before-fix writes cleanly at write-point', () => {
+    const evDir = newDir();
+    const c1 = runRecord('check', 'cycle-1-baseline', 'before-fix', evDir);
+    expect(c1.code).toBe(1);
+    expect(c1.out.trim()).toBe('FULL_REVIEW_RECORD: missing cycle-1-baseline');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.missed.json'))).toBe(false);
+
+    const w = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir);
+    expect(w.code, w.err).toBe(0);
+    expect(w.out.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+
+    const c2 = runRecord('check', 'cycle-1-baseline', 'before-fix', evDir);
+    expect(c2.code, c2.err).toBe(0);
+    expect(c2.out.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-baseline; provenance=write-point; completed=true');
+  });
+
+  test('missed write past the window locks out write-point and requires snapshot-bound evidence for late write', () => {
+    const evDir = newDir();
+    const cNext = runRecord('check', 'cycle-1-baseline', 'next-cycle', evDir);
+    expect(cNext.code).toBe(1);
+    expect(cNext.out.trim()).toBe(MISSED_NEXT_CYCLE);
+    const missPath = join(evDir, 'cycle-1-baseline.missed.json');
+    expect(existsSync(missPath)).toBe(true);
+
+    const wPoint = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir);
+    expect(wPoint.code).toBe(3);
+    expect(wPoint.out.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: missed at next-cycle');
+
+    const wNoSources = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late' })), evDir);
+    expect(wNoSources.code).toBe(3);
+    expect(wNoSources.out.trim()).toContain(REFUSED_PREFIX);
+
+    const outsideFile = join(baseTmp, `outside-${++dirSeq}.txt`);
+    writeFileSync(outsideFile, `reviewed snapshot ${s1}\n`);
+    const wOutside = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: [outsideFile] })), evDir);
+    expect(wOutside.code).toBe(3);
+    expect(wOutside.out.trim()).toContain('outside the evidence directory');
+
+    const noSnapFile = join(evDir, 'review-no-snap.txt');
+    writeFileSync(noSnapFile, 'reviewed some other commit\n');
+    const wNoSnap = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['review-no-snap.txt'] })), evDir);
+    expect(wNoSnap.code).toBe(3);
+    expect(wNoSnap.out.trim()).toContain('does not name the snapshot');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    const evFile = join(evDir, 'review-cycle-1.txt');
+    writeFileSync(evFile, `core review complete for snapshot ${s1}\n`);
+    const wLate = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['review-cycle-1.txt'] })), evDir);
+    expect(wLate.code, wLate.err).toBe(0);
+    expect(wLate.out.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=late; sha256=[0-9a-f]{64}$/);
+
+    const written = JSON.parse(readFileSync(join(evDir, 'cycle-1-baseline.json'), 'utf8'));
+    expect(written.sources).toBeUndefined();
+    expect(written.late).toEqual({
+      boundary: 'next-cycle',
+      miss_sha256: sha256(readFileSync(missPath)),
+      sources: [{ path: 'review-cycle-1.txt', sha256: sha256(readFileSync(evFile)) }],
+    });
+
+    const cStop = runRecord('check', 'cycle-1-baseline', 'stop', evDir);
+    expect(cStop.code, cStop.err).toBe(0);
+    expect(cStop.out.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-baseline; provenance=late; completed=true');
+  });
+
+  test('an unrepaired miss reports missed at stop with no record file', () => {
+    const evDir = newDir();
+    expect(runRecord('check', 'cycle-1-baseline', 'next-cycle', evDir).code).toBe(1);
+    const cStop = runRecord('check', 'cycle-1-baseline', 'stop', evDir);
+    expect(cStop.code).toBe(1);
+    expect(cStop.out.trim()).toBe(MISSED_NEXT_CYCLE);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+  });
+
+  test('late write without a next-cycle miss record is refused', () => {
+    const evDir = newDir();
+    writeFileSync(join(evDir, 'review-cycle-1.txt'), `snapshot ${s1}\n`);
+    const lateInput = writeInput(baseRecord({ provenance: 'late', sources: ['review-cycle-1.txt'] }));
+
+    const wNone = runRecord('write', 'cycle-1-baseline', lateInput, evDir);
+    expect(wNone.code).toBe(3);
+    expect(wNone.out.trim()).toContain(REFUSED_PREFIX);
+
+    writeFileSync(
+      join(evDir, 'cycle-1-baseline.missed.json'),
+      JSON.stringify({ schema: 'review-and-prep-record-miss/v1', kind: 'cycle-1-baseline', boundary: 'stop', detected_at: '2026-11-09T00:00:00.000Z' }),
+    );
+    const wStopBoundary = runRecord('write', 'cycle-1-baseline', lateInput, evDir);
+    expect(wStopBoundary.code).toBe(3);
+    expect(wStopBoundary.out.trim()).toContain(REFUSED_PREFIX);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+  });
+
+  test('second write prints exists, exits 2 and leaves the file unchanged', () => {
+    const evDir = newDir();
+    const w1 = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir);
+    expect(w1.code, w1.err).toBe(0);
+    const recFile = join(evDir, 'cycle-1-baseline.json');
+    const before = readFileSync(recFile);
+
+    const w2 = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: 'false', cause: 'reviewer-incomplete: red-team' })), evDir);
+    expect(w2.code).toBe(2);
+    expect(w2.out.trim()).toBe('FULL_REVIEW_RECORD: exists cycle-1-baseline');
+    expect(readFileSync(recFile)).toEqual(before);
+  });
+
+  test('validation rejects missing keys, boolean completed and tree disagreement, and flags corrupt files as unreadable', () => {
+    const evDir = newDir();
+    const noStages = baseRecord();
+    delete (noStages as Record<string, unknown>).stages;
+    const rMissing = runRecord('write', 'cycle-1-baseline', writeInput(noStages), evDir);
+    expect(rMissing.code).toBe(3);
+    expect(rMissing.out.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: stages');
+
+    const rBool = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: true })), evDir);
+    expect(rBool.code).toBe(3);
+    expect(rBool.out.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: completed');
+
+    const rTree = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ snapshot: dirtySnap, snapshot_tree_equals_t: true })), evDir);
+    expect(rTree.code).toBe(3);
+    expect(rTree.out.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: snapshot_tree_equals_t');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    writeFileSync(join(evDir, 'cycle-1-baseline.json'), '{not valid json\n');
+    const cCorrupt = runRecord('check', 'cycle-1-baseline', 'stop', evDir);
+    expect(cCorrupt.code).toBe(1);
+    expect(cCorrupt.out.trim()).toBe('FULL_REVIEW_RECORD: unreadable cycle-1-baseline: json');
+  });
+
+  test('record I/O failures are explicit and never report a persisted miss', () => {
+    const evDir = newDir();
+    const absent = join(evDir, 'absent');
+    const miss = runRecord('check', 'cycle-1-baseline', 'next-cycle', absent);
+    expect(miss.code).toBe(1);
+    expect(miss.out.trim()).toBe('FULL_REVIEW_RECORD: unreadable cycle-1-baseline: miss record (ENOENT)');
+    expect(miss.err).toBe('');
+    expect(existsSync(join(absent, 'cycle-1-baseline.missed.json'))).toBe(false);
+    const write = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), absent);
+    expect(write.code).toBe(3);
+    expect(write.out.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: record write (ENOENT)');
+    expect(write.err).toBe('');
+  });
+
+  test('non-object miss records fail closed with structured output', () => {
+    const evDir = newDir();
+    const missPath = join(evDir, 'cycle-1-baseline.missed.json');
+    for (const value of [null, true, 1, 'invalid', []]) {
+      const bytes = JSON.stringify(value);
+      writeFileSync(missPath, bytes);
+      const check = runRecord('check', 'cycle-1-baseline', 'next-cycle', evDir);
+      expect(check.code).toBe(1);
+      expect(check.out.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-baseline at unreadable');
+      expect(check.err).toBe('');
+      const write = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir);
+      expect(write.code).toBe(3);
+      expect(write.out).toContain('refused cycle-1-baseline: missed at unreadable');
+      expect(readFileSync(missPath, 'utf8')).toBe(bytes);
+      expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+    }
+  });
+
+  test('late records cannot use their own input or generated record files as sources', () => {
+    const evDir = newDir();
+    expect(runRecord('check', 'cycle-1-baseline', 'next-cycle', evDir).code).toBe(1);
+    const input = join(evDir, 'assembled.json');
+    writeFileSync(input, JSON.stringify(baseRecord({ provenance: 'late', sources: ['assembled.json'] })));
+    const self = runRecord('write', 'cycle-1-baseline', input, evDir);
+    expect(self.code).toBe(3);
+    expect(self.out).toContain('is not review evidence');
+    writeFileSync(join(evDir, 'cycle-1-fix-review.json'), JSON.stringify({ cycle_2_snapshot: s1 }));
+    const generated = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['cycle-1-fix-review.json'] })), evDir);
+    expect(generated.code).toBe(3);
+    expect(generated.out).toContain('is not review evidence');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+    writeFileSync(join(evDir, '..notes.txt'), `core reviewed ${s1}\n`);
+    const retained = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ provenance: 'late', sources: ['..notes.txt'] })), evDir);
+    expect(retained.code, retained.err).toBe(0);
+  });
+
+  test('completion flags reject inconsistent probe outcomes', () => {
+    const evDir = newDir();
+    for (const outcome of ['blocked', 'inconclusive', 'not-run', 'reproduced']) {
+      const probes = [{ id: '0123456789ab', key: 'cli:bun test', outcome, fingerprint: 'app.ts:1:contract' }];
+      const baseline = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ probes })), evDir);
+      expect(baseline.code).toBe(3);
+      expect(baseline.out).toContain('invalid cycle-1-baseline: completed');
+      if (outcome !== 'reproduced') {
+        const fix = runRecord('write', 'cycle-1-fix-review', writeInput({
+          schema: 'review-and-prep-cycle-1-fix-review/v1', provenance: 'write-point',
+          cycle_1_snapshot: s1, cycle_2_snapshot: s1, scope: `delta from ${s1}`,
+          stages: [{ name: 'core', result: 'completed' }], probes, fix_reviewed: 'true',
+        }), evDir);
+        expect(fix.code).toBe(3);
+        expect(fix.out).toContain('invalid cycle-1-fix-review: fix_reviewed');
+      }
+    }
+    const pending = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord({ completed: 'pending-fix-review', cause: 'no reproduced probe' })), evDir);
+    expect(pending.code).toBe(3);
+    expect(pending.out).toContain('invalid cycle-1-baseline: completed');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+    expect(existsSync(join(evDir, 'cycle-1-fix-review.json'))).toBe(false);
+  });
+
+  test('cycle-1-fix-review supports before-fix, next-cycle and late write naming cycle_2_snapshot', () => {
+    const evDir = newDir();
+    const s2 = dirtySnap;
+    const fixRecord = (overrides: Record<string, unknown> = {}) => ({
+      schema: 'review-and-prep-cycle-1-fix-review/v1',
+      provenance: 'write-point',
+      cycle_1_snapshot: s1,
+      cycle_2_snapshot: s2,
+      scope: `delta from ${s1}`,
+      stages: [{ name: 'core', result: 'completed' }],
+      probes: [{ id: '0123456789ab', key: 'cli:bun test', outcome: 'passed', evidence: 'probe-rerun.txt' }],
+      fix_reviewed: 'true',
+      ...overrides,
+    });
+
+    expect(runRecord('check', 'cycle-1-fix-review', 'before-fix', evDir).out.trim()).toBe('FULL_REVIEW_RECORD: missing cycle-1-fix-review');
+    expect(runRecord('check', 'cycle-1-fix-review', 'next-cycle', evDir).out.trim()).toBe('FULL_REVIEW_RECORD: missed cycle-1-fix-review at next-cycle');
+
+    writeFileSync(join(evDir, 'cycle-1-only.txt'), `only names ${s1}\n`);
+    const wWrongSnap = runRecord('write', 'cycle-1-fix-review', writeInput(fixRecord({ provenance: 'late', sources: ['cycle-1-only.txt'] })), evDir);
+    expect(wWrongSnap.code).toBe(3);
+    expect(wWrongSnap.out.trim()).toContain('does not name the snapshot');
+
+    writeFileSync(join(evDir, 'cycle-2-review.txt'), `delta from ${s1} to ${s2} reviewed\n`);
+    const wLate = runRecord('write', 'cycle-1-fix-review', writeInput(fixRecord({ provenance: 'late', sources: ['cycle-2-review.txt'] })), evDir);
+    expect(wLate.code, wLate.err).toBe(0);
+    expect(wLate.out.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-fix-review; provenance=late; sha256=[0-9a-f]{64}$/);
+
+    const cStop = runRecord('check', 'cycle-1-fix-review', 'stop', evDir);
+    expect(cStop.code, cStop.err).toBe(0);
+    expect(cStop.out.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-fix-review; provenance=late; fix-reviewed=true');
+  });
+
+  test('cycle-1-fix-review accepts scope "full" and rejects near-miss scopes', () => {
+    const evDir = newDir();
+    const fixRecord = (scope: string) => ({
+      schema: 'review-and-prep-cycle-1-fix-review/v1',
+      provenance: 'write-point',
+      cycle_1_snapshot: s1,
+      cycle_2_snapshot: s1,
+      scope,
+      stages: [{ name: 'core', result: 'completed' }],
+      probes: [{ id: '0123456789ab', key: 'cli:bun test', outcome: 'passed', evidence: 'probe-rerun.txt' }],
+      fix_reviewed: 'true',
+    });
+
+    for (const badScope of ['Full', 'full ', `full from ${s1}`, 'partial', '']) {
+      const r = runRecord('write', 'cycle-1-fix-review', writeInput(fixRecord(badScope)), evDir);
+      expect(r.code, badScope).toBe(3);
+      expect(r.out.trim(), badScope).toBe('FULL_REVIEW_RECORD: invalid cycle-1-fix-review: scope');
+      expect(existsSync(join(evDir, 'cycle-1-fix-review.json')), badScope).toBe(false);
+    }
+
+    const w = runRecord('write', 'cycle-1-fix-review', writeInput(fixRecord('full')), evDir);
+    expect(w.code, w.err).toBe(0);
+    expect(w.out.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-fix-review; provenance=write-point; sha256=[0-9a-f]{64}$/);
+    expect(existsSync(join(evDir, 'cycle-1-fix-review.json'))).toBe(true);
+
+    const c = runRecord('check', 'cycle-1-fix-review', 'stop', evDir);
+    expect(c.code, c.err).toBe(0);
+    expect(c.out.trim()).toBe('FULL_REVIEW_RECORD: present cycle-1-fix-review; provenance=write-point; fix-reviewed=true');
+  });
+
+  test('REVIEW_STATE_DIR precheck enforces cycle-1 pass, required voices and probe gates on write-point and late writes', () => {
+    const evDir = newDir();
+    const absentDir = newDir();
+    const wAbsent = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: absentDir });
+    expect(wAbsent.code).toBe(3);
+    expect(wAbsent.out.trim()).toBe(REFUSED_UNREADABLE);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    const garbageDir = newDir();
+    writeFileSync(join(garbageDir, 'review-run-state.json'), '{not-json\n');
+    const wGarbage = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: garbageDir });
+    expect(wGarbage.code).toBe(3);
+    expect(wGarbage.out.trim()).toBe(REFUSED_UNREADABLE);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    expect(callCmd(evDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000001',
+      base: headSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+    }).code).toBe(0);
+    const wNoPass = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+    expect(wNoPass.code).toBe(3);
+    expect(wNoPass.out.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (cycle-1-pass)');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000002',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['core'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    const wNoVoice = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+    expect(wNoVoice.code).toBe(3);
+    expect(wNoVoice.out.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (core)');
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000002',
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: '019315e0-0000-7000-8000-000000000003',
+      outcome: 'completed',
+      findings: [],
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000002',
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: '019315e0-0000-7000-8000-000000000003',
+    }).code).toBe(0);
+    const wNoProbe = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+    expect(wNoProbe.code).toBe(3);
+    expect(wNoProbe.out.trim()).toBe(REFUSED_PROBE);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    expect(callCmd(evDir, 'record gate', {
+      gate_id: '019315e0-0000-7000-8000-000000000004',
+      name: 'probe-0123456789ab',
+      result: 'passed',
+      candidate: { commit: headSha, base: headSha },
+    }).code).toBe(0);
+    const wOk = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+    expect(wOk.code, wOk.err).toBe(0);
+    expect(wOk.out.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(true);
+
+    const lateDir = newDir();
+    expect(callCmd(lateDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000011',
+      base: headSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+    }).code).toBe(0);
+    expect(callCmd(lateDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000012',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['core'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    expect(callCmd(lateDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000012',
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: '019315e0-0000-7000-8000-000000000013',
+      outcome: 'completed',
+      findings: [],
+    }).code).toBe(0);
+    expect(callCmd(lateDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000012',
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: '019315e0-0000-7000-8000-000000000013',
+    }).code).toBe(0);
+    expect(runRecord('check', 'cycle-1-baseline', 'next-cycle', lateDir).code).toBe(1);
+    writeFileSync(join(lateDir, 'review-cycle-1.txt'), `core review complete for snapshot ${s1}\n`);
+    const wLateRefused = runRecord(
+      'write',
+      'cycle-1-baseline',
+      writeInput(baseRecord({ provenance: 'late', sources: ['review-cycle-1.txt'] })),
+      lateDir,
+      { REVIEW_STATE_DIR: lateDir },
+    );
+    expect(wLateRefused.code).toBe(3);
+    expect(wLateRefused.out.trim()).toBe(REFUSED_PROBE);
+    expect(existsSync(join(lateDir, 'cycle-1-baseline.json'))).toBe(false);
+  });
+
+  test('interrupted cycle-1 session recovers via show and checkpoint resume without continuation=full', () => {
+    const evDir = newDir();
+    expect(callCmd(evDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000021',
+      base: headSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+      session_id: 'extend-019315e0-0000-7000-8000-000000000022',
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000023',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['core'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000023',
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: '019315e0-0000-7000-8000-000000000024',
+      outcome: 'completed',
+      findings: [],
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000023',
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: '019315e0-0000-7000-8000-000000000024',
+    }).code).toBe(0);
+
+    const baselineInput = writeInput(baseRecord());
+    const wInterrupted = runRecord('write', 'cycle-1-baseline', baselineInput, evDir, { REVIEW_STATE_DIR: evDir });
+    expect(wInterrupted.code).toBe(3);
+    expect(wInterrupted.out.trim()).toBe(REFUSED_PROBE);
+
+    const showBefore = runCli(['show', '--dir', evDir, '--base', headSha]);
+    expect(showBefore.code).toBe(0);
+    expect(showBefore.json.lifecycle).toBe('open');
+    expect(showBefore.json.last_checkpoint).toBeNull();
+    expect(showBefore.json.gates.some((g: { name: string }) => g.name.startsWith('probe-'))).toBe(false);
+
+    expect(callCmd(evDir, 'checkpoint', {
+      checkpoint_id: '019315e0-0000-7000-8000-000000000025',
+      kind: 'resume',
+      base: headSha,
+      session_id: 'extend-019315e0-0000-7000-8000-000000000026',
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record gate', {
+      gate_id: '019315e0-0000-7000-8000-000000000027',
+      name: 'probe-0123456789ab',
+      result: 'passed',
+      candidate: { commit: headSha, base: headSha },
+    }).code).toBe(0);
+
+    const wRecovered = runRecord('write', 'cycle-1-baseline', baselineInput, evDir, { REVIEW_STATE_DIR: evDir });
+    expect(wRecovered.code, wRecovered.err).toBe(0);
+    expect(wRecovered.out.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+
+    const showAfter = runCli(['show', '--dir', evDir, '--base', headSha]);
+    expect(showAfter.code).toBe(0);
+    expect(showAfter.json.segments[0]).toMatchObject({ segment: 1, end: 'interrupted' });
+    expect(showAfter.json.segments[1]).toMatchObject({ segment: 2, end: null });
+  });
+
+  test('full-review-record --help and -h exit 0, document usage, kinds, boundaries, REVIEW_STATE_DIR, verbs and exit codes, and write nothing', () => {
+    const empty = newDir();
+    for (const flag of ['--help', '-h']) {
+      const h = runCli(['full-review-record', flag], { cwd: empty });
+      expect(h.code).toBe(0);
+      expect(h.err).toBe('');
+      expect(h.out).toContain('bin/review-state full-review-record WORKSPACE DIR write KIND FILE');
+      expect(h.out).toContain('bin/review-state full-review-record WORKSPACE DIR check KIND BOUNDARY');
+      expect(h.out).toContain('cycle-1-baseline');
+      expect(h.out).toContain('cycle-1-fix-review');
+      expect(h.out).toContain('before-fix');
+      expect(h.out).toContain('next-cycle');
+      expect(h.out).toContain('stop');
+      expect(h.out).toContain('REVIEW_STATE_DIR');
+      expect(h.out).toContain('not a review-state result envelope');
+      for (const verb of ['written', 'present', 'missing', 'missed', 'unreadable', 'exists', 'invalid', 'refused']) {
+        expect(h.out).toContain(`FULL_REVIEW_RECORD: ${verb} `);
+      }
+      expect(h.out).toContain('Exit codes: 0 written|present · 1 missing|missed|unreadable · 2 exists · 3 invalid|refused');
+    }
+    expect(readdirSync(empty)).toEqual([]);
+  });
+
+  test('argument errors keep the program messages and exit 3', () => {
+    const evDir = newDir();
+    const rMissing = runCli(['full-review-record', repo, evDir, 'check']);
+    expect(rMissing.code).toBe(3);
+    expect(rMissing.err).toBe('');
+    expect(rMissing.out.trim()).toBe('FULL_REVIEW_RECORD: invalid undefined: kind');
+
+    const rKind = runRecord('check', 'bogus', 'stop', evDir);
+    expect(rKind.code).toBe(3);
+    expect(rKind.err).toBe('');
+    expect(rKind.out.trim()).toBe('FULL_REVIEW_RECORD: invalid bogus: kind');
+
+    const rAction = runRecord('delete', 'cycle-1-baseline', 'stop', evDir);
+    expect(rAction.code).toBe(3);
+    expect(rAction.err).toBe('');
+    expect(rAction.out.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: action');
+
+    const rBoundary = runRecord('check', 'cycle-1-baseline', 'later', evDir);
+    expect(rBoundary.code).toBe(3);
+    expect(rBoundary.err).toBe('');
+    expect(rBoundary.out.trim()).toBe('FULL_REVIEW_RECORD: invalid cycle-1-baseline: boundary');
+  });
+
+  test('launcher smoke through BIN_PATH returns stdout lines and exit codes 1, 0, 2 and 3', () => {
+    const evDir = newDir();
+    const inFile = writeInput(baseRecord());
+    const spawnRec = (args: string[]) =>
+      spawnSync(BIN_PATH, ['full-review-record', repo, evDir, ...args], { encoding: 'utf8', env: GIT_ENV });
+
+    const rMissing = spawnRec(['check', 'cycle-1-baseline', 'before-fix']);
+    expect(rMissing.status).toBe(1);
+    expect(rMissing.stderr).toBe('');
+    expect(rMissing.stdout.trim()).toBe('FULL_REVIEW_RECORD: missing cycle-1-baseline');
+
+    const rWritten = spawnRec(['write', 'cycle-1-baseline', inFile]);
+    expect(rWritten.status).toBe(0);
+    expect(rWritten.stderr).toBe('');
+    expect(rWritten.stdout.trim()).toMatch(/^FULL_REVIEW_RECORD: written cycle-1-baseline; provenance=write-point; sha256=[0-9a-f]{64}$/);
+
+    const rExists = spawnRec(['write', 'cycle-1-baseline', inFile]);
+    expect(rExists.status).toBe(2);
+    expect(rExists.stderr).toBe('');
+    expect(rExists.stdout.trim()).toBe('FULL_REVIEW_RECORD: exists cycle-1-baseline');
+
+    const rInvalid = spawnRec(['check', 'bogus', 'stop']);
+    expect(rInvalid.status).toBe(3);
+    expect(rInvalid.stderr).toBe('');
+    expect(rInvalid.stdout.trim()).toBe('FULL_REVIEW_RECORD: invalid bogus: kind');
+  });
+
+  test('helper-built state with a corrupted stored-state field is refused as run-state unreadable and writes no record', () => {
+    const evDir = newDir();
+    expect(callCmd(evDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000031',
+      base: headSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000032',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['core'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000032',
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: '019315e0-0000-7000-8000-000000000033',
+      outcome: 'completed',
+      findings: [],
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000032',
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: '019315e0-0000-7000-8000-000000000033',
+    }).code).toBe(0);
+    expect(callCmd(evDir, 'record gate', {
+      gate_id: '019315e0-0000-7000-8000-000000000034',
+      name: 'probe-0123456789ab',
+      result: 'passed',
+      candidate: { commit: headSha, base: headSha },
+    }).code).toBe(0);
+
+    const statePath = join(evDir, 'review-run-state.json');
+    const raw = JSON.parse(readFileSync(statePath, 'utf8'));
+    raw.run.repo = 123;
+    writeFileSync(statePath, `${JSON.stringify(raw, null, 2)}\n`);
+    expect(validateStoredState(raw, statePath).ok).toBe(false);
+
+    const w = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), evDir, { REVIEW_STATE_DIR: evDir });
+    expect(w.code).toBe(3);
+    expect(w.err).toBe('');
+    expect(w.out.trim()).toBe(REFUSED_UNREADABLE);
+    expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
   });
 });

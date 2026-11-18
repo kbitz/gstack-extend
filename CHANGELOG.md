@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.100.0] - 2026-11-18
+
+### Changed
+
+- `bin/review-state` gains a `full-review-record` command, with its own `--help`, that writes and checks the cycle-1 full-review records `/review-and-prep` keeps in its evidence directory, and the skill now calls it in one line instead of carrying those checks as an inline program.
+- The new `bin/review-state full-review-record` command writes and checks cycle-1 full-review evidence.
+
 ## [0.99.0] - 2026-11-17
 
 ### Changed

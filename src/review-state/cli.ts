@@ -1,6 +1,7 @@
 import { isAbsolute, join } from 'node:path';
 import { buildHelp, executeBuild, type BuildOverride } from './build.ts';
 import { executeExport, EXPORT_SCHEMA } from './export.ts';
+import { FULL_REVIEW_RECORD_PREFIX, fullReviewRecordHelp, runFullReviewRecord } from './fence.ts';
 import { executeRender, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
 import { executeShow, SHOW_SCHEMA } from './show.ts';
 import { REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
@@ -22,11 +23,13 @@ Usage:
   bin/review-state show --dir DIR [--base SHA] [--wtree TOKEN]
   bin/review-state export --dir DIR
   bin/review-state render --dir DIR --input FILE
+  bin/review-state full-review-record WORKSPACE DIR write|check KIND FILE|BOUNDARY
   bin/review-state --version
   bin/review-state --help | -h | build --help | <command> --help
 
 show and export are read-only: no --input, no lock, and no state writes.
 render reads review-run-state.json without locking or modifying it and writes output files in --dir.
+full-review-record prints one FULL_REVIEW_RECORD: line with its own exit codes (full-review-record --help), and every /review-and-prep invocation calls it, not only under run-state=record.
 
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)
@@ -86,6 +89,16 @@ function emitResult(res: StoreResult, io: CliIo): number {
 
 export function main(argv: string[], io: CliIo): number {
   const env = io.env ?? process.env;
+  if (argv[0] === 'full-review-record') {
+    const restArgs = argv.slice(1);
+    if (restArgs.includes('--help') || restArgs.includes('-h')) {
+      io.stdout(fullReviewRecordHelp());
+      return 0;
+    }
+    const res = runFullReviewRecord(restArgs, env);
+    io.stdout(`${FULL_REVIEW_RECORD_PREFIX}${res.message}\n`);
+    return res.exitCode;
+  }
   if (argv[0] === 'build') {
     if (argv.includes('--help') || argv.includes('-h')) {
       io.stdout(buildHelp());
