@@ -1672,7 +1672,8 @@ receipt" means the full receipt (`full-receipt-<n>.md`), while every
 receipt comment in their exact grammar for orchestrator run-record readers.
 Per-cycle `Delegated part:` lines keep each line's twelve-segment grammar and
 the kept marker set, match what the review-state renderer already emits per
-pass (`docs/designs/review-run-state.md` D9; `src/review-state/render.ts:178-193`),
+pass (`docs/designs/review-run-state.md` D9 and `FIELD_FMT.delegatedParts` in
+`src/review-state/render.ts`),
 and change no case outcome, so no section version bumps (`## Versioning and compatibility`).
 Legacy receipts without `Full receipt:` continue to read as before. On another
 machine without the evidence directory, detail-dependent reuse (such as
