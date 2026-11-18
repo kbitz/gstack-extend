@@ -8,7 +8,7 @@ import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, buildHelp, buildRequest, FLAG_TABLES, parseDelegationLine, PASS_STATE_FLAGS, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
-import { FIELD_FMT, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
+import { allocateExclusiveFile, FIELD_FMT, isFreshForBinding, makeCtx, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, tilde, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, writerOrderKnown, WTREE_RE, type CommandName, type DelegationPolicy, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
 import { classifyLockHolder, readHelperVersion, readLocalBootId, readLocalPidNs } from '../src/review-state/store.ts';
@@ -382,7 +382,7 @@ describe('bin/review-state', () => {
     const empty = newDir();
     const h = runCli(['--help'], { cwd: empty });
     expect(h.code).toBe(0);
-    expect(h.out).toContain('Experimental until Track 79A');
+    expect(h.out).toContain('Experimental internal helper; /review-and-prep records its run state by default.');
     expect(h.out).toContain('bin/review-state full-review-record WORKSPACE DIR write|check KIND FILE|BOUNDARY');
     const helpReasons = [...h.out.matchAll(/^ {2}([a-z-]+) \(status=/gm)].map((m) => m[1]);
     expect(helpReasons).toEqual(REASON_TABLE.map((r) => r.reason));
@@ -1550,6 +1550,531 @@ describe('bin/review-state', () => {
     callCmd(dNeeds, 'start', mkStart(8));
     callCmd(dNeeds, 'finish', { outcome: 'needs-context', base: baseSha, stop_reason: 'missing spec' });
     expect(readFileSync(runRender(dNeeds, 'n-final.json', { output: 'final' }).json.files[0].path, 'utf8')).toContain('status: needs-context;');
+  });
+
+  // Value: protects=render field bounds, wrong types, final exit combinations, stale audit/gate selection, delegated fallback selection, correction folding, formatter refusal envelopes, summary normalization, allocateExclusiveFile collision/failure cleanup, UTF-8 metadata and tilde prefix boundaries; fails_when=any render input rule, derivation rule or exclusive file write cleanup regresses; why_new=Track 89A T6 (Criterion 4); seam=CLI, executeRender, FIELD_FMT, unresolvedFindings, allocateExclusiveFile, tilde
+  test('render covers remaining exit/field combinations, bounds, latest-selection, fallback, corrections, refusal envelopes, summary normalization, exclusive file allocation, UTF-8 metadata and tilde()', () => {
+    const runRender = (dir: string, name: string, payload: unknown, opts?: { env?: NodeJS.ProcessEnv }) =>
+      runCli(['render', '--dir', dir, '--input', writeJson(dir, name, payload)], opts);
+    const commentUrl = 'https://github.com/kbitz/gstack-extend/pull/240#issuecomment-2001';
+    const validPr = {
+      number: 240,
+      url: 'https://github.com/kbitz/gstack-extend/pull/240',
+      repo: 'kbitz/gstack-extend',
+      base_ref: 'origin/main',
+      head_repo: 'kbitz/gstack-extend',
+      head_branch: 'topic',
+    };
+    const autoLine = 'Auto-chosen (veto by replying on this PR): Keep existing name? → yes';
+
+    // 1. Field bounds, wrong types, output missing/unknown, and full_receipt / comment_file name patterns
+    const dBounds = newDir();
+    writeFileSync(join(dBounds, 'other.md'), 'other\n');
+    writeFileSync(join(dBounds, 'full-receipt-1.md'), 'receipt\n');
+    writeFileSync(join(dBounds, 'comment-receipt-1.md'), 'comment\n');
+    const otherRef = { path: 'other.md', sha256: sha256('other\n') };
+    const validFullRef = { path: 'full-receipt-1.md', sha256: sha256('receipt\n') };
+    const validComRef = { path: 'comment-receipt-1.md', sha256: sha256('comment\n') };
+    callCmd(dBounds, 'start', mkStart(701));
+    callCmd(dBounds, 'record gate', {
+      gate_id: uid(702), name: 'greptile', result: 'not-run',
+      candidate: { commit: headSha, base: baseSha },
+      details: { value: 'skipped — no root configuration; do not run it', run: null },
+    });
+    callCmd(dBounds, 'checkpoint', { checkpoint_id: uid(703), kind: 'ready', base: baseSha });
+
+    const fiftyOneSections = Array.from({ length: 51 }, () => otherRef);
+    const fiftyOneAuto = Array.from({ length: 51 }, (_, i) => `${autoLine} ${i}`);
+    for (const [name, payload, want] of [
+      ['missing-output.json', {}, { path: 'output', rule: 'missing-key', expected: 'full-receipt|comment|body|final' }],
+      ['unknown-output.json', { output: 'unknown' }, { path: 'output', rule: 'invalid-enum', expected: 'full-receipt|comment|body|final' }],
+      ['sections-too-many.json', { output: 'full-receipt', sections: fiftyOneSections }, { path: 'sections', rule: 'invalid-value', expected: 'array-0..50' }],
+      ['sections-not-array.json', { output: 'full-receipt', sections: 'not-array' }, { path: 'sections', rule: 'invalid-value', expected: 'array-0..50' }],
+      ['bad-full-name.json', { output: 'comment', full_receipt: otherRef }, { path: 'full_receipt.path', rule: 'invalid-value', expected: 'full-receipt-<n>.md' }],
+      ['bad-com-name.json', { output: 'final', full_receipt: validFullRef, comment_file: otherRef, comment_url: commentUrl }, { path: 'comment_file.path', rule: 'invalid-value', expected: 'comment-receipt-<n>.md' }],
+      ['save-empty.json', { output: 'final', save_before_shipping: '' }, { path: 'save_before_shipping', rule: 'invalid-value', expected: 'string-1..500|null' }],
+      ['save-too-long.json', { output: 'final', save_before_shipping: 's'.repeat(501) }, { path: 'save_before_shipping', rule: 'invalid-value', expected: 'string-1..500|null' }],
+      ['save-type.json', { output: 'final', save_before_shipping: 42 }, { path: 'save_before_shipping', rule: 'invalid-value', expected: 'string-1..500|null' }],
+      ['checks-empty.json', { output: 'final', required_user_checks: '' }, { path: 'required_user_checks', rule: 'invalid-value', expected: 'string-1..2000|null' }],
+      ['checks-too-long.json', { output: 'final', required_user_checks: 'c'.repeat(2001) }, { path: 'required_user_checks', rule: 'invalid-value', expected: 'string-1..2000|null' }],
+      ['checks-type.json', { output: 'final', required_user_checks: 42 }, { path: 'required_user_checks', rule: 'invalid-value', expected: 'string-1..2000|null' }],
+      ['auto-too-many.json', { output: 'final', auto_choice_lines: fiftyOneAuto }, { path: 'auto_choice_lines', rule: 'invalid-value', expected: 'auto-choice-line-array' }],
+      ['auto-bad-prefix.json', { output: 'final', auto_choice_lines: ['Not prefixed: choice'] }, { path: 'auto_choice_lines', rule: 'invalid-value', expected: 'auto-choice-line-array' }],
+      ['auto-empty-tail.json', { output: 'final', auto_choice_lines: ['Auto-chosen (veto by replying on this PR):    '] }, { path: 'auto_choice_lines', rule: 'invalid-value', expected: 'auto-choice-line-array' }],
+      ['login-empty.json', { output: 'final', gh_login: '' }, { path: 'gh_login', rule: 'invalid-value', expected: 'string-1..128|null' }],
+      ['login-too-long.json', { output: 'final', gh_login: 'u'.repeat(129) }, { path: 'gh_login', rule: 'invalid-value', expected: 'string-1..128|null' }],
+      ['login-newline.json', { output: 'final', gh_login: 'bad\nuser' }, { path: 'gh_login', rule: 'invalid-value', expected: 'string-1..128|null' }],
+    ] as const) {
+      const r = runRender(dBounds, name, payload);
+      expect(r.code, name).toBe(1);
+      expect(r.json.detail.violations, name).toContainEqual(want);
+    }
+    callCmd(dBounds, 'finish', { outcome: 'prepared', base: baseSha, readiness_confirmed_at: '2026-11-10T18:10:00Z' });
+    expect(runRender(dBounds, 'login-conflict.json', {
+      output: 'final', gh_login: 'other-login', full_receipt: validFullRef, comment_file: validComRef, comment_url: commentUrl,
+    }).json.detail.violations).toContainEqual({ path: 'gh_login', rule: 'conflicts-with-state', expected: 'matches-run-gh-login' });
+
+    // Table-driven final cases per exit (prepared, paused, stopped, external-gate, blocked, needs-context) with null start pr/gh_login
+    const makeNullPrDir = (seq: number) => {
+      const d = newDir();
+      writeFileSync(join(d, 'full-receipt-1.md'), 'receipt\n');
+      writeFileSync(join(d, 'comment-receipt-1.md'), 'comment\n');
+      callCmd(d, 'start', mkStart(seq, { pr: null, gh_login: null }));
+      callCmd(d, 'record gate', {
+        gate_id: uid(seq + 1000), name: 'greptile', result: 'not-run',
+        candidate: { commit: headSha, base: baseSha },
+        details: { value: 'skipped — no root configuration; do not run it', run: null },
+      });
+      return d;
+    };
+
+    const dPrepNull = makeNullPrDir(710);
+    callCmd(dPrepNull, 'finish', { outcome: 'prepared', base: baseSha, readiness_confirmed_at: '2026-11-10T18:10:00Z' });
+    const dPauseNull = makeNullPrDir(711);
+    callCmd(dPauseNull, 'checkpoint', { checkpoint_id: uid(721), kind: 'pause', base: baseSha });
+    const dStopNull = makeNullPrDir(712);
+    callCmd(dStopNull, 'finish', { outcome: 'stopped', base: baseSha, stop_reason: 'cycle cap', delta_base: baseSha, stop_count: 1 });
+    const dExtNull = makeNullPrDir(713);
+    callCmd(dExtNull, 'checkpoint', { checkpoint_id: uid(722), kind: 'external-gate', base: baseSha });
+    callCmd(dExtNull, 'checkpoint', { checkpoint_id: uid(723), kind: 'pause', base: baseSha });
+    const dBlkNull = makeNullPrDir(714);
+    callCmd(dBlkNull, 'finish', { outcome: 'blocked', base: baseSha, stop_reason: 'provider-failures' });
+    const dNeedsNull = makeNullPrDir(715);
+    callCmd(dNeedsNull, 'finish', { outcome: 'needs-context', base: baseSha, stop_reason: 'missing input' });
+
+    for (const [label, dir, payload, wantViolations] of [
+      [
+        'prepared missing required fields and carrying forbidden fields',
+        dPrepNull,
+        { output: 'final', required_user_checks: 'M1 check', auto_choice_lines: [autoLine] },
+        [
+          { path: 'full_receipt', rule: 'missing-key', expected: 'object' },
+          { path: 'comment_file', rule: 'missing-key', expected: 'object' },
+          { path: 'comment_url', rule: 'missing-key', expected: 'http-url' },
+          { path: 'pr', rule: 'missing-key', expected: 'object' },
+          { path: 'gh_login', rule: 'missing-key', expected: 'string' },
+          { path: 'required_user_checks', rule: 'forbidden-for-exit', expected: 'null' },
+          { path: 'auto_choice_lines', rule: 'forbidden-for-exit', expected: 'empty' },
+        ],
+      ],
+      [
+        'paused missing required_user_checks and pr and carrying prepared extras',
+        dPauseNull,
+        { output: 'final', save_before_shipping: 'wip.md' },
+        [
+          { path: 'required_user_checks', rule: 'missing-key', expected: 'string-1..2000' },
+          { path: 'pr', rule: 'missing-key', expected: 'object' },
+          { path: '$', rule: 'forbidden-for-exit', expected: 'paused-final-fields-only' },
+        ],
+      ],
+      [
+        'paused carrying auto_choice_lines',
+        dPauseNull,
+        { output: 'final', required_user_checks: 'M1 check', pr: validPr, auto_choice_lines: [autoLine] },
+        [{ path: '$', rule: 'forbidden-for-exit', expected: 'paused-final-fields-only' }],
+      ],
+      [
+        'stopped missing pr and carrying forbidden fields',
+        dStopNull,
+        { output: 'final', required_user_checks: 'M1 check' },
+        [
+          { path: 'pr', rule: 'missing-key', expected: 'object' },
+          { path: '$', rule: 'forbidden-for-exit', expected: 'stopped-final-fields-only' },
+        ],
+      ],
+      [
+        'external-gate carrying prepared extras',
+        dExtNull,
+        { output: 'final', save_before_shipping: 'wip.md' },
+        [{ path: '$', rule: 'forbidden-for-exit', expected: 'external-gate-final-fields-only' }],
+      ],
+      [
+        'external-gate carrying required_user_checks',
+        dExtNull,
+        { output: 'final', required_user_checks: 'M1 check' },
+        [{ path: '$', rule: 'forbidden-for-exit', expected: 'external-gate-final-fields-only' }],
+      ],
+      [
+        'blocked carrying auto_choice_lines',
+        dBlkNull,
+        { output: 'final', auto_choice_lines: [autoLine] },
+        [{ path: '$', rule: 'forbidden-for-exit', expected: 'stage-line-final-fields-only' }],
+      ],
+      [
+        'needs-context carrying save_before_shipping',
+        dNeedsNull,
+        { output: 'final', save_before_shipping: 'wip.md' },
+        [{ path: '$', rule: 'forbidden-for-exit', expected: 'stage-line-final-fields-only' }],
+      ],
+    ] as const) {
+      const res = runRender(dir, `final-${label.replace(/\s+/g, '-')}.json`, payload);
+      expect(res.code, label).toBe(1);
+      for (const v of wantViolations) {
+        expect(res.json.detail.violations, label).toContainEqual(v);
+      }
+    }
+
+    // 2. Stale audit and latest evidence selection, wtree null vs mismatch, Checks not run first-seen order
+    const binding = { head: headSha, tree: treeSha, base: baseSha, wtree: '1111111111111111' };
+    expect(isFreshForBinding({ commit: headSha, tree: treeSha, base: baseSha, wtree: '2222222222222222' }, binding)).toBe(false);
+    expect(isFreshForBinding({ commit: headSha, tree: treeSha, base: baseSha, wtree: null }, binding)).toBe(true);
+    expect(isFreshForBinding({ commit: headSha, tree: treeSha, base: baseSha, wtree: '2222222222222222' }, { ...binding, wtree: null })).toBe(true);
+
+    const dSelection = newDir();
+    writeFileSync(join(dSelection, 'pregate.json'), '{"ok":true}\n');
+    writeFileSync(join(dSelection, 'doc.md'), '## Docs\n');
+    callCmd(dSelection, 'start', mkStart(730, { wtree: '1111111111111111' }));
+    callCmd(dSelection, 'record gate', {
+      gate_id: uid(731), name: 'greptile', result: 'not-run',
+      candidate: { commit: headSha, base: baseSha },
+      details: { value: 'skipped — no root configuration; do not run it', run: null },
+    });
+    // First-seen order: pregate (passed), tests (not-run), lint (not-run), then pregate (not-run), lint (passed) -> pregate, tests
+    callCmd(dSelection, 'record gate', {
+      gate_id: uid(732), name: 'pregate', result: 'passed',
+      candidate: { commit: headSha, base: baseSha, wtree: '1111111111111111' },
+      details: { raw_verdict: 'pass', wrapper_verdict: 'pass', policy: 'base', record_path: 'pregate.json', record_sha256: sha256('{"ok":true}\n'), skipped_lanes: [] },
+    });
+    callCmd(dSelection, 'record gate', {
+      gate_id: uid(733), name: 'tests', result: 'not-run', reason: 'deferred',
+      candidate: { commit: headSha, base: baseSha, wtree: '1111111111111111' },
+    });
+    callCmd(dSelection, 'record gate', {
+      gate_id: uid(734), name: 'lint', result: 'not-run', reason: 'pending',
+      candidate: { commit: headSha, base: baseSha, wtree: '1111111111111111' },
+    });
+    expect(callCmd(dSelection, 'record gate', {
+      gate_id: uid(735), name: 'pregate', result: 'not-run', reason: 'invalidated',
+      candidate: { commit: headSha, base: baseSha, wtree: '1111111111111111' },
+      details: { raw_verdict: 'pass', wrapper_verdict: 'pass', policy: 'base', record_path: 'pregate.json', record_sha256: sha256('{"ok":true}\n'), skipped_lanes: [] },
+    }).json.reason).toBe('recorded');
+    callCmd(dSelection, 'record gate', {
+      gate_id: uid(736), name: 'lint', result: 'passed',
+      candidate: { commit: headSha, base: baseSha, wtree: null },
+    });
+    // Coverage and documentation audits: fresh first, then stale (coverage on baseSha; documentation with mismatched non-null wtree)
+    callCmd(dSelection, 'record audit', {
+      audit_id: uid(737), name: 'coverage', result: 'passed',
+      details: { pct: 95, threshold: 80 },
+      candidate: { commit: headSha, base: baseSha, wtree: '1111111111111111' },
+    });
+    callCmd(dSelection, 'record audit', {
+      audit_id: uid(738), name: 'coverage', result: 'passed',
+      details: { pct: 95, threshold: 80 },
+      candidate: { commit: baseSha, base: baseSha, wtree: '1111111111111111' },
+    });
+    callCmd(dSelection, 'record audit', {
+      audit_id: uid(739), name: 'documentation', result: 'passed',
+      details: { report_id: 'doc-1', section_path: 'doc.md', section_sha256: sha256('## Docs\n') },
+      candidate: { commit: headSha, base: baseSha, wtree: '1111111111111111' },
+    });
+    callCmd(dSelection, 'record audit', {
+      audit_id: uid(740), name: 'documentation', result: 'passed',
+      details: { report_id: 'doc-2', section_path: 'doc.md', section_sha256: sha256('## Docs\n') },
+      candidate: { commit: headSha, base: baseSha, wtree: '2222222222222222' },
+    });
+    callCmd(dSelection, 'checkpoint', { checkpoint_id: uid(741), kind: 'ready', base: baseSha, wtree: '1111111111111111' });
+    const selState = JSON.parse(readFileSync(join(dSelection, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const selCtx = makeCtx(selState, { dir: dSelection });
+    expect(FIELD_FMT.checksNotRun(selCtx)).toBe('Checks not run: pregate, tests');
+    expect(FIELD_FMT.shipGates(selCtx)).toEqual([
+      `Ship gates: head=${headSha}; tree=${treeSha}; base=${baseSha}`,
+      '- pregate: not-run',
+      '- coverage: not-run',
+      '- documentation: not-run',
+    ]);
+
+    // 3. Delegated fallback selection and 4. Correction folding
+    callCmd(dSelection, 'record pass', mkPassStarted(750, { required_voices: ['testing', 'maintainability', 'core'] }));
+    // Voice 1 (testing): failed delegated attempt, then selected host fallback attempt -> renders last delegated attempt with outcome=fell-back, reason=timeout, findings=0
+    callCmd(dSelection, 'record pass', {
+      pass_id: uid(750), state: 'attempt', voice_id: 'testing', part: 'specialist:testing',
+      attempt_id: uid(751), outcome: 'failed',
+      delegate: {
+        provider: 'codex', model: 'gpt-5', outcome: 'fell-back', fallback_reason: 'timeout', replay: false,
+        wall_ms: 400, input_tokens: 50, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: null, call_id: sha256('del-fall'),
+      },
+    });
+    callCmd(dSelection, 'record pass', {
+      pass_id: uid(750), state: 'attempt', voice_id: 'testing', part: 'specialist:testing',
+      attempt_id: uid(752), predecessor_attempt_id: uid(751), outcome: 'completed',
+      findings: [{ finding_id: 'F-HOST', severity_source: 'P2', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:testing'] }],
+    });
+    callCmd(dSelection, 'record pass', { pass_id: uid(750), state: 'voice-complete', voice_id: 'testing', selected_attempt_id: uid(752) });
+
+    // Voice 2 (maintainability): two delegated attempts, first is selected credited -> first wins over later delegated one
+    callCmd(dSelection, 'record pass', {
+      pass_id: uid(750), state: 'attempt', voice_id: 'maintainability', part: 'specialist:maintainability',
+      attempt_id: uid(753), outcome: 'completed',
+      delegate: {
+        provider: 'claude', model: 'sonnet', outcome: 'credited', fallback_reason: null, replay: false,
+        wall_ms: 200, input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, call_id: sha256('del-selected'),
+      },
+      findings: [{ finding_id: 'F-CRED', severity_source: 'P3', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:maintainability'] }],
+    });
+    callCmd(dSelection, 'record pass', {
+      pass_id: uid(750), state: 'attempt', voice_id: 'maintainability', part: 'specialist:maintainability',
+      attempt_id: uid(754), predecessor_attempt_id: uid(753), outcome: 'failed',
+      delegate: {
+        provider: 'claude', model: 'sonnet', outcome: 'fell-back', fallback_reason: 'rate-limit', replay: false,
+        wall_ms: 50, input_tokens: 10, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, call_id: sha256('del-later'),
+      },
+    });
+    callCmd(dSelection, 'record pass', { pass_id: uid(750), state: 'voice-complete', voice_id: 'maintainability', selected_attempt_id: uid(753) });
+
+    // Voice 3 (core): findings for correction folding
+    expect(callCmd(dSelection, 'record pass', {
+      pass_id: uid(750), state: 'attempt', voice_id: 'core', part: 'core',
+      attempt_id: uid(755), outcome: 'completed',
+      findings: [
+        { finding_id: 'F-CHAIN', severity_source: 'P1', severity_rubric: 'core', adjudication: 'unclassified', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-DUP', severity_source: 'P2', severity_rubric: 'core', adjudication: 'duplicate', resolution: 'unknown', duplicate_of: 'F-CHAIN', found_by: ['core'] },
+        { finding_id: 'F-RC', severity_source: 'P2', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+        { finding_id: 'F-REJ', severity_source: 'P3', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'] },
+      ],
+    }).json.reason).toBe('recorded');
+    expect(callCmd(dSelection, 'record pass', { pass_id: uid(750), state: 'voice-complete', voice_id: 'core', selected_attempt_id: uid(755) }).json.reason).toBe('recorded');
+    expect(callCmd(dSelection, 'record pass', { pass_id: uid(750), state: 'completed', completed_at: '2026-11-10T18:05:00Z' }).json.reason).toBe('recorded');
+
+    // Correction chain on F-CHAIN: accepted+fixed, then reopened -> ends open
+    expect(callCmd(dSelection, 'record correction', {
+      correction_id: uid(760),
+      target: { pass_id: uid(750), voice_id: 'core', attempt_id: uid(755), finding_id: 'F-CHAIN' },
+      adjudication: 'accepted', resolution: 'fixed', fixed_in: headSha,
+    }).json.reason).toBe('recorded');
+    expect(callCmd(dSelection, 'record correction', {
+      correction_id: uid(761),
+      target: { pass_id: uid(750), voice_id: 'core', attempt_id: uid(755), finding_id: 'F-CHAIN' },
+      supersedes: uid(760), resolution: 'open',
+    }).json.reason).toBe('recorded');
+    // F-RC -> receipt_class 'test-gap-recorded'; F-REJ -> rejected + unknown
+    expect(callCmd(dSelection, 'record correction', {
+      correction_id: uid(763),
+      target: { pass_id: uid(750), voice_id: 'core', attempt_id: uid(755), finding_id: 'F-RC' },
+      receipt_class: 'test-gap-recorded',
+    }).json.reason).toBe('recorded');
+    expect(callCmd(dSelection, 'record correction', {
+      correction_id: uid(764),
+      target: { pass_id: uid(750), voice_id: 'core', attempt_id: uid(755), finding_id: 'F-REJ' },
+      adjudication: 'rejected', resolution: 'unknown',
+    }).json.reason).toBe('recorded');
+
+    const afterPassState = JSON.parse(readFileSync(join(dSelection, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const delLines = FIELD_FMT.delegatedParts(makeCtx(afterPassState, { dir: dSelection }));
+    expect(delLines).toEqual([
+      `Delegated part: testing; provider=codex; model=gpt-5; outcome=fell-back; reason=timeout; wall_ms=400; input_tokens=50; output_tokens=0; cache_read_input_tokens=0; cache_creation_input_tokens=unknown; findings=0; call=${sha256('del-fall')}`,
+      `Delegated part: maintainability; provider=claude; model=sonnet; outcome=credited; reason=none; wall_ms=200; input_tokens=100; output_tokens=20; cache_read_input_tokens=0; cache_creation_input_tokens=0; findings=1; call=${sha256('del-selected')}`,
+    ]);
+    // Inject synthetic corrections with mismatched pass_id/voice_id/attempt_id on F-CHAIN and open resolution on rejected/duplicate/non-blocking to verify target isolation and exclusion rules
+    const coreAttempt = afterPassState.passes[0]!.voices[2]!.attempts[0]!;
+    const withForeignCor: ReviewRunState = {
+      ...afterPassState,
+      passes: [
+        {
+          ...afterPassState.passes[0]!,
+          voices: [
+            afterPassState.passes[0]!.voices[0]!,
+            afterPassState.passes[0]!.voices[1]!,
+            {
+              ...afterPassState.passes[0]!.voices[2]!,
+              attempts: [
+                {
+                  ...coreAttempt,
+                  findings: [
+                    ...(coreAttempt.findings ?? []),
+                    { finding_id: 'F-DUP-OPEN', severity_source: 'P2', severity_rubric: 'core', adjudication: 'duplicate', resolution: 'open', duplicate_of: 'F-CHAIN', found_by: ['core'], attribution_reason: null, receipt_class: null },
+                    { finding_id: 'F-REJ-OPEN', severity_source: 'P3', severity_rubric: 'core', adjudication: 'rejected', resolution: 'open', duplicate_of: null, found_by: ['core'], attribution_reason: null, receipt_class: null },
+                    { finding_id: 'F-NB-OPEN', severity_source: 'P3', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', duplicate_of: null, found_by: ['core'], attribution_reason: null, receipt_class: 'non-blocking' },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      corrections: [
+        ...afterPassState.corrections,
+        {
+          correction_id: uid(765),
+          target: { pass_id: uid(999), voice_id: 'core', attempt_id: uid(755), finding_id: 'F-CHAIN' },
+          supersedes: null, adjudication: 'rejected', resolution: 'unknown', receipt_class: null, fixed_in: null, recorded_at: '2026-11-10T18:06:00Z',
+        },
+        {
+          correction_id: uid(766),
+          target: { pass_id: uid(750), voice_id: 'testing', attempt_id: uid(755), finding_id: 'F-CHAIN' },
+          supersedes: null, adjudication: 'rejected', resolution: 'unknown', receipt_class: null, fixed_in: null, recorded_at: '2026-11-10T18:06:01Z',
+        },
+        {
+          correction_id: uid(767),
+          target: { pass_id: uid(750), voice_id: 'core', attempt_id: uid(752), finding_id: 'F-CHAIN' },
+          supersedes: null, adjudication: 'rejected', resolution: 'unknown', receipt_class: null, fixed_in: null, recorded_at: '2026-11-10T18:06:02Z',
+        },
+      ],
+    };
+    expect(unresolvedFindings(withForeignCor)).toEqual(['F-HOST P2', 'F-CRED P3', 'F-CHAIN P1']);
+
+    // 5. Formatter refusal envelopes: greptile-gate-missing and skipped-pregate-lanes-too-long
+    const dNoGrep = newDir();
+    callCmd(dNoGrep, 'start', mkStart(770));
+    callCmd(dNoGrep, 'checkpoint', { checkpoint_id: uid(771), kind: 'ready', base: baseSha });
+    const rNoGrep = runRender(dNoGrep, 'no-grep.json', { output: 'full-receipt' });
+    expect(rNoGrep.code).toBe(1);
+    expect(rNoGrep.json.detail.violations).toEqual([{ path: '$', rule: 'greptile-gate-missing', expected: 'greptile-gate-recorded' }]);
+    expect(readdirSync(dNoGrep).filter((f) => f.startsWith('full-receipt-'))).toEqual([]);
+
+    const dLongLanes = newDir();
+    writeFileSync(join(dLongLanes, 'full-receipt-1.md'), 'receipt\n');
+    writeFileSync(join(dLongLanes, 'pregate.json'), '{"ok":true}\n');
+    callCmd(dLongLanes, 'start', mkStart(772));
+    const longLanes = Array.from({ length: 60 }, (_, i) => `lane-number-${i}-with-extra-padding`);
+    expect(callCmd(dLongLanes, 'record gate', {
+      gate_id: uid(773), name: 'pregate', result: 'not-run', reason: 'skipped',
+      candidate: { commit: headSha, base: baseSha },
+      details: { raw_verdict: 'pass', wrapper_verdict: 'pass', policy: 'base', record_path: 'pregate.json', record_sha256: sha256('{"ok":true}\n'), skipped_lanes: longLanes },
+    }).json.reason).toBe('recorded');
+    callCmd(dLongLanes, 'finish', { outcome: 'stopped', base: baseSha, stop_reason: 'cycle cap', delta_base: baseSha, stop_count: 1 });
+    const rLongLanes = runRender(dLongLanes, 'long-lanes.json', {
+      output: 'comment', full_receipt: { path: 'full-receipt-1.md', sha256: sha256('receipt\n') },
+    });
+    expect(rLongLanes.code).toBe(1);
+    expect(rLongLanes.json.detail.violations).toEqual([{ path: '$', rule: 'skipped-pregate-lanes-too-long', expected: 'max-500-chars' }]);
+    expect(readdirSync(dLongLanes).filter((f) => f.startsWith('comment-stopped-'))).toEqual([]);
+
+    // 6. Summary rejection and normalization, plus 8. UTF-8 metadata
+    const dSum = newDir();
+    callCmd(dSum, 'start', mkStart(775));
+    callCmd(dSum, 'record gate', {
+      gate_id: uid(776), name: 'greptile', result: 'not-run',
+      candidate: { commit: headSha, base: baseSha },
+      details: { value: 'skipped — no root configuration; do not run it', run: null },
+    });
+    callCmd(dSum, 'checkpoint', { checkpoint_id: uid(777), kind: 'ready', base: baseSha });
+    writeFileSync(join(dSum, 'sec-crlf.md'), 'Section line 1 — café 😀\r\nSection line 2\r\n\r\n');
+    const rFullUtf8 = runRender(dSum, 'full-utf8.json', {
+      output: 'full-receipt', sections: [{ path: 'sec-crlf.md', sha256: sha256('Section line 1 — café 😀\r\nSection line 2\r\n\r\n') }],
+    });
+    expect(rFullUtf8.code).toBe(0);
+    const fullUtf8Path = rFullUtf8.json.files[0].path as string;
+    const fullUtf8Text = readFileSync(fullUtf8Path, 'utf8');
+    expect(fullUtf8Text).not.toContain('\r');
+    expect(fullUtf8Text.endsWith('Section line 1 — café 😀\nSection line 2\n')).toBe(true);
+    expect(rFullUtf8.json.files[0].bytes).toBe(Buffer.byteLength(fullUtf8Text, 'utf8'));
+    expect(rFullUtf8.json.files[0].chars).toBe(fullUtf8Text.length);
+    expect(rFullUtf8.json.files[0].bytes).toBeGreaterThan(rFullUtf8.json.files[0].chars);
+    const sumFullRef = { path: 'full-receipt-1.md', sha256: rFullUtf8.json.files[0].sha256 };
+
+    for (const [fn, content, expectedRule] of [
+      ['sum-empty.md', '   \r\n\t\n', 'non-empty-summary'],
+      ['sum-marker.md', 'Contains <!-- review-and-prep:receipt:abc --> marker.\n', 'no-review-and-prep-marker'],
+      ['sum-paused.md', 'Status is PAUSED because manual testing required.\n', 'no-paused-phrase-outside-paused'],
+    ] as const) {
+      writeFileSync(join(dSum, fn), content);
+      const rBadSum = runRender(dSum, `${fn}.json`, {
+        output: 'body', comment_url: commentUrl, full_receipt: sumFullRef, summary: { path: fn, sha256: sha256(content) },
+      });
+      expect(rBadSum.code, fn).toBe(1);
+      expect(rBadSum.json.detail.violations, fn).toEqual([{ path: 'summary', rule: 'invalid-value', expected: expectedRule }]);
+    }
+
+    writeFileSync(join(dSum, 'sum-crlf.md'), 'Line A\r\nLine B\r\n\r\n');
+    const rBodyCrlf = runRender(dSum, 'body-crlf.json', {
+      output: 'body', comment_url: commentUrl, full_receipt: sumFullRef,
+      summary: { path: 'sum-crlf.md', sha256: sha256('Line A\r\nLine B\r\n\r\n') },
+    });
+    expect(rBodyCrlf.code).toBe(0);
+    const bodyCrlfText = readFileSync(rBodyCrlf.json.files[0].path, 'utf8');
+    expect(bodyCrlfText).not.toContain('\r');
+    expect(bodyCrlfText).toContain('prepared\n\nLine A\nLine B\n\nReceipt:');
+
+    // Paused phrase is allowed on a paused exit
+    callCmd(dSum, 'checkpoint', { checkpoint_id: uid(778), kind: 'pause', base: baseSha });
+    const rBodyPausedPhrase = runRender(dSum, 'body-paused-ok.json', {
+      output: 'body', comment_url: commentUrl, full_receipt: sumFullRef,
+      summary: { path: 'sum-paused.md', sha256: sha256('Status is PAUSED because manual testing required.\n') },
+    });
+    expect(rBodyPausedPhrase.code).toBe(0);
+
+    // 7. Output-name collisions and owned-write failures via allocateExclusiveFile
+    const dAlloc = newDir();
+    // readdir failure
+    const rReaddirFail = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
+      readdir: () => { throw Object.assign(new Error('permission denied'), { code: 'EACCES' }); },
+    });
+    expect(rReaddirFail).toEqual({
+      ok: false,
+      detail: { errno: 'EACCES', syscall: 'readdir', path: dAlloc },
+    });
+
+    // EEXIST retry landing on the next number
+    let openCalls = 0;
+    const rRetryNext = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
+      open: (p, flags, mode) => {
+        openCalls++;
+        if (openCalls === 1) throw Object.assign(new Error('exists'), { code: 'EEXIST', syscall: 'open' });
+        return require('node:fs').openSync(p, flags, mode);
+      },
+    });
+    expect(rRetryNext.ok).toBe(true);
+    if (rRetryNext.ok) {
+      expect(rRetryNext.file.path).toBe(join(dAlloc, 'full-receipt-2.md'));
+      expect(openCalls).toBe(2);
+    }
+
+    // Exhaustion after 64 tries
+    let exhaustCalls = 0;
+    const rExhaust = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
+      open: () => {
+        exhaustCalls++;
+        throw Object.assign(new Error('exists'), { code: 'EEXIST', syscall: 'open' });
+      },
+    });
+    expect(exhaustCalls).toBe(64);
+    expect(rExhaust).toEqual({
+      ok: false,
+      detail: { errno: 'EEXIST', syscall: 'open', path: join(dAlloc, 'full-receipt-*.md') },
+    });
+
+    // Write failure removes only the file this call created
+    const rWriteFail = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
+      write: () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC', syscall: 'write' }); },
+    });
+    expect(rWriteFail).toEqual({
+      ok: false,
+      detail: { errno: 'ENOSPC', syscall: 'write', path: join(dAlloc, 'full-receipt-3.md') },
+    });
+    expect(existsSync(join(dAlloc, 'full-receipt-3.md'))).toBe(false);
+    expect(existsSync(join(dAlloc, 'full-receipt-2.md'))).toBe(true);
+
+    // fsync failure removes the owned file
+    const rFsyncFail = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
+      fsync: () => { throw Object.assign(new Error('io error'), { code: 'EIO', syscall: 'fsync' }); },
+    });
+    expect(rFsyncFail).toEqual({
+      ok: false,
+      detail: { errno: 'EIO', syscall: 'fsync', path: join(dAlloc, 'full-receipt-3.md') },
+    });
+    expect(existsSync(join(dAlloc, 'full-receipt-3.md'))).toBe(false);
+
+    // Replaced inode during fsync failure is left alone
+    const targetPath = join(dAlloc, 'full-receipt-3.md');
+    const rReplacedInode = allocateExclusiveFile(dAlloc, dAlloc, 'full-receipt', 'hello\n', '/home/user', {
+      fsync: () => {
+        unlinkSync(targetPath);
+        writeFileSync(targetPath, 'replacement from another writer\n');
+        throw Object.assign(new Error('io error after replacement'), { code: 'EIO', syscall: 'fsync' });
+      },
+    });
+    expect(rReplacedInode.ok).toBe(false);
+    expect(existsSync(targetPath)).toBe(true);
+    expect(readFileSync(targetPath, 'utf8')).toBe('replacement from another writer\n');
+
+    // 8. tilde() home-prefix display path boundaries
+    expect(tilde('/home/user/dir/file.md', '/home/user')).toBe('~/dir/file.md');
+    expect(tilde('/home/user/dir/file.md', '/home/user///')).toBe('~/dir/file.md');
+    expect(tilde('/home/user2/dir/file.md', '/home/user')).toBe('/home/user2/dir/file.md');
+    expect(tilde('/home/user', '/home/user')).toBe('/home/user');
+    expect(tilde('/etc/hosts', '/')).toBe('/etc/hosts');
+    expect(tilde('/etc/hosts', '///')).toBe('/etc/hosts');
   });
 
   test('render outputs evidence locators in published PR comments and bodies while keeping local paths for full-receipt, CLI display, and H-F final', () => {
@@ -7117,6 +7642,177 @@ describe('full-review-record', () => {
     expect(wLateRefused.code).toBe(3);
     expect(wLateRefused.out.trim()).toBe(REFUSED_PROBE);
     expect(existsSync(join(lateDir, 'cycle-1-baseline.json'))).toBe(false);
+  });
+
+  // Value: protects=REVIEW_STATE_DIR precheck edge cases: valid-JSON states failing validateStoredState, first local full cycle-1 pass in record order, failed-attempt voice completion, not-applicable voice completion, and same-name probe gate on another candidate commit; fails_when=malformed state passes precheck, second pass masks first pass, failed or not-applicable voice is refused, or a probe gate on another commit satisfies the precheck; why_new=Track 89A T5 (Criterion 3); seam=CLI full-review-record and src/review-state/fence.ts
+  test('REVIEW_STATE_DIR precheck covers malformed stored states, first cycle-1 pass order, failed and not-applicable voices, and probe gates on another candidate', () => {
+    // 1. Valid JSON that fails validateStoredState: {} and a started state whose passes[0] lacks required_voices
+    const emptyObjDir = newDir();
+    writeFileSync(join(emptyObjDir, 'review-run-state.json'), '{}\n');
+    const wEmptyObj = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), emptyObjDir, { REVIEW_STATE_DIR: emptyObjDir });
+    expect(wEmptyObj.code).toBe(3);
+    expect(wEmptyObj.out.trim()).toBe(REFUSED_UNREADABLE);
+    expect(existsSync(join(emptyObjDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    const badPassDir = newDir();
+    expect(callCmd(badPassDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000101',
+      base: headSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+    }).code).toBe(0);
+    expect(callCmd(badPassDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000102',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['core'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    const badPassPath = join(badPassDir, 'review-run-state.json');
+    const badPassRaw = JSON.parse(readFileSync(badPassPath, 'utf8'));
+    delete badPassRaw.passes[0].required_voices;
+    writeFileSync(badPassPath, `${JSON.stringify(badPassRaw, null, 2)}\n`);
+    expect(validateStoredState(badPassRaw, badPassPath).ok).toBe(false);
+    const wBadPass = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), badPassDir, { REVIEW_STATE_DIR: badPassDir });
+    expect(wBadPass.code).toBe(3);
+    expect(wBadPass.out.trim()).toBe(REFUSED_UNREADABLE);
+    expect(existsSync(join(badPassDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    // 2. First full cycle-one pass in record order: two local, full, cycle 1 passes
+    const orderOkDir = newDir();
+    expect(callCmd(orderOkDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000111',
+      base: headSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+    }).code).toBe(0);
+    expect(callCmd(orderOkDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000112',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['core'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    expect(callCmd(orderOkDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000112',
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: '019315e0-0000-7000-8000-000000000113',
+      outcome: 'completed',
+      findings: [],
+    }).code).toBe(0);
+    expect(callCmd(orderOkDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000112',
+      state: 'voice-complete',
+      voice_id: 'core',
+      selected_attempt_id: '019315e0-0000-7000-8000-000000000113',
+    }).code).toBe(0);
+    // Second local, full, cycle 1 pass whose required voice 'red-team' has no result
+    expect(callCmd(orderOkDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000114',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: headSha },
+      required_voices: ['red-team'],
+      started_at: '2026-11-12T00:01:00Z',
+    }).code).toBe(0);
+    expect(callCmd(orderOkDir, 'record gate', {
+      gate_id: '019315e0-0000-7000-8000-000000000115',
+      name: 'probe-0123456789ab',
+      result: 'passed',
+      candidate: { commit: headSha, base: headSha },
+    }).code).toBe(0);
+    const wOrderOk = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), orderOkDir, { REVIEW_STATE_DIR: orderOkDir });
+    expect(wOrderOk.code, wOrderOk.err).toBe(0);
+    expect(existsSync(join(orderOkDir, 'cycle-1-baseline.json'))).toBe(true);
+
+    // Reversed order: first pass has required voice 'red-team' with no result; second pass has 'core' completed
+    const orderRevDir = newDir();
+    const revState = JSON.parse(readFileSync(join(orderOkDir, 'review-run-state.json'), 'utf8'));
+    revState.passes = [revState.passes[1], revState.passes[0]];
+    writeFileSync(join(orderRevDir, 'review-run-state.json'), `${JSON.stringify(revState, null, 2)}\n`);
+    const wOrderRev = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), orderRevDir, { REVIEW_STATE_DIR: orderRevDir });
+    expect(wOrderRev.code).toBe(3);
+    expect(wOrderRev.out.trim()).toBe('FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (red-team)');
+    expect(existsSync(join(orderRevDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    // 3. Failed-attempt voice result (no voice-complete) + 4. Not-applicable voice result + 5. Same-name probe gate on another candidate
+    const voiceAndProbeDir = newDir();
+    expect(callCmd(voiceAndProbeDir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000121',
+      base: baseSha,
+      plan: { ref: 'plan.md', sha256: 'a'.repeat(64) },
+      policy: { value: POLICY_RUN_STATE, source: 'caller prompt' },
+      continuation: { prior_stops: 0, max: 0 },
+    }).code).toBe(0);
+    expect(callCmd(voiceAndProbeDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000122',
+      state: 'started',
+      scope: 'local',
+      cycle: 1,
+      coverage: 'full',
+      candidate: { commit: headSha, base: baseSha },
+      required_voices: ['core', 'outside:challenge'],
+      started_at: '2026-11-12T00:00:00Z',
+    }).code).toBe(0);
+    // 'core' has only a failed attempt and no voice-complete
+    expect(callCmd(voiceAndProbeDir, 'record pass', {
+      pass_id: '019315e0-0000-7000-8000-000000000122',
+      state: 'attempt',
+      voice_id: 'core',
+      attempt_id: '019315e0-0000-7000-8000-000000000123',
+      outcome: 'failed',
+    }).code).toBe(0);
+    // 'outside:challenge' is closed with --not-applicable not-applicable and no attempt
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', voiceAndProbeDir,
+      '--pass-id', '019315e0-0000-7000-8000-000000000122',
+      '--state', 'voice-complete',
+      '--voice-id', 'outside:challenge',
+      '--not-applicable', 'not-applicable',
+    ]).code).toBe(0);
+    // Probe gate recorded on baseSha (another candidate commit) leaves the write refused (0123456789ab)
+    expect(callCmd(voiceAndProbeDir, 'record gate', {
+      gate_id: '019315e0-0000-7000-8000-000000000124',
+      name: 'probe-0123456789ab',
+      result: 'passed',
+      candidate: { commit: baseSha, base: baseSha },
+    }).code).toBe(0);
+    const incompleteRecord = baseRecord({
+      stages: [
+        { name: 'core', result: 'incomplete' },
+        { name: 'outside:challenge', result: 'skipped — not-applicable' },
+      ],
+      completed: 'false',
+      cause: 'reviewer-incomplete',
+    });
+    const wWrongCommitProbe = runRecord('write', 'cycle-1-baseline', writeInput(incompleteRecord), voiceAndProbeDir, { REVIEW_STATE_DIR: voiceAndProbeDir });
+    expect(wWrongCommitProbe.code).toBe(3);
+    expect(wWrongCommitProbe.out.trim()).toBe(REFUSED_PROBE);
+    expect(existsSync(join(voiceAndProbeDir, 'cycle-1-baseline.json'))).toBe(false);
+
+    // Adding the matching probe gate on headSha writes the record and preserves the caller's completed value
+    expect(callCmd(voiceAndProbeDir, 'record gate', {
+      gate_id: '019315e0-0000-7000-8000-000000000125',
+      name: 'probe-0123456789ab',
+      result: 'passed',
+      candidate: { commit: headSha, base: baseSha },
+    }).code).toBe(0);
+    const wMatchingProbe = runRecord('write', 'cycle-1-baseline', writeInput(incompleteRecord), voiceAndProbeDir, { REVIEW_STATE_DIR: voiceAndProbeDir });
+    expect(wMatchingProbe.code, wMatchingProbe.err).toBe(0);
+    const writtenBaseline = JSON.parse(readFileSync(join(voiceAndProbeDir, 'cycle-1-baseline.json'), 'utf8'));
+    expect(writtenBaseline.completed).toBe('false');
+    expect(writtenBaseline.cause).toBe('reviewer-incomplete');
   });
 
   test('interrupted cycle-1 session recovers via show and checkpoint resume without continuation=full', () => {

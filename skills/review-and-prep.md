@@ -182,15 +182,16 @@ prints the ID that the new run (and its single run `begin`) uses, as
 **Segments** above says.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
-Under `run-state=record`, follow its **Read an optional review policy** bullet
-instead of the writes below; spans, waits and decisions stay with `GX_RUN` from
-derive's `current.run_step_id`, `GX_SID` from
-its `current.session_id`, `GX_CAPTURE=1` only when `current.run_begin` is
-`recorded` or `replayed`, and no context-override argument.
+While the run state is recorded (the default), `derive` writes the run `begin`
+and `end`, pass and correction records; spans, waits and decisions use `GX_RUN`
+from derive's `current.run_step_id`, `GX_SID` from its `current.session_id`,
+`GX_CAPTURE=1` only when `current.run_begin` is `recorded` or `replayed`, and no
+context-override argument. While it is unavailable, this invocation writes no
+run, pass or correction record.
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
-producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
-with one JSON object (`v:1`, or `v:2` for a `pass` record, `stage:"review-and-prep"`, the retained
+inline producer is `gstack-extend-telemetry metrics <begin|end|decision>` (`decision` for raw `REUSE`/`N/A`, and the span library's `begin`/`end`), plus `metrics read`,
+with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
 `session_id`, a fresh lowercase UUID `event_id` you keep stable for that
 event) on stdin. Every ID you mint is lowercase and random (below).
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
@@ -199,14 +200,14 @@ disabled, unavailable, conflicting or unconfirmed capture is recorded as
 capture state only — it never changes a review finding, a gate, Greptile
 applicability, readiness, or any outward action, and never delays the fresh
 checks that precede one. Never rerun completed work to manufacture telemetry.
-For an `unconfirmed` or missing envelope of a `decision`, `pass` or
-`correction`, keep the exact payload and `event_id`, run
+For an `unconfirmed` or missing envelope of a `decision`, keep the exact
+payload and `event_id`, run
 `metrics read --session-id <id> --event-id <event_id>`, and replay that
 identical payload at most once when the read reports the event present or
 safely absent; on conflict/partial/unknown stop and leave capture unknown. A
 `begin` or `end` is never replayed later: the span library reconciles it once
 in its own call (`match` counts it as written; `absent` leaves the boundary
-missing), and no interval is derived from a `decision`, `pass` or `correction`
+missing), and no interval is derived from a `decision`
 timestamp. Never mint a fresh `event_id` for a replay.
 
 Issue metrics calls one at a time from this session, never as parallel tool
@@ -286,14 +287,10 @@ library and both call forms are in
   in later calls; any `begin=`, `end=` or `decision=` value other than
   `recorded`, `replayed`, `match`, `pending` or `skipped` makes the receipt carry
   `capture=partial (<reason>)`.
-- Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
-  run `step_id` (retain it as `GX_RUN`), `parent_step_id:null`, and `context`
-  carrying the candidate HEAD/tree/base you already observed (or null — never run
-  `git write-tree` or create an index for metrics), `binding` clean/dirty/unknown,
-  the SHA-256 of the installed copy of this skill, and `parent_session_id:null`
-  unless the spawning stage handed you its exact ID. In the same call, resolve the
-  launcher through the telemetry helper and print the library path to retain
-  as `GX_LIB`:
+- derive writes the run `begin`; in the call that runs the first derive of a
+  segment, resolve the library path to retain as `GX_LIB` (resolve the launcher
+  through the telemetry helper and print the library path to retain as
+  `GX_LIB`):
 
   ```bash
   _GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
@@ -304,10 +301,6 @@ library and both call forms are in
   An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
   unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
   or missing-span)` in the receipt and continue the workflow.
-  Once the candidate changes (you first observe it, a base merge, a fix commit),
-  every later step `begin` and pass `started` carries a `context` override with
-  the new HEAD/tree/base (the fourth argument of `gx_span_begin`); their ends,
-  attempts and voice records inherit it.
 - One governing `decision` per executed phase visit, recorded under the phase of
   the work decided about: `gx_span_begin` emits it (`RUN`, reason `required`
   unless `GX_REASON` names another controlled reason) and shares its `step_id`
@@ -321,23 +314,13 @@ library and both call forms are in
   their parallel voice intervals (`parent_step_id`); under parallel dispatch
   those are parent-observed, not per-voice runtime, and a voice step sets
   `NODECISION=1`.
-- Local review as `pass` records: one pass is one review round over one
-  candidate, with its required voices declared at `state:"started"`, each
-  attempt recorded separately (a completed attempt carries its findings —
-  allowlisted IDs/severities/dispositions only, never finding bodies, prompts
-  or command output; an empty array means zero), one selected attempt or an
-  explicit policy-authorized `N/A` per voice, then `state:"completed"`. Send an
-  attempt's `model_context` only when a tool result or launcher configuration
-  supplied it; an identifier outside the documented grammar is null with
-  `unknown_reason:"unsupported"`, never a reason to drop the attempt. A
-  `finding_id` is unique within an attempt; declare duplicates on the finding
-  (`duplicate_of`). A fix batch is a `kind:"fix"` step, counted separately
-  from passes. Greptile is
+- A fix batch is a `kind:"fix"` step, counted separately from passes. Greptile is
   `scope:"greptile"` with its own count and its existing once-per-PR rule
   above unchanged; metrics never triggers, retries or waives it.
-- Finding attribution (`v:2`): every `pass` record sends `v:2`; every other
-  producer keeps `v:1`. Each finding in a completed attempt adds `found_by`,
-  the parts that reported it, and `attribution_reason`. Take each part from
+- Finding attribution (`v:2`): for each `record pass`
+  `--finding <finding_id>,<severity_source>,<part>[,<part>...]` or
+  `attribution=<reason>` value, which `derive` writes as `v:2` `found_by` and
+  `attribution_reason`, take each part from
   that part's own record, never from the finding's text, file or category:
   `specialist:<name>` from the `specialist` field of a specialist's finding,
   `red-team` for a finding tagged `"specialist":"red-team"`,
@@ -345,42 +328,26 @@ library and both call forms are in
   `core` for a finding the core checklist reported, `qa` for a finding an
   exploratory QA probe reported, `greptile` for a finding Greptile's own review
   reported, and `outside:challenge` or `outside:structured` for an outside
-  voice's finding, by its phase. A finding several parts reported keeps every
+  voice's finding, by its phase. A delegated part's finding takes `found_by`
+  from the runner's part row: `specialist:<part>` for the four specialists,
+  `red-team` for `red-team`, and `native-adversarial` for `adversarial`. A
+  finding several parts reported keeps every
   part: the finding you keep lists every source upstream's merge names, and a
   `duplicate_of` row keeps its own part. Under `specialists=fold`, a finding the
   main pass recorded while applying a folded checklist names
   `specialist:<name>` of that checklist, taken from the main pass's own record,
   and a folded finding recorded with no checklist is `core`; neither is ever
   inferred later from text, file or category, and no voice is declared for a
-  folded specialist. With no part to name, send
-  `found_by: []` and an `attribution_reason`: `unlisted-part` for a part
+  folded specialist. With no part to name, send `attribution=<reason>`
+  (`found_by: []` and an `attribution_reason`): `unlisted-part` for a part
   outside that list, `unsupported` for a name outside the grammar,
   `not-reported` when the part's record does not say. Never guess a part. Read
   upstream's records and `gstack-review-read`; never write, append to or edit
-  upstream's review log for attribution. An `unsupported-version` answer means
-  the installed helper predates `v:2`; that capture is unavailable, like any
-  other unrecorded call.
-- Delegated attempts (`v:3`): a delegated part's `attempt` sends `v:3` with
-  the runner's `delegate` values (`provider`, `model`, `outcome`,
-  `fallback_reason`, `replay`, `wall_ms` and the four token counts, null when
-  unknown); the pass's other records keep `v:2`. Its `model_context` sends
-  `requested_model` from the configuration with `requested_source:
-  launcher-config`, `reported_source: unavailable` and `unknown_reason:
-  not-reported`. A delegated part's finding takes `found_by` from the runner's
-  part row: `specialist:<part>` for the four specialists, `red-team` for
-  `red-team`, and `native-adversarial` for `adversarial`, plus today's v3
-  `delegate` object. An older helper answers `unsupported-version`; that capture is
-  unavailable, like any other unrecorded call.
-- Corrections, appended as they happen: `correction_kind:"finding"` with the
-  finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
-  resolution or adjudication changes after its attempt was recorded (a fix
-  lands: `resolution:"fixed"`; a later change to the same finding names the
-  previous correction in `supersedes_event_id`); `retry` or `fallback` with
-  the new `attempt_id` when a voice attempt is retried or replaced; and
-  `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
-  batch closes. Corrections name only passes, voices and attempts recorded in
-  this segment's run: a finding first recorded in an earlier segment gets no
-  correction here, and its resolution shows in the receipt instead.
+  upstream's review log for attribution.
+- A finding's later adjudication or resolution change is a `record correction`,
+  which `derive` writes as `correction_kind:"finding"`; retry and fallback
+  corrections come from `--predecessor-attempt-id`; fix-cycle corrections are
+  not derived (calls doc `## Derive and spans`, decision d8).
 - Waits as `kind:"wait"` steps (`gx_span_begin_wait`) with `wait_category`
   (`human` at the manual testing checkpoint and while a question to the user is
   open, `external-review` from the Greptile request's submission until its
@@ -404,8 +371,8 @@ library and both call forms are in
   continues a paused run (its Telemetry start ran after a pause), the snapshot
   counts this segment only, so also add the literal line
   `Workflow metrics (local, optional): this segment only; earlier segments are recorded under their own session IDs.`
-  `end` the run step just before the legacy telemetry finish; at a deliberate
-  pause end it `paused`, before the `blocked` finish. Never write or edit a PR body or comment only to refresh
+  derive writes the run `end` after the pause checkpoint or `finish` and before
+  Telemetry finish (calls doc **Fixed points**). Never write or edit a PR body or comment only to refresh
   metrics, and never after `gh pr ready`. Existing receipt and handoff labels,
   markers and the manual-testing rules are unchanged; the metrics line cannot
   authorize readiness. An interrupted run that produces no receipt needs none
@@ -707,7 +674,7 @@ or decision rows only when the receipt's last editor is the running account;
 otherwise re-verify the rows or re-confirm the decisions with the user.
 A closed or merged PR requires a new work decision, not reopening automatically.
 
-Under `run-state=record`, a resume or repeat invocation first runs the calls document's **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.
+While the run state is recorded, a resume or repeat invocation first runs the calls document's **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.
 
 With `full-suite=external` in the invocation prompt, read **Resume entry** in
 **Pause for an external full-suite gate** now before scheduling review or checks;
@@ -793,11 +760,11 @@ recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.
 
 `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.
 
-Create this invocation's evidence directory — a unique branch-and-invocation subdirectory directly under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not `run-state=record` is active), before Step 1 ends (`start` when `run-state=record` is active) and before Step 2's first review, probe, baseline or gate file is written; never overwrite another invocation's directory. An evidence locator is `<evidence directory name>/<file>` inside this directory (for example `inv-1/full-receipt-1.md`), resolved under the evidence root (`docs/workflow-handoffs.md#receipt-locators`). Pull request text (the body section and the receipt, paused and stopped comments) names a file in this directory only by its evidence locator, while chat output and local files keep the absolute or `~/` path. On a resume, reuse the paused or interrupted invocation's existing evidence directory from the corroborated `Full receipt:` locator (its first segment, resolved under the evidence root by the reader rule in `docs/workflow-handoffs.md#receipt-locators`; a legacy `~/` or absolute path names the directory directly), the external-gate pause's `Evidence directory:` line or the newest matching invocation directory under the evidence root (`docs/review-run-state-calls.md`, `## Resume`).
+Create this invocation's evidence directory — a unique branch-and-invocation subdirectory directly under the evidence root — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not the run state is recorded), before Step 1 ends (`start` while the run state is recorded) and before Step 2's first review, probe, baseline or gate file is written; never overwrite another invocation's directory. An evidence locator is `<evidence directory name>/<file>` inside this directory (for example `inv-1/full-receipt-1.md`), resolved under the evidence root (`docs/workflow-handoffs.md#receipt-locators`). Pull request text (the body section and the receipt, paused and stopped comments) names a file in this directory only by its evidence locator, while chat output and local files keep the absolute or `~/` path. On a resume, reuse the paused or interrupted invocation's existing evidence directory from the corroborated `Full receipt:` locator (its first segment, resolved under the evidence root by the reader rule in `docs/workflow-handoffs.md#receipt-locators`; a legacy `~/` or absolute path names the directory directly), the external-gate pause's `Evidence directory:` line or the newest matching invocation directory under the evidence root (`docs/review-run-state-calls.md`, `## Resume`).
 
 The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation's `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.
 
-Under `run-state=record`, this invocation's evidence directory is `--dir`, and every `--evidence`, `--pregate-record`, `--section` and `--delegate-file` path is relative to it and resolves inside it.
+While the run state is recorded, this invocation's evidence directory is `--dir`, and every `--evidence`, `--pregate-record`, `--section` and `--delegate-file` path is relative to it and resolves inside it.
 
 ### Establish the approved implementation scope
 
@@ -1097,16 +1064,29 @@ continuation.
   `repair-cycles=light: nothing skipped — in-cap=full`. It sets no other key.
   Capability check:
   `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`.
-- `run-state=record` (its only value) is opt-in. It records this invocation's
-  run state through the experimental `bin/review-state` helper as
-  `<extend-root>/docs/review-run-state-calls.md` defines. Read it once at Step 1;
-  its derive command replaces the run
-  `begin` and `end`, pass, correction and context-override metrics writes in
-  **Workflow metrics (optional, local)**.
-  Every run-state record is sent with `bin/review-state build` as the calls
-  document lists, never a hand-written request file. It changes no finding,
-  gate, readiness or handoff line (the full receipt gains only the run-state
-  lines that document names). Capability check:
+- `run-state=record` (its only value) is accepted and changes nothing: recording is the default. Every invocation records its run state through the
+  experimental `bin/review-state` helper as
+  `<extend-root>/docs/review-run-state-calls.md` defines, when the preamble
+  printed an `EXTEND_ROOT:` line, `"<extend-root>/bin/review-state" --version`
+  exits 0 and that document is readable; read the document at Step 1 except its
+  **Inline outputs** section, which is read by heading only when the Degraded
+  path starts or a render is refused. When no `EXTEND_ROOT:` line was printed or
+  `"<extend-root>/bin/review-state" --version` fails, record nothing, add
+  `Run state: unavailable (helper-missing)` and
+  `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: helper-missing).`
+  to the full receipt, write every output inline from the skill's templates and
+  **Inline outputs** when readable, and run the fence without
+  `REVIEW_STATE_DIR`. When `<extend-root>/docs/review-run-state-calls.md` is
+  missing or unreadable (an install older than the loaded skill), record
+  nothing, add `Run state: unavailable (calls-document-missing)` and
+  `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: calls-document-missing).`
+  to the full receipt, write every output inline from the skill's templates, and
+  run the fence without `REVIEW_STATE_DIR`. While recording, `derive` writes the
+  run `begin` and `end`, pass and correction metrics records in **Workflow
+  metrics (optional, local)**, and every run-state record goes through
+  `bin/review-state build` as the calls document lists, never a hand-written
+  request file. It changes no finding, gate, readiness or handoff line (the full
+  receipt gains only the run-state lines that document names). Capability check:
   `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"`.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
@@ -1587,7 +1567,7 @@ configuration's SHA-256 and labels, never its path), as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's
 `delegate` values. A fallback is the failed delegate
 attempt, then a host attempt that names it as its predecessor, then a `fallback`
-correction. Under `run-state=record`, the caller records the failed delegated
+correction. While the run state is recorded, the caller records the failed delegated
 attempt with `--delegate-file` and the host attempt with
 `--predecessor-attempt-id` naming it, `derive` writes the `fallback` correction,
 and no `record correction` is sent for it.
@@ -2544,7 +2524,7 @@ assembled JSON file for `write`, or `before-fix`, `next-cycle` or `stop` for
 The fence prints one `FULL_REVIEW_RECORD:` line, read as above (`--help` lists
 its messages and exit codes). That line is not a review-state result envelope,
 so the run-state retry and fallback rules in `docs/review-run-state-calls.md` do
-not apply to it (under `run-state=record`, that document's `REVIEW_STATE_DIR`
+not apply to it (while the run state is recorded, that document's `REVIEW_STATE_DIR`
 prefix still applies). Before the first fence use in an invocation, confirm its
 launcher is executable and `"<extend-root>/bin/review-state" full-review-record --help`
 exits 0. When the helper is missing (no `EXTEND_ROOT:` line, the launcher is
@@ -2604,15 +2584,7 @@ shapes the prompt below, so the continuation starts in a fresh session.
    retry, look up that exact marker and reuse a corroborated existing comment;
    post only if absent. Conflicting or unverifiable duplicates hold for repair.
    Step 1's corroboration and restriction rules treat it like a pause.
-   The stopped comment uses Step 6's compact shape: the
-   `<!-- review-and-prep:stopped:<full-sha> -->` marker,
-   `Status: STOPPED — review cycle cap`, the five stopped labels below,
-   `Unresolved:`, `Continuation: <k> of <n>`, its one `Skipped pregate lanes:`
-   or `Ship gates:` line, every `Delegated part:` line,
-   `reviewRestrictionResolved: true` when applicable, and
-   `Full receipt: <evidence locator>; sha256: <64 hex>`; the other listed lines
-   live in `full-receipt-<n>.md`, and the dedicated full-review evidence comment
-   procedure below is unchanged.
+   Render the full receipt, stopped comment (`<!-- review-and-prep:stopped:<full-sha> -->`, carrying its one `Skipped pregate lanes:` or `Ship gates:` line and `Full receipt: <evidence locator>; sha256: <64 hex>`), PR body and final handoff with `"<extend-root>/bin/review-state" render` (`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**; inline line order in **Inline outputs**), while the dedicated full-review evidence comment procedure below is unchanged.
    For H-E, retain the newest corroborated full-review base across repair-only continuations;
    review the cumulative delta from that base, including earlier continuation repairs.
    Do not replace it with a delta-reviewed invocation start or call partial coverage full.
@@ -3029,7 +3001,7 @@ inputs it touched under that gate's own freshness rule before Step 6. Copy the
 final pregate record, the audit's post-child snapshot and its documentation
 section into this invocation's evidence directory (**Evidence directory**), not
 the evidence root, and record each copy's path and SHA-256 in the receipt.
-Under `run-state=record`, `record gate` `pregate`'s `--pregate-record` and
+While the run state is recorded, `record gate` `pregate`'s `--pregate-record` and
 `record audit` `documentation`'s `--section` are those copies' paths
 relative to it. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
 
@@ -3353,10 +3325,11 @@ supply a new policy or result line.
 
 **Pause.** Write the line below and the policy line to the evidence directory.
 Open a wait span with category `checks` and end it `paused` at the actual pause,
-not earlier. End the metrics run step `paused`, then run Telemetry finish with
-`--outcome blocked`. Print
-`Evidence directory: <absolute path>` and every auto-choice line, then print
-this line, unfenced, as the last line of the turn:
+not earlier. Record `checkpoint external-gate` and `checkpoint pause`, run
+`derive`, and render `final` (`"<extend-root>/bin/review-state" render --help`,
+calls doc **Fixed points**), then run Telemetry finish with `--outcome blocked`.
+Print `Evidence directory: <absolute path>` and every auto-choice line, then
+print this line, unfenced, as the last line of the turn:
 
 `External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`
 
@@ -3952,14 +3925,13 @@ The PAUSED body uses Step 6's `## Review and prep` body-section shape, listing
 pending user checks under open checks, and every line this section says to
 record goes to the full receipt (`full-receipt-<n>.md`). Post the PAUSED receipt once per pause as a PR comment. Before posting, scan
 the comment bytes with the same scan (`scan-text`, wrapping
-`gstack-redact --from-file`), or a manual inspection. The paused comment uses
-Step 6's compact shape: mark it `<!-- review-and-prep:paused:<full-sha> -->`,
-include `Status: PAUSED — manual testing required`, `Prepared HEAD:` (the
-checkpoint), `Review policy:`, `Greptile:` (the postponed or skip value),
-every `Delegated part:` line and `Unresolved:` in their exact grammar,
-`reviewRestrictionResolved: true` when applicable, one line:
-`Resume with /review-and-prep resume; do not run /ship on this draft.`, and
-`Full receipt: <evidence locator>; sha256: <64 hex>`. The marker is distinct
+`gstack-redact --from-file`), or a manual inspection. Render the full receipt,
+paused comment (`<!-- review-and-prep:paused:<full-sha> -->`, carrying
+`Resume with /review-and-prep resume; do not run /ship on this draft.` and
+`Full receipt: <evidence locator>; sha256: <64 hex>`), PR body and final handoff
+with `"<extend-root>/bin/review-state" render`
+(`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**;
+inline line order in **Inline outputs**). The marker is distinct
 from `review-and-prep:receipt:`, so `/ship-and-land` never reads a paused
 receipt as prepared. If posting the paused comment fails, keep the pause and
 keep preparation incomplete until the compact comment is confirmed; report its
@@ -4576,10 +4548,16 @@ the relevant base/head refs. Require all of the following:
   relabel its original base/SHA as current.
 - Version assignment and release work remain for `/ship`.
 
-Write the full receipt (`full-receipt-<n>.md` in the invocation's evidence
-directory, created exclusively, never rewritten and never posted to GitHub) and
-write/update one `## Review and prep` receipt in the PR body, preserving the
-rest of the description. Record the body's last-edited time and editor,
+Once every readiness gate passes, run `checkpoint ready`, render the full
+receipt (`full-receipt-<n>.md` in the invocation's evidence directory, created
+exclusively, never rewritten and never posted to GitHub) from sections files
+holding the content this section lists, render the `comment` and post it with
+`--body-file`, and render the `body` (`## Review and prep`) with its permalink
+and splice that section into the PR body, preserving the rest of the
+description, then recheck, run `gh pr ready`, read back, run `finish`
+`prepared`, run `derive`, and render `final`
+(`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**;
+inline assembly in **Inline outputs**). Record the body's last-edited time and editor,
 re-read the body immediately before each edit, apply the receipt to that fresh
 text, and re-read after writing; if another actor edited in that window,
 re-apply the receipt onto their version and note the collision in the receipt.
@@ -4709,25 +4687,20 @@ reviewRestrictionResolved: true
 Full receipt: <evidence locator>; sha256: <64 hex>
 ```
 
-`Delegated part:` appears once per delegated part for each review cycle that ran
-it, in cycle order, when `delegate=<part>` is active (a part run in three cycles
-has three lines, and its last line is its latest cycle), and `Unresolved:`
-records unresolved findings or `none recorded`; keep both in the compact receipt
-comment as machine-read lines in their exact grammar rather than moving them
-only to `full-receipt-<n>.md`.
-`reviewRestrictionResolved: true` appears only when the rule above requires it.
-Write each path under the evidence root as its evidence locator (**Evidence directory**), and any other path under `$HOME` as `~/…`.
+Keep `Delegated part:` and `Unresolved:` in the compact receipt comment as
+machine-read lines in their exact grammar (`reviewRestrictionResolved: true`
+only when the rule above requires it; per-cycle ordering and path forms in calls
+doc **Inline outputs**).
 
-The PR body's `## Review and prep` section carries only: the status line
-(`prepared`, `PAUSED — manual testing required`, `STOPPED — review cycle cap`,
-or `BLOCKED — provider failures`); what changed and why (two to four sentences);
-the `Review default:` line and every
-`Auto-chosen (veto by replying on this PR):` line verbatim at line start, plus
-other decisions open to veto; one `Tests:` line (suite result and selection,
-pregate verdict, Greptile state); risks and open checks (pending user checks on
-a pause); and `Receipt:` the receipt, paused or stopped comment permalink (none
-yet on a BLOCKED exit) and `Evidence:` the full receipt's evidence locator
-(`full-receipt-<n>.md`) and its SHA-256. Keep every PR body at or under the
+The PR body's `## Review and prep` summary file holds only the model-written
+summary content: what changed and why (two to four sentences); the
+`Review default:` line and every `Auto-chosen (veto by replying on this PR):`
+line verbatim at line start, plus other decisions open to veto; one `Tests:`
+line (suite result and selection, pregate verdict, Greptile state); and risks
+and open checks (pending user checks on a pause); `render` `body` adds the
+heading, status line, `Receipt:` permalink and `Evidence:` the full receipt's
+evidence locator (`full-receipt-<n>.md`) and its SHA-256 (inline assembly in
+calls doc **Inline outputs**). Keep every PR body at or under the
 3,000-character budget measured by Step 3's `PR_BODY_SIZE` check. When the body
 exceeds 3,000 characters, shorten producer text by leaving detail to
 `full-receipt-<n>.md`. Never shorten: the `## Review and prep` heading and
@@ -4829,38 +4802,24 @@ this checkout without committing them, since they block release work until then.
 ```
 
 End every final message except the external-gate pause with this stage line, after
-any handoff fence and outside it, with nothing after it:
+any handoff fence and outside it, with nothing after it (`render` `final` produces the handoff fence, any `User-facing change:` lines and this stage line; `"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points** and **Inline outputs**):
 
 Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
 
-The prompt above is `next: ship-and-land; status: done`, with `head` the Prepared
-HEAD and `plan-sha256` the prompt's `SHA-256`. A blocked or needs-context exit
-prints `next: none` and that status after its resume summary, with no fence.
-`plan-sha256` is `none` when the exit names no plan hash.
-
 When the prepared diff changes user-visible behavior, CLI flags, configuration,
-skill inputs or outputs, or upgrade requirements, print one
-`User-facing change: <one plain sentence>` line for each change in the final
-message on a `next: ship-and-land` exit,
-outside the H-B `Run /ship-and-land` fence: place them after the fence's
-closing line and before the `Stage handoff: stage-handoff/v1;` line, which
-stays the last line of the message; see
-[release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures)
-(`docs/workflow-handoffs.md`). Never put `User-facing change:` on the
-`Run /ship-and-land for this prepared PR.` line, inside the H-B fence, or on
-the `Stage handoff: stage-handoff/v1;` line. Omit `User-facing change:`
-entirely when the diff has no user-facing change (never write `none` or
-`n/a`), and never copy internal review findings, test counts or `## Risks`
-items into it. Write one disclosure per line, label first, singular and inline.
-Use plain sentences with no upper-case status word, local path, credential or
-confidential requirement text: these lines count as text outside the handoff
-and become public release notes. Commands, files and labels go in backticks
-exactly as written. The lines are not added to the compact receipt comment,
-the PR body's `## Review and prep` section or the kept marker set. No manual
-testing pause, cycle stop, blocked result or external-gate exit prints them.
-A plan's `Release note:` and `Upgrade risk:` lines stay in the plan, which a
-release step also reads; restate one only when the reviewed head changed what
-it says.
+skill inputs or outputs, or upgrade requirements, pass one
+`--user-facing-change` value per change to `finish` `prepared` (rendered as
+`User-facing change: <one plain sentence>`; see
+[release disclosures](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#release-disclosures),
+`docs/workflow-handoffs.md`, and inline placement in calls doc **Inline outputs**).
+Omit `--user-facing-change` entirely when the diff has no user-facing change
+(never write `none` or `n/a`), and never copy internal review findings, test
+counts or `## Risks` items into it. Use plain sentences with no upper-case
+status word, local path, credential or confidential requirement text: these
+lines count as text outside the handoff and become public release notes.
+Commands, files and labels go in backticks exactly as written. A plan's
+`Release note:` and `Upgrade risk:` lines stay in the plan, which a release
+step also reads; restate one only when the reviewed head changed what it says.
 
 Read back live readiness before producing this prompt on an already-complete
 rerun too. Do not publish new PR comments or push code after the ready transition

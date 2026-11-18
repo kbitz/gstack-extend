@@ -1380,7 +1380,7 @@ describe('review-and-prep pause points finish blocked', () => {
   });
 
   test('a pause ends the metrics run step paused, and a resume records its own run', () => {
-    expect(text).toContain('at a deliberate pause end it `paused`, before the `blocked` finish');
+    expect(text).toContain('derive writes the run `end` after the pause checkpoint or `finish` and before Telemetry finish');
     expect(text).not.toContain('for example on resume');
     expect(text).not.toContain('leave it open at a pause');
   });
@@ -1461,10 +1461,12 @@ describe('review-and-prep PR body size budget', () => {
     expect(compactFence).toContain('record: <evidence locator>;');
     expect(compactFence).toContain('section: <evidence locator>;');
     expect(prep).not.toContain('<~-relative path>');
+    const callsRaw = readFileSync(join(ROOT, 'docs', 'review-run-state-calls.md'), 'utf8');
+    const inlineOutputs = callsRaw.slice(callsRaw.indexOf('## Inline outputs')).replace(/\s+/g, ' ');
     const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
-    expect(readiness).toContain('Write each path under the evidence root as its evidence locator');
+    expect(inlineOutputs).toContain('Write each path under the evidence root as its evidence locator');
     expect(readiness).toContain("`Evidence:` the full receipt's evidence locator");
-    const pausedShape = pauseSection.split('The paused comment uses')[1]!.split('The marker is distinct')[0]!;
+    const pausedShape = inlineOutputs.split('The paused comment uses')[1]!.split('The marker is distinct')[0]!;
     expect(pausedShape).toContain('every `Delegated part:` line');
     expect(pausedShape).toContain('`Unresolved:`');
     expect(stopSection).toContain('its one `Skipped pregate lanes:` or `Ship gates:` line');
@@ -1542,6 +1544,8 @@ describe('review-and-prep PR body size budget', () => {
 describe('review-and-prep Step 7 user-facing change disclosure', () => {
   const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
   const step7Raw = skillSection(prep, H_STEP_7);
+  const callsRaw = readFileSync(join(ROOT, 'docs', 'review-run-state-calls.md'), 'utf8');
+  const inlineOutputs = callsRaw.slice(callsRaw.indexOf('## Inline outputs')).replace(/\s+/g, ' ');
 
   // Value: protects=User-facing change: sits outside the H-B fence and compact receipt; fails_when=User-facing change: moves into the H-B fence or the compact receipt; why_new=Track 73B Step 7 fence check; seam=none
   test('Step 7 places User-facing change: outside the H-B fence and leaves H-B and the compact receipt unchanged', () => {
@@ -1553,6 +1557,7 @@ describe('review-and-prep Step 7 user-facing change disclosure', () => {
     expect(receiptFence).not.toContain('User-facing change');
     expect(step7Raw).toContain('`User-facing change: <one plain sentence>`');
     expect(step7Raw).toContain('docs/workflow-handoffs.md#release-disclosures');
+    expect(inlineOutputs).toContain('place them after the fence\'s closing line and before the `Stage handoff: stage-handoff/v1;` line');
   });
 });
 
@@ -1669,8 +1674,8 @@ describe('review-and-prep run-state=record', () => {
   const metricsRaw = skillSection(prep, '### Workflow metrics (optional, local)');
   const callsRaw = readFileSync(join(ROOT, 'docs', 'review-run-state-calls.md'), 'utf8');
 
-  // Value: protects=the Workflow metrics section conditions its inline writes on run-state=record with the derive token mapping and without adding a code fence; fails_when=a token is dropped or a bash fence is added; why_new=Track 77B T2 reduced to tokens per Track 86B T4; seam=none
-  test('Workflow metrics conditions its inline writes on run-state=record without changing its fences', () => {
+  // Value: protects=the Workflow metrics section conditions its inline writes on recorded run state with the derive token mapping and without adding a code fence; fails_when=a token is dropped or a bash fence is added; why_new=Track 77B T2 updated for Track 89A T2; seam=none
+  test('Workflow metrics conditions its inline writes on recorded run state and derive without changing its fences', () => {
     const afterContract = metricsRaw.slice(
       metricsRaw.indexOf('Full contract:'),
       metricsRaw.indexOf('Resolve `gstack-extend-telemetry`'),
@@ -1678,7 +1683,7 @@ describe('review-and-prep run-state=record', () => {
     expect(afterContract).not.toContain('```');
     const para = afterContract.replace(/\s+/g, ' ');
     for (const token of [
-      'run-state=record',
+      '`derive`',
       'GX_RUN',
       'current.run_step_id',
       'GX_SID',
@@ -1688,6 +1693,142 @@ describe('review-and-prep run-state=record', () => {
     ]) {
       expect(para, token).toContain(token);
     }
+  });
+
+  // Value: protects=recording is the default in the policy bullet and calls doc Activation, with both unavailable reasons and the capability check; fails_when=the default sentence, an unavailable reason or an activation condition is dropped or the bullet reverts to opt-in; why_new=Track 89A T1; seam=none
+  test('the policy bullet and calls document make recording the default and lock both unavailable reasons', () => {
+    const policyRaw = skillSection(prep, '### Read an optional review policy');
+    const bulletStart = policyRaw.indexOf('- `run-state=record`');
+    expect(bulletStart).toBeGreaterThan(-1);
+    const bulletEnd = policyRaw.indexOf('\n- ', bulletStart + 2);
+    const bullet = policyRaw.slice(bulletStart, bulletEnd > -1 ? bulletEnd : undefined).replace(/\s+/g, ' ');
+
+    const defaultSentence = '`run-state=record` (its only value) is accepted and changes nothing: recording is the default.';
+    const checkDefaultBullet = (b: string): string[] => {
+      const violations: string[] = [];
+      if (!b.includes(defaultSentence)) violations.push('missing default sentence');
+      if (b.includes('is opt-in')) violations.push('bullet still says is opt-in');
+      if (!b.includes('`Run state: unavailable (helper-missing)`')) violations.push('missing helper-missing');
+      if (!b.includes('`Run state: unavailable (calls-document-missing)`')) violations.push('missing calls-document-missing');
+      if (!b.includes('`grep -F \'run-state=record\' "<installed skill dir>/SKILL.md"`')) violations.push('missing capability check');
+      return violations;
+    };
+
+    expect(checkDefaultBullet(bullet)).toEqual([]);
+    expect(checkDefaultBullet(bullet.replace(defaultSentence, ''))).toContain('missing default sentence');
+
+    const actStart = callsRaw.indexOf('## Activation');
+    const actEnd = callsRaw.indexOf('\n## ', actStart + 1);
+    expect(actStart).toBeGreaterThan(-1);
+    expect(actEnd).toBeGreaterThan(actStart);
+    const activation = callsRaw.slice(actStart, actEnd).replace(/\s+/g, ' ');
+    expect(activation).not.toContain('Active when the review policy parsed with `run-state=record`');
+    expect(activation).toContain('`EXTEND_ROOT:`');
+    expect(activation).toContain('`"<extend-root>/bin/review-state" --version` exits 0');
+    expect(activation).toContain('`<extend-root>/docs/review-run-state-calls.md` is readable');
+    expect(activation).toContain('`Run state: unavailable (helper-missing)`');
+    expect(activation).toContain('`Run state: unavailable (calls-document-missing)`');
+  });
+
+  // Value: protects=inline metrics write procedures owned by derive stay removed from skills/review-and-prep.md; fails_when=any removed inline run-begin, delegated-v3, corrections or context-override phrase returns; why_new=Track 89A T2; seam=none
+  test('inline metrics write procedures owned by derive stay removed from the skill', () => {
+    const removedPhrases = [
+      'Once, before other metrics: `begin` with `kind:"run"`',
+      '- Delegated attempts (`v:3`)',
+      '- Corrections, appended as they happen',
+      'Once the candidate changes (you first observe it',
+    ] as const;
+    const checkRemoved = (text: string): string[] =>
+      removedPhrases.filter((phrase) => text.includes(phrase));
+
+    expect(checkRemoved(prep)).toEqual([]);
+    for (const phrase of removedPhrases) {
+      expect(checkRemoved(`${prep}\n${phrase}\n`), phrase).toContain(phrase);
+    }
+  });
+
+  // Value: protects=moved line-assembly rules live in calls doc ## Inline outputs and the skill carries render --help pointers at Readiness, the paused comment, the stopped comment and Step 7; fails_when=an Inline outputs rule or a render --help pointer is dropped; why_new=Track 89A T3; seam=none
+  test('calls doc Inline outputs carries the moved assembly rules and the skill carries render --help pointers at all four sites', () => {
+    const inlineStart = callsRaw.indexOf('## Inline outputs');
+    expect(inlineStart).toBeGreaterThan(-1);
+    const inlineFlat = callsRaw.slice(inlineStart).replace(/\s+/g, ' ');
+
+    const checkInlineAndPointers = (skillText: string, inlineText: string): string[] => {
+      const violations: string[] = [];
+      for (const rule of [
+        '`Delegated part:` appears once per delegated part for each review cycle that ran it, in cycle order',
+        'Write each path under the evidence root as its evidence locator',
+        'The PR body\'s `## Review and prep` section carries only:',
+        'The paused comment uses Step 6\'s compact shape:',
+        'The stopped comment uses Step 6\'s compact shape:',
+        'place them after the fence\'s closing line and before the `Stage handoff: stage-handoff/v1;` line',
+      ]) {
+        if (!inlineText.includes(rule)) violations.push(`missing inline rule: ${rule}`);
+      }
+      for (const [label, heading] of [
+        ['Readiness', '### Readiness'],
+        ['paused comment', H_MANUAL_CHECKPOINT],
+        ['stopped comment', H_CYCLE_STOP],
+        ['Step 7', H_STEP_7],
+      ] as const) {
+        const sec = skillSection(skillText, heading).replace(/\s+/g, ' ');
+        if (!sec.includes('render --help')) violations.push(`missing render --help at ${label}`);
+      }
+      return violations;
+    };
+
+    expect(checkInlineAndPointers(prep, inlineFlat)).toEqual([]);
+    expect(
+      checkInlineAndPointers(prep, inlineFlat.replace('The stopped comment uses Step 6\'s compact shape:', '')),
+    ).toContain('missing inline rule: The stopped comment uses Step 6\'s compact shape:');
+    expect(
+      checkInlineAndPointers(prep.replaceAll('render --help', 'render'), inlineFlat).length,
+    ).toBe(4);
+  });
+
+  // Value: protects=no-ID baseline fence refusal recovery and version-skew fallbacks (calls-document-missing and derive-missing); fails_when=a refusal string, reason code, without REVIEW_STATE_DIR instruction, replacement-pass ban or skew reason is dropped; why_new=Track 89A T4; seam=none
+  test('locks no-ID fence refusal recovery and version-skew fallbacks with mutation checks', () => {
+    const fenceStart = callsRaw.indexOf('## The baseline fence');
+    const fenceEnd = callsRaw.indexOf('\n## ', fenceStart + 1);
+    const fenceSec = callsRaw.slice(fenceStart, fenceEnd).replace(/\s+/g, ' ');
+    const deriveStart = callsRaw.indexOf('## Derive and spans');
+    const deriveEnd = callsRaw.indexOf('\n## ', deriveStart + 1);
+    const deriveSec = callsRaw.slice(deriveStart, deriveEnd).replace(/\s+/g, ' ');
+    const policySec = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+
+    const checkFenceRule = (f: string): string[] => {
+      const tokens = [
+        'FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (run-state unreadable)',
+        'FULL_REVIEW_RECORD: refused cycle-1-baseline: write point not reached (cycle-1-pass)',
+        'fence-run-state-unreadable',
+        'fence-cycle-1-pass-missing',
+        'without `REVIEW_STATE_DIR`',
+        'never record a replacement pass after the fact',
+      ];
+      return tokens.filter((t) => !f.includes(t));
+    };
+    const checkCallsDocSkew = (p: string): string[] => {
+      const tokens = [
+        'calls-document-missing',
+        'capture=unavailable (run-state unavailable: calls-document-missing)',
+      ];
+      return tokens.filter((t) => !p.includes(t));
+    };
+    const checkDeriveSkew = (d: string): string[] => {
+      const tokens = [
+        'derive-missing',
+        'capture=unavailable (derive-missing)',
+      ];
+      return tokens.filter((t) => !d.includes(t));
+    };
+
+    expect(checkFenceRule(fenceSec)).toEqual([]);
+    expect(checkCallsDocSkew(policySec)).toEqual([]);
+    expect(checkDeriveSkew(deriveSec)).toEqual([]);
+
+    expect(checkFenceRule(fenceSec.replace('fence-cycle-1-pass-missing', ''))).toContain('fence-cycle-1-pass-missing');
+    expect(checkCallsDocSkew(policySec.replaceAll('calls-document-missing', ''))).toContain('calls-document-missing');
+    expect(checkDeriveSkew(deriveSec.replaceAll('derive-missing', ''))).toContain('derive-missing');
   });
 
   // Value: protects=docs/review-run-state-calls.md resolves every Fixed points heading against skills/review-and-prep.md; fails_when=a Fixed points heading drifts; why_new=Track 77B T4; seam=none

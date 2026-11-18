@@ -1077,8 +1077,7 @@ Missing data always reads as unknown — never as zero work.
 
 ### Review-state derive
 
-This command and [`review-state export`](designs/review-run-state.md#d8-commands-result-envelope-and-reason-codes) are experimental until Track 79A's default
-decision. Only `/review-and-prep` calls them, under the opt-in `run-state=record` review-policy value ([`docs/review-run-state-calls.md`](review-run-state-calls.md)). Run derive from the recording
+This command and [`review-state export`](designs/review-run-state.md#d8-commands-result-envelope-and-reason-codes) are experimental internal helpers. `/review-and-prep` calls them by default while recording its run state ([`docs/review-run-state-calls.md`](review-run-state-calls.md)). Run derive from the recording
 checkout after recording state, and rerun it there to recover a missed write.
 
 `gstack-extend-telemetry derive --dir DIR` invokes `bin/review-state export --dir DIR`
