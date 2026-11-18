@@ -371,8 +371,8 @@ telemetry skipped: missing or malformed start/session state (handoff from anothe
 `--session-id` and `--start`. It never reads another root's handoff. A same-skill
 handoff already in the destination root is judged by the rule above. Inside one
 harness session, a start-less non-resumable finish adopts that session's open
-start in the same root at any age. Subagents inherit the parent's session marker
-and count as the same session. A finish inside a nested harness (`codex exec`
+start in the same root at any age. A subagent with the same valid markers and
+values as its parent counts as the same session. A finish inside a nested harness (`codex exec`
 launched from Claude Code) carries an extra marker and counts as another session,
 so a non-resumable finish there is refused. Resumable adoption stays unbounded,
 so a start-less finish can adopt an abandoned resumable start. That is the fallback:
@@ -2158,7 +2158,7 @@ Existing Cursor SDK metadata is requested configuration even when the historical
 detector labels it `detected`.
 `unknown` means the value is null, and a null value is always `unknown`. A
 rejected flag changes nothing, so the detected value keeps `detected`: an
-`--agent` outside the four harnesses, or a blank, non-printable, or over-200-character
+`--agent` outside the accepted names above, or a blank, non-printable, or over-200-character
 `--model` or `--effort`. A valid `--agent` naming another harness drops the detected
 model and effort first, so an omitted `--model` or `--effort` is then null and
 `unknown` unless `GSTACK_EXTEND_MODEL` or `GSTACK_EXTEND_EFFORT` fills it as
@@ -2207,6 +2207,9 @@ validate. Pin a release tag or commit of the schema, or vendor a copy: the file
 on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
+
+The `muse` value extends the shared `agent` enum. Update pinned schema copies
+before validating version 4 rows with `agent: "muse"`.
 
 The v2/v3 `host_agent_id` and v4 `workspace_host` patterns require Unicode property escapes and Unicode-mode
 ECMA-262 regex evaluation, as provided by the pinned Ajv's default
