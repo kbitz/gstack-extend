@@ -1562,6 +1562,10 @@ describe('bin/review-state', () => {
       expect(res.json.files[0].display).toBe(`~/${name}/full-receipt-1.md`);
       const fullText = readFileSync(res.json.files[0].path, 'utf8');
       expect(fullText).toMatch(new RegExp(`^Run state: recorded \\(~/${name}/review-run-state\\.json; rev \\d+\\)$`, 'm'));
+      if (r.dir === dReady) {
+        expect(fullText).toContain(`record: ~/${name}/pregate.json; sha256: ${sha256(pregateBytes)}`);
+        expect(fullText).toContain(`section: ~/${name}/doc-sec.md; sha256: ${sha256(docSecBytes)}`);
+      }
       fullRefs.set(r.dir, { path: 'full-receipt-1.md', sha256: res.json.files[0].sha256 });
     }
 

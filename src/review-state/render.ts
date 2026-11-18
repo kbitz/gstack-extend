@@ -42,7 +42,7 @@ export function tilde(p: string, home: string = homedir()): string {
   const h = home.replace(/\/+$/, '');
   return h.length > 1 && p.startsWith(`${h}/`) ? `~/${p.slice(h.length + 1)}` : p;
 }
-export function evidenceLocator(dir: string, rel: string): string {
+function evidenceLocator(dir: string, rel: string): string {
   const name = basename(normalizeDir(dir));
   return name ? `${name}/${rel}` : rel;
 }
@@ -113,7 +113,7 @@ const reqPr = (s: ReviewRunState, pr?: PrInfo | null): PrInfo => {
 
 export type RenderCtx = RenderFinalInput & {
   state: ReviewRunState; exit: Exclude<RenderExitState, 'not-renderable'>; b: ActiveBinding;
-  dir: string; home: string; fullReceipt?: EvidenceRef; summaryText?: string; resolved?: boolean;
+  dir: string; home: string; fullReceipt?: EvidenceRef; summaryText?: string; resolved?: boolean; localEvidencePaths?: boolean;
 };
 
 export function renderDelegationPolicyLine(d: DelegationPolicy | null): string | null {
@@ -164,18 +164,21 @@ export const FIELD_FMT = {
     return `Checks not run: ${notRun.length > 0 ? notRun.join(', ') : 'none'}`;
   },
   shipGates: (c: RenderCtx) => {
+    const pathFor = c.localEvidencePaths
+      ? (rel: string) => tilde(`${normalizeDir(c.dir)}/${rel}`, c.home)
+      : (rel: string) => evidenceLocator(c.dir, rel);
     const pre = lastByName(c.state.gates, 'pregate');
     const cov = lastByName(c.state.audits, 'coverage'), doc = lastByName(c.state.audits, 'documentation');
     return [
       `Ship gates: head=${c.b.head}; tree=${c.b.tree}; base=${c.b.base}`,
       pre && pre.result !== 'not-run' && isFreshForBinding(pre.candidate, c.b)
-        ? `- pregate: ${String(pre.details.raw_verdict)}; wrapper: ${String(pre.details.wrapper_verdict)}; policy: ${String(pre.details.policy)}; record: ${evidenceLocator(c.dir, String(pre.details.record_path))}; sha256: ${String(pre.details.record_sha256)}`
+        ? `- pregate: ${String(pre.details.raw_verdict)}; wrapper: ${String(pre.details.wrapper_verdict)}; policy: ${String(pre.details.policy)}; record: ${pathFor(String(pre.details.record_path))}; sha256: ${String(pre.details.record_sha256)}`
         : '- pregate: not-run',
       cov && cov.result !== 'not-run' && isFreshForBinding(cov.candidate, c.b)
         ? `- coverage: ${cov.result}; pct: ${cov.details.pct != null ? `${String(cov.details.pct)}%` : 'n/a'}; threshold: ${String(cov.details.threshold)}`
         : '- coverage: not-run',
       doc && doc.result !== 'not-run' && isFreshForBinding(doc.candidate, c.b)
-        ? `- documentation: ${doc.result}; audit: ${String(doc.details.report_id)}; section: ${evidenceLocator(c.dir, String(doc.details.section_path))}; sha256: ${String(doc.details.section_sha256)}`
+        ? `- documentation: ${doc.result}; audit: ${String(doc.details.report_id)}; section: ${pathFor(String(doc.details.section_path))}; sha256: ${String(doc.details.section_sha256)}`
         : '- documentation: not-run',
     ];
   },
@@ -309,7 +312,7 @@ export function renderFullReceipt(state: ReviewRunState, input: { sectionsText?:
   const exit = exitState(state), key = `full:${exit}`;
   if (!(key in LINE_GRAMMARS) || (exit === 'blocked' && state.finish?.stop_reason !== 'provider-failures')) throw new Error(`not-renderable: full-receipt on ${exit}`);
   const resolved = exit === 'ready' || exit === 'paused' ? Boolean(input.reviewRestrictionResolved) : state.finish?.review_restriction_resolved === true;
-  const lines = evalGrammar(key, state, { dir, home, resolved });
+  const lines = evalGrammar(key, state, { dir, home, resolved, localEvidencePaths: true });
   const secs = (input.sectionsText ?? []).map((s) => s.replace(/\r\n?/g, '\n').replace(/\n+$/, ''));
   return secs.length > 0 ? `${lines.join('\n')}\n\n${secs.join('\n\n')}\n` : `${lines.join('\n')}\n`;
 }
