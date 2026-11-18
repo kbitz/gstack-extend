@@ -164,14 +164,16 @@ are hashed with the values, so equal IDs from different harnesses do not collide
 No valid marker stores null. Debug mode names the markers that contributed and
 never prints their values.
 
-**Upgrade during an open stage:** This release starts including a valid
-`GROK_SESSION_ID` even without `GROK_AGENT=1`, and a valid `MUSE_SESSION_ID`. A
-Muse stage started before upgrading has a null fingerprint and still pairs
-within the 24-hour bound (`ADOPTION_BOUND_S`); a start that also carried another
-harness marker changes its fingerprint on upgrade and is refused at finish as
-belonging to another session. Finish open stages before upgrading,
-or use the existing explicit `--session-id` finish with that stage's original
-telemetry session ID. Existing rows are not rewritten.
+**Upgrade during an open stage.** The Grok change added valid `GROK_SESSION_ID`
+to the fingerprint without requiring `GROK_AGENT=1`. The Muse change adds valid
+`MUSE_SESSION_ID`. A non-resumable Muse stage started with only the Muse marker
+before the upgrade has a null fingerprint and can still pair within the 24-hour
+bound (`ADOPTION_BOUND_S`). If another harness marker was already part of the
+start fingerprint, adding a marker across the upgrade changes that fingerprint.
+An implicit finish for a non-resumable stage then refuses the handoff as belonging
+to another session. Finish open stages before upgrading or pass the stage's
+original telemetry session ID to `--session-id` at finish. Existing rows retain
+their original values.
 
 A valid explicit `--session-id` keeps its previous behavior and is never
 age-bounded. An explicit `--start` alone does not bypass adoption. With a valid
@@ -1853,7 +1855,7 @@ directories. Hand-use capture is qualified for the owner's observed Claude `cli`
 | `grok` | Detection supported when valid `GROK_SESSION_ID` or `GROK_AGENT=1` is present (session-ID-only path fixture-qualified; no real post-fix by-hand readback); unmarked under ACP `terminal/create` (`paseo 0.15.2` + `grok 1.0.77`) | `GROK_SESSION_ID` (valid session ID, including hook/MCP and session-id-only launches) or `GROK_AGENT=1` (terminal shell; non-`"1"` profile names are ignored); model and effort from `~/.grok/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}`. Under `grok acp`, `xai-grok-shell-terminal`'s `terminal/create` RPC delegates command execution to Paseo's sibling terminal without forwarding `GROK_SESSION_ID` or `GROK_AGENT=1` (`run_mode_source="no-harness"` when unmarked) | Unqualified (`unknown` / `harness-unqualified` when detected) | Neither Grok's environment nor `~/.grok/sessions/<encoded-cwd>/<session>/{summary.json,events.jsonl}` records an entrypoint distinguishing interactive by-hand use from ACP or orchestrated runs, and Paseo only injects a provider entrypoint for Claude |
 | `codex` | Qualified (terminal CLI, `codex exec`, and Paseo app-server) | `CODEX_THREAD_ID`; model and effort from `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (`CODEX_HOME` honored) | Unqualified (`unknown` / `harness-unqualified`) | Neither `CODEX_*` environment variables nor rollout `session_meta.payload` (`originator` / `source` only record shapes such as `("codex_cli_rs", "vscode")` or `("codex_exec", "exec")`, while Paseo's app-server client passes hardcoded `clientInfo.name="codex_app_server_daemon"`) distinguishes a by-hand launch from an orchestrated worker |
 | `cursor` | Qualified when `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` is exported | `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` (`CURSOR_INVOKED_AS` for `route="cli"`); transcripts under `~/.cursor/projects/*/agent-transcripts/` break cross-harness ties while model and effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified`) | Neither `CURSOR_AGENT`, `CURSOR_CONVERSATION_ID`, `CURSOR_INVOKED_AS`, nor Cursor's agent transcripts expose an entrypoint distinguishing interactive by-hand sessions from ACP or headless worker launches |
-| `muse` | Detection supported when a valid `MUSE_SESSION_ID` is present (`muse 1.4.23`, for Paseo and terminal launches; fixture-qualified only, with no real post-change readback; Paseo export observed, terminal export unverified) | `MUSE_SESSION_ID` (`MUSE_THREAD_ID` and the per-call `MUSE_TOOL_USE_ID` are unused); model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`; only the named session log is read, never sibling or subagent logs, and a missing log leaves model `null`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT`. Under Paseo, Muse runs commands in its own shell so `MUSE_SESSION_ID` reaches them | Unqualified (`unknown` / `harness-unqualified` when detected) | Muse exports no entrypoint variable; `session.opened.observed` `client_info_name` in the session log names the client (`paseo` under Paseo), but no terminal-launch log was available to qualify that signal and Paseo launches both by-hand and orchestrated sessions |
+| `muse` | Fixture-qualified when a valid `MUSE_SESSION_ID` is present, using the Muse 1.4.23 log format. Paseo shell export was observed with Muse 1.4.20. Terminal export and real post-change readbacks remain unverified | `MUSE_SESSION_ID` (`MUSE_THREAD_ID` and the per-call `MUSE_TOOL_USE_ID` are unused); model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`; only the named session log is read, and a missing log leaves model `null`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified` when detected) | Muse exports no entrypoint variable. `session.opened.observed` `client_info_name` names the client (`paseo` under Paseo). Paseo launches both by-hand and orchestrated sessions, and the terminal client name is unverified |
 
 <a id="hand-run-usability-signals"></a>
 
@@ -2114,16 +2116,15 @@ until finish flags or requested variables supply them:
   leave model and effort null. Under ACP (`grok acp`) when the host advertises
   client terminal capability, `xai-grok-shell-terminal`'s `terminal/create` request
   does not forward `GROK_SESSION_ID` or `GROK_AGENT=1`, leaving child commands unmarked.
-- **Muse Code** exports `MUSE_SESSION_ID`. The wrapper reads that session's
+- When **Muse Code** exports `MUSE_SESSION_ID`, the wrapper reads that session's
   `session.jsonl` under `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/`
   (default `$HOME/.local/share` when `XDG_DATA_HOME` is unset or relative), taking
   `model` from `runtime.session` `model_completed` events inside the stage window.
   Effort stays null because the session log does not record an effort value (finish
   flags or `GSTACK_EXTEND_EFFORT` can supply it). Only the named session's log is
   read, never a sibling session's log or a `<session>/subagent/<child>/session.jsonl`
-  log, and a missing or unreadable log leaves model null. Under Paseo, Muse runs
-  commands in its own shell, so `MUSE_SESSION_ID` reaches child commands, unlike
-  Grok's ACP `terminal/create`.
+  log, and a missing or unreadable log leaves model null. In the observed Paseo
+  launch, `MUSE_SESSION_ID` reached commands in Muse's own shell.
 - **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. An explicit
   `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker records
   `route: "cli"`; otherwise `route` is `"unknown"`.

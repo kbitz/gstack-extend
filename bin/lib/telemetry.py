@@ -1172,21 +1172,22 @@ def codex_logs(thread_id, codex_home=None):
 def muse_logs(session_id, data_home=None):
     if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
         return []
-    xdg = os.environ.get("XDG_DATA_HOME")
-    root = Path(data_home if data_home is not None else xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share")
+    if data_home is None:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        data_home = xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
+    store = Path(data_home).resolve() / "muse/sessions"
     found = []
-    for path in (root / "muse/sessions").glob(f"*/*/*/{session_id}/session.jsonl"):
+    for path in store.glob(f"*/*/*/{session_id}/session.jsonl"):
         try:
-            if not path.is_symlink() and path.is_file():
+            # A linked date or session directory can redirect a regular-looking log.
+            if path.resolve() == path and path.is_file():
                 found.append(path)
-        except OSError:
+        except (OSError, RuntimeError):
             continue
     return found
 
 
 def muse_turns(session_id):
-    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
-        return []
     log = newest(muse_logs(session_id))
     turns = []
     for outer in tail_records(log) if log else ():
@@ -1200,7 +1201,7 @@ def muse_turns(session_id):
             if not isinstance(event, dict) or event.get("kind") != "model_completed":
                 continue
             model = clean(event.get("model"))
-            raw_ts = record.get("recorded_at") if "recorded_at" in record else outer.get("recorded_at")
+            raw_ts = record.get("recorded_at")
             ts = integer(raw_ts) if isinstance(raw_ts, int) else None
             if model is None or ts is None:
                 continue

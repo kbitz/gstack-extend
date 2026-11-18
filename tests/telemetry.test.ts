@@ -1515,7 +1515,7 @@ const museLog = (home: string, sessionId: string, records: object[], subagent?: 
   const rel = subagent ? join(sessionId, 'subagent', subagent, 'session.jsonl') : join(sessionId, 'session.jsonl');
   writeJsonl(join(base, 'muse/sessions/2026/11/18', rel), [
     museRecord(1, 1, sessionId, 'runtime.session.metadata', { record: { model_id: 'muse-fixture-meta' } }),
-    museRecord(1, 2, sessionId, 'runtime.session', {
+    museRecord(Date.now() / 1000, 2, sessionId, 'runtime.session', {
       kind: 'run',
       event: {
         kind: 'model_request_configured',
@@ -2029,16 +2029,19 @@ describe('execution provenance', () => {
     }).row;
     expect(relXdg).toMatchObject({ agent: 'muse', model: 'muse-fixture-1.0', model_source: 'detected' });
 
-    // String recorded_at and record without model alone leave model null.
+    // Invalid or missing recorded_at and a record without model leave model and effort null.
     const skippedOnly = provenanceRun(fix, { MUSE_SESSION_ID: 'muse-skipped' }, () => {
       const now = Date.now() / 1000;
       museLog(fix.home, 'muse-skipped', [
         museTurn(iso(now), 3, 'muse-skipped', 'muse-fixture-1.0'),
         museTurn(String(Math.round(now * 1_000_000)), 4, 'muse-skipped', 'muse-fixture-1.0'),
         museTurn(now, 5, 'muse-skipped', undefined),
+        museRecord(now, 6, 'muse-skipped', 'runtime.batch', {}, {
+          children: [{ ...museTurn(now, 7, 'muse-skipped', 'muse-fixture-untimed'), recorded_at: undefined }],
+        }),
       ]);
     }).row;
-    expect(skippedOnly).toMatchObject({ agent: 'muse', model: null, model_source: 'unknown', effort: null });
+    expect(skippedOnly).toMatchObject({ agent: 'muse', model: null, model_source: 'unknown', effort: null, effort_source: 'unknown' });
 
     // GSTACK_EXTEND_EFFORT supplies requested effort.
     const requestedEffort = provenanceRun(fix, { MUSE_SESSION_ID: sid, GSTACK_EXTEND_EFFORT: 'high' }, () => {

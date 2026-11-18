@@ -152,14 +152,12 @@ On `2026-11-18`, the owner ran `full-review` (started `17:52:10Z`) and
 `gstack-extend-upgrade` (started `18:18:53Z`) by hand in Muse, launched from the
 Paseo app on host C (the same host ledger that holds the `2026-11-09T16:22:59Z`
 host C row above), with `producer_version: "0.101.0"`. Both rows recorded
-`agent: null`, `run_mode: "unknown"`, and `run_mode_source: "no-harness"`. The
-cause was in this repository rather than upstream: `SESSION_MARKERS` and
-`detect()` had no Muse marker. This change adds `MUSE_SESSION_ID` to
-`SESSION_MARKERS` and `detect()` (plus `muse` in `HARNESSES`, `muse_logs()`,
-`muse_turns()`, and `harness_ancestor()`). Under Paseo, Muse exports
-`MUSE_SESSION_ID` to its shell, so no Paseo-specific fallback is needed;
-by-hand mode stays `unknown` / `harness-unqualified`. Rows already written are
-not rewritten.
+`agent: null`, `run_mode: "unknown"`, and `run_mode_source: "no-harness"`.
+The repository's `SESSION_MARKERS` and `detect()` did not recognize Muse. They
+now use `MUSE_SESSION_ID`, which the observed Paseo-launched Muse session
+exported to shell commands. Detection is fixture-qualified and by-hand mode
+stays `unknown` / `harness-unqualified`. Existing rows retain their original
+values.
 
 When no primary orchestration signal (`session-kind`, `work-item`,
 `run-mode-env`) applies, `run_mode` is `"unknown"` for every case below, with
