@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.102.0] - 2026-11-18
+
+### Changed
+
+- Telemetry now recognizes Muse Code sessions, so their stage-run rows record `agent: "muse"` and the model Muse logged instead of recording no harness.
+- Telemetry now recognizes Muse sessions and reads the named session log for model attribution.
+
+### Upgrade notes
+
+- Stage-run rows can now carry the agent value `muse`, so a consumer that validates rows against an older copy of `docs/stage-runs.schema.json` needs the updated schema.
+- Consumers with a pinned v4 telemetry schema need to refresh it to accept the new `muse` agent value.
+
 ## [0.101.1] - 2026-11-18
 
 ### Changed
