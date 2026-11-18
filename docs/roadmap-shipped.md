@@ -635,3 +635,34 @@ _tombstone: 85_
 ### Track 85H: Make review-state build produce valid coverage-audit details ✓ Shipped (v0.98.1)
 - 2026-11-17: merged [PR #270](https://github.com/kbitz/gstack-extend/pull/270) (commit `23f0bfc`, 19:40Z). It was never on the roadmap and carried no Track ID; it was carded on the owner's word outside the roadmap (the orchestrator's item 31f92466). This regeneration numbers it.
 - Its receipt: a skipped or not-applicable coverage audit records with its reason in the result and threshold `n/a` when no percentage is given, an over-long threshold explanation moves into the result with an override warning instead of being refused (PRs #266's and #267's audits replay as C18), and `build record` accepts `--dir DIR` between `record` and its subtype. Its review was the first of D15's three consecutive recorded reviews. It recorded three test gaps, deferred by this regeneration.
+
+## Individual Track history
+_tombstone: 86, 87, 88_
+
+### Track 86E: Replace the personal-tooling path in the review-concurrency acceptance record ✓ Shipped
+- 2026-11-18: merged [PR #273](https://github.com/kbitz/gstack-extend/pull/273) (commit `dbe7c13`, 00:05Z); verified land-time Track 86E (its PR title and brief name the card), original Group 86. Documentation change with no version bump of its own; first contained in the v0.98.2 release.
+- The `#202` and `#207` rows' Host / harness cells in `docs/acceptance/review-concurrency.md` describe the state root as a private state root, keeping every other fact; its `/docs-ship` receipt found the change in scope with no departure from the brief.
+
+### Track 86B: Loosen /review-and-prep's wording locks and state each rule once ✓ Shipped (v0.98.2)
+- 2026-11-18: merged [PR #272](https://github.com/kbitz/gstack-extend/pull/272) (commit `a9b8d5a`, 01:10Z); verified land-time Track 86B (the orchestrator's item a4488ab9, declared active by the 2026-11-17 regeneration; its approved plan is titled with the card), original Group 86.
+- Its receipt and HEAD carry the card: duplicate and sentence locks give way to contract guards and mutations, the skill states shared rules once with one conditional-line table for final, paused and stopped receipts, and the `Base issue:` form lives in `docs/source-tag-contract.md`; the PR states the counts (the review suite 4,852 → 2,726 lines and 255 → 111 tests; the skill 5,150 → 5,009 lines and 344,271 → 334,023 bytes). The developer accepted one documentation-freshness exception, and the review recorded one optional test gap (unavailable-template uniqueness), placed by this regeneration on Track 90A.
+
+### Track 88B: Keep local evidence paths out of public PR bodies ✓ Shipped (v0.99.0)
+- 2026-11-18: merged [PR #274](https://github.com/kbitz/gstack-extend/pull/274) (commit `dd10953`, 04:32Z). It was never on the roadmap and carried no Track ID; it implemented the card of this title, carded outside the roadmap on the developer's word (2026-11-17, "2 - yes"; the orchestrator's item 15515f11). This regeneration numbers it.
+- Its receipt: published receipts from `/review-and-prep` and `/ship-and-land` use locators relative to the producing skill's evidence root, private receipts keep usable local paths, legacy receipt paths stay readable, and the 0.x MINOR release notes disclose the change for tools that opened those paths. Its review recorded one test gap (a prepared handoff through a directory alias), deferred by this regeneration.
+
+### Track 87A: Move the full-review record fence into a helper and decide the telemetry copy ✓ Shipped (v0.100.0)
+- 2026-11-18: merged [PR #275](https://github.com/kbitz/gstack-extend/pull/275) (commit `ba552af`, 09:47Z); verified land-time Track 87A (its approved plan is titled with the card), original Group 87.
+- Its receipt and HEAD carry the card: `bin/review-state full-review-record` writes and checks the cycle-1 records with its own `--help`, the skill calls it in one line, and direct CLI and protocol tests replace the markdown-extraction tests; the skill went from 5,009 to 4,881 lines. The developer chose to keep the Workflow metrics copy. Its review recorded four test gaps: two are already on Track 89A's fence test-gap task, and two are deferred by this regeneration.
+
+### Track 86A: Measure the recorded run-state path on real runs and decide its default ✓ Shipped
+- 2026-11-18: merged [PR #276](https://github.com/kbitz/gstack-extend/pull/276) (commit `20994ab`, 13:43Z); verified land-time Track 86A (its PR title and approved plan name the card), original Group 86. Documentation change with no version bump of its own; first contained in the v0.101.0 release.
+- `docs/acceptance/review-run-state.md` records E15's before and after figures and the developer's decision ("2 b") to adopt the recorded path on reliability grounds, which superseded the card's sample bound and 50% target: three consecutive orchestrated reviews kept complete records in every segment, and mean bookkeeping and resume output fell 27.3%. Per-record `seq` and `input_sha256` are dropped with the reason. The record commits a remeasurement after Track 89A ships, placed by this regeneration as Track 90C.
+
+### Track 88A: Finish the review-state helper's default-promotion items ✓ Shipped (v0.101.0)
+- 2026-11-18: merged [PR #277](https://github.com/kbitz/gstack-extend/pull/277) (commit `cdad935`, 17:33Z); verified land-time Track 88A (its approved plan is titled with the card), original Group 88.
+- Its receipt and HEAD carry the card on Track 86A's adopt decision: stale locks are reclaimed, state bound to another host is refused, a corrupt state is moved aside to a named backup when a run starts, and Git execution failures and unexpected errors return `internal-error` with exit 5 and a trace; `seq` and `input_sha256` stay dropped as 86A decided; the recorded version-ordering and store test gaps have tests, and the release notes disclose that older helpers read the new state as a newer schema. Its review recorded six test gaps, deferred by this regeneration.
+
+### Track 88C: Make review-state build handle an absent selected attempt ✓ Shipped (v0.101.1)
+- 2026-11-18: merged [PR #278](https://github.com/kbitz/gstack-extend/pull/278) (commit `d8b7576`, 20:14Z). It was never on the roadmap and carried no Track ID; it implemented a fix carded outside the roadmap after Track 88A's review (the orchestrator's item 3de2c8d5). This regeneration numbers it.
+- Its receipt: `bin/review-state build` treats a literal `null` on eligible flags as an omitted flag, and a `voice-complete` call that names neither an attempt nor a `--not-applicable` reason fills in the voice's only completed attempt and reports the derivation; PR #277's request replays as a regression case.
