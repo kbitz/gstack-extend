@@ -2,6 +2,78 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: internal-error trace failures
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The CLI tests verify a successful trace and an error before directory validation. They lack a trace creation or sync fault after validation.
+- **Hypothesis (untested):** Inject the fault and assert exit 5, `detail.trace: null` and cleanup of any partial trace.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/store.ts:146`
+- **Evidence:** Track 88A coverage audit and passing CLI error cases on `7b80ee8`.
+- **Context:** Filed by /review-and-prep for Track 88A before draft creation (2026-11-18).
+- **Effort:** ? (triage in /roadmap)
+- **Revisit when:** The internal-error trace writer changes.
+
+### [review:files=src/review-state/export.ts|src/review-state/state.ts|tests/review-state.test.ts] Test gap: unreadable stored state and malformed host
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Existing tests cover readable corrupt state and valid foreign host strings. They lack an injected state-file read failure and an invalid host value.
+- **Hypothesis (untested):** Check the CLI refusal and recovery guidance when reading throws, and verify validation rejects an invalid host field.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/export.ts:412`
+- **Evidence:** Track 88A coverage audit and passing stored-state refusal tests on `7b80ee8`.
+- **Context:** Filed by /review-and-prep for Track 88A before draft creation (2026-11-18).
+- **Effort:** ? (triage in /roadmap)
+- **Revisit when:** Stored-state validation or recovery guidance changes.
+
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: stale lock restore and contention bounds
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The tests exercise a displaced holder that can be restored. They lack a disappearing candidate, an occupied restore path and a restore I/O fault.
+- **Hypothesis (untested):** Inject those outcomes, then check the attempt bound, current-holder preservation and retention of the moved lock on a restore failure.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/store.ts:398`
+- **Evidence:** Track 88A coverage audit and passing lock inspection and stale recovery tests on `7b80ee8`.
+- **Context:** Filed by /review-and-prep for Track 88A before draft creation (2026-11-18).
+- **Effort:** ? (triage in /roadmap)
+- **Revisit when:** The stale-lock protocol changes.
+
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: late lock ownership changes
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The ordinary pre-publication token check is tested. The tests lack token loss after claiming a corrupt-state backup and after publishing a write.
+- **Hypothesis (untested):** Schedule those ownership changes and assert the busy refusal before publication and the warning after publication, preserving the replacement holder.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/store.ts:715`
+- **Evidence:** Track 88A coverage audit and passing token replacement and commit warning tests on `7b80ee8`.
+- **Context:** Filed by /review-and-prep for Track 88A before draft creation (2026-11-18).
+- **Effort:** ? (triage in /roadmap)
+- **Revisit when:** The writer's token checks or commit cleanup change.
+
+### [review:files=src/review-state/store.ts|tests/review-state.test.ts] Test gap: corrupt backup collisions and ambiguous publication
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The tests cover distinct backup names and a backup destination error. They lack forced name collisions and a publication failure that leaves the original path unverifiable.
+- **Hypothesis (untested):** Force a collision and retry exhaustion. In a separate fault case, check that the reported backup retains the original bytes when the original path cannot be verified.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/store.ts:439`
+- **Evidence:** Track 88A coverage audit, passing backup tests and the independent EIO replay on `7b80ee8`.
+- **Context:** Filed by /review-and-prep for Track 88A before draft creation (2026-11-18).
+- **Effort:** ? (triage in /roadmap)
+- **Revisit when:** Corrupt-state backup or publication changes.
+
+### [review:files=bin/lib/telemetry.py|src/review-state/export.ts|tests/workflow-metrics.test.ts] Test gap: derive propagates new export refusals
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The review-state CLI tests cover `cross-host` and `internal-error` export results. The derive integration covers other non-OK export results.
+- **Hypothesis (untested):** Exercise both new responses through derive and assert the unavailable reason and unchanged ledger.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1949`
+- **Evidence:** Track 88A coverage audit, current derive reason forwarding and passing workflow-metrics tests on `7b80ee8`.
+- **Context:** Filed by /review-and-prep for Track 88A before draft creation (2026-11-18).
+- **Effort:** ? (triage in /roadmap)
+- **Revisit when:** Derive's review-state refusal handling changes.
+
 ### [review:files=skills/review-and-prep.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: unavailable-template uniqueness
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** The unavailable-evidence template lock checks the allowed reason tokens but does not directly reject a second conflicting template definition.
