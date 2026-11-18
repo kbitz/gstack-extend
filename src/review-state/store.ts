@@ -1,11 +1,40 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeSync, type Stats } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { applyCommand, collectEvidenceItems, isVersion, REASONS, serializeState, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
+import { applyCommand, collectEvidenceItems, CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, isVersion, REASONS, serializeState, storedWriterOrderKnown, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
 
 export const DEFAULT_VERSION_PATH = resolve(import.meta.dir, '..', '..', 'VERSION');
+
+let lastValidatedRealDir: string | null = null;
+let lastValidatedCommand: string | null = null;
+
+export function resetValidatedStateDir(): void {
+  lastValidatedRealDir = null;
+  lastValidatedCommand = null;
+}
+
+export function getLastValidatedCommand(): string | null {
+  return lastValidatedCommand;
+}
+
+export class GitExecutionError extends Error {
+  readonly git: string;
+  readonly errno: string | null;
+  readonly signal: string | null;
+
+  constructor(git: string, errno: string | null, signal: string | null, message?: string) {
+    const parts = [`git ${git} execution failed`];
+    if (errno) parts.push(`(${errno})`);
+    if (signal) parts.push(`[${signal}]`);
+    super(message && message.trim().length > 0 ? message.trim() : parts.join(' '));
+    this.name = 'GitExecutionError';
+    this.git = git;
+    this.errno = errno;
+    this.signal = signal;
+  }
+}
 
 export function readHelperVersion(versionPath = DEFAULT_VERSION_PATH): string | null {
   try {
@@ -31,7 +60,7 @@ export type StoreResult = {
   side_effects: SideEffects;
   retry: RetryHint;
   retry_after_ms: number | null;
-  exitCode: 0 | 1 | 2 | 3 | 4;
+  exitCode: 0 | 1 | 2 | 3 | 4 | 5;
 };
 
 export function cleanGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -43,6 +72,10 @@ export function cleanGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
 
 export function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv): { ok: boolean; stdout: string } {
   const r = spawnSync('git', ['-C', cwd, ...args], { env, encoding: 'utf8', stdio: 'pipe', timeout: 5000 });
+  if (r.error || r.signal !== null || r.status === null) {
+    const errCode = (r.error as NodeJS.ErrnoException | undefined)?.code ?? null;
+    throw new GitExecutionError(args[0] ?? 'git', errCode, r.signal ?? null, r.error?.message);
+  }
   return { ok: r.status === 0, stdout: (r.stdout ?? '').replace(/\r?\n$/, '') };
 }
 
@@ -57,6 +90,8 @@ export function validateStateDir(
   env: NodeJS.ProcessEnv,
   helperVersion: string | null,
 ): ValidatedStateDir {
+  lastValidatedRealDir = null;
+  lastValidatedCommand = command;
   const reply = (reason: ReasonCode, detail: Record<string, unknown>, sPath: string | null, customFix?: string): ValidatedStateDir =>
     ({ ok: false, result: makeEnvelope(command, reason, detail, sPath, null, customFix, helperVersion, null) });
 
@@ -91,7 +126,76 @@ export function validateStateDir(
     return reply('bad-dir', { condition: 'in-worktree', resolved_path: truncate80(realDir), toplevel: truncate80(realTop) }, statePath, 'Place --dir outside the Git work tree, or continue inline (D1).');
   }
 
+  lastValidatedRealDir = realDir;
   return { ok: true, realTop, realDir, statePath, gitEnv };
+}
+
+const compactUtcTimestamp = (d = new Date()): string =>
+  d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+
+const randomHex = (bytes: number): string => {
+  try {
+    return randomBytes(bytes).toString('hex');
+  } catch {
+    let out = '';
+    for (let i = 0; i < bytes; i++) out += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    return out;
+  }
+};
+
+export function internalErrorResult(
+  command: string,
+  err: unknown,
+  statePath: string | null = null,
+  helperVersion: string | null = readHelperVersion(),
+): StoreResult {
+  const isGit = err instanceof GitExecutionError;
+  const cause: 'git-execution' | 'uncaught' = isGit ? 'git-execution' : 'uncaught';
+  const errObj = err instanceof Error ? err : new Error(String(err));
+  const rawMessage = errObj.message || errObj.name || 'internal error';
+  const now = new Date();
+  const isoNow = now.toISOString();
+  const utcTag = compactUtcTimestamp(now);
+
+  let trace: string | null = null;
+  if (lastValidatedRealDir !== null) {
+    const traceName = `review-state-error-${utcTag}-${process.pid}-${randomHex(4)}.txt`;
+    const tracePath = join(lastValidatedRealDir, traceName);
+    const traceLines = [
+      `time: ${isoNow}`,
+      `command: ${command}`,
+      `helper_version: ${helperVersion ?? 'unknown'}`,
+      `cause: ${cause}`,
+      `name: ${errObj.name || 'Error'}`,
+      `message: ${rawMessage}`,
+      ...(isGit ? [`git: ${err.git}`, `errno: ${err.errno ?? 'null'}`, `signal: ${err.signal ?? 'null'}`] : []),
+      `stack:\n${errObj.stack ?? `${errObj.name}: ${rawMessage}`}`,
+    ];
+    let created = false;
+    try {
+      const fd = openSync(tracePath, 'wx', 0o600);
+      created = true;
+      try {
+        writeAll(fd, Buffer.from(`${traceLines.join('\n')}\n`, 'utf8'));
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      trace = traceName;
+    } catch {
+      if (created) unlinkQuiet(tracePath);
+      trace = null;
+    }
+  }
+
+  const detail: Record<string, unknown> = {
+    cause,
+    message: truncate80(rawMessage),
+    trace,
+    ...(isGit ? { git: err.git, errno: err.errno, signal: err.signal } : {}),
+  };
+  const resolvedStatePath = statePath ?? (lastValidatedRealDir ? join(lastValidatedRealDir, 'review-run-state.json') : null);
+  return makeEnvelope(command || 'unknown', 'internal-error', detail, resolvedStatePath, null, undefined, helperVersion, null);
 }
 
 export function makeEnvelope(
@@ -168,7 +272,7 @@ export function checkDirFile(
   realDir: string,
   relPath: string,
   sha256?: string,
-): { ok: true; realPath: string; bytes: Buffer; sha256: string; size: number; mtimeMs: number } | { ok: false; error: DirFileError } {
+): { ok: true; realPath: string; bytes: Buffer; sha256: string; size: number; mtimeMs: number; dev: number; ino: number } | { ok: false; error: DirFileError } {
   const candidatePath = resolve(realDir, relPath);
   if (!candidatePath.startsWith(`${realDir}/`)) return { ok: false, error: 'evidence-outside-dir' };
   try {
@@ -180,20 +284,179 @@ export function checkDirFile(
     const bytes = readFileSync(realEv);
     const actualSha = createHash('sha256').update(bytes).digest('hex');
     if (sha256 !== undefined && actualSha !== sha256) return { ok: false, error: 'evidence-digest-mismatch' };
-    return { ok: true, realPath: realEv, bytes, sha256: actualSha, size: st.size, mtimeMs: st.mtimeMs };
+    return { ok: true, realPath: realEv, bytes, sha256: actualSha, size: st.size, mtimeMs: st.mtimeMs, dev: st.dev, ino: st.ino };
   } catch {
     return { ok: false, error: 'evidence-missing' };
   }
 }
 
-function parseLockHolder(lockPath: string): { pid: number | null; host: string | null; started_at: string | null; unknown: boolean } {
+export type StaleLockReason = 'process-exited' | 'boot-changed' | 'unparseable-aged';
+export type LockClassification =
+  | { status: 'stale'; reason: StaleLockReason }
+  | { status: 'live' | 'other-host' | 'unverifiable' };
+
+export const UNPARSEABLE_LOCK_GRACE_MS = 60_000;
+export const MAX_STALE_LOCK_BREAKS = 3;
+const MAX_CORRUPT_BACKUP_ATTEMPTS = 8;
+
+export function readLocalBootId(): string | null {
   try {
-    const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
-    if (typeof raw === 'object' && raw !== null && typeof raw.pid === 'number' && Number.isInteger(raw.pid) && typeof raw.host === 'string' && raw.host.length > 0 && typeof raw.started_at === 'string' && raw.started_at.length > 0) {
-      return { pid: raw.pid, host: truncate80(raw.host), started_at: truncate80(raw.started_at), unknown: false };
+    const raw = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    return raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readLocalPidNs(): string | null {
+  try {
+    const raw = readlinkSync('/proc/self/ns/pid').trim();
+    return raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export function defaultProbePid(pid: number): 'alive' | 'esrch' | 'other' {
+  try {
+    process.kill(pid, 0);
+    return 'alive';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') return 'esrch';
+    if (code === 'EPERM') return 'alive';
+    return 'other';
+  }
+}
+
+export function classifyLockHolder(
+  rawBytes: string,
+  mtimeMs: number,
+  nowMs: number,
+  localHost: string,
+  localBootId: string | null,
+  localPidNs: string | null,
+  probePid: (pid: number) => 'alive' | 'esrch' | 'other' = defaultProbePid,
+): LockClassification {
+  const rec = parseLock(rawBytes);
+  if (typeof rec?.host === 'string' && rec.host !== '' && rec.host !== localHost) return { status: 'other-host' };
+  if (
+    rec === null ||
+    typeof rec.pid !== 'number' ||
+    !Number.isSafeInteger(rec.pid) ||
+    typeof rec.host !== 'string' ||
+    rec.host === '' ||
+    typeof rec.started_at !== 'string' ||
+    rec.started_at === ''
+  ) {
+    return nowMs - mtimeMs > UNPARSEABLE_LOCK_GRACE_MS
+      ? { status: 'stale', reason: 'unparseable-aged' }
+      : { status: 'unverifiable' };
+  }
+  const lockBootId = typeof rec.boot_id === 'string' && rec.boot_id.length > 0 ? rec.boot_id : null;
+  if (lockBootId !== null && localBootId !== null && lockBootId !== localBootId) {
+    return { status: 'stale', reason: 'boot-changed' };
+  }
+  const lockPidNs = typeof rec.pid_ns === 'string' && rec.pid_ns.length > 0 ? rec.pid_ns : null;
+  if (lockPidNs !== null && localPidNs !== null && lockPidNs !== localPidNs) {
+    return { status: 'unverifiable' };
+  }
+  if (rec.pid <= 0) return { status: 'unverifiable' };
+  const probe = probePid(rec.pid);
+  if (probe === 'esrch') return { status: 'stale', reason: 'process-exited' };
+  if (probe === 'alive') return { status: 'live' };
+  return { status: 'unverifiable' };
+}
+
+function parseLock(raw: string): Record<string, unknown> | null {
+  try {
+    const data: unknown = JSON.parse(raw);
+    if (typeof data === 'object' && data !== null && !Array.isArray(data)) return data as Record<string, unknown>;
+  } catch { /* empty or malformed lock */ }
+  return null;
+}
+
+type LockSnapshot = { stat: Stats; bytes: Buffer };
+
+function readLockSnapshot(lockPath: string): LockSnapshot | null {
+  try {
+    // Inspect one inode and avoid following links or waiting on a non-regular lock.
+    const fd = openSync(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = fstatSync(fd);
+      return stat.isFile() ? { stat, bytes: readFileSync(fd) } : null;
+    } finally {
+      closeSync(fd);
     }
-  } catch { /* empty or unparseable */ }
+  } catch {
+    return null;
+  }
+}
+
+const sameFile = (a: Stats, b: Stats): boolean => a.dev === b.dev && a.ino === b.ino;
+
+function reclaimLock(lockPath: string, ownToken: string, before: LockSnapshot): 'retry' | 'reclaimed' | 'wait' {
+  const stalePath = `${lockPath}.stale-${ownToken}`;
+  try {
+    renameSync(lockPath, stalePath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'retry';
+    throw err;
+  }
+
+  const after = readLockSnapshot(stalePath);
+  // The filesystem may reuse an inode number after another invocation reclaims the lock.
+  const matched = after !== null && sameFile(before.stat, after.stat) &&
+    before.stat.mtimeMs === after.stat.mtimeMs && before.bytes.equals(after.bytes);
+  if (!matched) {
+    try {
+      linkSync(stalePath, lockPath);
+    } catch (err) {
+      // Keep the moved lock available for inspection if restoration fails.
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
+  unlinkSync(stalePath);
+  return matched ? 'reclaimed' : 'wait';
+}
+
+function parseLockHolder(lockPath: string): { pid: number | null; host: string | null; started_at: string | null; unknown: boolean } {
+  const lock = readLockSnapshot(lockPath);
+  const holder = lock && parseLock(lock.bytes.toString('utf8'));
+  if (holder && typeof holder.pid === 'number' && Number.isInteger(holder.pid) &&
+    typeof holder.host === 'string' && holder.host !== '' &&
+    typeof holder.started_at === 'string' && holder.started_at !== '') {
+    return { pid: holder.pid, host: truncate80(holder.host), started_at: truncate80(holder.started_at), unknown: false };
+  }
   return { pid: null, host: null, started_at: null, unknown: true };
+}
+
+function holdsOwnLock(lockPath: string, ownToken: string): boolean {
+  const lock = readLockSnapshot(lockPath);
+  return lock !== null && parseLock(lock.bytes.toString('utf8'))?.token === ownToken;
+}
+
+function linkCorruptBackup(statePath: string): string {
+  const utcTag = compactUtcTimestamp();
+  for (let attempt = 1; ; attempt++) {
+    const backupPath = `${statePath}.corrupt-${utcTag}-${randomHex(4)}`;
+    try {
+      linkSync(statePath, backupPath);
+      return backupPath;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST' || attempt >= MAX_CORRUPT_BACKUP_ATTEMPTS) throw err;
+    }
+  }
+}
+
+function removeRedundantBackup(statePath: string, backupPath: string): boolean {
+  try {
+    if (!sameFile(lstatSync(statePath), lstatSync(backupPath))) return false;
+    unlinkSync(backupPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function executeCommand(command: CommandName, dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env, versionPath?: string): StoreResult {
@@ -219,13 +482,13 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   const { rawInput } = inCheck;
 
   const evidenceErrors = new Map<string, string>();
-  const evidenceSnapshots = new Map<string, { relPath: string; realPath: string; size: number; mtimeMs: number }>();
+  const evidenceSnapshots = new Map<string, { relPath: string; realPath: string; size: number; mtimeMs: number; dev: number; ino: number }>();
   for (const item of collectEvidenceItems(command, rawInput)) {
     const key = `${item.path}:${item.sha256}`;
     const check = checkDirFile(realDir, item.path, item.sha256);
     if (!check.ok) evidenceErrors.set(key, check.error);
     else if ([item.path, check.realPath].some((p) => TMP_FILE_RE.test(basename(p).toLowerCase()))) evidenceErrors.set(key, 'evidence-reserved-path');
-    else evidenceSnapshots.set(key, { relPath: item.path, realPath: check.realPath, size: check.size, mtimeMs: check.mtimeMs });
+    else evidenceSnapshots.set(key, { relPath: item.path, realPath: check.realPath, size: check.size, mtimeMs: check.mtimeMs, dev: check.dev, ino: check.ino });
   }
 
   const envChecker: EnvChecker = {
@@ -236,18 +499,54 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   };
 
   const lockPath = join(realDir, 'review-run-state.json.lock');
+  const localHost = hostname();
+  const localBootId = readLocalBootId();
+  const localPidNs = readLocalPidNs();
+  const ownToken = randomHex(16);
+  let staleBreaks = 0;
+  let reclaimedReason: StaleLockReason | null = null;
   const startMs = Date.now();
   while (true) {
     let created = false;
     try {
       const fd = openSync(lockPath, 'wx', 0o600);
       created = true;
-      try { writeAll(fd, Buffer.from(`${JSON.stringify({ pid: process.pid, host: hostname(), started_at: new Date().toISOString() })}\n`, 'utf8')); fsyncSync(fd); } finally { closeSync(fd); }
+      try {
+        const lockObj = {
+          pid: process.pid,
+          host: localHost,
+          started_at: new Date().toISOString(),
+          token: ownToken,
+          boot_id: localBootId,
+          pid_ns: localPidNs,
+        };
+        writeAll(fd, Buffer.from(`${JSON.stringify(lockObj)}\n`, 'utf8'));
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
       break;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (created) unlinkQuiet(lockPath);
       if (!created && e.code === 'EEXIST') {
+        if (staleBreaks < MAX_STALE_LOCK_BREAKS) {
+          const lock = readLockSnapshot(lockPath);
+          if (lock !== null) {
+            const classification = classifyLockHolder(lock.bytes.toString('utf8'), lock.stat.mtimeMs, Date.now(), localHost, localBootId, localPidNs);
+            if (classification.status === 'stale') {
+              staleBreaks++;
+              try {
+                const reclaim = reclaimLock(lockPath, ownToken, lock);
+                if (reclaim === 'reclaimed') reclaimedReason ??= classification.reason;
+                if (reclaim !== 'wait') continue;
+              } catch (err) {
+                const fault = err as NodeJS.ErrnoException;
+                return reply('unwritable', { errno: fault.code ?? 'EIO', syscall: fault.syscall ?? 'rename', path: truncate80(fault.path ?? lockPath) }, statePath, null);
+              }
+            }
+          }
+        }
         if (Date.now() - startMs >= lockWaitMs) return reply('busy', { holder: parseLockHolder(lockPath) }, statePath, null, undefined, lockWaitMs);
         Bun.sleepSync(Math.min(50, Math.max(1, lockWaitMs - (Date.now() - startMs))));
         continue;
@@ -268,16 +567,43 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
     if (!commonDirRes.ok || !revRefRes.ok || !headRes.ok || !treeRes.ok) return reply('not-in-worktree', { cwd: truncate80(cwd) }, statePath, null);
     const gitInfo: GitInfo = { toplevel: realTop, repo: realpathSync(resolve(cwd, commonDirRes.stdout)), branch: revRefRes.stdout, head: headRes.stdout, tree: treeRes.stdout };
     let storedState: ReviewRunState | null = null;
+    let moveCorruptStateAside = false;
     try {
       const rawBytes = readFileSync(statePath!, 'utf8');
       let parsedState: unknown;
-      try { parsedState = JSON.parse(rawBytes); } catch (err) { return reply('corrupt', { path: truncate80(statePath!), message: truncate80((err as Error).message) }, statePath, null); }
-      const validated = validateStoredState(parsedState, statePath!, helperVersion);
-      if (!validated.ok) return reply(validated.reason, validated.detail, statePath, null);
-      storedState = validated.state;
+      let parseErr: Error | null = null;
+      try {
+        parsedState = JSON.parse(rawBytes);
+      } catch (err) {
+        parseErr = err as Error;
+      }
+      if (parseErr !== null) {
+        if (command === 'start') {
+          moveCorruptStateAside = true;
+        } else {
+          return reply('corrupt', { path: truncate80(statePath!), message: truncate80(parseErr.message) }, statePath, null);
+        }
+      } else {
+        const validated = validateStoredState(parsedState, statePath!, helperVersion);
+        if (!validated.ok) {
+          const orderKnown = storedWriterOrderKnown(parsedState, helperVersion);
+          if (validated.reason === 'corrupt' && command === 'start' && orderKnown) {
+            moveCorruptStateAside = true;
+          } else {
+            const customFix = validated.reason === 'corrupt' && !orderKnown ? CORRUPT_ORDER_FIX : undefined;
+            return reply(validated.reason, validated.detail, statePath, null, customFix);
+          }
+        } else {
+          storedState = validated.state;
+        }
+      }
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code !== 'ENOENT') return reply('corrupt', { path: truncate80(statePath!), message: truncate80(e.message) }, statePath, null);
+      if (e.code !== 'ENOENT') return reply('corrupt', { path: truncate80(statePath!), message: truncate80(e.message) }, statePath, null, CORRUPT_READ_FIX);
+    }
+
+    if (storedState !== null && storedState.host !== null && storedState.host !== localHost) {
+      return reply('cross-host', { expected_host: truncate80(storedState.host), actual_host: truncate80(localHost) }, statePath, storedState.rev);
     }
 
     if (storedState !== null && (storedState.run.repo !== gitInfo.repo || storedState.run.branch !== gitInfo.branch)) {
@@ -288,7 +614,14 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       try {
         const curReal = realpathSync(resolve(realDir, snap.relPath));
         const curSt = statSync(curReal);
-        if (curReal !== snap.realPath || !curSt.isFile() || curSt.size !== snap.size || curSt.mtimeMs !== snap.mtimeMs) {
+        if (
+          curReal !== snap.realPath ||
+          !curSt.isFile() ||
+          curSt.dev !== snap.dev ||
+          curSt.ino !== snap.ino ||
+          curSt.size !== snap.size ||
+          curSt.mtimeMs !== snap.mtimeMs
+        ) {
           evidenceErrors.set(key, 'evidence-changed');
         }
       } catch {
@@ -296,11 +629,11 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       }
     }
 
-    const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString(), helperVersion);
+    const outcome = applyCommand(storedState, command, rawInput, gitInfo, envChecker, new Date().toISOString(), helperVersion, localHost);
     if (outcome.reason !== 'recorded') return reply(outcome.reason, outcome.detail, statePath, outcome.rev, outcome.fix);
 
     const protectedFiles = new Set<string>();
-    let sweepSafe = true;
+    let sweepSafe = !moveCorruptStateAside;
     for (const [cmd, records] of [
       ['record gate', outcome.state.gates], ['record audit', outcome.state.audits],
       ['checkpoint', outcome.state.checkpoints], ['finish', outcome.state.finish ? [outcome.state.finish] : []],
@@ -311,7 +644,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       }
     }
 
-    const warnings: string[] = [];
+    const warnings: string[] = reclaimedReason ? [`reclaimed stale lock (${reclaimedReason})`] : [];
     let dirNames: string[] | null = null;
     try {
       if (sweepSafe) dirNames = readdirSync(realDir);
@@ -342,15 +675,31 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
 
     const serialized = Buffer.from(serializeState(outcome.state), 'utf8');
     tmpPath = join(realDir, `review-run-state.json.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
+    let movedAsidePath: string | null = null;
     try {
       const fd = openSync(tmpPath, 'wx', 0o600);
       try { writeAll(fd, serialized); fsyncSync(fd); } finally { closeSync(fd); }
+      const lockHeld = holdsOwnLock(lockPath, ownToken);
+      if (lockHeld && moveCorruptStateAside) {
+        // Claim the backup name exclusively while the original remains readable at statePath.
+        movedAsidePath = linkCorruptBackup(statePath!);
+      }
+      if (!lockHeld || (movedAsidePath !== null && !holdsOwnLock(lockPath, ownToken))) {
+        unlinkQuiet(tmpPath);
+        tmpPath = null;
+        if (movedAsidePath !== null) removeRedundantBackup(statePath!, movedAsidePath);
+        return reply('busy', { holder: parseLockHolder(lockPath) }, statePath, storedState?.rev ?? null, undefined, lockWaitMs);
+      }
       renameSync(tmpPath, statePath!);
       committed = true;
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (tmpPath) unlinkQuiet(tmpPath);
-      return reply('unwritable', { errno: e.code ?? 'EIO', syscall: e.syscall ?? 'write', path: truncate80(tmpPath) }, statePath, storedState?.rev ?? null);
+      if (movedAsidePath !== null && removeRedundantBackup(statePath!, movedAsidePath)) movedAsidePath = null;
+      return reply('unwritable', {
+        errno: e.code ?? 'EIO', syscall: e.syscall ?? 'write', path: truncate80(e.path ?? tmpPath ?? statePath!),
+        ...(movedAsidePath !== null ? { moved_aside: basename(movedAsidePath) } : {}),
+      }, statePath, storedState?.rev ?? null);
     }
 
     try {
@@ -360,10 +709,21 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
       warnings.push(`failed to sync directory: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);
     }
 
-    try { unlinkSync(lockPath); } catch (err) { warnings.push(`failed to remove lock: ${(err as NodeJS.ErrnoException).code ?? 'error'}`); }
-    const detail = warnings.length > 0 ? { ...outcome.detail, warnings } : { ...outcome.detail };
+    if (holdsOwnLock(lockPath, ownToken)) {
+      try { unlinkSync(lockPath); } catch (err) { warnings.push(`failed to remove lock: ${(err as NodeJS.ErrnoException).code ?? 'error'}`); }
+    } else {
+      warnings.push('lock no longer held by this writer');
+    }
+    const detail: Record<string, unknown> = {
+      ...outcome.detail,
+      ...(movedAsidePath !== null ? { moved_aside: basename(movedAsidePath) } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
     return reply('recorded', detail, statePath, outcome.state.rev);
   } finally {
-    if (!committed) { if (tmpPath) unlinkQuiet(tmpPath); unlinkQuiet(lockPath); }
+    if (!committed) {
+      if (tmpPath) unlinkQuiet(tmpPath);
+      if (holdsOwnLock(lockPath, ownToken)) unlinkQuiet(lockPath);
+    }
   }
 }

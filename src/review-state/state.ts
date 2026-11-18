@@ -2,13 +2,13 @@ export const SCHEMA_VERSION = 'review-run-state/v1' as const;
 
 export type ReasonCode =
   | 'recorded' | 'replayed' | 'invalid-input' | 'bad-dir' | 'not-in-worktree'
-  | 'worktree-mismatch' | 'not-started' | 'paused' | 'finished' | 'exists'
-  | 'conflict' | 'corrupt' | 'newer-schema' | 'usage' | 'unwritable' | 'busy';
-export type StatusCode = 'recorded' | 'replayed' | 'refused' | 'conflict' | 'unreadable' | 'usage' | 'unwritable' | 'busy';
+  | 'worktree-mismatch' | 'cross-host' | 'not-started' | 'paused' | 'finished' | 'exists'
+  | 'conflict' | 'corrupt' | 'newer-schema' | 'usage' | 'unwritable' | 'busy' | 'internal-error';
+export type StatusCode = 'recorded' | 'replayed' | 'refused' | 'conflict' | 'unreadable' | 'usage' | 'unwritable' | 'busy' | 'error';
 export type SideEffects = 'committed' | 'none';
 export type RetryHint = 'no' | 'same-input' | 'after-fix' | 'never';
 export type CommandName = 'start' | 'record pass' | 'record correction' | 'record gate' | 'record audit' | 'checkpoint' | 'finish';
-export type ReasonEntry = { reason: ReasonCode; status: StatusCode; exit: 0 | 1 | 2 | 3 | 4; side_effects: SideEffects; retry: RetryHint; fix: string };
+export type ReasonEntry = { reason: ReasonCode; status: StatusCode; exit: 0 | 1 | 2 | 3 | 4 | 5; side_effects: SideEffects; retry: RetryHint; fix: string };
 
 export const REASON_TABLE: readonly ReasonEntry[] = [
   { reason: 'recorded', status: 'recorded', exit: 0, side_effects: 'committed', retry: 'no', fix: '' },
@@ -17,16 +17,18 @@ export const REASON_TABLE: readonly ReasonEntry[] = [
   { reason: 'bad-dir', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Create --dir with mkdir -p outside the work tree, or continue inline (D1).' },
   { reason: 'not-in-worktree', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Run bin/review-state from inside the target Git work tree.' },
   { reason: 'worktree-mismatch', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Run on the bound repository and branch, or start a new run in a new --dir.' },
+  { reason: 'cross-host', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Run this command on the host that started the run, or start a new run in a new --dir, or continue inline (D1).' },
   { reason: 'not-started', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Run bin/review-state start first.' },
   { reason: 'paused', status: 'refused', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'Run bin/review-state checkpoint with kind "resume" before recording or finishing.' },
   { reason: 'finished', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Run is already closed; start a new run in a new --dir for a continuation.' },
   { reason: 'exists', status: 'refused', exit: 1, side_effects: 'none', retry: 'never', fix: 'Resend the existing run_id for replay, or use a new --dir for a new run.' },
   { reason: 'conflict', status: 'conflict', exit: 1, side_effects: 'none', retry: 'after-fix', fix: 'For a retry, resend the original payload file unchanged; for new content, use a new record ID.' },
-  { reason: 'corrupt', status: 'unreadable', exit: 1, side_effects: 'none', retry: 'never', fix: 'Do not overwrite the corrupt state file; continue this review run inline (D1).' },
+  { reason: 'corrupt', status: 'unreadable', exit: 1, side_effects: 'none', retry: 'never', fix: 'The helper never overwrites a corrupt state: run start to move it aside and begin a new run in this --dir, or continue this review run inline (D1).' },
   { reason: 'newer-schema', status: 'unreadable', exit: 1, side_effects: 'none', retry: 'never', fix: 'Upgrade gstack-extend on this machine, or continue this review run inline (D1).' },
   { reason: 'usage', status: 'usage', exit: 2, side_effects: 'none', retry: 'after-fix', fix: 'Pass valid CLI flags, an absolute regular --input file (<=1 MiB) inside --dir, and GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS in 0..60000.' },
   { reason: 'unwritable', status: 'unwritable', exit: 3, side_effects: 'none', retry: 'same-input', fix: 'Grant write permissions or free disk space on --dir, or continue inline (D1).' },
-  { reason: 'busy', status: 'busy', exit: 4, side_effects: 'none', retry: 'same-input', fix: 'Confirm no review-state process runs as the recorded pid on the recorded host, delete review-run-state.json.lock, and rerun the identical command.' },
+  { reason: 'busy', status: 'busy', exit: 4, side_effects: 'none', retry: 'same-input', fix: 'A same-host lock whose process has exited is reclaimed automatically; this holder is alive, on another host, or unverifiable. Confirm no review-state process runs as the recorded pid on the recorded host, delete review-run-state.json.lock, and rerun the identical command.' },
+  { reason: 'internal-error', status: 'error', exit: 5, side_effects: 'none', retry: 'same-input', fix: 'Rerun the identical command once (replay makes a rerun safe); if it fails again, continue inline (D1) and keep the trace file named in detail.trace.' },
 ] as const;
 
 export const REASONS = Object.fromEntries(REASON_TABLE.map((e) => [e.reason, e])) as Record<ReasonCode, ReasonEntry>;
@@ -64,7 +66,7 @@ export const REQUEST_EXAMPLES = {
 } as const satisfies Record<keyof typeof REQUEST_SHAPES, Record<string, unknown>>;
 
 export const STATE_KEYS = {
-  root: ['schema', 'rev', 'writer', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish'],
+  root: ['schema', 'rev', 'writer', 'host', 'run', 'binding', 'plan', 'policy', 'continuation', 'segments', 'passes', 'corrections', 'gates', 'audits', 'checkpoints', 'finish'],
   run: ['run_id', 'skill', 'repo', 'branch', 'pr', 'gh_login', 'started_at'],
   pr: ['url', 'repo', 'number', 'head_repo', 'head_branch', 'base_ref'],
   binding: ['head', 'tree', 'base', 'wtree'],
@@ -90,7 +92,7 @@ export const STATE_KEYS = {
 export const DELEGATE_RUNNER_EXTRA_KEYS = ['part', 'dispatched', 'dispatched_at', 'returned_at', 'parse', 'verdict', 'findings'] as const;
 
 export const ADDITIVE_V1_DEFAULTS = {
-  root: { writer: null },
+  root: { writer: null, host: null },
   passes: { segment: null },
   corrections: { segment: null },
   gates: { segment: null },
@@ -152,7 +154,7 @@ export type FullReviewEvidence = { status: 'available'; commit: string; tree: st
 export type FinishRecord = { outcome: string; stop_reason: string | null; head: string; tree: string; base: string; delta_base: string | null; stop_count: number | null; wtree: string | null; review_restriction_resolved: boolean; readiness_confirmed_at: string | null; full_review_evidence: FullReviewEvidence | null; user_facing_changes: string[]; evidence: EvidenceRef[]; finished_at: string };
 export type SegmentRecord = { segment: number; started_at: string; ended_at: string | null; end: 'paused' | 'finished' | 'interrupted' | null; session_id: string | null; toplevel: string };
 export type ReviewRunState = {
-  schema: typeof SCHEMA_VERSION; rev: number; writer: string | null;
+  schema: typeof SCHEMA_VERSION; rev: number; writer: string | null; host: string | null;
   run: { run_id: string; skill: 'review-and-prep'; repo: string; branch: string; pr: PrInfo | null; gh_login: string | null; started_at: string };
   binding: { head: string; tree: string; base: string; wtree: string | null };
   plan: { ref: string; sha256: string };
@@ -212,6 +214,11 @@ export function isVersionNewer(candidate: unknown, baseline: unknown): boolean {
     if (c[i]! !== b[i]!) return c[i]! > b[i]!;
   }
   return false;
+}
+
+export function writerOrderKnown(writer: unknown, helperVersion: unknown): boolean {
+  if (writer === null || writer === undefined) return true;
+  return parseVersionTuple(writer) !== null && parseVersionTuple(helperVersion) !== null;
 }
 export const isRelPath = (v: unknown): v is string =>
   isStr(v, 1, 500) && !v.startsWith('/') && !v.includes('\\') && v.split('/').every((p) => p !== '' && p !== '.' && p !== '..');
@@ -374,7 +381,7 @@ function checkCandAndEv(cand: { commit: string; base: string | null }, evs: Evid
   return cTree;
 }
 
-export function applyCommand(state: ReviewRunState | null, command: CommandName, rawInput: unknown, git: GitInfo, env: EnvChecker, nowIso: string, helperVersion: string | null = null): ApplyOutcome {
+export function applyCommand(state: ReviewRunState | null, command: CommandName, rawInput: unknown, git: GitInfo, env: EnvChecker, nowIso: string, helperVersion: string | null = null, host: string | null = null): ApplyOutcome {
   const rev = state?.rev ?? null;
   if (!isObj(rawInput)) return invalid(rev, [{ path: '$', rule: 'invalid-type', expected: 'object' }]);
   const v: Violation[] = [];
@@ -444,7 +451,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     if (v.length > 0) return invalid(rev, v);
 
     const next: ReviewRunState = {
-      schema: SCHEMA_VERSION, rev: 1, writer: helperVersion,
+      schema: SCHEMA_VERSION, rev: 1, writer: helperVersion, host: isStr(host, 1, 255) ? host : null,
       run: { run_id: canon.run_id, skill: 'review-and-prep', repo: git.repo, branch: git.branch, pr: canon.pr, gh_login: canon.gh_login, started_at: nowIso },
       binding: { head: git.head, tree: git.tree, base: canon.base, wtree: canon.wtree },
       plan: canon.plan, policy: canon.policy, continuation: canon.continuation,
@@ -887,6 +894,13 @@ function applyAdditiveV1Defaults(raw: Record<string, unknown>): void {
   }
 }
 
+export const CORRUPT_ORDER_FIX = 'Inspect review-run-state.json manually (writer version ordering could not be established, so start will not move it aside), or continue this review run inline (D1).';
+export const CORRUPT_READ_FIX = 'Make review-run-state.json readable before attempting recovery, or continue this review run inline (D1).';
+
+export function storedWriterOrderKnown(state: unknown, helperVersion: string | null): boolean {
+  return writerOrderKnown(isObj(state) ? state.writer : undefined, helperVersion);
+}
+
 export type StoredValidationResult =
   | { ok: true; state: ReviewRunState }
   | { ok: false; reason: 'corrupt' | 'newer-schema'; detail: Record<string, unknown> };
@@ -929,7 +943,7 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
   const reference = (ok: boolean, path: string) => { if (!ok) v.push({ path, rule: 'invalid-reference', expected: 'existing-record' }); };
   const candidate = (x: unknown, path: string) => object(x, STATE_KEYS.candidate, { commit: R.hex40, tree: R.hex40, base: R.hex40N, wtree: R.wtreeN }, path);
   const evidence = (x: unknown, path: string) => array(x, path, (e, p) => { object(e, STATE_KEYS.evidence, { path: R.relPath, sha256: R.hex64 }, p); });
-  const root = object(raw, STATE_KEYS.root, { schema: R.enum([SCHEMA_VERSION]), rev: R.posInt, writer: R.versionN }, '');
+  const root = object(raw, STATE_KEYS.root, { schema: R.enum([SCHEMA_VERSION]), rev: R.posInt, writer: R.versionN, host: R.strN(1, 255) }, '');
   if (root) {
     const run = object(root.run, STATE_KEYS.run, { run_id: R.uuid, skill: R.enum(['review-and-prep']), repo: R.str(1, 500), branch: R.str(1, 200), gh_login: R.strN(1, 128, true), started_at: R.isoZ }, 'run');
     if (run && run.pr !== null) object(run.pr, STATE_KEYS.pr, { url: R.url, repo: R.str(1, 200, true), number: R.posInt, head_repo: R.str(1, 200, true), head_branch: R.str(1, 200, true), base_ref: R.str(1, 200, true) }, 'run.pr');
