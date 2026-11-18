@@ -185,15 +185,18 @@ While the run state is recorded (the default), `derive` writes the run `begin`
 and `end`, pass and correction records; spans, waits and decisions use `GX_RUN`
 from derive's `current.run_step_id`, `GX_SID` from its `current.session_id`,
 `GX_CAPTURE=1` only when `current.run_begin` is `recorded` or `replayed`, and no
-context-override argument. While recording is unavailable, set `GX_CAPTURE=0`
-and skip metrics writes, including raw decisions. Keep any records already
-written and report capture as the calls document defines.
+context-override argument. While recording is unavailable, set `GX_CAPTURE=0`.
+Spans and raw decisions require `GX_CAPTURE=1`. For an older calls document
+that omits the skew recovery, keep recording state if `derive` returns
+`usage`, prints no parseable result or reports `ok` or `partial` without the
+binding fields above. Set `GX_CAPTURE=0` and use `derive-missing` as the
+metrics receipt's unavailable reason.
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Each
 inline producer (`decision` for raw `REUSE`/`N/A`, and the span library's
 `begin`/`end`) calls `gstack-extend-telemetry metrics <begin|end|decision>`
-with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
-`session_id`, a fresh lowercase UUID `event_id` you keep stable for that
+with one JSON object (`v:1`, `stage:"review-and-prep"`, `session_id` from
+`GX_SID`, a fresh lowercase UUID `event_id` you keep stable for that
 event) on stdin. `metrics read` takes the flags listed below. Every ID you
 mint is lowercase and random (below).
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
@@ -364,7 +367,9 @@ library and both call forms are in
   (`full-receipt-<n>.md`), or, when the read is
   unavailable, the literal line
   `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
-  with the actual status. An open run reads as in progress; that is expected.
+  with the actual status. Use `GX_SID` as the read ID when derive supplies the
+  current segment's binding. When there is no ID, use the status line with the
+  actual reason in place of the read. An open run reads as in progress.
   If any metrics call after the run `begin` ended without `recorded` or
   `replayed` and was not reconciled, also add the literal line
   `Workflow metrics (local, optional): capture=partial (<reason>).` beside
@@ -1070,9 +1075,11 @@ continuation.
   `<extend-root>/docs/review-run-state-calls.md` defines, when the preamble
   printed an `EXTEND_ROOT:` line, `"<extend-root>/bin/review-state" --version`
   exits 0 and that document is readable; read the document at Step 1 except its
-  **Inline outputs** section. Read that section by heading only for the inline
-  paths named below and under **When /review stops at its cycle cap**. When no
-  `EXTEND_ROOT:` line was printed or
+  **Inline outputs** section. This activation rule takes precedence over
+  opt-in wording in an older readable calls document. Read **Inline outputs**
+  by heading for the inline paths below, a stop with a changed policy, or an
+  inline Greptile-exit or configuration pause. When no `EXTEND_ROOT:` line
+  was printed or
   `"<extend-root>/bin/review-state" --version` fails, record nothing, add
   `Run state: unavailable (helper-missing)` and
   `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: helper-missing).`
@@ -2532,7 +2539,13 @@ The fence prints one `FULL_REVIEW_RECORD:` line, read as above (`--help` lists
 its messages and exit codes). That line is not a review-state result envelope,
 so use the fence's own recovery rules. While recording, follow **The baseline
 fence** in `docs/review-run-state-calls.md` for `REVIEW_STATE_DIR` and each
-fence refusal. Before the first fence use in an invocation, confirm its
+fence refusal. If an older calls document omits the recovery for a no-ID
+refusal, map `(run-state unreadable)` to `fence-run-state-unreadable` and
+`(cycle-1-pass)` to `fence-cycle-1-pass-missing`. Take the **Degraded path**
+with that reason and rerun the identical baseline write once without
+`REVIEW_STATE_DIR`. Preserve the stored state and the record's original
+provenance. A missing pass stays missing.
+Before the first fence use in an invocation, confirm its
 launcher is executable and `"<extend-root>/bin/review-state" full-review-record --help`
 exits 0. When the helper is missing (no `EXTEND_ROOT:` line, the launcher is
 not executable, or the help command fails), the invocation writes no

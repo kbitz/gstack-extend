@@ -1714,12 +1714,16 @@ describe('review-and-prep run-state=record', () => {
       for (const heading of ['Receipt layout and kept marker set', 'Grammar stage line', 'Release disclosures']) {
         if (!b.includes(`**${heading}**`)) violations.push(`missing fallback: ${heading}`);
       }
+      if (!b.includes('takes precedence over opt-in wording in an older readable calls document')) {
+        violations.push('missing skew precedence');
+      }
       return violations;
     };
 
     expect(checkDefaultBullet(bullet)).toEqual([]);
     expect(checkDefaultBullet(bullet.replace(defaultSentence, ''))).toContain('missing default sentence');
     expect(checkDefaultBullet(bullet.replace('**Grammar stage line**', ''))).toContain('missing fallback: Grammar stage line');
+    expect(checkDefaultBullet(bullet.replace('takes precedence over', 'repeats'))).toContain('missing skew precedence');
 
     const actStart = callsRaw.indexOf('## Activation');
     const actEnd = callsRaw.indexOf('\n## ', actStart + 1);
@@ -1835,6 +1839,10 @@ describe('review-and-prep run-state=record', () => {
     expect(checkFenceRule(fenceSec)).toEqual([]);
     expect(checkCallsDocSkew(policySec)).toEqual([]);
     expect(checkDeriveSkew(deriveSec)).toEqual([]);
+    const baseline = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
+    expect(baseline).toContain('map `(run-state unreadable)` to `fence-run-state-unreadable` and `(cycle-1-pass)` to `fence-cycle-1-pass-missing`');
+    expect(metricsRaw.replace(/\s+/g, ' ')).toContain('Spans and raw decisions require `GX_CAPTURE=1`.');
+    expect(callsRaw).toContain('put those diagnostics in the exit prose and preserve the receipt and its SHA-256');
 
     expect(checkFenceRule(fenceSec.replace('fence-run-state-unreadable', ''))).toContain('fence-run-state-unreadable');
     expect(checkFenceRule(fenceSec.replace('fence-cycle-1-pass-missing', ''))).toContain('fence-cycle-1-pass-missing');
