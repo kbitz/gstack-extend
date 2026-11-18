@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, 
 import { hostname } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
-import { BUILD_COMMANDS, buildHelp, buildRequest, parseDelegationLine, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
+import { BUILD_COMMANDS, buildHelp, buildRequest, FLAG_TABLES, parseDelegationLine, PASS_STATE_FLAGS, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
 import { main } from '../src/review-state/cli.ts';
 import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
 import { FIELD_FMT, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
@@ -5793,6 +5793,86 @@ describe('bin/review-state', () => {
     expect(new Set(docKeys)).toEqual(expectedSet);
   });
 
+  test('build literal-null flag list matches validator nullability and text-null refusal', () => {
+    const stubGit: GitInfo = { toplevel: '/repo', repo: '/repo/.git', branch: 'main', head: headSha, tree: treeSha };
+    const stubEnv: EnvChecker = { commitExists: () => true, commitTree: () => treeSha, isAncestor: () => true, checkEvidence: () => null };
+    const stateBefore = new Map<string, ReviewRunState | null>();
+    let state: ReviewRunState | null = null;
+    for (const [key, example] of Object.entries(REQUEST_EXAMPLES)) {
+      stateBefore.set(key, state);
+      const out = applyCommand(state, (key.startsWith('record pass') ? 'record pass' : key) as CommandName, example, stubGit, stubEnv, '2026-11-10T18:10:00Z', '0.93.2');
+      if (out.reason === 'recorded') state = out.state;
+    }
+    const setPath = (obj: Record<string, unknown>, key: string, val: unknown) => {
+      const [a, b] = key.split('.');
+      if (b) obj[a!] = { ...(obj[a!] as Record<string, unknown>), [b]: val };
+      else obj[a!] = val;
+    };
+    const getPath = (obj: Record<string, unknown>, key: string): unknown => key.split('.').reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], obj);
+    const probeViolations = (shape: keyof typeof REQUEST_EXAMPLES, cmd: CommandName, flag: string, key: string, val: unknown) => {
+      const raw = structuredClone(REQUEST_EXAMPLES[shape]) as Record<string, unknown>;
+      if (shape === 'start' && key.startsWith('pr.')) raw.pr = { url: 'https://github.com/o/r/pull/1', repo: 'o/r', number: 1, head_repo: 'o/r', head_branch: 'b', base_ref: 'main' };
+      if (shape === 'record gate' && flag.startsWith('--greptile-')) { raw.name = 'greptile'; raw.details = { value: 'v', run: null }; }
+      if (shape === 'record gate' && flag.startsWith('--pregate-')) { raw.name = 'pregate'; raw.details = { raw_verdict: 'PASS', wrapper_verdict: 'passed', policy: 'base', record_path: 'r.json', record_sha256: sha256('r'), skipped_lanes: [] }; }
+      if (shape === 'record audit' && flag === '--report-id') { raw.name = 'documentation'; raw.details = { report_id: 'd1', section_path: 's.md', section_sha256: sha256('s') }; }
+      if (shape === 'finish' && flag === '--full-review-unavailable') raw.full_review_evidence = { status: 'unavailable', reason: 'r' };
+      else if (shape === 'finish' && flag.startsWith('--full-review-')) raw.full_review_evidence = { status: 'available', commit: headSha, tree: treeSha, source: 's' };
+      setPath(raw, key, val);
+      const out = applyCommand(stateBefore.get(shape) ?? null, cmd, raw, stubGit, stubEnv, '2026-11-10T18:10:00Z', '0.93.2');
+      return ((out.detail.violations as Array<{ path: string; expected: string }> | undefined) ?? []).filter((x) => x.path === key);
+    };
+    const cleanByShape: Record<string, (flag: string) => string[]> = {
+      start: () => ['--run-id', uid(1), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('p'), '--policy-source', 'none supplied', '--max-continuations', '1', '--prior-stops', '1'],
+      'record pass (started)': () => ['--pass-id', uid(2), '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'delta', '--commit', headSha, '--voice', 'core'],
+      'record pass (attempt)': () => ['--pass-id', uid(2), '--state', 'attempt', '--voice-id', 'core', '--attempt-id', uid(3), '--outcome', 'completed'],
+      'record pass (voice-complete)': (f) => ['--pass-id', uid(2), '--state', 'voice-complete', '--voice-id', 'core', ...(f === '--selected-attempt-id' ? ['--not-applicable', 'not-applicable'] : ['--selected-attempt-id', uid(3)])],
+      'record pass (completed)': () => ['--pass-id', uid(2), '--state', 'completed'],
+      'record correction': () => ['--correction-id', uid(4), '--pass-id', uid(2), '--voice-id', 'core', '--attempt-id', uid(3), '--finding-id', 'F-1'],
+      'record gate': () => ['--gate-id', uid(5), '--name', 'greptile', '--result', 'passed', '--commit', headSha, '--greptile-value', 'clean'],
+      'record audit': () => ['--audit-id', uid(6), '--name', 'coverage', '--result', 'passed', '--coverage-threshold', '80', '--commit', headSha],
+      checkpoint: () => ['--checkpoint-id', uid(7), '--kind', 'resume'],
+      finish: (f) => ['--outcome', f === '--stop-reason' ? 'blocked' : 'stopped', '--base', baseSha, ...(f === '--stop-reason' ? [] : ['--stop-reason', 'cap'])],
+    };
+    const tables = [
+      ['start', 'start', FLAG_TABLES.start], ...PASS_STATES.map((st) => [`record pass (${st})`, 'record pass', PASS_STATE_FLAGS[st]] as const),
+      ['record correction', 'record correction', FLAG_TABLES['record correction']], ['record gate', 'record gate', FLAG_TABLES['record gate']],
+      ['record audit', 'record audit', FLAG_TABLES['record audit']], ['checkpoint', 'checkpoint', FLAG_TABLES.checkpoint], ['finish', 'finish', FLAG_TABLES.finish],
+    ] as const;
+    const emptyDir = newDir(), omits: string[] = [], keepsText: string[] = [];
+    for (const [shape, cmd, rows] of tables) {
+      for (const row of rows) {
+        if (row.kind !== 'string' && row.kind !== 'int' && row.kind !== 'number-or-string') { expect(row.nullOmits, `${shape} ${row.flag}`).toBeUndefined(); continue; }
+        const vFalse = probeViolations(shape, cmd, row.flag, row.key, false);
+        expect(vFalse.length, `${shape} ${row.flag}`).toBeGreaterThan(0);
+        const nullable = vFalse.some((x) => x.expected.endsWith('|null'));
+        const refuses = probeViolations(shape, cmd, row.flag, row.key, 'null').some((x) => x.expected.endsWith('|null'));
+        expect(Boolean(row.nullOmits), `${shape} ${row.flag}`).toBe(nullable && refuses);
+        const clean = cleanByShape[shape]!(row.flag), label = `${shape} ${row.flag}`;
+        if (row.nullOmits) {
+          omits.push(label);
+          expect(buildRequest(cmd, [...clean, row.flag, 'null'], emptyDir), label).toEqual(buildRequest(cmd, clean, emptyDir));
+        } else if (nullable) {
+          keepsText.push(label);
+          const built = buildRequest(cmd, [...clean, row.flag, 'null'], emptyDir);
+          expect(built.ok && getPath(built.request, row.key), label).toBe('null');
+        }
+      }
+    }
+    expect(omits).toEqual([
+      'start --delegation-line', 'start --continues', 'start --session-id',
+      'record pass (started) --delta-from', 'record pass (started) --base',
+      'record pass (attempt) --part', 'record pass (attempt) --predecessor-attempt-id', 'record pass (attempt) --dispatched-at', 'record pass (attempt) --returned-at',
+      'record pass (voice-complete) --selected-attempt-id', 'record pass (voice-complete) --not-applicable',
+      'record correction --adjudication', 'record correction --resolution', 'record correction --receipt-class', 'record correction --fixed-in', 'record correction --supersedes',
+      'record gate --base', 'record gate --greptile-run', 'record audit --coverage-pct', 'record audit --base',
+      'checkpoint --base', 'checkpoint --session-id', 'finish --delta-base', 'finish --stop-count', 'finish --readiness-confirmed-at',
+    ]);
+    expect(keepsText).toEqual([
+      'start --wtree', 'start --gh-login', 'start --policy-value', 'record pass (started) --wtree',
+      'record gate --reason', 'record gate --wtree', 'record audit --wtree', 'checkpoint --wtree', 'finish --stop-reason', 'finish --wtree',
+    ]);
+  });
+
   test('coverage audit requests that record today keep byte-identical request bytes', () => {
     const d = newDir();
     expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1020), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('t1-bytes'), '--policy-source', 'none supplied', '--max-continuations', '1']).json.reason).toBe('recorded');
@@ -5974,6 +6054,56 @@ describe('bin/review-state', () => {
     expect(rBogus.json.command).toBe('record');
     expect(rBogus.json.detail).toEqual({ message: 'unknown command "record"' });
     expect(readdirSync(d3).filter((f) => f.startsWith('request-record-'))).toEqual([]);
+  });
+
+  test("replays PR #277's voice-complete (C20): build fills in the voice's only completed attempt", () => {
+    const d = newDir(), passId = '22521534-98a2-4e70-a725-905abb3c06ac', attId = '2e2b72d4-6548-4e4d-8340-0257b66a6a40';
+    const voices = ['core', 'specialist:maintainability', 'red-team', 'qa', 'native-adversarial', 'outside:challenge', 'outside:structured'];
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1038), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('c20-plan'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, ...voices.flatMap((v) => ['--voice', v])]).json.reason).toBe('recorded');
+    writeJson(d, 'maint.json', {
+      v: 1, status: 'ran', config_sha256: sha256('cfg'),
+      parts: [{ part: 'maintainability', provider: 'p', model: 'm', call_id: sha256('c20-call'), replay: false, dispatched: true, dispatched_at: '2026-11-18T01:00:00Z', returned_at: '2026-11-18T01:02:00Z', wall_ms: 10, input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: null, parse: 'valid', verdict: 'clean', outcome: 'credited', fallback_reason: null, findings: [] }],
+    });
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'specialist:maintainability', '--part', 'specialist:maintainability', '--attempt-id', attId, '--delegate-file', 'maint.json']).json.reason).toBe('recorded');
+
+    const vcBase = ['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'voice-complete'];
+    const rA = runCli([...vcBase, '--voice-id', 'specialist:maintainability', '--selected-attempt-id', 'null']);
+    expect([rA.json.reason, rA.err, rA.json.detail.overrides, rA.json.detail.derived]).toEqual([
+      'recorded', '', undefined, [{ flag: '--selected-attempt-id', used: attId, rule: 'only-completed-attempt-on-voice' }],
+    ]);
+    const expBytesA = `{"pass_id":"${passId}","state":"voice-complete","voice_id":"specialist:maintainability","selected_attempt_id":"${attId}"}\n`;
+    expect(readFileSync(join(d, `request-record-pass-${sha256(expBytesA).slice(0, 16)}.json`), 'utf8')).toBe(expBytesA);
+    const stA = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stA.passes[0]!.voices.find((v) => v.voice_id === 'specialist:maintainability')!.selected_attempt_id).toBe(attId);
+    const reqsAfterA = readdirSync(d).filter((f) => f.startsWith('request-')).sort();
+    expect(runCli([...vcBase, '--voice-id', 'specialist:maintainability']).json.reason).toBe('replayed');
+    expect(runCli([...vcBase, '--voice-id', 'specialist:maintainability', '--selected-attempt-id', attId]).json.reason).toBe('replayed');
+    expect(readdirSync(d).filter((f) => f.startsWith('request-')).sort()).toEqual(reqsAfterA);
+
+    const coreAtt1 = uid(1039), coreAtt2 = uid(1040);
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', coreAtt1, '--outcome', 'completed']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', passId, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', coreAtt2, '--predecessor-attempt-id', coreAtt1, '--outcome', 'completed']).json.reason).toBe('recorded');
+    const beforeB = readFileSync(join(d, 'review-run-state.json'), 'utf8');
+    const expViol = [{ path: 'selected_attempt_id', rule: 'invalid-value', expected: 'exactly-one-of-selected_attempt_id-or-not_applicable' }];
+    for (const extra of [['--selected-attempt-id', 'null'], []] as const) {
+      const rB = runCli([...vcBase, '--voice-id', 'core', ...extra]);
+      expect([rB.code, rB.json.reason, rB.json.detail.violations, rB.json.detail.derived]).toEqual([1, 'invalid-input', expViol, undefined]);
+    }
+    expect(readFileSync(join(d, 'review-run-state.json'), 'utf8')).toBe(beforeB);
+
+    const rC0 = runCli([...vcBase, '--voice-id', 'red-team', '--selected-attempt-id', 'null']);
+    expect([rC0.code, rC0.json.reason, rC0.json.detail.violations, rC0.json.detail.derived]).toEqual([1, 'invalid-input', expViol, undefined]);
+    const rC1 = runCli([...vcBase, '--voice-id', 'red-team', '--selected-attempt-id', 'null', '--not-applicable', 'not-applicable']);
+    expect([rC1.json.reason, rC1.err, rC1.json.detail.overrides, rC1.json.detail.derived]).toEqual(['recorded', '', undefined, undefined]);
+    const stC = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(stC.passes[0]!.voices.find((v) => v.voice_id === 'red-team')).toMatchObject({ selected_attempt_id: null, not_applicable: 'not-applicable' });
+    const expBytesC = `{"pass_id":"${passId}","state":"voice-complete","voice_id":"red-team","not_applicable":"not-applicable"}\n`;
+    expect(readFileSync(join(d, `request-record-pass-${sha256(expBytesC).slice(0, 16)}.json`), 'utf8')).toBe(expBytesC);
+    expect(runCli([...vcBase, '--voice-id', 'red-team', '--not-applicable', 'not-applicable']).json.reason).toBe('replayed');
+
+    const rD = runCli([...vcBase, '--voice-id', 'qa', '--selected-attempt-id', 'null', '--selected-attempt-id', attId]);
+    expect([rD.code, rD.json.reason, rD.json.detail]).toEqual([2, 'usage', { message: 'duplicate --selected-attempt-id flag' }]);
   });
 
   // Value: protects=separation of Git execution failures (timeout, spawn, signal), uncaught errors, and missing-Bun runtime from invalid-input; fails_when=Git execution failure returns commit-not-found or not-in-worktree, trace file is written before --dir validation or leaks payload, lock/tmp remains on throw, or missing Bun prints no envelope; why_new=Track 88A T1; seam=subprocess mock.module and /bin/sh launcher
