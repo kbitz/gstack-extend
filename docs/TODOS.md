@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/cli.ts|tests/review-state.test.ts] Test gap: Lock fence fallback wording in top-level review-state help
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The help test locks default recording and the fence command. It does not assert the top-level help's explanation of when the fence runs without `REVIEW_STATE_DIR`.
+- **Hypothesis (untested):** Extend the existing help test to catch a return to wording that ties the fence to the old opt-in flag.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/cli.ts`
+- **Evidence:** The coverage audit read the help test, ran `bin/review-state --help` and confirmed the current wording.
+- **Context:** Filed by /review-and-prep on `mmm/47c5f95a` at `6d18433` on 2026-11-18, before draft creation.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
