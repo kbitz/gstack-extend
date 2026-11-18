@@ -8,7 +8,7 @@
  * Coverage:
  *   - is_safe_install_path: happy path, nonexistent (ancestor walk),
  *     outside-$HOME, world-writable (chmod 0777), broken symlink, $HOME
- *     resolution, slash-delimited prefix (kb2 vs kb).
+ *     resolution, slash-delimited prefix (alice2 vs alice).
  *   - is_safe_target_path: directory (safe), symlink (refused), regular
  *     file (refused), nonexistent (safe — mkdir -p will create).
  *   - stat flavor: GNU- and BSD-style stat shims on PATH, so both owner-uid
@@ -123,14 +123,14 @@ describe('is_safe_install_path', () => {
     expect(r.exitCode).toBe(1);
   });
 
-  test('slash-delimited HOME match: /Users/kb2 is NOT inside /Users/kb', () => {
+  test('slash-delimited HOME match: /Users/alice2 is NOT inside /Users/alice', () => {
     // Simulate two homes with prefix-overlap names. Without slash-delimited
     // case match, naive "$path"* prefix would accept this.
-    const homeKb = join(baseTmp, 'home-kb');
-    const homeKb2 = join(baseTmp, 'home-kb2');
-    mkdirSync(homeKb, { recursive: true });
-    mkdirSync(homeKb2, { recursive: true });
-    const r = runFn('is_safe_install_path', homeKb2, { HOME: homeKb });
+    const homeAlice = join(baseTmp, 'home-alice');
+    const homeAlice2 = join(baseTmp, 'home-alice2');
+    mkdirSync(homeAlice, { recursive: true });
+    mkdirSync(homeAlice2, { recursive: true });
+    const r = runFn('is_safe_install_path', homeAlice2, { HOME: homeAlice });
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('outside resolved $HOME');
   });

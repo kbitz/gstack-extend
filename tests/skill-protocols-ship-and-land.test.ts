@@ -841,15 +841,22 @@ describe('ship-and-land compact PR body receipt and full receipt file', () => {
 
   // Value: protects=ship-and-land keeps its ## Ship and land PR-body section at or under 1,500 characters, writes full-receipt-<n>.md in the supplementary directory, and honors hash-chained full receipts plus legacy receipt comments; fails_when=the 1,500-character cap, the Full receipt link, the supplementary location, the legacy rule or the release-only hash-chained reconstruction is dropped; why_new=AC4 and AC5 for ship-and-land; seam=none; no_claim=installed-agent execution
   test('ship-and-land pins the 1,500-character body section, full-receipt-<n>.md in the supplementary directory, and hash-chained/legacy receipt reading', () => {
+    expect(raw).not.toContain('<~-relative path>');
     for (const clause of [
       'Write a compact `## Ship and land` receipt in the PR body at or under 1,500 characters, retaining/linking the original preparation receipt and carrying only:',
-      '`Full receipt: <~-relative path>; sha256: <64 hex>` pointing to the full ship receipt file (`full-receipt-<n>.md`) written under the supplementary location below, and the wall time from the invocation start to the push.',
+      '`Full receipt: <evidence locator>; sha256: <64 hex>` pointing to the full ship receipt file (`full-receipt-<n>.md`) written under the supplementary location below, and the wall time from the invocation start to the push.',
       'Store supplementary durable artifacts (including `full-receipt-<n>.md`) outside ephemeral workspaces: an existing `<state-root>/projects/<slug>/ship-and-land/`, otherwise `~/scratch/ship-and-land/`.',
       'Keep temporary files outside the repository.',
+      '(`Full receipt: <evidence locator>; sha256: <64 hex>`), resolving it under the review-and-prep evidence root (`<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`) by the reader rule in `docs/workflow-handoffs.md#receipt-locators` (a legacy `~/` or absolute path reads as today)',
+      "resolving the prior `## Ship and land` receipt's `Full receipt:` locator under the ship-and-land root by the same reader rule; a legacy `~/` or absolute path reads as today",
+      "Preparation's full pregate record (`record:`) is located under the review-and-prep root by the same reader rule",
+      'The documentation section (`section:`) is located under the review-and-prep root the same way before its SHA-256 check',
       'A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.',
       'If its durable file is absent, reconstruct it from authenticated receipt text only when the resulting bytes match that hash; otherwise its evidence is unavailable. Authenticated receipt text is the hash-verified full receipt, or a legacy receipt comment; an unavailable full receipt makes that evidence unavailable and selects the `FULL` path.',
       'A line in a full receipt file (`full-receipt-<n>.md`) inherits the naming comment\'s provenance only when that comment passes this author and `userContentEdits` check and the file\'s bytes match its `Full receipt:` SHA-256.',
-      'Use a unique branch/invocation subdirectory; create each full receipt exclusively, never overwrite it',
+      'Use a unique branch/invocation subdirectory directly under that location; create each full receipt exclusively, never overwrite it',
+      "Reuse that directory (found from the prior `## Ship and land` receipt's `Full receipt:` locator under the ship-and-land root, or from a legacy path) and continue its numbering on resume.",
+      'Pull request text names files in this directory only by their evidence locator (`<evidence directory name>/<file>`, `docs/workflow-handoffs.md#receipt-locators`), while chat output (the readiness report and the exit message) and the local full receipt keep the absolute or `~/` path.',
       'Measure the section as a JavaScript string before each body write',
     ]) {
       expect(shipN, clause).toContain(clause);

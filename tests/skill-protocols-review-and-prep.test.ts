@@ -58,7 +58,7 @@ const MARKER_RESERVATION = '<!-- review-and-prep:greptile-reservation:<full-sha>
 const MARKER_CONTINUATION = '<!-- review-and-prep:continuation:<stop-sha> -->';
 
 const RESUME_HINT = 'Resume with /review-and-prep resume; do not run /ship on this draft.';
-const FULL_RECEIPT_POINTER = 'Full receipt: <~-relative path>; sha256: <64 hex>';
+const FULL_RECEIPT_POINTER = 'Full receipt: <evidence locator>; sha256: <64 hex>';
 const IN_CAP_ANCHOR_1 = '`A pass covers Steps 3–5, including all reviewers before fixes.`';
 const IN_CAP_ANCHOR_2 = '`Allow at most 3 fix cycles`';
 const IN_CAP_ANCHOR_3 = '`DIFF_BASE=$(git merge-base origin/<base> HEAD)`';
@@ -525,6 +525,7 @@ function checkExternalGateTemplatesLock(text: string): string[] {
   const pause = skillSection(text, H_EXTERNAL_PAUSE).replace(/\s+/g, ' ');
   const violations: string[] = [];
   for (const tpl of [
+    '`Evidence directory: <absolute path>`',
     '`External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`',
     '`External gate result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <command>; exit: <n>; log: <reference>`',
     '`External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>`',
@@ -2002,6 +2003,13 @@ describe('review-and-prep PR body size budget', () => {
   test('compact receipt template carries only the ordered machine-read labels and paused/stopped comments keep their compact shape', () => {
     expect(checkCompactReceiptTemplateLock(prep)).toEqual([]);
     expect(checkFullReceiptTemplateLock(prep)).toEqual([]);
+    const compactFence = extractCompactReceiptFence(prep);
+    expect(compactFence).toContain('record: <evidence locator>;');
+    expect(compactFence).toContain('section: <evidence locator>;');
+    expect(prep).not.toContain('<~-relative path>');
+    const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+    expect(readiness).toContain('Write each path under the evidence root as its evidence locator');
+    expect(readiness).toContain("`Evidence:` the full receipt's evidence locator");
     const pausedShape = pauseSection.split('The paused comment uses')[1]!.split('The marker is distinct')[0]!;
     expect(pausedShape).toContain('every `Delegated part:` line');
     expect(pausedShape).toContain('`Unresolved:`');
@@ -2270,6 +2278,14 @@ describe('review-and-prep run-state=record', () => {
     expect(evDirAt).toBeGreaterThan(step1At);
     expect(step2At).toBeGreaterThan(evDirAt);
     expect(prep.match(/^### Evidence directory$/gm)).toHaveLength(1);
+
+    const evDirSec = skillSection(prep, '### Evidence directory').replace(/\s+/g, ' ');
+    expect(evDirSec).toContain('directly under the evidence root');
+    expect(evDirSec).toContain('a legacy `~/` or absolute path names the directory directly');
+
+    const locatingLine = callsRaw.slice(callsRaw.indexOf('**Locating the run:**'), callsRaw.indexOf('- **Reading the state:**')).replace(/\s+/g, ' ');
+    expect(locatingLine).toContain('`Full receipt:` locator under the evidence root');
+    expect(locatingLine).toContain('a legacy `~/` or absolute path names it directly');
 
     const designRaw = readFileSync(join(ROOT, 'docs', 'designs', 'review-run-state.md'), 'utf8');
     const d2HeadingMatch = /\(`skills\/review-and-prep\.md`, `(### [^`]+)`\)/.exec(designRaw);

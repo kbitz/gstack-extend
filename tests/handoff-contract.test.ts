@@ -1564,7 +1564,19 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(keptSection).toContain('Skipped pregate lanes:');
     expect(keptSection).toContain('A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.');
     expect(keptSection).toContain('so no section version bumps (per `## Versioning and compatibility`)');
-    expect(ship).toContain('Full receipt: <~-relative path>; sha256: <64 hex>');
+    const versionsSection = DOC.split('## Versions')[1]?.split('\n## ')[0] ?? '';
+    expect(versionsSection).toMatch(/^\|\s*Receipt locators\s*\|[^|\n]+\|\s*2\s*\|/m);
+    const locatorsSection = squash(DOC.split('#### Receipt locators')[1]?.split('\n## ')[0] ?? '');
+    expect(locatorsSection).toContain('<state-root>/projects/<slug>/review-and-prep/');
+    expect(locatorsSection).toContain('~/scratch/review-and-prep/');
+    expect(locatorsSection).toContain('<state-root>/projects/<slug>/ship-and-land/');
+    expect(locatorsSection).toContain('~/scratch/ship-and-land/');
+    expect(locatorsSection).toContain('A value that starts with `/` or `~/` is a legacy version-1 path and reads as before');
+    expect(locatorsSection).toContain("H-F's `Evidence directory: <absolute path>`");
+    const locatorPlaceholder = 'Full receipt: <evidence locator>; sha256: <64 hex>';
+    expect(keptSection).toContain(locatorPlaceholder);
+    expect(prep).toContain(locatorPlaceholder);
+    expect(ship).toContain(locatorPlaceholder);
     expect(ship).toContain('A receipt, paused or stopped comment without a `Full receipt:` line is a legacy receipt whose own text is its full receipt, read as today.');
     const trusted = run('B-TRUSTED');
     const compact = run('B-COMPACT-RECEIPT');
@@ -3295,12 +3307,12 @@ describe('(Q) review-state render byte compatibility', () => {
       ['<verbatim policy value or none supplied>', 'none supplied'], ['<path, link or "agreed task in the receipt">', 'docs/plans/example-plan.md'], ['SHA-256: <64 hex>', `SHA-256: ${VARS.PLAN}`],
       ['<the H-B Greptile value>', greptileVal], ['<link|none>', 'https://github.com/example-org/example-repo/pull/42#pullrequestreview-1'], ['<none|comma-separated checks>', 'none'],
       ['Ship gates: head=<40 hex>; tree=<40 hex>; base=<40 hex>', `Ship gates: head=${VARS.HEAD}; tree=${VARS.TREE}; base=${VARS.BASE}`], ['<raw verdict>', 'pass'], ['<verdict>', 'pass'], ['<base|head>', 'base'],
-      ['record: <path>; sha256: <64 hex>', `record: ~/.gstack/projects/example/review-and-prep/inv-1/pregate.json; sha256: ${'1'.repeat(64)}`], ['<status or waiver>', 'pass'], ['<value|n/a>', '100%'], ['<decision>', 'pass'],
-      ['<status or named-risk decision>', 'accepted'], ['<id>', 'doc-1'], ['section: <path>; sha256: <64 hex>', `section: ~/.gstack/projects/example/review-and-prep/inv-1/doc-section.md; sha256: ${'2'.repeat(64)}`],
+      ['record: <evidence locator>; sha256: <64 hex>', `record: inv-1/pregate.json; sha256: ${'1'.repeat(64)}`], ['<status or waiver>', 'pass'], ['<value|n/a>', '100%'], ['<decision>', 'pass'],
+      ['<status or named-risk decision>', 'accepted'], ['<id>', 'doc-1'], ['section: <evidence locator>; sha256: <64 hex>', `section: inv-1/doc-section.md; sha256: ${'2'.repeat(64)}`],
       ['<part>', 'testing'], ['<label>', 'provider-a'], ['<model>', 'model-a'], ['outcome=credited|fell-back', 'outcome=credited'], ['<cause|none>', 'none'], ['wall_ms=<n|unknown>', 'wall_ms=1200'],
       ['cache_read_input_tokens=<n|unknown>', 'cache_read_input_tokens=0'], ['cache_creation_input_tokens=<n|unknown>', 'cache_creation_input_tokens=unknown'], ['input_tokens=<n|unknown>', 'input_tokens=100'],
       ['output_tokens=<n|unknown>', 'output_tokens=50'], ['findings=<n>', 'findings=0'], ['<sha256>', 'b'.repeat(64)], ['<finding IDs and severities, or "none recorded">', 'none recorded'],
-      ['<~-relative path>; sha256: <64 hex>', `~/.gstack/projects/example/review-and-prep/inv-1/full-receipt-1.md; sha256: ${'3'.repeat(64)}`],
+      ['<evidence locator>; sha256: <64 hex>', `inv-1/full-receipt-1.md; sha256: ${'3'.repeat(64)}`],
     ];
     const stopLabelsTpl = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1]!.split('```markdown\n')[1]!.split('\n```')[0]!;
 

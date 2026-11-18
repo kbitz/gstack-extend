@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { RECEIPT_KEYS } from '../review-delegate/delegate.ts';
 import { loadStoredState } from './export.ts';
 import { isHttpUrl, isObj, isStr, R, STATE_KEYS, truncate80, validateFields, type CandidateBinding, type DelegationPolicy, type EvidenceRef, type FieldRule, type PrInfo, type ReviewRunState, type Violation } from './state.ts';
@@ -41,6 +41,10 @@ export const normalizeDir = (dir: string): string => (dir.length > 1 ? dir.repla
 export function tilde(p: string, home: string = homedir()): string {
   const h = home.replace(/\/+$/, '');
   return h.length > 1 && p.startsWith(`${h}/`) ? `~/${p.slice(h.length + 1)}` : p;
+}
+export function evidenceLocator(dir: string, rel: string): string {
+  const name = basename(normalizeDir(dir));
+  return name ? `${name}/${rel}` : rel;
 }
 
 export function exitState(state: ReviewRunState): RenderExitState {
@@ -160,18 +164,18 @@ export const FIELD_FMT = {
     return `Checks not run: ${notRun.length > 0 ? notRun.join(', ') : 'none'}`;
   },
   shipGates: (c: RenderCtx) => {
-    const nd = normalizeDir(c.dir), pre = lastByName(c.state.gates, 'pregate');
+    const pre = lastByName(c.state.gates, 'pregate');
     const cov = lastByName(c.state.audits, 'coverage'), doc = lastByName(c.state.audits, 'documentation');
     return [
       `Ship gates: head=${c.b.head}; tree=${c.b.tree}; base=${c.b.base}`,
       pre && pre.result !== 'not-run' && isFreshForBinding(pre.candidate, c.b)
-        ? `- pregate: ${String(pre.details.raw_verdict)}; wrapper: ${String(pre.details.wrapper_verdict)}; policy: ${String(pre.details.policy)}; record: ${tilde(`${nd}/${String(pre.details.record_path)}`, c.home)}; sha256: ${String(pre.details.record_sha256)}`
+        ? `- pregate: ${String(pre.details.raw_verdict)}; wrapper: ${String(pre.details.wrapper_verdict)}; policy: ${String(pre.details.policy)}; record: ${evidenceLocator(c.dir, String(pre.details.record_path))}; sha256: ${String(pre.details.record_sha256)}`
         : '- pregate: not-run',
       cov && cov.result !== 'not-run' && isFreshForBinding(cov.candidate, c.b)
         ? `- coverage: ${cov.result}; pct: ${cov.details.pct != null ? `${String(cov.details.pct)}%` : 'n/a'}; threshold: ${String(cov.details.threshold)}`
         : '- coverage: not-run',
       doc && doc.result !== 'not-run' && isFreshForBinding(doc.candidate, c.b)
-        ? `- documentation: ${doc.result}; audit: ${String(doc.details.report_id)}; section: ${tilde(`${nd}/${String(doc.details.section_path)}`, c.home)}; sha256: ${String(doc.details.section_sha256)}`
+        ? `- documentation: ${doc.result}; audit: ${String(doc.details.report_id)}; section: ${evidenceLocator(c.dir, String(doc.details.section_path))}; sha256: ${String(doc.details.section_sha256)}`
         : '- documentation: not-run',
     ];
   },
@@ -212,7 +216,7 @@ export const FIELD_FMT = {
   },
   restrictionResolved: (c: RenderCtx) => (c.resolved ? ['reviewRestrictionResolved: true'] : []),
   pauseResumeHint: () => 'Resume with /review-and-prep resume; do not run /ship on this draft.',
-  fullReceiptLine: (c: RenderCtx) => `Full receipt: ${tilde(`${normalizeDir(c.dir)}/${c.fullReceipt!.path}`, c.home)}; sha256: ${c.fullReceipt!.sha256}`,
+  fullReceiptLine: (c: RenderCtx) => `Full receipt: ${evidenceLocator(c.dir, c.fullReceipt!.path)}; sha256: ${c.fullReceipt!.sha256}`,
   runStateLine: (c: RenderCtx) => `Run state: recorded (${tilde(`${normalizeDir(c.dir)}/review-run-state.json`, c.home)}; rev ${c.state.rev})`,
   hbHeader: (c: RenderCtx) => {
     const pr = reqPr(c.state, c.pr);
@@ -244,10 +248,11 @@ export const FIELD_FMT = {
   heHeader: (c: RenderCtx) => { const pr = reqPr(c.state, c.pr); return `Run /review-and-prep continue for PR ${pr.url} on ${pr.repo}, branch ${pr.head_branch}.`; },
   heFooter: () => ['Keep the PR draft.', 'Do not run /ship on this PR.'],
   hfBlock: (c: RenderCtx) => [`Evidence directory: ${normalizeDir(c.dir)}`, ...(c.autoChoiceLines ?? []), `External gate: external-gate/v1; head: ${c.b.head}; tree: ${c.b.tree}; base: ${c.b.base}`],
-  bodyLines: (c: RenderCtx) => {
-    const nd = normalizeDir(c.dir);
-    return ['## Review and prep', '', EXIT_MATRIX[c.exit].bodyPhrase!, '', c.summaryText!.replace(/\r\n?/g, '\n').replace(/\n+$/, ''), '', `Receipt: ${c.commentUrl ?? 'none yet'}`, `Evidence: ${tilde(nd, c.home)}; full receipt: ${tilde(`${nd}/${c.fullReceipt!.path}`, c.home)}; sha256: ${c.fullReceipt!.sha256}`];
-  },
+  bodyLines: (c: RenderCtx) => [
+    '## Review and prep', '', EXIT_MATRIX[c.exit].bodyPhrase!, '', c.summaryText!.replace(/\r\n?/g, '\n').replace(/\n+$/, ''), '',
+    `Receipt: ${c.commentUrl ?? 'none yet'}`,
+    `Evidence: ${evidenceLocator(c.dir, c.fullReceipt!.path)}; sha256: ${c.fullReceipt!.sha256}`,
+  ],
   stageLine: (c: RenderCtx) => {
     const st = EXIT_MATRIX[c.exit].stage;
     return st ? [`Stage handoff: stage-handoff/v1; stage: review; next: ${st[0]}; status: ${st[1]}; head: ${c.b.head}; plan-sha256: ${c.state.plan.sha256 || 'none'}`] : [];

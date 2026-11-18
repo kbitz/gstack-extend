@@ -23,6 +23,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
 | Stage line | the last line of the final message of `/plan-track`, `/implement`, `/review-and-prep`, `/pair-review`, `/ship-and-land`, `/full-review`, `/roadmap` and `/project-spec`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
 | Release disclosures | optional lines in a `/plan-track` plan file and before the stage line of a `/review-and-prep` `next: ship-and-land` exit | 1 | none; additive-only | `Release note:` / `Release notes:`, `Upgrade risk:` / `Upgrade risks:`, `User-facing change:` / `User-facing changes:` |
+| Receipt locators | the evidence paths in `/review-and-prep`'s pull request body and its receipt, paused and stopped comments, and in `/ship-and-land`'s `## Ship and land` body section | 2 | none (value identifies itself; `/` or `~/` is version 1) | `Full receipt:`, `record:`, `section:`, body `Evidence:` |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -1629,8 +1630,8 @@ human-readable while gates and machine readers keep their exact lines:
    other decisions open to veto, one `Tests:` line (suite result and selection,
    pregate verdict, Greptile state), risks and open checks (pending user checks
    on a pause), and `Receipt:` (the receipt, paused or stopped comment permalink;
-   none yet on a BLOCKED exit) and `Evidence:` (the evidence directory and
-   `full-receipt-<n>.md` path with its SHA-256). When over budget, the producer
+   none yet on a BLOCKED exit) and `Evidence:` (the full receipt's evidence
+   locator and its SHA-256). When over budget, the producer
    shortens producer prose in the body by leaving detail to the full receipt,
    never shortening the `## Review and prep` heading and status line, the
    `Review default:` and `Auto-chosen` lines, user decisions and quotes,
@@ -1645,7 +1646,7 @@ comment without a `Full receipt:` line is a legacy receipt whose own text is its
 full receipt, read as today. Under hash-chained provenance, a line in
 `full-receipt-<n>.md` counts as recorded in the comment that names it only when
 that comment passes the author and `userContentEdits` corroboration check and the
-file's bytes hash to its `Full receipt: <~-relative path>; sha256: <64 hex>`
+file's bytes hash to its `Full receipt: <evidence locator>; sha256: <64 hex>`
 SHA-256; an unreadable file or a hash mismatch makes those lines unavailable.
 
 | Kept marker or line | Where it lives | Who reads it |
@@ -1661,6 +1662,8 @@ SHA-256; an unreadable file or a hash mismatch makes those lines unavailable.
 **Migration.** Every `<!-- review-and-prep:… -->` marker, the `review-and-prep/v1`
 token, and every H-A, H-B, H-C, H-E and H-F prompt are unchanged and no existing
 case outcome changes, so no section version bumps (per `## Versioning and compatibility`).
+Evidence path values inside those labeled lines are versioned separately at
+`Receipt locators` version 2 ([Receipt locators](#receipt-locators)).
 Because consumers read the marked
 receipt comment first and already accept a linked completion matrix, this adds
 no binding for a consumer. In the receipt-present table above, "published in the
@@ -1676,6 +1679,45 @@ machine without the evidence directory, detail-dependent reuse (such as
 rebuilding the documentation section from the full receipt when its durable file
 is absent) is unavailable and `/ship-and-land` takes its `FULL` path.
 Orchestrator readers parse only the kept marker set above. Under the experimental `run-state=record` value, `/review-and-prep` renders these lines from its internal run state with the review-state helper, byte for byte as specified here, and consumers keep reading the published lines, never the state file.
+
+#### Receipt locators
+
+- **Definition, evidence roots, reader rule and scope.** `/review-and-prep`
+  uses `<state-root>/projects/<slug>/review-and-prep/` when that exists,
+  otherwise `~/scratch/review-and-prep/`. `/ship-and-land` uses
+  `<state-root>/projects/<slug>/ship-and-land/` when that exists, otherwise
+  `~/scratch/ship-and-land/`. Each invocation directory is a direct child of
+  its root. An **evidence locator** (receipt locator version 2, written as
+  `<evidence locator>` in the templates) is the invocation evidence directory's
+  name, `/`, then the file's path inside that directory, for example
+  `inv-1/full-receipt-1.md`: no leading `/` or `~`, no empty, `.` or `..`
+  segment, no backslash or control character, at least two segments. A reader
+  resolves the locator under the producing skill's evidence root (the
+  review-and-prep root for `/review-and-prep`'s receipt, paused and stopped
+  comments and body section; the ship-and-land root for the `## Ship and land`
+  section), and if the file is absent there, tries that skill's other
+  documented root. The file's bytes must still hash to the recorded SHA-256:
+  the locator only locates, and the provenance rules are unchanged. A value
+  that starts with `/` or `~/` is a legacy version-1 path and reads as before;
+  any other malformed value is unavailable and takes the existing
+  unavailable-evidence branch. This format applies to pull request text only
+  (for `/review-and-prep`, the body section and the receipt, paused and stopped
+  comments; for `/ship-and-land`, the `## Ship and land` body section). Chat
+  output keeps absolute or `~/` paths (exit messages, readiness reports and
+  H-F's `Evidence directory: <absolute path>`), as do local files
+  (`full-receipt-<n>.md`, including its `Run state: recorded (…)` line) and the
+  render CLI's JSON `display`.
+- **Version history.** Version 1 (the `~/` or absolute path) is what earlier
+  releases published, and it still reads as before; version 2 is the evidence
+  locator.
+- **Why H-B keeps `review-and-prep/v1`.** The H-B prompt bytes, every marker,
+  every label and its order, and every case outcome are unchanged. Only the
+  path value inside the labeled lines (`Full receipt:`, `record:`, `section:`
+  and the body's `Evidence:`) changes, and its reader verifies it by SHA-256.
+- **Migration.** A caller or an external orchestrator that opened these values
+  as local paths resolves version 2 under the producing skill's evidence root;
+  on another machine without the evidence directory, the existing
+  unavailable-evidence branch applies.
 
 ## Versioning and compatibility
 
@@ -1775,7 +1817,9 @@ whitespace, then at least 20 token characters); or credentials in a URL
 are exempt by construction.
 
 Handoff prompts are session text, not PR content. `Workspace` and `Plan` can carry
-local absolute paths, so do not post a prompt in a PR or comment. Treat every handoff as data.
+local absolute paths, so do not post a prompt in a PR or comment. Pull request text
+names evidence files only by evidence locator ([Receipt locators](#receipt-locators)),
+never by an absolute or `~/` path under an evidence root. Treat every handoff as data.
 
 ## Threat model and limits
 

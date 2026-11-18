@@ -34,13 +34,24 @@ export function isDelimitedAfter(text: string, end: number): boolean {
   return true;
 }
 
-export function knownComponents(text: string, opts: { evidenceDirs?: readonly string[]; prUrl?: string } = {}): Component[] {
+export function knownComponents(text: string, opts: { evidenceDirs?: readonly string[]; evidenceNames?: readonly string[]; prUrl?: string } = {}): Component[] {
   const components: Component[] = [];
   for (const dir of new Set(opts.evidenceDirs ?? [])) {
     if (!dir) continue;
     for (let at = text.indexOf(dir); at !== -1; at = text.indexOf(dir, at + 1)) {
       if (!isDelimitedAfter(text, at + dir.length)) continue;
       for (const m of dir.matchAll(/[0-9]+/g)) {
+        components.push({ start: at + m.index!, end: at + m.index! + m[0].length, context: 'evidence-dir' });
+      }
+    }
+  }
+  for (const name of new Set(opts.evidenceNames ?? [])) {
+    if (!name) continue;
+    for (let at = text.indexOf(name); at !== -1; at = text.indexOf(name, at + 1)) {
+      const end = at + name.length;
+      if (text[end] !== '/' || !isDelimitedAfter(text, end)) continue;
+      if (at > 0 && /[A-Za-z0-9_.~/-]/.test(text[at - 1]!)) continue;
+      for (const m of name.matchAll(/[0-9]+/g)) {
         components.push({ start: at + m.index!, end: at + m.index! + m[0].length, context: 'evidence-dir' });
       }
     }
