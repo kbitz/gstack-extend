@@ -1789,7 +1789,7 @@ With neither variable set, every path is what it was before this section.
   legacy `"cli"` and `"paseo-entrypoint"`), while non-interactive or unlisted
   launch surfaces (`entrypoint-unqualified`), missing or unreadable
   launch-surface evidence (`entrypoint-unavailable`), harnesses without
-  qualifying launch-surface evidence or with an `--agent` override
+  qualifying launch-surface evidence or with an `--agent` override naming a different harness
   (`harness-unqualified`), and unattributed runs (`no-harness`) record
   `run_mode: "unknown"`. An orchestrator that launches workers through Paseo or
   a terminal entrypoint must set `GSTACK_EXTEND_RUN_MODE=orchestrated` (or

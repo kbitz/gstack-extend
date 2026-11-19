@@ -21,7 +21,7 @@ without fabricating rows:
    - From Claude Code's terminal (`CLAUDE_CODE_ENTRYPOINT=cli`, no orchestration or workspace-owner signal set), recording `run_mode: "user-directed"`, `run_mode_source: "cli"`.
 2. **One orchestrated run of an interactive stage** (`/plan-track`, `/roadmap`, or `/project-spec`) launched with `GSTACK_EXTEND_RUN_MODE=orchestrated`, recording `run_mode: "orchestrated"` and `run_mode_source: "session-kind"`, `"work-item"`, or `"run-mode-env"` according to the 10-rule classifier precedence in [docs/telemetry.md](../telemetry.md#run-mode) (`"run-mode-env"` when no higher-precedence `GSTACK_SESSION_KIND=spawned|unattended` or `GSTACK_EXTEND_WORK_ITEM` signal is set, such as `--docs project-spec`, and `"session-kind"` when the hand worker is spawned with `GSTACK_SESSION_KIND=spawned`).
 
-An orchestrator that launches workers through Paseo or Claude's `cli`
+An orchestrator that launches workers through a host app or a terminal
 entrypoint must set `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
 `GSTACK_EXTEND_WORKSPACE_OWNER`, `GSTACK_EXTEND_WORK_ITEM`, or
 `GSTACK_SESSION_KIND=spawned|unattended`), or its workers are counted as hand
@@ -115,7 +115,7 @@ workspace-owner signal and read back through
 
 | Status | Harness and installed version | How to launch by hand | Expected `agent` | Expected `run_mode` | Expected `run_mode_source` |
 |---|---|---|---|---|---|
-| `pending` | `codex` (`codex-cli 0.170.0`) | Run one gstack-extend stage by hand in Codex (`codex` terminal TUI or Paseo app-server) with no orchestration signal | `codex` | `user-directed` | `terminal-session` |
+| `pending` | `codex` (`codex-cli 0.170.0`) | Start a new Codex thread by hand in the terminal TUI and run one gstack-extend stage with no orchestration signal | `codex` | `user-directed` | `terminal-session` |
 | `pending` | `muse` (`Muse Code 1.4.24`) | Run one gstack-extend stage by hand in Muse from the Paseo host app with no orchestration signal | `muse` | `user-directed` | `host-app-session` |
 | `pending` | `grok` (`grok 1.0.89`) | Run one gstack-extend stage by hand in Grok from a terminal (`GROK_AGENT=1`) with no orchestration signal (unmarked Paseo ACP `terminal/create` still records `agent: null`, `no-harness`) | `grok` | `unknown` | `harness-unqualified` |
 | `pending` | `cursor` (`cursor-agent 2026.11.19-f005e9d`) | Run one gstack-extend stage by hand in Cursor from a terminal (`CURSOR_AGENT=1`) with no orchestration signal | `cursor` | `unknown` | `harness-unqualified` |
@@ -133,6 +133,11 @@ Claude's legacy `"cli"`), `host-app` (`run_mode_source: "host-app-session"`, or
 Claude's legacy `"paseo-entrypoint"`), `other` (`entrypoint-unqualified`), or no
 class (`entrypoint-unavailable`). A harness with no qualifying evidence has no
 reader and records `unknown` / `harness-unqualified`.
+
+The Codex reader uses the rollout creation header for the named thread. Codex
+CLI 0.170.0 appends on resume without writing a fresh header. A launcher using
+`codex exec resume` must supply the orchestration signal because the header
+alone cannot identify the current client. See [Run mode](../telemetry.md#run-mode).
 
 Historical observations that motivated the shared rule and its per-harness
 boundaries:
@@ -222,7 +227,7 @@ not positive evidence when the field is omitted on non-interactive or ACP
 sessions. A value that names the harness's own interactive client maps to
 `terminal` even when a host app drove that client without naming itself in the
 log. Client names map to `host-app` only through the shared host table
-`HOST_APP_CLIENTS` (`("paseo",)`, exact case-sensitive match), except Claude's
+`HOST_APP_CLIENTS` (exact case-sensitive match), except Claude's
 legacy `CLAUDE_CODE_ENTRYPOINT=Paseo` mapping.
 
 | Harness and version | Surfaces and local logs inspected | Environment and session-log launch evidence observed | Raw evidence → shared class mapping and reason | Qualification status under shared rule |

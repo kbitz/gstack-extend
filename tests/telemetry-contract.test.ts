@@ -2569,7 +2569,6 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     };
 
     writeCodexMeta('codex-contract-term', 'codex_cli_rs', 'vscode');
-    writeCodexMeta('codex-contract-tui', 'codex-tui', 'vscode');
     writeCodexMeta('codex-contract-exec', 'codex_exec', 'exec');
     writeCodexMeta('codex-contract-sub', 'codex_cli_rs', { subagent: 'review' });
     symlinkSync(codexRollout('codex-contract-term'), codexRollout('codex-contract-sym'));
@@ -2597,7 +2596,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         harness: 'codex',
         overrideAgent: 'claude',
         terminal: { CODEX_THREAD_ID: 'codex-contract-term' },
-        other: [{ CODEX_THREAD_ID: 'codex-contract-exec' }],
+        other: [
+          { CODEX_THREAD_ID: 'codex-contract-exec' },
+          { CODEX_THREAD_ID: 'codex-contract-sub' },
+        ],
         missing: { CODEX_THREAD_ID: 'codex-1' },
         symlinked: { CODEX_THREAD_ID: 'codex-contract-sym' },
         overBound: { CODEX_THREAD_ID: 'codex-contract-over' },

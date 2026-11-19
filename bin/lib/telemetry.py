@@ -11,6 +11,7 @@ import json
 import os
 import stat
 from collections import Counter
+from contextlib import ExitStack
 from pathlib import Path
 import re
 import shutil
@@ -1038,14 +1039,30 @@ def iso(epoch):
         return None
 
 
-def head_records(path):
-    # Complete JSON objects within the first LOG_HEAD_BYTES of a regular JSONL log; a line cut by the cap is dropped.
-    if path is None or path.is_symlink() or not path.is_file():
+def head_records(path, store):
+    if path is None:
         return
-    with path.open("rb") as stream:
-        chunk = stream.read(LOG_HEAD_BYTES + 1)
+    # Open each component under the session store without following links or racing a path check.
+    parts = path.relative_to(store).parts
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with ExitStack() as opened:
+        directory = os.open(store, directory_flags)
+        opened.callback(os.close, directory)
+        for part in parts[:-1]:
+            directory = os.open(part, directory_flags, dir_fd=directory)
+            opened.callback(os.close, directory)
+        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        opened.callback(os.close, descriptor)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            chunk = stream.read(LOG_HEAD_BYTES + 1)
+
+    # The one-byte lookahead can confirm a record ends at the cap, but is never parsed.
     lines = chunk[:LOG_HEAD_BYTES].split(b"\n")
-    for line in lines[:-1] if len(chunk) > LOG_HEAD_BYTES else lines:
+    if len(chunk) > LOG_HEAD_BYTES and chunk[-1:] != b"\n":
+        lines.pop()
+    for line in lines:
         try:
             record = json.loads(line)
         except ValueError:
@@ -1191,20 +1208,27 @@ def claude_user_signals(session_id, begin, end):
     return questions, max(0, int(round(total_wait))), resumes
 
 
+def codex_log_store(codex_home=None):
+    return Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
+
+
 def codex_logs(thread_id, codex_home=None):
     if not isinstance(thread_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", thread_id):
         return []
-    root = Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-    return list((root / "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+    return list(codex_log_store(codex_home).glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+
+
+def muse_log_store(data_home=None):
+    if data_home is None:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        data_home = xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
+    return (Path(data_home) / "muse/sessions").resolve()
 
 
 def muse_logs(session_id, data_home=None):
     if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
         return []
-    if data_home is None:
-        xdg = os.environ.get("XDG_DATA_HOME")
-        data_home = xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
-    store = (Path(data_home) / "muse/sessions").resolve()
+    store = muse_log_store(data_home)
     found = []
     for path in store.glob(f"*/*/*/{session_id}/session.jsonl"):
         try:
@@ -1523,7 +1547,7 @@ def claude_launch_surface():
 
 def codex_launch_surface():
     log = newest(codex_logs(os.environ.get("CODEX_THREAD_ID", "")))
-    for record in head_records(log) if log else ():
+    for record in head_records(log, codex_log_store()):
         if record.get("type") != "session_meta":
             continue
         payload = record.get("payload")
@@ -1549,7 +1573,7 @@ def codex_launch_surface():
 
 def muse_launch_surface():
     log = newest(muse_logs(os.environ.get("MUSE_SESSION_ID", "")))
-    for record in head_records(log) if log else ():
+    for record in head_records(log, muse_log_store()):
         if record.get("payload_type") != "session.opened.observed":
             continue
         payload = record.get("payload")

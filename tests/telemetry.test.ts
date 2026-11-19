@@ -5391,7 +5391,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.codex_log_store, telemetry.muse_log_store, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
       '    src = inspect.getsource(fn)',
       '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl"):',
       '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
@@ -5405,7 +5405,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       '            bad.append((event, target))',
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
-      'list(telemetry.head_records(pathlib.Path(sys.argv[3])))',
+      'assert list(telemetry.head_records(pathlib.Path(sys.argv[3]), telemetry.codex_log_store()))',
       'assert telemetry.claude_launch_surface() == "terminal"',
       'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-term", "PASEO_AGENT_ID": "paseo-codex-rm"}, clear=False):',
       '    assert telemetry.codex_launch_surface() == "terminal"',
@@ -5483,6 +5483,18 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       join(museSymDir, 'session.jsonl'),
     );
     writeMuseOpen('muse-rm-over', 'paseo', 70_000);
+
+    // Value: protects=only a regular file under the named session store can qualify; fails_when=a linked date directory is followed; why_new=QA showed an outside-store fixture classifying as hand use; seam=none
+    const linkedCodexHome = join(fix.home, 'codex-linked-home');
+    const linkedDay = join(linkedCodexHome, 'sessions/2026/11/19');
+    mkdirSync(dirname(linkedDay), { recursive: true });
+    symlinkSync(dirname(codexRolloutPath('codex-rm-term')), linkedDay, 'dir');
+
+    // Value: protects=a launch record whose bytes end exactly at the 64 KiB head bound still qualifies; fails_when=the bounded head read drops a complete last line at the cap; why_new=review reproduced the boundary record being dropped; seam=none
+    const headBytes = 64 * 1024; // bin/lib/telemetry.py LOG_HEAD_BYTES
+    const edgeMeta = { timestamp: iso(1790000000), type: 'session_meta', payload: { id: 'codex-rm-edge', originator: 'codex_cli_rs', source: 'vscode' } };
+    const edgePad = headBytes - JSON.stringify(edgeMeta).length - JSON.stringify({ type: 'padding', pad: '' }).length - 1;
+    writeJsonl(codexRolloutPath('codex-rm-edge'), [{ type: 'padding', pad: 'x'.repeat(edgePad) }, edgeMeta, { type: 'turn' }]);
 
     const qualifiedHarnesses: Array<{
       harness: string;
@@ -5591,6 +5603,19 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         });
       }
     }
+
+    cases.push({
+      name: 'Codex rollout through a linked date directory gives entrypoint-unavailable',
+      finishEnv: { CODEX_HOME: linkedCodexHome, CODEX_THREAD_ID: 'codex-rm-term' },
+      mode: 'unknown',
+      source: 'entrypoint-unavailable',
+    });
+    cases.push({
+      name: 'Codex session_meta ending exactly at the head read bound gives terminal-session',
+      finishEnv: { CODEX_THREAD_ID: 'codex-rm-edge' },
+      mode: 'user-directed',
+      source: 'terminal-session',
+    });
 
     for (const tc of cases) {
       const start = runHelper({ ...fix.env, ...tc.finishEnv }, ['start', '--skill', 'extend:roadmap']);
