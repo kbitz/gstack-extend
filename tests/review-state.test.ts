@@ -6148,19 +6148,17 @@ describe('bin/review-state', () => {
     const pass1Id = uid(1050), att1Core = uid(1051), att1Testing = uid(1052);
     const pass2Id = uid(1053), att2Core = uid(1054);
     const findingId = 'telemetry.py:1203:testing';
-    const findingSpec = `${findingId},P2,specialist:testing,qa,outside:challenge`;
-
     expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1049), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('pr280'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
     expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core', '--voice', 'testing']).json.reason).toBe('recorded');
     expect(runCli([
       'build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'attempt',
       '--voice-id', 'core', '--part', 'core', '--attempt-id', att1Core, '--outcome', 'completed',
-      '--finding', findingSpec,
+      '--finding', `${findingId},P2,specialist:testing,qa,outside:challenge`,
     ]).json.reason).toBe('recorded');
     const rAtt2 = runCli([
       'build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'attempt',
       '--voice-id', 'testing', '--part', 'specialist:testing', '--attempt-id', att1Testing, '--outcome', 'completed',
-      '--finding', findingSpec,
+      '--finding', `${findingId},P2,specialist:testing`,
     ]);
     expect([rAtt2.json.reason, rAtt2.json.detail.violations]).toEqual(['recorded', undefined]);
     expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', att1Core]).json.reason).toBe('recorded');
@@ -6171,19 +6169,18 @@ describe('bin/review-state', () => {
     expect(runCli([
       'build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'attempt',
       '--voice-id', 'core', '--part', 'core', '--attempt-id', att2Core, '--outcome', 'completed',
-      '--finding', findingSpec,
+      '--finding', `${findingId},P2,core,qa`,
     ]).json.reason).toBe('recorded');
     expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', att2Core]).json.reason).toBe('recorded');
     expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'completed']).json.reason).toBe('recorded');
 
     const st = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
-    const expectedFoundBy = ['specialist:testing', 'qa', 'outside:challenge'];
     const p1CoreFindings = st.passes[0]!.voices.find((v) => v.voice_id === 'core')!.attempts[0]!.findings!;
     const p1TestingFindings = st.passes[0]!.voices.find((v) => v.voice_id === 'testing')!.attempts[0]!.findings!;
     const p2CoreFindings = st.passes[1]!.voices.find((v) => v.voice_id === 'core')!.attempts[0]!.findings!;
-    expect(p1CoreFindings).toMatchObject([{ finding_id: findingId, found_by: expectedFoundBy }]);
-    expect(p1TestingFindings).toMatchObject([{ finding_id: findingId, found_by: expectedFoundBy }]);
-    expect(p2CoreFindings).toMatchObject([{ finding_id: findingId, found_by: expectedFoundBy }]);
+    expect(p1CoreFindings).toMatchObject([{ finding_id: findingId, found_by: ['specialist:testing', 'qa', 'outside:challenge'] }]);
+    expect(p1TestingFindings).toMatchObject([{ finding_id: findingId, found_by: ['specialist:testing'] }]);
+    expect(p2CoreFindings).toMatchObject([{ finding_id: findingId, found_by: ['core', 'qa'] }]);
 
     const expRes = runCli(['export', '--dir', d]);
     expect([expRes.code, expRes.err]).toEqual([0, '']);
