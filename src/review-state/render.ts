@@ -375,13 +375,21 @@ function validateEvRef(raw: unknown, field: string, v: Violation[], pat?: RegExp
   return { path: p, sha256: String(c.sha256 ?? '') };
 }
 
-function allocateExclusiveFile(
-  realDir: string, dirAsGiven: string, prefix: string, content: string, home: string,
+export type ExclusiveFileOps = {
+  open?: (path: string, flags: string, mode: number) => number;
+  write?: (fd: number, buf: Buffer) => void;
+  fsync?: (fd: number) => void;
+  readdir?: (dir: string) => string[];
+};
+
+export function allocateExclusiveFile(
+  realDir: string, dirAsGiven: string, prefix: string, content: string, home: string, ops: ExclusiveFileOps = {},
 ): { ok: true; file: ReviewStateRenderFile } | { ok: false; detail: Record<string, unknown> } {
+  const openFn = ops.open ?? openSync, writeFn = ops.write ?? writeAll, fsyncFn = ops.fsync ?? fsyncSync, readdirFn = ops.readdir ?? ((d: string) => readdirSync(d));
   let maxN = 0n;
   const re = new RegExp(`^${prefix}-([1-9]\\d*)\\.md$`);
   try {
-    for (const e of readdirSync(realDir)) { const m = re.exec(e); if (m && BigInt(m[1]!) > maxN) maxN = BigInt(m[1]!); }
+    for (const e of readdirFn(realDir)) { const m = re.exec(e); if (m && BigInt(m[1]!) > maxN) maxN = BigInt(m[1]!); }
   } catch (err) {
     return { ok: false, detail: { errno: (err as NodeJS.ErrnoException).code ?? 'EIO', syscall: 'readdir', path: truncate80(realDir) } };
   }
@@ -399,9 +407,9 @@ function allocateExclusiveFile(
       } catch { /* A removed or unreadable path is not ours to clean up. */ }
     };
     try {
-      fd = openSync(outPath, 'wx', 0o600); created = true;
+      fd = openFn(outPath, 'wx', 0o600); created = true;
       ownedStat = fstatSync(fd);
-      writeAll(fd, buf); fsyncSync(fd); closeSync(fd); fd = null;
+      writeFn(fd, buf); fsyncFn(fd); closeSync(fd); fd = null;
       const rb = readFileSync(outPath);
       if (!rb.equals(buf)) { cleanupOwnedFile(); return { ok: false, detail: { errno: 'EIO', syscall: 'readback', path: truncate80(outPath) } }; }
       const s = rb.toString('utf8');

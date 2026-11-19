@@ -1661,7 +1661,11 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(flat).toContain('lowercase UUID');
       expect(flat).toContain('never guess an ID');
       expect(flat).toContain('immediately before writing');
-      expect(flat).toContain('`end` the run step just before the legacy telemetry finish');
+      if (skill === 'ship-and-land') {
+        expect(flat).toContain('`end` the run step just before the legacy telemetry finish');
+      } else {
+        expect(flat).toContain('derive writes the run `end` after the pause checkpoint or `finish` and before Telemetry finish');
+      }
       expect(flat).toContain('kind:"fix"');
       expect(flat).toContain('correction_kind:"finding"');
       expect(flat).toContain('One governing `decision` per executed phase visit');

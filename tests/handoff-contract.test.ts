@@ -3206,7 +3206,7 @@ describe('(P) run-state=record', () => {
     expect(has(prep, check), `skill: ${check}`).toBe(true);
     expect(has(doc, check), `doc: ${check}`).toBe(true);
     for (const phrase of [
-      '`run-state=record` (its only value) is opt-in.',
+      '`run-state=record` (its only value) is accepted and changes nothing: recording is the default.',
       'The light review default never sets it',
       'An installation without the value reads the whole line as `none supplied`',
       '(exit 0 means supported) and omits the value otherwise, keeping its other keys',

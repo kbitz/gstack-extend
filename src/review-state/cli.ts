@@ -12,7 +12,7 @@ export type CliIo = { stdout(text: string): void; stderr(text: string): void; cw
 export function renderMainHelp(): string {
   const reasons = REASON_TABLE.map((r) => `  ${r.reason} (status=${r.status}, exit=${r.exit}, side_effects=${r.side_effects}, retry=${r.retry})`).join('\n');
   return `review-state — experimental recorder for /review-and-prep run state (${SCHEMA_VERSION})
-Experimental until Track 79A's default decision; internal store only.
+Experimental internal helper; /review-and-prep records its run state by default.
 
 Usage:
   bin/review-state build <command> --dir DIR [flags]
@@ -29,7 +29,7 @@ Usage:
 
 show and export are read-only: no --input, no lock, and no state writes.
 render reads review-run-state.json without locking or modifying it and writes output files in --dir.
-full-review-record prints one FULL_REVIEW_RECORD: line with its own exit codes (full-review-record --help), and every /review-and-prep invocation calls it, not only under run-state=record.
+full-review-record prints one FULL_REVIEW_RECORD: line with its own exit codes (full-review-record --help). /review-and-prep calls it when the fence command is available, including when state recording is unavailable.
 
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)

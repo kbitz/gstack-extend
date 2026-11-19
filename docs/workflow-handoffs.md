@@ -1080,6 +1080,9 @@ entry "Harden the bounded documentation audit before enabling it" in
 See the [documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)
 record.
 
+The rollout instructions below apply when interoperating with installs from
+before recording became the default.
+
 `run-state=record` follows the same rollout order and the same check, written as
 `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"` (exit 0 means
 supported): update the caller's own H-E parser first, since an older H-E parser
@@ -1091,7 +1094,7 @@ state through the experimental review-state helper and derives the review's
 workflow metrics, finding attribution and missing stage-run rows
 ([review-run-state-calls.md](review-run-state-calls.md)). It waives no gate,
 changes no handoff line and never authorizes a continuation, and a prepared
-receipt still emits `review: COMPLETE`.
+receipt still emits `review: COMPLETE`. Recording is now the default, so a caller need not send `run-state=record`; the value stays accepted with no further effect.
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1679,7 +1682,7 @@ Legacy receipts without `Full receipt:` continue to read as before. On another
 machine without the evidence directory, detail-dependent reuse (such as
 rebuilding the documentation section from the full receipt when its durable file
 is absent) is unavailable and `/ship-and-land` takes its `FULL` path.
-Orchestrator readers parse only the kept marker set above. Under the experimental `run-state=record` value, `/review-and-prep` renders these lines from its internal run state with the review-state helper, byte for byte as specified here, and consumers keep reading the published lines, never the state file.
+Orchestrator readers parse only the kept marker set above. `/review-and-prep` renders these lines from its internal run state with the experimental review-state helper by default (and writes them inline from the skill's templates on the degraded path), byte for byte as specified here, and consumers keep reading the published lines, never the state file.
 
 #### Receipt locators
 

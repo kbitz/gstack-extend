@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.103.0] - 2026-11-19
+
+### Changed
+
+- In this 0.x minor release `/review-and-prep` records every review's run state with `bin/review-state` by default and renders its receipts, PR text and handoffs from that state, while every published receipt and handoff line keeps its exact bytes and `run-state=record` stays accepted with no further effect.
+- /review-and-prep now records run state by default when the installed helper and caller instructions are available.
+
+### Upgrade notes
+
+- A machine whose gstack-extend install lacks `bin/review-state` or `docs/review-run-state-calls.md` now reviews without run-state recording and writes no workflow metrics for that review, so upgrade every machine that runs `/review-and-prep` before relying on its metrics.
+
 ## [0.102.1] - 2026-11-19
 
 ### Fixed
