@@ -2011,12 +2011,16 @@ describe('execution provenance', () => {
     expect(validRow(missingNamed)).toBe(true);
 
     // Non-empty invalid GROK_SESSION_ID never falls back to a fresh sibling log; without GROK_AGENT=1 it is not a marker.
+    // A fresh directory holds exactly one fresh sibling log, so a removed invalid-name guard would attribute it.
+    const invalidWork = join(fix.home, 'grok-invalid');
+    mkdirSync(invalidWork);
+    const invalidPlace = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(invalidWork)));
     const invalidWithGrokAgent = provenanceRun(fix, { GROK_AGENT: '1', GROK_SESSION_ID: '../bad' }, () => {
-      writeJsonl(join(place, 'fresh-sibling', 'events.jsonl'),
+      writeJsonl(join(invalidPlace, 'fresh-sibling', 'events.jsonl'),
         [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-sibling' }]);
-      writeFileSync(join(place, 'fresh-sibling', 'summary.json'),
+      writeFileSync(join(invalidPlace, 'fresh-sibling', 'summary.json'),
         JSON.stringify({ current_model_id: 'grok-sibling', reasoning_effort: 'high' }));
-    }, [], work).row;
+    }, [], invalidWork).row;
     expect(invalidWithGrokAgent).toMatchObject({
       agent: 'grok',
       agent_source: 'detected',
@@ -2029,7 +2033,7 @@ describe('execution provenance', () => {
     });
     expect(validRow(invalidWithGrokAgent)).toBe(true);
 
-    const invalidWithoutGrokAgent = provenanceRun(fix, { GROK_SESSION_ID: '../bad' }, undefined, [], work).row;
+    const invalidWithoutGrokAgent = provenanceRun(fix, { GROK_SESSION_ID: '../bad' }, undefined, [], invalidWork).row;
     expect(invalidWithoutGrokAgent).toMatchObject({
       agent: null,
       agent_source: 'unknown',
@@ -5391,7 +5395,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.codex_log_store, telemetry.muse_log_store, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
       '    src = inspect.getsource(fn)',
       '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl"):',
       '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
@@ -5405,7 +5409,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       '            bad.append((event, target))',
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
-      'assert list(telemetry.head_records(pathlib.Path(sys.argv[3]), telemetry.codex_log_store()))',
+      'assert list(telemetry.head_records(pathlib.Path(sys.argv[3]), telemetry.codex_home_dir()))',
       'assert telemetry.claude_launch_surface() == "terminal"',
       'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-term", "PASEO_AGENT_ID": "paseo-codex-rm"}, clear=False):',
       '    assert telemetry.codex_launch_surface() == "terminal"',
@@ -5495,6 +5499,26 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     const edgeMeta = { timestamp: iso(1790000000), type: 'session_meta', payload: { id: 'codex-rm-edge', originator: 'codex_cli_rs', source: 'vscode' } };
     const edgePad = headBytes - JSON.stringify(edgeMeta).length - JSON.stringify({ type: 'padding', pad: '' }).length - 1;
     writeJsonl(codexRolloutPath('codex-rm-edge'), [{ type: 'padding', pad: 'x'.repeat(edgePad) }, edgeMeta, { type: 'turn' }]);
+
+    // Value: protects=each reader trusts the configured home but refuses a linked store directory inside it, a header naming another thread, and a relative CODEX_HOME; fails_when=a reader follows a linked sessions or muse/sessions directory, adopts a rollout matched only by name suffix, or reads a store under the working directory; why_new=review reproduced each at the candidate; seam=none
+    const realCodexHome = join(fix.home, '.codex');
+    const linkedSessionsHome = join(fix.home, 'codex-linked-sessions-home');
+    mkdirSync(linkedSessionsHome);
+    symlinkSync(join(realCodexHome, 'sessions'), join(linkedSessionsHome, 'sessions'), 'dir');
+    const linkedCodexHomeRoot = join(fix.home, 'codex-home-link');
+    symlinkSync(realCodexHome, linkedCodexHomeRoot, 'dir');
+    const linkedMuseData = join(fix.home, 'muse-linked-data');
+    mkdirSync(join(linkedMuseData, 'muse'), { recursive: true });
+    symlinkSync(join(fix.home, '.local/share/muse/sessions'), join(linkedMuseData, 'muse/sessions'), 'dir');
+
+    // Value: protects=a resumed Codex thread keeps its creation header's class in both directions, as docs/telemetry.md states; fails_when=later rollout records change the class; why_new=the developer kept Codex qualified with the resume limitation documented and pinned; seam=none
+    for (const [tid, originator, source] of [['codex-rm-resumed-tui', 'codex_cli_rs', 'vscode'], ['codex-rm-resumed-exec', 'codex_exec', 'exec']]) {
+      writeJsonl(codexRolloutPath(tid), [
+        { timestamp: iso(1790000000), type: 'session_meta', payload: { id: tid, originator, source } },
+        { type: 'turn_context', payload: {} },
+        { type: 'turn_context', payload: {} },
+      ]);
+    }
 
     const qualifiedHarnesses: Array<{
       harness: string;
@@ -5616,6 +5640,50 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       mode: 'user-directed',
       source: 'terminal-session',
     });
+    cases.push(
+      {
+        name: 'a Codex sessions directory linked inside CODEX_HOME gives entrypoint-unavailable',
+        finishEnv: { CODEX_HOME: linkedSessionsHome, CODEX_THREAD_ID: 'codex-rm-term' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'a linked CODEX_HOME is the trusted home and gives terminal-session',
+        finishEnv: { CODEX_HOME: linkedCodexHomeRoot, CODEX_THREAD_ID: 'codex-rm-term' },
+        mode: 'user-directed',
+        source: 'terminal-session',
+      },
+      {
+        name: 'a Muse muse/sessions directory linked inside the data home gives entrypoint-unavailable',
+        finishEnv: { XDG_DATA_HOME: linkedMuseData, MUSE_SESSION_ID: 'muse-rm-host', PASEO_AGENT_ID: 'paseo-muse-rm' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'a Codex thread ID matching another rollout only by name suffix gives entrypoint-unavailable',
+        finishEnv: { CODEX_THREAD_ID: 'rm-term' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'a relative CODEX_HOME gives entrypoint-unavailable',
+        finishEnv: { CODEX_HOME: relative(process.cwd(), realCodexHome), CODEX_THREAD_ID: 'codex-rm-term' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'a resumed TUI-created Codex thread keeps terminal-session',
+        finishEnv: { CODEX_THREAD_ID: 'codex-rm-resumed-tui' },
+        mode: 'user-directed',
+        source: 'terminal-session',
+      },
+      {
+        name: 'a resumed exec-created Codex thread keeps entrypoint-unqualified',
+        finishEnv: { CODEX_THREAD_ID: 'codex-rm-resumed-exec' },
+        mode: 'unknown',
+        source: 'entrypoint-unqualified',
+      },
+    );
 
     for (const tc of cases) {
       const start = runHelper({ ...fix.env, ...tc.finishEnv }, ['start', '--skill', 'extend:roadmap']);

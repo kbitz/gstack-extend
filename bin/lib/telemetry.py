@@ -1039,17 +1039,18 @@ def iso(epoch):
         return None
 
 
-def head_records(path, store):
+def head_records(path, home):
     if path is None:
         return
-    # Open each component under the session store without following links or racing a path check.
-    parts = path.relative_to(store).parts
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    # The harness's configured home is trusted. Each directory below it and the log itself are opened without
+    # following links or racing a path check, so a linked store, date or session directory cannot qualify.
+    parts = path.relative_to(home).parts
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY
     with ExitStack() as opened:
-        directory = os.open(store, directory_flags)
+        directory = os.open(home, directory_flags)
         opened.callback(os.close, directory)
         for part in parts[:-1]:
-            directory = os.open(part, directory_flags, dir_fd=directory)
+            directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
             opened.callback(os.close, directory)
         descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         opened.callback(os.close, descriptor)
@@ -1208,8 +1209,12 @@ def claude_user_signals(session_id, begin, end):
     return questions, max(0, int(round(total_wait))), resumes
 
 
+def codex_home_dir(codex_home=None):
+    return Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
 def codex_log_store(codex_home=None):
-    return Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
+    return codex_home_dir(codex_home) / "sessions"
 
 
 def codex_logs(thread_id, codex_home=None):
@@ -1218,11 +1223,15 @@ def codex_logs(thread_id, codex_home=None):
     return list(codex_log_store(codex_home).glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
 
 
-def muse_log_store(data_home=None):
+def muse_data_home(data_home=None):
     if data_home is None:
         xdg = os.environ.get("XDG_DATA_HOME")
         data_home = xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
-    return (Path(data_home) / "muse/sessions").resolve()
+    return Path(data_home)
+
+
+def muse_log_store(data_home=None):
+    return (muse_data_home(data_home) / "muse/sessions").resolve()
 
 
 def muse_logs(session_id, data_home=None):
@@ -1546,12 +1555,18 @@ def claude_launch_surface():
 
 
 def codex_launch_surface():
-    log = newest(codex_logs(os.environ.get("CODEX_THREAD_ID", "")))
-    for record in head_records(log, codex_log_store()):
+    thread_id = os.environ.get("CODEX_THREAD_ID", "")
+    home = codex_home_dir()
+    # A relative CODEX_HOME would resolve against the working directory, which the checkout controls.
+    if not home.is_absolute():
+        return None
+    log = newest(codex_logs(thread_id))
+    for record in head_records(log, home):
         if record.get("type") != "session_meta":
             continue
         payload = record.get("payload")
-        if not isinstance(payload, dict):
+        # The rollout name matches the thread ID as a suffix, so the header must name this thread itself.
+        if not isinstance(payload, dict) or payload.get("id") != thread_id:
             return None
         raw_originator = payload.get("originator")
         originator = clean(raw_originator)
@@ -1573,7 +1588,11 @@ def codex_launch_surface():
 
 def muse_launch_surface():
     log = newest(muse_logs(os.environ.get("MUSE_SESSION_ID", "")))
-    for record in head_records(log, muse_log_store()):
+    home = muse_data_home()
+    # muse_logs resolves the store; reread the same log through the unresolved store so a linked muse or
+    # sessions directory under the data home is refused like any other linked directory.
+    named = home / "muse/sessions" / log.relative_to(muse_log_store()) if log is not None else None
+    for record in head_records(named, home):
         if record.get("payload_type") != "session.opened.observed":
             continue
         payload = record.get("payload")
