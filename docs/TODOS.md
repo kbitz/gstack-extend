@@ -157,6 +157,30 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** Attempt selection or correction targeting changes.
 
+### [review:files=tests/telemetry.test.ts|bin/lib/telemetry.py] Test gap: FIFO launch log for the bounded head read
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The launch-surface head read opens the log without blocking and refuses anything but a regular file. No matrix case names a FIFO as a Codex rollout or Muse `session.jsonl`, so dropping the non-blocking open would not fail a test.
+- **Hypothesis (untested):** Add a shared-matrix case per harness where the named log is a FIFO, expecting `unknown` / `entrypoint-unavailable` and a prompt finish.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/telemetry.test.ts:5540`
+- **Evidence:** The testing specialist raised it in two review cycles. A FIFO check on the CLI finished promptly with `entrypoint-unavailable` for both harnesses, so no failure was reproduced.
+- **Context:** Filed by /review-and-prep during the Track 90B review at `cf9604b` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** `head_records` or the launch-surface readers change.
+
+### [review:files=tests/telemetry.test.ts|bin/lib/telemetry.py] Test gap: Launch reader edge branches
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The readers' malformed-evidence branches have no case: a `session_meta` payload that is not an object, an empty or non-object Codex `source`, and a Muse open record that ends exactly at the 64 KiB head bound.
+- **Hypothesis (untested):** Add small cases to the shared matrix with `writeCodexMeta` and `writeMuseOpen`, expecting `entrypoint-unavailable` for malformed evidence and `host-app-session` for the Muse boundary record.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/telemetry.test.ts:5497`
+- **Evidence:** A review grep found no case for these branches. The `codex-tui` mapping it also named is pinned by the audit-script reader test. No failure was reproduced.
+- **Context:** Filed by /review-and-prep during the Track 90B review at `cf9604b` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** `codex_launch_surface` or `muse_launch_surface` changes.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
