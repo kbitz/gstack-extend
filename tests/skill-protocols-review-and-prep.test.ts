@@ -537,13 +537,68 @@ function checkExternalGateTemplatesLock(text: string): string[] {
 function checkFullReviewEvidenceTemplatesLock(text: string): string[] {
   const baselineRaw = skillSection(text, H_CYCLE_1_BASELINE);
   const example = baselineRaw.split('```markdown\n')[1]?.split('\n```')[0]?.split('\n') ?? [];
-  const reasonList = /`Full-review evidence unavailable: <([a-z|-]+)>`/.exec(text)?.[1]?.split('|') ?? [];
+  const matches = [...text.matchAll(/`Full-review evidence unavailable: <([a-z|-]+)>`/g)];
+  const reasonList = matches[0]?.[1]?.split('|') ?? [];
   const violations: string[] = [];
   if (example[2] !== 'Full-review evidence: commit=<B>; tree=<T>; scope=full; completed=true; source=<durable reference>') {
     violations.push('missing Full-review evidence row in baseline worked example');
   }
+  if (matches.length !== 1) {
+    violations.push(`expected 1 Full-review evidence unavailable template, got ${matches.length}`);
+  }
   if (JSON.stringify(reasonList) !== JSON.stringify(['anchor-changed', 'tree-differs', 'reviewer-incomplete', 'record-missing'])) {
     violations.push(`reasonList mismatch: ${reasonList.join('|')}`);
+  }
+  return violations;
+}
+
+function checkUnverifiedOutsideBaselineLock(text: string): string[] {
+  const baseline = skillSection(text, H_CYCLE_1_BASELINE).replace(/\s+/g, ' ');
+  const outside = skillSection(text, '### Bound Claude Code outside calls').replace(/\s+/g, ' ');
+  const stop = skillSection(text, H_CYCLE_STOP).replace(/\s+/g, ' ');
+  const violations: string[] = [];
+  if (
+    !baseline.includes(
+      "An outside voice (`outside:challenge`, `outside:structured`) whose completed reply stayed `unverified` (an unresolved parse, including a reply whose context line names missing context) is missing coverage, not an incomplete reviewer: when the only incomplete reviewers are such voices, `completed` follows the probe rule (`true` or `pending-fix-review`) and each voice's stage result records `missing coverage (unverified: <reason>)`",
+    )
+  ) {
+    violations.push('missing unverified outside voice -> missing coverage rule in baseline section');
+  }
+  if (
+    !baseline.includes(
+      'while an `unavailable` outside voice (execution failure, not dispatched, provider-failure stop) stays `reviewer-incomplete`.',
+    )
+  ) {
+    violations.push('missing unavailable outside voice -> reviewer-incomplete rule in baseline section');
+  }
+  if (
+    !baseline.includes(
+      'Set true only when every selected reviewer completed (under the same `unverified` outside-voice missing-coverage rule as `completed` above) and every probe in the union has a result on cycle 2\'s inputs (`passed` or `reproduced`).',
+    )
+  ) {
+    violations.push('missing fix-reviewed=true unverified outside-voice rule in baseline section');
+  }
+  if (
+    !stop.includes(
+      "In this row `completed=true` records coverage except any outside voice the dedicated evidence comment's per-stage results record as missing (`missing coverage (unverified: <reason>)`)",
+    )
+  ) {
+    violations.push('missing completed=true row coverage statement in cap-stop section');
+  }
+  if (
+    !outside.includes(
+      'A `repair-only` continuation whose corroborated full-review evidence records an outside voice as missing coverage runs that voice through `bin/outside-review` at full scope (verified merge base to its candidate snapshot), regardless of the delta, light-default or size gates.',
+    ) ||
+    !stop.includes('(rerunning any outside voice recorded as missing coverage at full scope, per **Bound Claude Code outside calls**)')
+  ) {
+    violations.push('missing full-scope outside rerun rule for repair-only continuation');
+  }
+  if (
+    !outside.includes(
+      'An unresolved parse stays `outside_status: unverified`, `GATE: MISSING COVERAGE`; an execution failure stays unavailable. Neither is clean or PASS, and the native pass never substitutes for outside completion.',
+    )
+  ) {
+    violations.push('missing unchanged outside readiness gate rule');
   }
   return violations;
 }
@@ -1159,6 +1214,7 @@ describe('review-and-prep final-gate repair', () => {
     expect(baseline).toContain('writes no full-review record and runs no record checkpoint');
     expect(baseline).toContain('no record checkpoint holds a fix or a reader');
     expect(baseline).toContain('reads both records as missing (`record-missing`)');
+    expect(checkUnverifiedOutsideBaselineLock(prep)).toEqual([]);
   });
 });
 
@@ -2068,6 +2124,36 @@ describe('kept contract locks fail on mutation', () => {
       name: 'receipt templates: drop record-missing from Full-review evidence unavailable',
       lock: checkFullReviewEvidenceTemplatesLock,
       mutate: (t) => t.replace('anchor-changed|tree-differs|reviewer-incomplete|record-missing', 'anchor-changed|tree-differs|reviewer-incomplete'),
+    },
+    {
+      name: 'receipt templates: duplicate Full-review evidence unavailable template',
+      lock: checkFullReviewEvidenceTemplatesLock,
+      mutate: (t) => `${t}\n\`Full-review evidence unavailable: <anchor-changed|tree-differs>\`\n`,
+    },
+    {
+      name: 'unverified outside baseline: drop unverified -> missing coverage rule',
+      lock: checkUnverifiedOutsideBaselineLock,
+      mutate: (t) => t.replace('`missing coverage (unverified: <reason>)`', '`incomplete (unverified: <reason>)`'),
+    },
+    {
+      name: 'unverified outside baseline: widen missing coverage to unavailable outside voice',
+      lock: checkUnverifiedOutsideBaselineLock,
+      mutate: (t) => t.replace('stays\n  `reviewer-incomplete`.', 'is also missing coverage.'),
+    },
+    {
+      name: 'unverified outside baseline: drop fix-reviewed=true unverified outside-voice rule',
+      lock: checkUnverifiedOutsideBaselineLock,
+      mutate: (t) => t.replace(' (under the same `unverified` outside-voice missing-coverage rule as\n  `completed` above)', ''),
+    },
+    {
+      name: 'unverified outside baseline: drop full-scope outside rerun in repair-only continuation',
+      lock: checkUnverifiedOutsideBaselineLock,
+      mutate: (t) => t.replace('at full scope (verified merge base to its candidate snapshot), regardless of the\ndelta, light-default or size gates.', 'at delta scope.'),
+    },
+    {
+      name: 'unverified outside baseline: weaken readiness gate for unverified outside voice',
+      lock: checkUnverifiedOutsideBaselineLock,
+      mutate: (t) => t.replace('`outside_status: unverified`,\n`GATE: MISSING COVERAGE`', '`outside_status: unverified`,\n`GATE: PASS`'),
     },
     {
       name: 'receipt templates: mutate Full receipt pointer line (also covered by 4048 immutability/provenance mutation checks)',

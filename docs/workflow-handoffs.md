@@ -505,6 +505,17 @@ read that comment through the IssueComment author/edit-history and content check
 a URL alone proves no completed review. Failed or unverifiable publication leaves
 full-review evidence unavailable; reconcile an uncertain post before retrying.
 
+In the `Full-review evidence:` row, `completed=true` covers the first-cycle
+baseline: every selected reviewer completed, except an outside voice
+(`outside:challenge`, `outside:structured`) that the dedicated evidence
+comment's per-stage results record as missing coverage (`missing coverage
+(unverified: <reason>)`); every required probe ran to a result on B; and a
+cycle 2 reviewed the fixes for any reproduced defect (`fix-reviewed=true`,
+under the same unverified-outside-voice rule). It never claims a clean review.
+An `unavailable` outside voice remains `reviewer-incomplete`. A `repair-only`
+continuation reruns any outside voice recorded as missing coverage at full
+scope (verified merge base to its candidate snapshot).
+
 The literal `reviewRestrictionResolved: true` in a later pause or receipt clears
 the review restriction only after verified review and corroboration of that
 record's author and every editor as the running account. A false, absent or

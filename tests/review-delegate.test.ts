@@ -1191,6 +1191,29 @@ describe('reply parsing and the receipt contract', () => {
       ['src/epsilon.ts', 7, 'red-team'],
       ['src/zeta.ts', 7, 'red-team'],
     ]);
+
+    // Track 90A: nothing-missing context lines are credited by decide() and parseFindings, while naming lines and
+    // post-Recommendation context lines fail closed.
+    for (const noneLine of [
+      'NEEDS_CONTEXT: none (the context extension supplied all three requested interfaces).',
+      'NEEDS_CONTEXT: none of the above depends on missing context. Every caller was supplied.',
+    ]) {
+      expect(decide('maintainability', spawned(`${maintLine}\n${noneLine}\n${rec}\nVERDICT: FINDINGS`), lastLineVerdict)).toMatchObject({
+        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean',
+        findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
+      });
+      expect(decide('maintainability', spawned(`${noneLine}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
+        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean', findings: [],
+      });
+      expect(parseFindings(`NO_FINDINGS: none\n${rec}\n${noneLine}\nVERDICT: CLEAN`, 'maintainability')).toEqual({ ok: false });
+      expect(parseFindings(`NO_FINDINGS: none\n${rec}\nVERDICT: CLEAN\n${noneLine}`, 'maintainability')).toEqual({ ok: false });
+    }
+    expect(decide('maintainability', spawned('NEEDS_CONTEXT: review material truncated'), lastLineVerdict)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+    });
+    expect(decide('maintainability', spawned(`NEEDS_CONTEXT: callers of alpha()\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+    });
   });
 
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
@@ -1917,6 +1940,27 @@ describe('installed classifier', () => {
       parse: 'valid',
       verdict: 'clean',
       findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
+    });
+
+    const rec = 'Recommendation: merge, optionally extracting the constant, because the finding is informational.';
+    const maintLine = '[P3] {"severity":"INFORMATIONAL","confidence":80,"path":"src/alpha.ts","line":14,"category":"maintainability","summary":"fictional maintainability note","fix":"extract constant"}';
+    for (const noneLine of [
+      'NEEDS_CONTEXT: none (the context extension supplied all three requested interfaces).',
+      'NEEDS_CONTEXT: none of the above depends on missing context. Every caller was supplied.',
+    ]) {
+      expect(decide('maintainability', spawned(`${maintLine}\n${noneLine}\n${rec}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
+        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean',
+        findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
+      });
+      expect(decide('maintainability', spawned(`${noneLine}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
+        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean', findings: [],
+      });
+    }
+    expect(decide('maintainability', spawned('NEEDS_CONTEXT: review material truncated'), classifyOutsideReview)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+    });
+    expect(decide('maintainability', spawned(`NEEDS_CONTEXT: callers of alpha()\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
     });
   });
 });

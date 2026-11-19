@@ -5,7 +5,7 @@
  */
 import { isAbsolute } from 'node:path';
 import { CLOSING_LINES, bytes, hash } from '../outside-review/prompt';
-import { recover, type Classification, type Classifier } from '../outside-review/recovery';
+import { contextLine, recover, type Classification, type Classifier } from '../outside-review/recovery';
 
 export const SPECIALIST_PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
 export const ATTACKER_PARTS = ['adversarial', 'red-team'] as const;
@@ -309,6 +309,7 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
       return { ok: false };
     }
     if (/^Recommendation: .+ because\b.+$/.test(line.trim())) { recommendation = true; continue; }
+    if (contextLine(line) === 'none') continue;
     if (line.trim() === 'NO_FINDINGS: none' && !clean && !findings.length) { clean = true; continue; }
     const label = LABEL_LINE.exec(line);
     if (!label || clean) return { ok: false };

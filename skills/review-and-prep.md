@@ -1221,6 +1221,10 @@ tool access or changes the criteria. Do not truncate a diff to fit a budget.
 
 Under `in-cap=delta` and `continuation=repair-only`, use exactly B and S from
 the validated delta procedure below, including its full-scope fallback rules.
+A `repair-only` continuation whose corroborated full-review evidence records an
+outside voice as missing coverage runs that voice through `bin/outside-review`
+at full scope (verified merge base to its candidate snapshot), regardless of the
+delta, light-default or size gates.
 Never append the branch-wide diff in the outside command. Retain both distinct
 calls on cycle 1 for 200+ changed lines; later cycles use `/review`'s existing
 size and explicit-override gates on their selected scope. Under the light
@@ -2410,7 +2414,15 @@ paragraph's inventory already covers this one). A missing anchor writes
 - **Completion values.** `completed=true`: every selected reviewer completed
   and every required probe is `passed`. `completed=pending-fix-review`: every
   selected reviewer completed, every required probe is `passed` or
-  `reproduced`, and at least one is `reproduced`. `completed=false` with reason
+  `reproduced`, and at least one is `reproduced`. An outside voice
+  (`outside:challenge`, `outside:structured`) whose completed reply stayed
+  `unverified` (an unresolved parse, including a reply whose context line names
+  missing context) is missing coverage, not an incomplete reviewer: when the
+  only incomplete reviewers are such voices, `completed` follows the probe rule
+  (`true` or `pending-fix-review`) and each voice's stage result records
+  `missing coverage (unverified: <reason>)`, while an `unavailable` outside
+  voice (execution failure, not dispatched, provider-failure stop) stays
+  `reviewer-incomplete`. `completed=false` with reason
   `reviewer-incomplete`: an unavailable, failed or bounded-wait reviewer (a
   reviewer still running or stalled when the provider-failure budget expired on
   a bounded-wait host), or a `blocked`, `inconclusive` or `not-run` required
@@ -2443,7 +2455,8 @@ paragraph's inventory already covers this one). A missing anchor writes
   2's own required list plus each cycle-1-reproduced key) with a reference to
   the evidence behind any reused current result, and `fix-reviewed=true|false`
   with the cause of a `false`. Set true only when every selected reviewer
-  completed and every probe in the union has a result on cycle 2's inputs
+  completed (under the same `unverified` outside-voice missing-coverage rule as
+  `completed` above) and every probe in the union has a result on cycle 2's inputs
   (`passed` or `reproduced`). A cycle-1-reproduced probe without such a
   result, including one marked not applicable in cycle 2, is `not-run`. Allowed
   cycle 2 skips are gate skips plus the recorded
@@ -2631,7 +2644,9 @@ shapes the prompt below, so the continuation starts in a fresh session.
    must pass: cycle 1's snapshot tree equals T. The row names cycle 1's B and T
    with `scope=full; completed=true`, and in both paths B is the first stop's
    delta base and the row's `commit=`. In this row `completed=true` records
-   coverage: every selected reviewer completed and every required probe ran to
+   coverage except any outside voice the dedicated evidence comment's per-stage
+   results record as missing (`missing coverage (unverified: <reason>)`): every
+   selected reviewer completed and every required probe ran to
    a result on B, and a delta or full-scope cycle 2 reviewed the fixes for any
    reproduced defect. It never claims a clean review; reviewer findings never made a pass
    incomplete, only probe outcomes did. At a continuation or delta re-review
@@ -2790,7 +2805,8 @@ new genuine cycle stop with a distinct SHA; any other retry needs the user's
 explicit work decision in this session.
 Then run what that authorized policy names: `repair-only`, a fresh
 `/review` as a delta re-review from the delta base with the unresolved findings
-as context; `full`, a fresh full-scope `/review`. `stop`, `none supplied` or
+as context (rerunning any outside voice recorded as missing coverage at full
+scope, per **Bound Claude Code outside calls**); `full`, a fresh full-scope `/review`. `stop`, `none supplied` or
 `k` above `n` holds for the user. A new cycle stop repeats this procedure.
 A cycle stop is a deliberate pause: run `SHARED:telemetry-finish` with
 `--outcome blocked`, as the manual-testing pause does.

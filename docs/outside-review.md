@@ -58,7 +58,8 @@ Never put the request in the source checkout or retained telemetry.
 Supply acceptance criteria and the two installed review rubrics, not whole
 skills or session history. The **wrapper adds context**, selecting specific
 callers, contracts and tests before dispatch; it records why each is relevant.
-The voice has no tools. `NEEDS_CONTEXT` keeps coverage missing until the parent
+The voice has no tools. A `NEEDS_CONTEXT` line that says nothing is missing is
+not a request; any other `NEEDS_CONTEXT` line keeps coverage missing until the parent
 provides the named material in a justified extension. Recovery of marker syntax
 never resends the prompt and never calls a model.
 
@@ -105,7 +106,11 @@ The installed classifier owns severity and execution checks. Recovery accepts
 only a completed execution, normalizes wrapped recommendation headings and
 lowercase priority labels and one-severity qualified labels, and permits a missing recommendation when the
 upstream structured validator independently establishes findings or an explicit
-no-findings conclusion. Refusals, failed execution, ambiguous prose and missing
+no-findings conclusion. A context-request line saying nothing is missing is not
+a request; any other context line keeps coverage missing. When upstream's
+column-0 numbered-item rule (`4ed1711d`) leaves a reply with unlabeled items,
+recovery rewrites numbered met-criterion lines (`Met`) without severity tokens
+into `Criterion N:` lines and reclassifies. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 

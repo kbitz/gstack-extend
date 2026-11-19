@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { prepare, snapshotDiff, CLOSING_LINES, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
 import { SETTLED_RULE } from '../src/review-delegate/delegate';
-import { recover, type Classifier } from '../src/outside-review/recovery';
+import { contextLine, recover, type Classifier } from '../src/outside-review/recovery';
 import { run, measurement } from '../src/outside-review/run';
 import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
@@ -230,6 +230,303 @@ describe('verdict line last (upstream 7cb151bf, 1.99.0.0)', () => {
       expect([gate, old.credited, old.parse, old.classification.verdict, old.classification.reason, old.classification.findings.highest]).toEqual([
         gate, false, 'failed', 'unverified', 'unverified_verdict', 'P2',
       ]);
+    }
+  });
+});
+
+// Mirrors upstream 4ed1711d (#3925) + 7cb151bf (#4140): column-0 numbered items without a severity
+// are counted as findings.unlabeled when the reply ends VERDICT: CLEAN, returning untagged_review.
+const numberedCleanVerdict: Classifier = (input) => {
+  const base = lastLineVerdict(input);
+  if (base.execution.state !== 'ran') return base;
+  const lines = input.text.trimEnd().split(/\r?\n/);
+  const last = (lines.at(-1) ?? '').replace(/^[\t ]*(?:#{1,6}[\t ]+|[-+*][\t ]+)?/, '').replace(/[*_`]/g, '').trim();
+  const token = /^VERDICT: (CLEAN|FINDINGS)$/.exec(last)?.[1] as 'CLEAN' | 'FINDINGS' | undefined;
+  const body = token ? lines.slice(0, -1).join('\n') : input.text;
+  const unlabeled = token === 'CLEAN'
+    ? [...body.matchAll(/^(?:\*\*|__)?\(?\d{1,3}[.)][\t ]+\S.*$/gm)].filter(m => !/\[(P[0-3])\]/.test(m[0])).length
+    : 0;
+  if (!unlabeled) return base;
+  const findings = { ...base.findings, unlabeled };
+  if (base.verdict === 'clean' && token === 'CLEAN') {
+    return { execution: base.execution, findings, verdict: 'unverified', reason: 'untagged_review' };
+  }
+  return { ...base, findings };
+};
+
+describe('nothing-missing context lines (Track 90A)', () => {
+  const gates = ['review', 'structured'] as const;
+  const OBSERVED_NONE_FORMS = [
+    'NEEDS_CONTEXT: none (the context extension supplied all three requested interfaces).',
+    'NEEDS_CONTEXT: none of the above depends on missing context. Every caller and schema was supplied in the prompt.',
+  ] as const;
+  const FORMATTING_NONE_VARIANTS = [
+    ...OBSERVED_NONE_FORMS,
+    '**NEEDS_CONTEXT:** none',
+    '- NEEDS_CONTEXT: none',
+    '`NEEDS_CONTEXT:` none',
+    '1. NEEDS_CONTEXT: none',
+    'NEEDS_CONTEXT — none',
+    'NEEDS_CONTEXT – none',
+    'NEEDS_CONTEXT - none',
+    'NEEDS_CONTEXT: None.',
+    '**NEEDS_CONTEXT: none**',
+    'NEEDS_CONTEXT: none; all callers are present above.',
+    'NEEDS_CONTEXT: none of the above depend on missing context.',
+  ] as const;
+  const FAIL_CLOSED_MISSING = [
+    'NEEDS_CONTEXT: none of the callers are visible',
+    'NEEDS_CONTEXT: none. The callers of x are missing.',
+    'NEEDS_CONTEXT: none (callers needed)',
+    'NEEDS_CONTEXT: none, but the schema is not shown',
+    'NEEDS_CONTEXT: none; the schema was omitted',
+    'NEEDS_CONTEXT: nonetheless callers are required',
+    'NEEDS_CONTEXT: none-such',
+    'NEEDS_CONTEXT: review material truncated',
+    'NEEDS_CONTEXT:',
+    'NEEDS_CONTEXT',
+    '| NEEDS_CONTEXT | none |',
+    '| NEEDS_CONTEXT: none |',
+    'NEEDS_CONTEXT because callers are missing',
+    'Verdict: NEEDS_CONTEXT',
+    'NEEDS_CONTEXT: callers',
+  ] as const;
+
+  const findingsReply = (ctxLine: string) => [
+    '[P1] `src/alpha.ts`: state check skips the duplicate branch when the map is empty.',
+    '',
+    ctxLine,
+    'Recommendation: request changes because the duplicate branch is reachable.',
+    'VERDICT: FINDINGS',
+  ].join('\n');
+
+  const cleanReply = (ctxLine: string) => [
+    'Checked every hunk against the supplied callers and contracts.',
+    ctxLine,
+    'NO_FINDINGS: none',
+    'Recommendation: approve because every criterion holds.',
+    'VERDICT: CLEAN',
+  ].join('\n');
+
+  test('credits findings and clean replies carrying nothing-missing context lines and fails closed on missing-context forms', () => {
+    for (const line of FORMATTING_NONE_VARIANTS) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const line of FAIL_CLOSED_MISSING) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    expect(contextLine('No NEEDS_CONTEXT: all callers present')).toBeNull();
+
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        // (a) Findings reply with each observed value form + trailing sentence.
+        for (const line of OBSERVED_NONE_FORMS) {
+          const res = recover(findingsReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+            gate, line, true, 'valid', 'findings', false,
+          ]);
+        }
+        // (b) NO_FINDINGS reply beside it.
+        for (const line of OBSERVED_NONE_FORMS) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+            gate, line, true, 'valid', 'clean', false,
+          ]);
+        }
+        // (c) Formatting variants table.
+        for (const line of FORMATTING_NONE_VARIANTS) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+            gate, line, true, 'valid', 'clean', false,
+          ]);
+        }
+        // (d) Fail-closed table, plus a reply carrying both a nothing-missing line and a naming line.
+        for (const line of [...FAIL_CLOSED_MISSING, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+          for (const reply of [findingsReply(line), cleanReply(line)]) {
+            const res = recover(reply, gate, 0, '', classifier);
+            expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+              gate, line, false, 'failed', 'unverified', true,
+            ]);
+          }
+        }
+      }
+    }
+  });
+
+  test('credits nothing-missing replies through run() and keeps a naming line uncredited', async () => {
+    await temporary(async dir => {
+      const results = await run(request, '+diff', dir, 'model', async (_prefix, task) => ({
+        status: 'completed',
+        result: task === TASKS.challenge ? findingsReply(OBSERVED_NONE_FORMS[0]) : cleanReply(OBSERVED_NONE_FORMS[1]),
+      }), lastLineVerdict);
+      expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict, r.needs_context])).toEqual([
+        ['challenge', true, 'valid', 'findings', false],
+        ['structured', true, 'valid', 'clean', false],
+      ]);
+      expect(results.map(r => measurement(r).credited)).toEqual([true, true]);
+    });
+    await temporary(async dir => {
+      const results = await run(request, '+diff', dir, 'model', async () => ({
+        status: 'completed',
+        result: cleanReply('NEEDS_CONTEXT: callers of alpha()'),
+      }), lastLineVerdict);
+      expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict, r.needs_context])).toEqual([
+        ['challenge', false, 'failed', 'unverified', true],
+        ['structured', false, 'failed', 'unverified', true],
+      ]);
+      expect(results.map(r => measurement(r).credited)).toEqual([false, false]);
+    });
+  });
+
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier gives the same outcomes for nothing-missing and fail-closed context lines (installed only)', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    for (const gate of gates) {
+      for (const line of OBSERVED_NONE_FORMS) {
+        const found = recover(findingsReply(line), gate, 0, '', classifyOutsideReview);
+        expect([gate, line, found.credited, found.parse, found.classification.verdict, found.needs_context]).toEqual([
+          gate, line, true, 'valid', 'findings', false,
+        ]);
+        const clean = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
+        expect([gate, line, clean.credited, clean.parse, clean.classification.verdict, clean.needs_context]).toEqual([
+          gate, line, true, 'valid', 'clean', false,
+        ]);
+      }
+      for (const line of [...FAIL_CLOSED_MISSING, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+        const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
+        expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+          gate, line, false, 'failed', 'unverified', true,
+        ]);
+      }
+    }
+  });
+});
+
+describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () => {
+  const gates = ['review', 'structured'] as const;
+  // Reconstructs the 2026-11-19 structured reply shape, not its text.
+  const STRUCTURED_MET_SHAPE = [
+    '**Structured review — parser and contract changes**',
+    '',
+    '**Criteria assessment**',
+    '1. **Parser accepts the nothing-missing context line.** Met.',
+    '   - Checked the delimiter and parenthetical branches.',
+    '2. **Missing-context lines still fail closed.** Met.',
+    '3. **Delegated reply parser uses the same predicate.** Met, by inspection.',
+    '4. **Existing gates remain unchanged for missing context.** Met. Every negative fixture still returns unverified.',
+    '5. **Structured met-criterion reply is credited.** Met.',
+    '6. **Release files are untouched on the branch.** Met.',
+    '7. **Baseline record preserves missing outside coverage.** Met.',
+    '8. **Handoff grammar and labels stay byte-identical.** Met.',
+    '',
+    '**Additional checks**',
+    '- Verified callers in `src/alpha.ts` and `tests/alpha.test.ts`.',
+    '- Checked fence handling and replay behavior.',
+    '',
+    'NO_FINDINGS: none',
+    'Recommendation: approve because all eight criteria are satisfied and no defect was found.',
+    'VERDICT: CLEAN',
+  ].join('\n');
+
+  const NEGATIVE_SHAPES = [
+    [
+      'untagged numbered findings',
+      [
+        '1. `src/alpha.ts`: missing null check before trimming the input.',
+        '2. `src/beta.ts`: retry counter resets on error.',
+        'Recommendation: approve because minor.',
+        'VERDICT: CLEAN',
+      ].join('\n'),
+    ],
+    [
+      'Met lines plus one numbered finding',
+      [
+        '1. **First criterion holds.** Met.',
+        '2. `src/alpha.ts` drops the fallback when the map is empty.',
+        'NO_FINDINGS: none',
+        'Recommendation: approve because minor.',
+        'VERDICT: CLEAN',
+      ].join('\n'),
+    ],
+    [
+      'Not met line',
+      [
+        '1. **First criterion holds.** Met.',
+        '2. **Second criterion holds.** Not met.',
+        'NO_FINDINGS: none',
+        'Recommendation: approve because partial.',
+        'VERDICT: CLEAN',
+      ].join('\n'),
+    ],
+    [
+      'Partially met line',
+      [
+        '1. **First criterion holds.** Partially met.',
+        'NO_FINDINGS: none',
+        'Recommendation: approve because partial.',
+        'VERDICT: CLEAN',
+      ].join('\n'),
+    ],
+    [
+      'Met? line',
+      [
+        '1. **First criterion holds.** Met?',
+        'NO_FINDINGS: none',
+        'Recommendation: approve because uncertain.',
+        'VERDICT: CLEAN',
+      ].join('\n'),
+    ],
+    [
+      'Met line carrying a severity word',
+      [
+        '1. **High-priority paths are covered.** Met.',
+        'NO_FINDINGS: none',
+        'Recommendation: approve because covered.',
+        'VERDICT: CLEAN',
+      ].join('\n'),
+    ],
+  ] as const;
+
+  test('credits the reconstructed 2026-11-19 met-criterion shape, fails closed on untagged findings or non-Met lines, and keeps existing valid shapes valid', async () => {
+    for (const gate of gates) {
+      const res = recover(STRUCTURED_MET_SHAPE, gate, 0, '', numberedCleanVerdict);
+      expect([gate, res.credited, res.parse, res.classification.verdict, res.classification.findings.highest]).toEqual([
+        gate, true, 'recovered', 'clean', null,
+      ]);
+      for (const [label, text] of NEGATIVE_SHAPES) {
+        const neg = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
+    }
+    await temporary(async dir => {
+      const results = await run(request, '+diff', dir, 'model', async () => ({
+        status: 'completed',
+        result: STRUCTURED_MET_SHAPE,
+      }), numberedCleanVerdict);
+      expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict])).toEqual([
+        ['challenge', true, 'recovered', 'clean'],
+        ['structured', true, 'recovered', 'clean'],
+      ]);
+    });
+    // Existing valid shapes keep parse: 'valid'.
+    const fixed = '[P2] `src/x.ts`: guard optional field\nRecommendation: merge because advisory.\nVERDICT: FINDINGS';
+    const clean = 'Checked every hunk.\nNO_FINDINGS: none\nRecommendation: approve because clean.\nVERDICT: CLEAN';
+    for (const gate of gates) {
+      expect(recover(fixed, gate, 0, '', numberedCleanVerdict).parse).toBe('valid');
+      expect(recover(clean, gate, 0, '', numberedCleanVerdict).parse).toBe('valid');
+    }
+  });
+
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier credits the met-criterion shape and rejects the negative shapes (installed only)', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    for (const gate of gates) {
+      const res = recover(STRUCTURED_MET_SHAPE, gate, 0, '', classifyOutsideReview);
+      expect([gate, res.credited, res.parse, res.classification.verdict, res.classification.findings.highest]).toEqual([
+        gate, true, 'recovered', 'clean', null,
+      ]);
+      for (const [label, text] of NEGATIVE_SHAPES) {
+        const neg = recover(text, gate, 0, '', classifyOutsideReview);
+        expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
     }
   });
 });
