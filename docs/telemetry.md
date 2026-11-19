@@ -158,19 +158,22 @@ age), beside `session_id`, `start`, and `usage`, plus `work_item` when the launc
 one ([Work item and launcher quick-start](#work-item-and-launcher-quick-start)). `harness` is a session-fingerprint hash, not a harness name:
 the SHA-256 hex digest of the compact JSON list of `[name, value]` pairs, sorted
 by name, for each marker whose value passes `valid_session`. The markers are
-`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_CONVERSATION_ID`, and
-`GROK_SESSION_ID` (the same session-marker gate `detect()` uses). Names
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_CONVERSATION_ID`,
+`GROK_SESSION_ID`, and `MUSE_SESSION_ID` (the same session-marker gate `detect()` uses). Names
 are hashed with the values, so equal IDs from different harnesses do not collide.
 No valid marker stores null. Debug mode names the markers that contributed and
 never prints their values.
 
-**Upgrade during an open stage:** This release starts including a valid
-`GROK_SESSION_ID` even without `GROK_AGENT=1`. If another harness marker was
-already part of the start fingerprint, upgrading before finish changes that
-fingerprint; an implicit finish of a non-resumable stage then refuses the old
-handoff as belonging to another session. Finish open stages before upgrading,
-or use the existing explicit `--session-id` finish with that stage's original
-telemetry session ID. Existing rows are not rewritten.
+**Upgrade during an open stage.** The Grok change added valid `GROK_SESSION_ID`
+to the fingerprint without requiring `GROK_AGENT=1`. The Muse change adds valid
+`MUSE_SESSION_ID`. A non-resumable Muse stage started with only the Muse marker
+before the upgrade has a null fingerprint and can still pair within the 24-hour
+bound (`ADOPTION_BOUND_S`). If another harness marker was already part of the
+start fingerprint, adding a marker across the upgrade changes that fingerprint.
+An implicit finish for a non-resumable stage then refuses the handoff as belonging
+to another session. Finish open stages before upgrading or pass the stage's
+original telemetry session ID to `--session-id` at finish. Existing rows retain
+their original values.
 
 A valid explicit `--session-id` keeps its previous behavior and is never
 age-bounded. An explicit `--start` alone does not bypass adoption. With a valid
@@ -368,8 +371,8 @@ telemetry skipped: missing or malformed start/session state (handoff from anothe
 `--session-id` and `--start`. It never reads another root's handoff. A same-skill
 handoff already in the destination root is judged by the rule above. Inside one
 harness session, a start-less non-resumable finish adopts that session's open
-start in the same root at any age. Subagents inherit the parent's session marker
-and count as the same session. A finish inside a nested harness (`codex exec`
+start in the same root at any age. A subagent with the same valid markers and
+values as its parent counts as the same session. A finish inside a nested harness (`codex exec`
 launched from Claude Code) carries an extra marker and counts as another session,
 so a non-resumable finish there is refused. Resumable adoption stays unbounded,
 so a start-less finish can adopt an abandoned resumable start. That is the fallback:
@@ -385,7 +388,7 @@ stayed constant across real CLI user turns and a `claude --resume`. Two start/fi
 runs paired, including a finish after resume; debug named only that marker. The
 check used isolated telemetry storage and real logger/config copies with network
 sync omitted. Compaction and a Conductor chat continuation were not exercised.
-Within-run marker stability in Codex, Cursor, and Grok has not been verified by
+Within-run marker stability in Codex, Cursor, Grok, and Muse has not been verified by
 this real-harness check; their automated tests use simulated markers.
 The marker stays in the fingerprint.
 
@@ -1724,7 +1727,7 @@ table below is the reader's reference; the schema is authoritative where they di
 | Field | Hand-run value |
 |---|---|
 | `stage` | Skill name without `extend:`, e.g. `roadmap` |
-| `agent` | `claude`, `codex`, `grok`, or `cursor`; null when unverifiable |
+| `agent` | `claude`, `codex`, `grok`, `cursor`, or `muse`; null when unverifiable |
 | `model` | Model ID from detection, a finish flag, or `GSTACK_EXTEND_MODEL`; see `model_source` |
 | `effort` | Effort level from detection, a finish flag, or `GSTACK_EXTEND_EFFORT`, in that source's vocabulary (`xhigh`, `high`); see `effort_source` |
 | `rung` | Always 0: a hand-run skill has no fallback chain |
@@ -1852,6 +1855,7 @@ directories. Hand-use capture is qualified for the owner's observed Claude `cli`
 | `grok` | Detection supported when valid `GROK_SESSION_ID` or `GROK_AGENT=1` is present (session-ID-only path fixture-qualified; no real post-fix by-hand readback); unmarked under ACP `terminal/create` (`paseo 0.15.2` + `grok 1.0.77`) | `GROK_SESSION_ID` (valid session ID, including hook/MCP and session-id-only launches) or `GROK_AGENT=1` (terminal shell; non-`"1"` profile names are ignored); model and effort from `~/.grok/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}`. Under `grok acp`, `xai-grok-shell-terminal`'s `terminal/create` RPC delegates command execution to Paseo's sibling terminal without forwarding `GROK_SESSION_ID` or `GROK_AGENT=1` (`run_mode_source="no-harness"` when unmarked) | Unqualified (`unknown` / `harness-unqualified` when detected) | Neither Grok's environment nor `~/.grok/sessions/<encoded-cwd>/<session>/{summary.json,events.jsonl}` records an entrypoint distinguishing interactive by-hand use from ACP or orchestrated runs, and Paseo only injects a provider entrypoint for Claude |
 | `codex` | Qualified (terminal CLI, `codex exec`, and Paseo app-server) | `CODEX_THREAD_ID`; model and effort from `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (`CODEX_HOME` honored) | Unqualified (`unknown` / `harness-unqualified`) | Neither `CODEX_*` environment variables nor rollout `session_meta.payload` (`originator` / `source` only record shapes such as `("codex_cli_rs", "vscode")` or `("codex_exec", "exec")`, while Paseo's app-server client passes hardcoded `clientInfo.name="codex_app_server_daemon"`) distinguishes a by-hand launch from an orchestrated worker |
 | `cursor` | Qualified when `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` is exported | `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` (`CURSOR_INVOKED_AS` for `route="cli"`); transcripts under `~/.cursor/projects/*/agent-transcripts/` break cross-harness ties while model and effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified`) | Neither `CURSOR_AGENT`, `CURSOR_CONVERSATION_ID`, `CURSOR_INVOKED_AS`, nor Cursor's agent transcripts expose an entrypoint distinguishing interactive by-hand sessions from ACP or headless worker launches |
+| `muse` | Fixture-qualified when a valid `MUSE_SESSION_ID` is present, using the Muse 1.4.23 log format. Paseo shell export was observed with Muse 1.4.20. Terminal export and real post-change readbacks remain unverified | `MUSE_SESSION_ID` (`MUSE_THREAD_ID` and the per-call `MUSE_TOOL_USE_ID` are unused); model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`; only the named session log is read, and a missing log leaves model `null`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified` when detected) | Muse exports no entrypoint variable. `session.opened.observed` `client_info_name` names the client (`paseo` under Paseo). Paseo launches both by-hand and orchestrated sessions, and the terminal client name is unverified |
 
 <a id="hand-run-usability-signals"></a>
 
@@ -2112,6 +2116,15 @@ until finish flags or requested variables supply them:
   leave model and effort null. Under ACP (`grok acp`) when the host advertises
   client terminal capability, `xai-grok-shell-terminal`'s `terminal/create` request
   does not forward `GROK_SESSION_ID` or `GROK_AGENT=1`, leaving child commands unmarked.
+- When **Muse Code** exports `MUSE_SESSION_ID`, the wrapper reads that session's
+  `session.jsonl` under `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/`
+  (default `$HOME/.local/share` when `XDG_DATA_HOME` is unset or relative), taking
+  `model` from `runtime.session` `model_completed` events inside the stage window.
+  Effort stays null because the session log does not record an effort value (finish
+  flags or `GSTACK_EXTEND_EFFORT` can supply it). Only the named session's log is
+  read, never a sibling session's log or a `<session>/subagent/<child>/session.jsonl`
+  log, and a missing or unreadable log leaves model null. In the observed Paseo
+  launch, `MUSE_SESSION_ID` reached commands in Muse's own shell.
 - **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. An explicit
   `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker records
   `route: "cli"`; otherwise `route` is `"unknown"`.
@@ -2130,7 +2143,7 @@ When ancestry is unavailable, the latest comparable log wins; without evidence
 the agent remains null. A failed
 detection costs only the detected values, never the row.
 
-Explicit finish flags override detection: `--agent claude|codex|cursor|grok`, `--model`,
+Explicit finish flags override detection: `--agent claude|codex|cursor|grok|muse`, `--model`,
 `--effort`, and `--work-item`. When `--agent` names a different harness than the
 detected one, the detected model and effort are dropped. These flags never reach
 gstack's logger.
@@ -2145,7 +2158,7 @@ Existing Cursor SDK metadata is requested configuration even when the historical
 detector labels it `detected`.
 `unknown` means the value is null, and a null value is always `unknown`. A
 rejected flag changes nothing, so the detected value keeps `detected`: an
-`--agent` outside the four harnesses, or a blank, non-printable, or over-200-character
+`--agent` outside the accepted names above, or a blank, non-printable, or over-200-character
 `--model` or `--effort`. A valid `--agent` naming another harness drops the detected
 model and effort first, so an omitted `--model` or `--effort` is then null and
 `unknown` unless `GSTACK_EXTEND_MODEL` or `GSTACK_EXTEND_EFFORT` fills it as
@@ -2194,6 +2207,9 @@ validate. Pin a release tag or commit of the schema, or vendor a copy: the file
 on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
+
+The `muse` value extends the shared `agent` enum. Update pinned schema copies
+before validating version 4 rows with `agent: "muse"`.
 
 The v2/v3 `host_agent_id` and v4 `workspace_host` patterns require Unicode property escapes and Unicode-mode
 ECMA-262 regex evaluation, as provided by the pinned Ajv's default
