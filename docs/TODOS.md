@@ -62,6 +62,42 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** Muse model selection or the stage-window policy changes.
 
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Conflicting initial finding dispositions
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The folding fixture varies severity across selected reports and gives both reports the same initial disposition.
+- **Hypothesis (untested):** Give selected reports of one finding different initial adjudications and resolutions. Verify the later report in voice order supplies each field.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:142`
+- **Evidence:** Coverage audit on `61cb108` traced the voice-order fold and found no matching regression test.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The selected-report fold or its test fixtures change.
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Correction order across governing reports
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The committed fixtures apply one correction at a time across the governing reports. A one-off CLI probe exercised several corrections in record order.
+- **Hypothesis (untested):** Add a fixture with corrections to different reports in one pass. Check that an omitted field preserves its prior value and that correction record order wins over voice order.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:147`
+- **Evidence:** Coverage audit and passing synthetic CLI correction probe on `61cb108`.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The correction fold or target lookup changes.
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Correction targeting an unselected attempt
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The fold tests correct a report from an older pass and cover selected reports in the current pass. They do not correct a replaced attempt in the current pass.
+- **Hypothesis (untested):** Select a replacement attempt that reports the same finding, then correct the earlier attempt on that voice. Verify the selected report still determines the receipt.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:148`
+- **Evidence:** Coverage audit on `61cb108` traced selection and the full target tuple. No failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Attempt selection or correction targeting changes.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
