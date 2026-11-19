@@ -2049,6 +2049,10 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { run_mode: 'user-directed', run_mode_source: 'Paseo' },
       { run_mode: 'unknown', run_mode_source: 'cli' },
       { run_mode: 'unknown', run_mode_source: 'paseo-entrypoint' },
+      { run_mode: 'unknown', run_mode_source: 'terminal-session' },
+      { run_mode: 'unknown', run_mode_source: 'host-app-session' },
+      { run_mode: 'orchestrated', run_mode_source: 'terminal-session' },
+      { run_mode: 'orchestrated', run_mode_source: 'host-app-session' },
       { workspace_host: '' }, { workspace_host: '   ' },
     ]) expect([patch, verdict({ ...v4, ...patch }).ok]).toEqual([patch, false]);
     for (const validV4Patch of [
@@ -2056,6 +2060,8 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       { workspace_host: 'my-host' },
       { run_mode: 'user-directed', run_mode_source: 'cli', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason: null, blocked_reason_source: 'not-blocked' },
       { run_mode: 'user-directed', run_mode_source: 'paseo-entrypoint', user_signals_source: 'session-log', questions: 0, user_wait_s: 0, resumes: 0, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { run_mode: 'user-directed', run_mode_source: 'terminal-session', user_signals_source: 'harness-unsupported', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-blocked' },
+      { run_mode: 'user-directed', run_mode_source: 'host-app-session', user_signals_source: 'harness-unsupported', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-blocked' },
       { run_mode: 'unknown', run_mode_source: 'entrypoint-unqualified', user_signals_source: 'no-harness', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-blocked' },
       { run_mode: 'unknown', run_mode_source: 'host-managed-workspace', user_signals_source: 'no-harness', questions: null, user_wait_s: null, resumes: null, blocked_reason: null, blocked_reason_source: 'not-blocked' },
     ]) expect([validV4Patch, verdict({ ...v4, ...validV4Patch }).ok]).toEqual([validV4Patch, true]);
@@ -2519,12 +2525,6 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'entrypoint-unavailable',
       },
       {
-        name: 'non-Claude harness yields harness-unqualified',
-        env: { CODEX_THREAD_ID: 'codex-1' },
-        expectedMode: 'unknown',
-        expectedSource: 'harness-unqualified',
-      },
-      {
         name: 'Grok session id without GROK_AGENT=1 yields harness-unqualified',
         env: { GROK_SESSION_ID: 'grok-session-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
         expectedMode: 'unknown',
@@ -2537,24 +2537,151 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'harness-unqualified',
       },
       {
-        name: 'Muse yields harness-unqualified',
-        env: { MUSE_SESSION_ID: 'muse-session-contract' },
-        expectedMode: 'unknown',
-        expectedSource: 'harness-unqualified',
-      },
-      {
-        name: 'Muse under Paseo yields harness-unqualified',
-        env: { MUSE_SESSION_ID: 'muse-session-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
-        expectedMode: 'unknown',
-        expectedSource: 'harness-unqualified',
-      },
-      {
         name: 'no harness yields no-harness',
         env: {},
         expectedMode: 'unknown',
         expectedSource: 'no-harness',
       },
     ];
+
+    const writeLines = (path: string, records: object[]) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, records.map(r => JSON.stringify(r)).join('\n') + '\n');
+    };
+    const codexRollout = (tid: string) =>
+      join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
+    const writeCodexMeta = (tid: string, originator: string, source: unknown, padBytes = 0) => {
+      const records: object[] = [];
+      if (padBytes > 0) records.push({ type: 'padding', pad: 'x'.repeat(padBytes) });
+      records.push({ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: tid, originator, source } });
+      writeLines(codexRollout(tid), records);
+    };
+    const museSessionFile = (sid: string) =>
+      join(fix.home, '.local/share/muse/sessions/2026/11/19', sid, 'session.jsonl');
+    const writeMuseOpen = (sid: string, clientName: string | null, padBytes = 0) => {
+      const records: object[] = [];
+      if (padBytes > 0) records.push({ payload_type: 'runtime.padding', payload: { pad: 'x'.repeat(padBytes) } });
+      records.push({
+        payload_type: 'session.opened.observed',
+        payload: { kind: 'session_opened', record: clientName !== null ? { client_info_name: clientName } : {} },
+      });
+      writeLines(museSessionFile(sid), records);
+    };
+
+    writeCodexMeta('codex-contract-term', 'codex_cli_rs', 'vscode');
+    writeCodexMeta('codex-contract-tui', 'codex-tui', 'vscode');
+    writeCodexMeta('codex-contract-exec', 'codex_exec', 'exec');
+    writeCodexMeta('codex-contract-sub', 'codex_cli_rs', { subagent: 'review' });
+    symlinkSync(codexRollout('codex-contract-term'), codexRollout('codex-contract-sym'));
+    writeCodexMeta('codex-contract-over', 'codex_cli_rs', 'vscode', 70_000);
+
+    writeMuseOpen('muse-contract-host', 'paseo');
+    writeMuseOpen('muse-contract-case', 'Paseo');
+    writeMuseOpen('muse-contract-other', 'other_client');
+    mkdirSync(dirname(museSessionFile('muse-contract-sym')), { recursive: true });
+    symlinkSync(museSessionFile('muse-contract-host'), museSessionFile('muse-contract-sym'));
+    writeMuseOpen('muse-contract-over', 'paseo', 70_000);
+
+    // Value: protects=contract run-mode matrix mirrors shared per-harness launch-surface classification and schema validity; fails_when=a qualified harness diverges on terminal/host-app/orchestrated/workspace-owner/other/unavailable/override cases; why_new=Track 90B T3 shared contract matrix; seam=none
+    const qualifiedHarnesses: Array<{
+      harness: string;
+      overrideAgent: string;
+      terminal?: Record<string, string>;
+      hostApp?: Record<string, string>;
+      other: Record<string, string>[];
+      missing: Record<string, string>;
+      symlinked: Record<string, string>;
+      overBound: Record<string, string>;
+    }> = [
+      {
+        harness: 'codex',
+        overrideAgent: 'claude',
+        terminal: { CODEX_THREAD_ID: 'codex-contract-term' },
+        other: [{ CODEX_THREAD_ID: 'codex-contract-exec' }],
+        missing: { CODEX_THREAD_ID: 'codex-1' },
+        symlinked: { CODEX_THREAD_ID: 'codex-contract-sym' },
+        overBound: { CODEX_THREAD_ID: 'codex-contract-over' },
+      },
+      {
+        harness: 'muse',
+        overrideAgent: 'claude',
+        hostApp: { MUSE_SESSION_ID: 'muse-contract-host', PASEO_AGENT_ID: 'paseo-agent-contract' },
+        other: [
+          { MUSE_SESSION_ID: 'muse-contract-case', PASEO_AGENT_ID: 'paseo-agent-contract' },
+          { MUSE_SESSION_ID: 'muse-contract-other', PASEO_AGENT_ID: 'paseo-agent-contract' },
+        ],
+        missing: { MUSE_SESSION_ID: 'muse-session-contract' },
+        symlinked: { MUSE_SESSION_ID: 'muse-contract-sym' },
+        overBound: { MUSE_SESSION_ID: 'muse-contract-over' },
+      },
+    ];
+
+    for (const q of qualifiedHarnesses) {
+      if (q.terminal) {
+        cases.push({
+          name: `${q.harness} terminal evidence yields user-directed / terminal-session`,
+          env: q.terminal,
+          expectedMode: 'user-directed',
+          expectedSource: 'terminal-session',
+        });
+      }
+      if (q.hostApp) {
+        cases.push({
+          name: `${q.harness} host-app evidence yields user-directed / host-app-session`,
+          env: q.hostApp,
+          expectedMode: 'user-directed',
+          expectedSource: 'host-app-session',
+        });
+      }
+      const byHandEnv = q.terminal ?? q.hostApp!;
+      cases.push(
+        {
+          name: `${q.harness} qualified evidence + GSTACK_EXTEND_RUN_MODE=orchestrated yields run-mode-env`,
+          env: { ...byHandEnv, GSTACK_EXTEND_RUN_MODE: 'orchestrated' },
+          expectedMode: 'orchestrated',
+          expectedSource: 'run-mode-env',
+        },
+        {
+          name: `${q.harness} qualified evidence + spawned + work item yields session-kind`,
+          env: { ...byHandEnv, GSTACK_SESSION_KIND: 'spawned', GSTACK_EXTEND_WORK_ITEM: `item-${q.harness}-contract` },
+          expectedMode: 'orchestrated',
+          expectedSource: 'session-kind',
+        },
+        {
+          name: `${q.harness} qualified evidence + GSTACK_EXTEND_WORKSPACE_OWNER yields host-managed-workspace`,
+          env: { ...byHandEnv, GSTACK_EXTEND_WORKSPACE_OWNER: 'paseo' },
+          expectedMode: 'unknown',
+          expectedSource: 'host-managed-workspace',
+        },
+        {
+          name: `${q.harness} qualified evidence + --agent override yields harness-unqualified`,
+          env: byHandEnv,
+          finishArgs: ['--agent', q.overrideAgent],
+          expectedMode: 'unknown',
+          expectedSource: 'harness-unqualified',
+        },
+      );
+      for (const [idx, otherEnv] of q.other.entries()) {
+        cases.push({
+          name: `${q.harness} other evidence [${idx}] yields entrypoint-unqualified`,
+          env: otherEnv,
+          expectedMode: 'unknown',
+          expectedSource: 'entrypoint-unqualified',
+        });
+      }
+      for (const [label, unavailEnv] of [
+        ['missing', q.missing],
+        ['symlinked', q.symlinked],
+        ['over-bound', q.overBound],
+      ] as const) {
+        cases.push({
+          name: `${q.harness} ${label} log yields entrypoint-unavailable`,
+          env: unavailEnv,
+          expectedMode: 'unknown',
+          expectedSource: 'entrypoint-unavailable',
+        });
+      }
+    }
 
     // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
     for (const [name, harness] of [

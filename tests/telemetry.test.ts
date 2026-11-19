@@ -1698,6 +1698,57 @@ describe('execution provenance', () => {
     expect(provenanceRun(fix, { CLAUDECODE: '1', CODEX_THREAD_ID: 'no-such-thread' }).row)
       .toMatchObject({ agent: null, model: null, effort: null });
     expect(provenanceRun(fix, { CLAUDECODE: '1' }).row).toMatchObject({ agent: 'claude', model: null, effort: null });
+
+    // Inherited GROK_SESSION_ID without GROK_AGENT=1 next to an inner CODEX_THREAD_ID resolves by latest turn.
+    const grokWork = join(fix.home, 'nested-grok-codex');
+    mkdirSync(grokWork);
+    const grokPlace = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(grokWork)));
+    const grokSid = '11111111-2222-4333-8444-555555555555';
+    const innerCodexTid = '01a0c487-0000-7000-8000-000000000099';
+    const grokLog = join(grokPlace, grokSid, 'events.jsonl');
+    const grokSummary = join(grokPlace, grokSid, 'summary.json');
+    const innerRollout = join(fix.home, '.codex/sessions/2026/09/21', `rollout-2026-09-21T00-00-00-${innerCodexTid}.jsonl`);
+    const grokAndCodex = { GROK_SESSION_ID: grokSid, CODEX_THREAD_ID: innerCodexTid };
+
+    expect(provenanceRun(fix, grokAndCodex, undefined, [], grokWork).row).toMatchObject({
+      agent: null,
+      model: null,
+      effort: null,
+      run_mode: 'unknown',
+      run_mode_source: 'no-harness',
+    });
+
+    const codexWins = provenanceRun(fix, grokAndCodex, start => {
+      writeJsonl(grokLog, [{ ts: iso(start - 40), type: 'turn_started', model_id: 'grok-4.7' }]);
+      writeFileSync(grokSummary, JSON.stringify({ current_model_id: 'grok-4.7', reasoning_effort: 'medium' }));
+      writeJsonl(innerRollout, [
+        { timestamp: iso(start - 30), type: 'session_meta', payload: { id: innerCodexTid, originator: 'codex_cli_rs', source: 'vscode' } },
+        codexTurn(start - 5, 'gpt-6-astra', 'high'),
+      ]);
+    }, [], grokWork).row;
+    expect(codexWins).toMatchObject({
+      agent: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+      run_mode: 'user-directed',
+      run_mode_source: 'terminal-session',
+    });
+
+    const grokWins = provenanceRun(fix, grokAndCodex, start => {
+      writeJsonl(grokLog, [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }]);
+      writeFileSync(grokSummary, JSON.stringify({ current_model_id: 'grok-4.7', reasoning_effort: 'medium' }));
+      writeJsonl(innerRollout, [
+        { timestamp: iso(start - 300), type: 'session_meta', payload: { id: innerCodexTid, originator: 'codex_cli_rs', source: 'vscode' } },
+        codexTurn(start - 200, 'gpt-6-astra', 'high'),
+      ]);
+    }, [], grokWork).row;
+    expect(grokWins).toMatchObject({
+      agent: 'grok',
+      model: 'grok-4.7',
+      effort: 'medium',
+      run_mode: 'unknown',
+      run_mode_source: 'harness-unqualified',
+    });
   }, 30_000);
 
   test('Grok: exactly one session active in this directory since the stage began is attributed; two are not', () => {
@@ -1958,6 +2009,38 @@ describe('execution provenance', () => {
       run_mode_source: 'harness-unqualified',
     });
     expect(validRow(missingNamed)).toBe(true);
+
+    // Non-empty invalid GROK_SESSION_ID never falls back to a fresh sibling log; without GROK_AGENT=1 it is not a marker.
+    const invalidWithGrokAgent = provenanceRun(fix, { GROK_AGENT: '1', GROK_SESSION_ID: '../bad' }, () => {
+      writeJsonl(join(place, 'fresh-sibling', 'events.jsonl'),
+        [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-sibling' }]);
+      writeFileSync(join(place, 'fresh-sibling', 'summary.json'),
+        JSON.stringify({ current_model_id: 'grok-sibling', reasoning_effort: 'high' }));
+    }, [], work).row;
+    expect(invalidWithGrokAgent).toMatchObject({
+      agent: 'grok',
+      agent_source: 'detected',
+      model: null,
+      model_source: 'unknown',
+      effort: null,
+      effort_source: 'unknown',
+      run_mode: 'unknown',
+      run_mode_source: 'harness-unqualified',
+    });
+    expect(validRow(invalidWithGrokAgent)).toBe(true);
+
+    const invalidWithoutGrokAgent = provenanceRun(fix, { GROK_SESSION_ID: '../bad' }, undefined, [], work).row;
+    expect(invalidWithoutGrokAgent).toMatchObject({
+      agent: null,
+      agent_source: 'unknown',
+      model: null,
+      model_source: 'unknown',
+      effort: null,
+      effort_source: 'unknown',
+      run_mode: 'unknown',
+      run_mode_source: 'no-harness',
+    });
+    expect(validRow(invalidWithoutGrokAgent)).toBe(true);
   }, 30_000);
 
   test('Muse: reads model from the named session log, ignores sibling and subagent logs, and keeps effort null unless requested', () => {
@@ -2057,9 +2140,13 @@ describe('execution provenance', () => {
       effort_source: 'requested',
     });
 
-    // Under Paseo: MUSE_SESSION_ID + PASEO_AGENT_ID detects Muse with harness-unqualified; PASEO_AGENT_ID alone is no-harness.
+    // Under Paseo: MUSE_SESSION_ID + PASEO_AGENT_ID with session.opened.observed client_info_name="paseo" classifies as user-directed / host-app-session; PASEO_AGENT_ID alone is no-harness.
     const paseoMuse = provenanceRun(fix, { MUSE_SESSION_ID: sid, PASEO_AGENT_ID: 'paseo-muse-1' }, () => {
-      museLog(fix.home, sid, [museTurn(Date.now() / 1000, 3, sid, 'muse-fixture-1.0')]);
+      const now = Date.now() / 1000;
+      museLog(fix.home, sid, [
+        museRecord(now, 2, sid, 'session.opened.observed', { kind: 'session_opened', record: { client_info_name: 'paseo' } }),
+        museTurn(now, 3, sid, 'muse-fixture-1.0'),
+      ]);
     }).row;
     expect(paseoMuse).toMatchObject({
       agent: 'muse',
@@ -2068,8 +2155,8 @@ describe('execution provenance', () => {
       model_source: 'detected',
       effort: null,
       effort_source: 'unknown',
-      run_mode: 'unknown',
-      run_mode_source: 'harness-unqualified',
+      run_mode: 'user-directed',
+      run_mode_source: 'host-app-session',
     });
     expect(validRow(paseoMuse)).toBe(true);
     const paseoAlone = provenanceRun(fix, { PASEO_AGENT_ID: 'paseo-muse-only' }).row;
@@ -2860,7 +2947,7 @@ describe('handoff adoption', () => {
     expectRefusal(foreignMuse.stderr, 'handoff from another session');
     expect(runHelper({ ...muse.env, MUSE_SESSION_ID: 'muse-session-1' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(muse.readLedger()).toHaveLength(1);
-    expect(muse.readLedger()[0]).toMatchObject({ agent: 'muse', agent_source: 'detected', run_mode: 'unknown', run_mode_source: 'harness-unqualified' });
+    expect(muse.readLedger()[0]).toMatchObject({ agent: 'muse', agent_source: 'detected', run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
 
     const invalidMuse = makeTelemetryFixture('community', 'stub');
     runHelper({ ...invalidMuse.env, MUSE_SESSION_ID: '../bad' }, ['start', '--skill', 'extend:roadmap']);
@@ -5153,10 +5240,10 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'entrypoint-unavailable',
       },
       {
-        name: 'codex markers only gives harness-unqualified',
+        name: 'codex markers only without rollout gives entrypoint-unavailable',
         finishEnv: { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'entrypoint-unavailable',
       },
       {
         name: 'cursor markers only gives harness-unqualified',
@@ -5177,10 +5264,10 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'harness-unqualified',
       },
       {
-        name: 'codex markers under Paseo gives harness-unqualified',
+        name: 'codex markers under Paseo without rollout gives entrypoint-unavailable',
         finishEnv: { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349', PASEO_AGENT_ID: 'paseo-codex-rm' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'entrypoint-unavailable',
       },
       {
         name: 'cursor markers under Paseo gives harness-unqualified',
@@ -5189,16 +5276,16 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'harness-unqualified',
       },
       {
-        name: 'muse markers only gives harness-unqualified',
+        name: 'muse markers only without session log gives entrypoint-unavailable',
         finishEnv: { MUSE_SESSION_ID: 'muse-rm-1' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'entrypoint-unavailable',
       },
       {
-        name: 'muse session id under Paseo gives harness-unqualified',
+        name: 'muse session id under Paseo without session log gives entrypoint-unavailable',
         finishEnv: { MUSE_SESSION_ID: 'muse-rm-paseo', PASEO_AGENT_ID: 'paseo-muse-rm' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'entrypoint-unavailable',
       },
       {
         name: 'orchestrated Muse worker with spawned session kind and work item gives session-kind',
@@ -5220,6 +5307,27 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'no-harness',
       },
     ];
+
+    const codexRolloutPath = (tid: string) =>
+      join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
+    const writeCodexMeta = (tid: string, originator: string, source: unknown) => {
+      writeJsonl(codexRolloutPath(tid), [
+        { timestamp: iso(1790000000), type: 'session_meta', payload: { id: tid, originator, source } },
+      ]);
+    };
+    const writeMuseOpen = (sid: string, clientName: string | null) => {
+      museLog(fix.home, sid, [
+        museRecord(1, 2, sid, 'session.opened.observed', {
+          kind: 'session_opened',
+          record: clientName !== null ? { client_info_name: clientName } : {},
+        }),
+      ]);
+    };
+    writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
+    writeCodexMeta('codex-rm-tui', 'codex-tui', 'vscode');
+    writeCodexMeta('codex-rm-sub', 'codex_cli_rs', { subagent: 'review' });
+    writeMuseOpen('muse-rm-host', 'paseo');
+    writeMuseOpen('muse-rm-nocli', null);
 
     // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
     for (const [name, harness] of [
@@ -5276,14 +5384,14 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     ]);
 
     // Criterion 6: Verify via Python sys.addaudithook and inspect.getsource that run_mode,
-    // claude_user_signals, host_file_name, stage_run_files, and run_report never use network,
-    // subprocess, sqlite3, or credential paths.
+    // head_records, the launch-surface readers, claude_user_signals, host_file_name,
+    // stage_run_files, and run_report never use network, subprocess, sqlite3, or credential paths.
     const auditScript = [
       'import inspect, io, json, pathlib, sys',
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
       '    src = inspect.getsource(fn)',
       '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl"):',
       '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
@@ -5297,6 +5405,23 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       '            bad.append((event, target))',
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
+      'list(telemetry.head_records(pathlib.Path(sys.argv[3])))',
+      'assert telemetry.claude_launch_surface() == "terminal"',
+      'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-term", "PASEO_AGENT_ID": "paseo-codex-rm"}, clear=False):',
+      '    assert telemetry.codex_launch_surface() == "terminal"',
+      '    assert telemetry.run_mode("codex", "codex", None) == ("user-directed", "terminal-session")',
+      'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-tui"}, clear=False):',
+      '    assert telemetry.codex_launch_surface() == "terminal"',
+      '    assert telemetry.run_mode("codex", "codex", None) == ("user-directed", "terminal-session")',
+      'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-sub"}, clear=False):',
+      '    assert telemetry.codex_launch_surface() == "other"',
+      '    assert telemetry.run_mode("codex", "codex", None) == ("unknown", "entrypoint-unqualified")',
+      'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-host"}, clear=False):',
+      '    assert telemetry.muse_launch_surface() == "host-app"',
+      '    assert telemetry.run_mode("muse", "muse", None) == ("user-directed", "host-app-session")',
+      'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-nocli"}, clear=False):',
+      '    assert telemetry.muse_launch_surface() is None',
+      '    assert telemetry.run_mode("muse", "muse", None) == ("unknown", "entrypoint-unavailable")',
       'telemetry.run_mode("claude", "claude", None)',
       'with mock.patch.dict(telemetry.os.environ, {}, clear=True):',
       '    assert telemetry.run_mode("claude", "claude", "bad\\nitem") == ("unknown", "malformed-signal")',
@@ -5313,7 +5438,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
       'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 4, "signals": signals}))',
     ].join('\n');
-    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend')], {
+    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend'), codexRolloutPath('codex-rm-term')], {
       env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
       encoding: 'utf8',
       timeout: 10_000,
@@ -5321,6 +5446,339 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     expect([audit.status, audit.stderr]).toEqual([0, '']);
     expect(JSON.parse(audit.stdout)).toEqual({ bad: [], rc: 0, ok: true, signals: [1, 3, 0] });
   }, 60_000);
+
+  test('qualified harnesses follow the shared by-hand rule and run_mode_source vocabulary', () => {
+    // Value: protects=every qualified harness goes through the same by-hand rule and shared run_mode_source vocabulary; fails_when=a qualified harness diverges on terminal/host-app/orchestrated/workspace-owner/other/unavailable/override cases; why_new=Track 90B T3 shared case list; seam=none
+    const fix = makeTelemetryFixture('community', 'stub');
+    const codexRolloutPath = (tid: string) =>
+      join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
+    const writeCodexMeta = (tid: string, originator: string, source: unknown, padBytes = 0) => {
+      const records: object[] = [];
+      if (padBytes > 0) records.push({ type: 'padding', pad: 'x'.repeat(padBytes) });
+      records.push({ timestamp: iso(1790000000), type: 'session_meta', payload: { id: tid, originator, source } });
+      writeJsonl(codexRolloutPath(tid), records);
+    };
+    const writeMuseOpen = (sid: string, clientName: string | null, padBytes = 0) => {
+      const records: object[] = [];
+      if (padBytes > 0) records.push(museRecord(1, 0, sid, 'runtime.padding', { pad: 'x'.repeat(padBytes) }));
+      records.push(museRecord(1, 2, sid, 'session.opened.observed', {
+        kind: 'session_opened',
+        record: clientName !== null ? { client_info_name: clientName } : {},
+      }));
+      museLog(fix.home, sid, records);
+    };
+
+    writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
+    writeCodexMeta('codex-rm-exec', 'codex_exec', 'exec');
+    symlinkSync(codexRolloutPath('codex-rm-term'), codexRolloutPath('codex-rm-sym'));
+    writeCodexMeta('codex-rm-over', 'codex_cli_rs', 'vscode', 70_000);
+
+    writeMuseOpen('muse-rm-host', 'paseo');
+    writeMuseOpen('muse-rm-case', 'Paseo');
+    writeMuseOpen('muse-rm-other', 'other_client');
+    const museSymDir = join(fix.home, '.local/share/muse/sessions/2026/11/18/muse-rm-sym');
+    mkdirSync(museSymDir, { recursive: true });
+    symlinkSync(
+      join(fix.home, '.local/share/muse/sessions/2026/11/18/muse-rm-host/session.jsonl'),
+      join(museSymDir, 'session.jsonl'),
+    );
+    writeMuseOpen('muse-rm-over', 'paseo', 70_000);
+
+    const qualifiedHarnesses: Array<{
+      harness: string;
+      overrideAgent: string;
+      terminal?: Record<string, string>;
+      hostApp?: Record<string, string>;
+      other: Record<string, string>[];
+      missing: Record<string, string>;
+      symlinked: Record<string, string>;
+      overBound: Record<string, string>;
+    }> = [
+      {
+        harness: 'codex',
+        overrideAgent: 'claude',
+        terminal: { CODEX_THREAD_ID: 'codex-rm-term' },
+        other: [{ CODEX_THREAD_ID: 'codex-rm-exec' }],
+        missing: { CODEX_THREAD_ID: '01a0c487-19ac-7903-89d9-d1642a113349' },
+        symlinked: { CODEX_THREAD_ID: 'codex-rm-sym' },
+        overBound: { CODEX_THREAD_ID: 'codex-rm-over' },
+      },
+      {
+        harness: 'muse',
+        overrideAgent: 'claude',
+        hostApp: { MUSE_SESSION_ID: 'muse-rm-host', PASEO_AGENT_ID: 'paseo-muse-rm' },
+        other: [
+          { MUSE_SESSION_ID: 'muse-rm-case', PASEO_AGENT_ID: 'paseo-muse-case' },
+          { MUSE_SESSION_ID: 'muse-rm-other', PASEO_AGENT_ID: 'paseo-muse-other' },
+        ],
+        missing: { MUSE_SESSION_ID: 'muse-rm-1' },
+        symlinked: { MUSE_SESSION_ID: 'muse-rm-sym' },
+        overBound: { MUSE_SESSION_ID: 'muse-rm-over' },
+      },
+    ];
+
+    const cases: Array<{
+      name: string;
+      finishEnv: Record<string, string>;
+      finishArgs?: string[];
+      mode: 'orchestrated' | 'user-directed' | 'unknown';
+      source: string;
+    }> = [];
+
+    for (const q of qualifiedHarnesses) {
+      if (q.terminal) {
+        cases.push({
+          name: `${q.harness} terminal evidence gives user-directed / terminal-session`,
+          finishEnv: q.terminal,
+          mode: 'user-directed',
+          source: 'terminal-session',
+        });
+      }
+      if (q.hostApp) {
+        cases.push({
+          name: `${q.harness} host-app evidence gives user-directed / host-app-session`,
+          finishEnv: q.hostApp,
+          mode: 'user-directed',
+          source: 'host-app-session',
+        });
+      }
+      const byHandEnv = q.terminal ?? q.hostApp!;
+      cases.push(
+        {
+          name: `${q.harness} qualified evidence + GSTACK_EXTEND_RUN_MODE=orchestrated gives run-mode-env`,
+          finishEnv: { ...byHandEnv, GSTACK_EXTEND_RUN_MODE: 'orchestrated' },
+          mode: 'orchestrated',
+          source: 'run-mode-env',
+        },
+        {
+          name: `${q.harness} qualified evidence + spawned + work item gives session-kind`,
+          finishEnv: { ...byHandEnv, GSTACK_SESSION_KIND: 'spawned', GSTACK_EXTEND_WORK_ITEM: `item-${q.harness}-1` },
+          mode: 'orchestrated',
+          source: 'session-kind',
+        },
+        {
+          name: `${q.harness} qualified evidence + GSTACK_EXTEND_WORKSPACE_OWNER gives host-managed-workspace`,
+          finishEnv: { ...byHandEnv, GSTACK_EXTEND_WORKSPACE_OWNER: 'paseo' },
+          mode: 'unknown',
+          source: 'host-managed-workspace',
+        },
+        {
+          name: `${q.harness} qualified evidence + --agent override gives harness-unqualified`,
+          finishEnv: byHandEnv,
+          finishArgs: ['--agent', q.overrideAgent],
+          mode: 'unknown',
+          source: 'harness-unqualified',
+        },
+      );
+      for (const [idx, otherEnv] of q.other.entries()) {
+        cases.push({
+          name: `${q.harness} other evidence [${idx}] gives entrypoint-unqualified`,
+          finishEnv: otherEnv,
+          mode: 'unknown',
+          source: 'entrypoint-unqualified',
+        });
+      }
+      for (const [label, unavailEnv] of [
+        ['missing', q.missing],
+        ['symlinked', q.symlinked],
+        ['over-bound', q.overBound],
+      ] as const) {
+        cases.push({
+          name: `${q.harness} ${label} log gives entrypoint-unavailable`,
+          finishEnv: unavailEnv,
+          mode: 'unknown',
+          source: 'entrypoint-unavailable',
+        });
+      }
+    }
+
+    for (const tc of cases) {
+      const start = runHelper({ ...fix.env, ...tc.finishEnv }, ['start', '--skill', 'extend:roadmap']);
+      expect(start.status, tc.name).toBe(0);
+      const finish = runHelper(
+        { ...fix.env, ...tc.finishEnv },
+        ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', ...(tc.finishArgs ?? [])],
+      );
+      expect(finish.status, tc.name).toBe(0);
+      const row = fix.readLedger().at(-1)!;
+      expect(row.run_mode, tc.name).toBe(tc.mode);
+      expect(row.run_mode_source, tc.name).toBe(tc.source);
+      expect(validRow(row), tc.name).toBe(true);
+    }
+  }, 60_000);
+
+  test('Claude run_mode results and emitted cli/Paseo rows match the frozen ef2f5e1 oracle byte for byte', () => {
+    // Value: protects=Claude run_mode and stage-run rows stay byte-for-byte identical across shared by-hand classification; fails_when=any Claude entrypoint, signal or agent pair diverges from ef2f5e1 or changes row keys/values; why_new=Track 90B T2 frozen-oracle lock; seam=none
+    const fix = makeTelemetryFixture('off');
+    const oracleScript = [
+      'import json, pathlib, sys',
+      'from unittest import mock',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'from telemetry import Path, RUN_MODE_ENV, WORKSPACE_OWNER_ENV, WORK_ITEM_ENV, clean, os, trace',
+      '',
+      'def frozen_run_mode(detected_agent="claude", agent="claude", saved_work_item=None):',
+      '    """Return (run_mode, run_mode_source) from consumer-neutral launcher signals and interactive entrypoints."""',
+      '    session_kind = os.environ.get("GSTACK_SESSION_KIND")',
+      '    if session_kind in ("spawned", "unattended"):',
+      '        return "orchestrated", "session-kind"',
+      '    finish_env_work_item = os.environ.get(WORK_ITEM_ENV)',
+      '    accepted_item = clean(saved_work_item)',
+      '    if accepted_item is None and finish_env_work_item not in (None, ""):',
+      '        accepted_item = clean(finish_env_work_item)',
+      '    if accepted_item is not None:',
+      '        return "orchestrated", "work-item"',
+      '    raw_run_mode = os.environ.get(RUN_MODE_ENV)',
+      '    if raw_run_mode == "orchestrated":',
+      '        return "orchestrated", "run-mode-env"',
+      '    if raw_run_mode not in (None, ""):',
+      '        trace(f"ignored {RUN_MODE_ENV} (unrecognized value; expected \'orchestrated\'). See docs/telemetry.md#run-mode.")',
+      '        return "unknown", "unrecognized-run-mode-env"',
+      '    gstack_home = os.environ.get("GSTACK_HOME")',
+      '    home = os.environ.get("HOME") or str(Path.home())',
+      '    if (',
+      '        isinstance(gstack_home, str)',
+      '        and gstack_home.strip()',
+      '        and os.path.isabs(gstack_home)',
+      '        and isinstance(home, str)',
+      '        and os.path.isabs(home)',
+      '        and os.path.normpath(gstack_home) != os.path.normpath(os.path.join(home, ".gstack"))',
+      '    ):',
+      '        return "unknown", "launcher-state-root"',
+      '    raw_owner = os.environ.get(WORKSPACE_OWNER_ENV)',
+      '    if (',
+      '        session_kind not in (None, "")',
+      '        or finish_env_work_item not in (None, "")',
+      '        or saved_work_item is not None',
+      '        or (gstack_home is not None and gstack_home != "" and not os.path.isabs(gstack_home))',
+      '    ):',
+      '        return "unknown", "malformed-signal"',
+      '    if raw_owner not in (None, ""):',
+      '        return "unknown", "host-managed-workspace"',
+      '    if detected_agent is None:',
+      '        return "unknown", "no-harness"',
+      '    if detected_agent != "claude" or agent != "claude":',
+      '        return "unknown", "harness-unqualified"',
+      '    raw_entrypoint = os.environ.get("CLAUDE_CODE_ENTRYPOINT")',
+      '    entry = clean(raw_entrypoint)',
+      '    if entry is None or raw_entrypoint != entry:',
+      '        return "unknown", "entrypoint-unavailable"',
+      '    if entry == "cli":',
+      '        return "user-directed", "cli"',
+      '    if entry == "Paseo":',
+      '        return "user-directed", "paseo-entrypoint"',
+      '    return "unknown", "entrypoint-unqualified"',
+      '',
+      'home = sys.argv[2]',
+      'custom_gstack = str(pathlib.Path(home) / "custom-gstack-root")',
+      'default_gstack = str(pathlib.Path(home) / ".gstack") + "/"',
+      'entrypoints = [',
+      '    None, "", "   ", "cli", "Paseo", "paseo", "CLI", " cli", "cli\\n", "x" * 201,',
+      '    "sdk-cli", "sdk-ts", "sdk-py", "acp", "claude-desktop", "claude-vscode", "remote-daemon", "github-action",',
+      ']',
+      'signal_cases = [',
+      '    {},',
+      '    {"GSTACK_EXTEND_RUN_MODE": "orchestrated"},',
+      '    {"GSTACK_EXTEND_RUN_MODE": "user-directed"},',
+      '    {"GSTACK_SESSION_KIND": "spawned"},',
+      '    {"GSTACK_SESSION_KIND": "unattended"},',
+      '    {"GSTACK_EXTEND_WORK_ITEM": "item-from-finish"},',
+      '    {"GSTACK_SESSION_KIND": "spawned", "GSTACK_EXTEND_WORK_ITEM": "item-both", "GSTACK_EXTEND_RUN_MODE": "orchestrated"},',
+      '    {"GSTACK_EXTEND_WORK_ITEM": "item-wins", "GSTACK_EXTEND_RUN_MODE": "orchestrated"},',
+      '    {"GSTACK_HOME": custom_gstack},',
+      '    {"GSTACK_SESSION_KIND": "spawned", "GSTACK_HOME": custom_gstack},',
+      '    {"GSTACK_HOME": default_gstack},',
+      '    {"GSTACK_HOME": "relative-root"},',
+      '    {"GSTACK_SESSION_KIND": "bogus"},',
+      '    {"GSTACK_EXTEND_WORK_ITEM": "   "},',
+      '    {"GSTACK_EXTEND_WORKSPACE_OWNER": "paseo"},',
+      '    {"GSTACK_EXTEND_WORKSPACE_OWNER": ""},',
+      '    {"GSTACK_EXTEND_WORKSPACE_OWNER": "   "},',
+      '    {"GSTACK_EXTEND_WORKSPACE_OWNER": "owner\\nbad"},',
+      '    {"GSTACK_EXTEND_WORKSPACE_OWNER": "x" * 201},',
+      ']',
+      'agent_pairs = [("claude", "claude"), ("claude", "codex"), ("codex", "claude"), (None, "claude"), (None, None)]',
+      'saved_items = [None, "item-from-start", "bad\\nitem"]',
+      'checked = 0',
+      'mismatches = []',
+      'for entry in entrypoints:',
+      '    for sig in signal_cases:',
+      '        env = {"HOME": home, **sig}',
+      '        if entry is not None:',
+      '            env["CLAUDE_CODE_ENTRYPOINT"] = entry',
+      '        for detected_agent, agent in agent_pairs:',
+      '            for saved_item in saved_items:',
+      '                with mock.patch.dict(telemetry.os.environ, env, clear=True):',
+      '                    expected = frozen_run_mode(detected_agent, agent, saved_item)',
+      '                    actual = telemetry.run_mode(detected_agent, agent, saved_item)',
+      '                checked += 1',
+      '                if actual != expected:',
+      '                    mismatches.append({"entry": entry, "sig": sig, "pair": [detected_agent, agent], "saved": saved_item, "expected": expected, "actual": actual})',
+      'print(json.dumps({"checked": checked, "mismatches": mismatches}))',
+    ].join('\n');
+
+    const oracle = spawnSync('python3', ['-B', '-I', '-c', oracleScript, join(ROOT, 'bin/lib'), fix.home], {
+      env: fix.env,
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect([oracle.status, oracle.stderr]).toEqual([0, '']);
+    const parsed = JSON.parse(oracle.stdout);
+    expect(parsed.mismatches).toEqual([]);
+    expect(parsed.checked).toBe(18 * 19 * 5 * 3);
+
+    const repo = join(fix.home, 'claude-lock-repo');
+    mkdirSync(repo);
+    for (const args of [['init', '-q'], ['symbolic-ref', 'HEAD', 'refs/heads/feature/claude-lock'], ['remote', 'add', 'origin', 'git@github.com:acme/widget.git']]) {
+      expect(spawnSync('git', ['-C', repo, ...args], { env: fix.env }).status).toBe(0);
+    }
+    for (const [entrypoint, expectedSource] of [['cli', 'cli'], ['Paseo', 'paseo-entrypoint']] as const) {
+      const sid = `0c7f2e29-0000-4000-8000-00000000c1a${entrypoint === 'cli' ? '1' : '2'}`;
+      const transcript = join(fix.home, '.claude/projects/claude-lock', `${sid}.jsonl`);
+      const { row } = provenanceRun(
+        fix,
+        { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid, CLAUDE_CODE_ENTRYPOINT: entrypoint },
+        () => writeJsonl(transcript, [claudeTurn(Date.now() / 1000, `m-${entrypoint}`, 'claude-opus-5', 'high')]),
+        ['--outcome', 'success'],
+        repo,
+      );
+      expect(Object.keys(row)).toEqual(SCHEMA);
+      expect(Object.keys(row)).toHaveLength(29);
+      const { started_at, duration_s, session_id, producer_version, ...stable } = row;
+      expect(typeof started_at).toBe('string');
+      expect(typeof duration_s).toBe('number');
+      expect(typeof session_id).toBe('string');
+      expect(typeof producer_version).toBe('string');
+      expect(stable).toEqual({
+        stage: 'roadmap',
+        agent: 'claude',
+        model: 'claude-opus-5',
+        effort: 'high',
+        rung: 0,
+        outcome: 'success',
+        repo: 'acme/widget',
+        branch: 'feature/claude-lock',
+        work_item: null,
+        source: 'gstack-extend',
+        route: 'cli',
+        entrypoint_raw: entrypoint,
+        schema_version: 4,
+        agent_source: 'detected',
+        model_source: 'detected',
+        effort_source: 'detected',
+        workspace_host: null,
+        run_mode: 'user-directed',
+        run_mode_source: expectedSource,
+        questions: 0,
+        user_wait_s: 0,
+        resumes: 0,
+        user_signals_source: 'session-log',
+        blocked_reason: null,
+        blocked_reason_source: 'not-blocked',
+      });
+      expect(validRow(row)).toBe(true);
+    }
+  }, 30_000);
 
   test('claude_user_signals extracts questions, user_wait_s, and resumes without leaking prompt or answer text, and records null reasons', () => {
     const fix = makeTelemetryFixture('community', 'stub');

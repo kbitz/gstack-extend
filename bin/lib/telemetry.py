@@ -54,11 +54,23 @@ RUN_MODE_SOURCES = (
     "host-managed-workspace",
     "cli",
     "paseo-entrypoint",
+    "terminal-session",
+    "host-app-session",
     "entrypoint-unqualified",
     "entrypoint-unavailable",
     "harness-unqualified",
     "no-harness",
 )
+LAUNCH_SURFACE_SOURCES = {
+    "terminal": "terminal-session",
+    "host-app": "host-app-session",
+}
+# Documented legacy mapping for Claude, kept byte for byte so existing Claude rows and run_mode() results do not change.
+CLAUDE_LEGACY_LAUNCH_SOURCES = {
+    "terminal": "cli",
+    "host-app": "paseo-entrypoint",
+}
+HOST_APP_CLIENTS = ("paseo",)
 USER_SIGNALS_SOURCES = (
     "session-log",
     "orchestrated",
@@ -88,6 +100,7 @@ KNOWN_SKILLS = (
 VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
 VERSION_BYTES = 128
 RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # ASCII digits only; the schema's producer_version pattern
+LOG_HEAD_BYTES = 64 << 10  # launch-surface records sit at the head of a session log; bounds finish latency on huge logs
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
 # Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
 # Debug prints only these tokens: never a store path, id, cwd, exception, or field value.
@@ -1025,6 +1038,22 @@ def iso(epoch):
         return None
 
 
+def head_records(path):
+    # Complete JSON objects within the first LOG_HEAD_BYTES of a regular JSONL log; a line cut by the cap is dropped.
+    if path is None or path.is_symlink() or not path.is_file():
+        return
+    with path.open("rb") as stream:
+        chunk = stream.read(LOG_HEAD_BYTES + 1)
+    lines = chunk[:LOG_HEAD_BYTES].split(b"\n")
+    for line in lines[:-1] if len(chunk) > LOG_HEAD_BYTES else lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            yield record
+
+
 def tail_records(path):
     # JSON objects from the last LOG_TAIL_BYTES of a JSONL log; a line cut by the seek is dropped.
     # Regular files only: a FIFO or device named like a transcript blocks in open(). A bounded read keeps a
@@ -1480,6 +1509,72 @@ def workspace_host():
     return label
 
 
+def claude_launch_surface():
+    raw_entrypoint = os.environ.get("CLAUDE_CODE_ENTRYPOINT")
+    entry = clean(raw_entrypoint)
+    if entry is None or raw_entrypoint != entry:
+        return None
+    if entry == "cli":
+        return "terminal"
+    if entry == "Paseo":
+        return "host-app"
+    return "other"
+
+
+def codex_launch_surface():
+    log = newest(codex_logs(os.environ.get("CODEX_THREAD_ID", "")))
+    for record in head_records(log) if log else ():
+        if record.get("type") != "session_meta":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        raw_originator = payload.get("originator")
+        originator = clean(raw_originator)
+        if originator is None or raw_originator != originator:
+            return None
+        source = payload.get("source")
+        if isinstance(source, str):
+            clean_source = clean(source)
+            if clean_source is None or source != clean_source:
+                return None
+            if originator in ("codex_cli_rs", "codex-tui") and clean_source == "vscode":
+                return "terminal"
+            return "other"
+        if isinstance(source, dict) and source:
+            return "other"
+        return None
+    return None
+
+
+def muse_launch_surface():
+    log = newest(muse_logs(os.environ.get("MUSE_SESSION_ID", "")))
+    for record in head_records(log) if log else ():
+        if record.get("payload_type") != "session.opened.observed":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict) or payload.get("kind") != "session_opened":
+            return None
+        opened = payload.get("record")
+        if not isinstance(opened, dict):
+            return None
+        raw_client = opened.get("client_info_name")
+        client = clean(raw_client)
+        if client is None or raw_client != client:
+            return None
+        if client in HOST_APP_CLIENTS:
+            return "host-app"
+        return "other"
+    return None
+
+
+LAUNCH_SURFACE_READERS = {
+    "claude": claude_launch_surface,
+    "codex": codex_launch_surface,
+    "muse": muse_launch_surface,
+}
+
+
 def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
     """Return (run_mode, run_mode_source) from consumer-neutral launcher signals and interactive entrypoints."""
     session_kind = os.environ.get("GSTACK_SESSION_KIND")
@@ -1520,16 +1615,23 @@ def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
         return "unknown", "host-managed-workspace"
     if detected_agent is None:
         return "unknown", "no-harness"
-    if detected_agent != "claude" or agent != "claude":
+    if detected_agent != agent:
         return "unknown", "harness-unqualified"
-    raw_entrypoint = os.environ.get("CLAUDE_CODE_ENTRYPOINT")
-    entry = clean(raw_entrypoint)
-    if entry is None or raw_entrypoint != entry:
+    reader = LAUNCH_SURFACE_READERS.get(detected_agent)
+    if reader is None:
+        return "unknown", "harness-unqualified"
+    try:
+        surface = reader()
+    except Exception:
+        surface = None
+    if surface is None:
         return "unknown", "entrypoint-unavailable"
-    if entry == "cli":
-        return "user-directed", "cli"
-    if entry == "Paseo":
-        return "user-directed", "paseo-entrypoint"
+    if surface == "other":
+        return "unknown", "entrypoint-unqualified"
+    sources = CLAUDE_LEGACY_LAUNCH_SOURCES if detected_agent == "claude" else LAUNCH_SURFACE_SOURCES
+    mode_source = sources.get(surface)
+    if mode_source is not None:
+        return "user-directed", mode_source
     return "unknown", "entrypoint-unqualified"
 
 
