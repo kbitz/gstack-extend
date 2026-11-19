@@ -309,7 +309,9 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
       return { ok: false };
     }
     if (/^Recommendation: .+ because\b.+$/.test(line.trim())) { recommendation = true; continue; }
-    if (contextLine(line) === 'none') continue;
+    // A nothing-missing context line may precede the findings or `NO_FINDINGS: none`, never sit between that marker and
+    // the Recommendation it must immediately precede.
+    if (!clean && contextLine(line) === 'none') continue;
     if (line.trim() === 'NO_FINDINGS: none' && !clean && !findings.length) { clean = true; continue; }
     const label = LABEL_LINE.exec(line);
     if (!label || clean) return { ok: false };

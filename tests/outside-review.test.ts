@@ -349,6 +349,49 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Lines that name missing context through a contraction, a typographic apostrophe, a request, a caveat or a
+  // code-span deny word, and nothing-missing lines with a nested call or a benign negation (review fixes).
+  const NAMING_REVIEW_FIXES = [
+    'NEEDS_CONTEXT: none (I can’t see the callers)',
+    "NEEDS_CONTEXT: none (the body wasn't shown)",
+    "NEEDS_CONTEXT: none; the callers weren't provided",
+    'NEEDS_CONTEXT: none; please supply src/x.ts',
+    'NEEDS_CONTEXT: none (unable to see the callers of alpha)',
+    'NEEDS_CONTEXT: none (I lack the callers)',
+    "NEEDS_CONTEXT: none. I don't have the schema.",
+    'NEEDS_CONTEXT: none (for the first item) except the callers of alpha()',
+    'NEEDS_CONTEXT: none. The implementation excerpt is `missing`.',
+    'NEEDS_CONTEXT: none. Diff was cut off.',
+    'NEEDS_CONTEXT: none (callers of alpha() would help)',
+  ] as const;
+  const NONE_REVIEW_FIXES = [
+    'NEEDS_CONTEXT: none (callers of alpha() were supplied).',
+    'NEEDS_CONTEXT: none (the change does not touch any caller).',
+  ] as const;
+
+  // Value: protects=a context line that names missing context in a contraction, typographic apostrophe, request, caveat or code span
+  //   stays uncredited (criteria 1 and 4) while nested calls and benign negations still read as nothing missing; fails_when=the deny
+  //   scan misses these forms or reads code-span text as erased; why_new=cycle 1 of Track 90A's review reproduced each form as credited;
+  //   seam=contextLine() and recover() with the strict and last-line classifiers; no_claim=an exhaustive deny list
+  test('fails closed on contractions, typographic apostrophes, requests, caveats and code-span deny words', () => {
+    for (const line of NAMING_REVIEW_FIXES) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_REVIEW_FIXES) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_REVIEW_FIXES) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_REVIEW_FIXES) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+            gate, line, true, 'valid', 'clean', false,
+          ]);
+        }
+      }
+    }
+  });
+
   test('credits nothing-missing replies through run() and keeps a naming line uncredited', async () => {
     await temporary(async dir => {
       const results = await run(request, '+diff', dir, 'model', async (_prefix, task) => ({
@@ -387,10 +430,16 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
+        ]);
+      }
+      for (const line of NONE_REVIEW_FIXES) {
+        const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
+        expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+          gate, line, true, 'valid', 'clean', false,
         ]);
       }
     }
@@ -480,7 +529,31 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
         'VERDICT: CLEAN',
       ].join('\n'),
     ],
+    // Review fixes: emphasis around a severity token or negation, and a caveat or defect sentence after `Met.`.
+    ...([
+      ['emphasized severity token', '1. Criterion with __P1__: Met.'],
+      ['emphasized severity word', '1. __High-priority paths are covered.__ Met.'],
+      ['emphasized negation after Met', '1. **Criterion.** Met. __Not__ met when the list is empty.'],
+      ['emphasized unmet after Met', '1. **Criterion holds.** Met. __Unmet__ for empty input.'],
+      ['caveat after Met', '4. **Retry handling.** Met. However, src/alpha.ts drops the write when the timeout fires.'],
+      ['defect sentence after Met', '2. **Retry handling.** Met. The retry counter resets on error and drops the last attempt.'],
+    ] as const).map(([label, line]) => [
+      label,
+      [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+    ] as const),
   ] as const;
+
+  // Review fixes: a statement with an internal delimiter before its final `Met`, and a benign negation after `Met.`
+  // (the retained 2026-11-19 reply has that shape), are still met-criterion lines.
+  const COMPOSITE_MET_SHAPES = [
+    ['internal colon, final em dash', '1. Full-review evidence: baseline usable — Met.'],
+    ['bold statement with an internal colon, final em dash', '1. **Full-review evidence: baseline usable** — Met.'],
+    ['bold statement with an internal colon, final colon', '1. **Track 90A: parser**: Met.'],
+    ['benign negation after Met', '6. **Release files are untouched on the branch.** Met. The branch does not edit any release file.'],
+  ].map(([label, line]) => [
+    label,
+    [line, 'NO_FINDINGS: none', 'Recommendation: approve because every criterion holds.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
 
   test('credits the reconstructed 2026-11-19 met-criterion shape, fails closed on untagged findings or non-Met lines, and keeps existing valid shapes valid', async () => {
     for (const gate of gates) {
@@ -514,6 +587,34 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     }
   });
 
+  // Value: protects=met-criterion lines whose statement holds an internal delimiter, or whose sentence after `Met.` is a benign
+  //   negation, are credited as plan T3 describes; fails_when=the delimiter search stops at the first internal delimiter or the
+  //   caveat scan rejects negation; why_new=cycle 1 of Track 90A's review reproduced the composite shapes as uncredited;
+  //   seam=recover() with the numbered-item fixture classifier; no_claim=a model's wording
+  test('credits met-criterion lines with an internal delimiter or a benign negation after Met', () => {
+    for (const gate of gates) {
+      for (const [label, text] of COMPOSITE_MET_SHAPES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict]).toEqual([gate, label, true, 'recovered', 'clean']);
+      }
+    }
+  });
+
+  // Value: protects=the met-criterion rewrite stays linear on a long whitespace run in an untrusted reply, so a degenerate reply
+  //   cannot stall the runner; fails_when=the delimiter search backtracks quadratically (about 1.7 s at 32k spaces, over a minute at
+  //   200k, so this test then exceeds its timeout); why_new=cycle 1 of Track 90A's review measured the quadratic search;
+  //   seam=recover() with the numbered-item fixture classifier; no_claim=a wall-clock bound
+  test('keeps the met-criterion rewrite linear on long whitespace runs', () => {
+    const run200k = ' '.repeat(200_000);
+    const tail = 'NO_FINDINGS: none\nRecommendation: approve because covered.\nVERDICT: CLEAN';
+    for (const gate of gates) {
+      const unmatched = recover(`1. x${run200k}y\n${tail}`, gate, 0, '', numberedCleanVerdict);
+      expect([gate, unmatched.credited, unmatched.classification.reason]).toEqual([gate, false, 'untagged_review']);
+      const delimited = recover(`1. Statement holds:${run200k}Met.\n${tail}`, gate, 0, '', numberedCleanVerdict);
+      expect([gate, delimited.credited, delimited.parse, delimited.classification.verdict]).toEqual([gate, true, 'recovered', 'clean']);
+    }
+  });
+
   test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier credits the met-criterion shape and rejects the negative shapes (installed only)', async () => {
     const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
     for (const gate of gates) {
@@ -521,6 +622,12 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
       expect([gate, res.credited, res.parse, res.classification.verdict, res.classification.findings.highest]).toEqual([
         gate, true, 'recovered', 'clean', null,
       ]);
+      for (const [label, text] of COMPOSITE_MET_SHAPES) {
+        const composite = recover(text, gate, 0, '', classifyOutsideReview);
+        expect([gate, label, composite.credited, composite.parse, composite.classification.verdict]).toEqual([
+          gate, label, true, 'recovered', 'clean',
+        ]);
+      }
       for (const [label, text] of NEGATIVE_SHAPES) {
         const neg = recover(text, gate, 0, '', classifyOutsideReview);
         expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([

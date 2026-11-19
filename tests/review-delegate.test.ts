@@ -1214,6 +1214,19 @@ describe('reply parsing and the receipt contract', () => {
     expect(decide('maintainability', spawned(`NEEDS_CONTEXT: callers of alpha()\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
       outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
     });
+
+    // Review fixes: a context line between NO_FINDINGS and the Recommendation breaks their documented adjacency, and a
+    // naming line written with a contraction or a typographic apostrophe still falls back as needs-context.
+    const adjacent = `NO_FINDINGS: none\nNEEDS_CONTEXT: none\n${rec}\nVERDICT: CLEAN`;
+    expect(parseFindings(adjacent, 'maintainability')).toEqual({ ok: false });
+    expect(decide('maintainability', spawned(adjacent), lastLineVerdict)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'unparsed-finding', findings: [],
+    });
+    for (const naming of ['NEEDS_CONTEXT: none (I can’t see the callers)', "NEEDS_CONTEXT: none (the body wasn't shown)"]) {
+      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
+        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+      });
+    }
   });
 
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
@@ -1962,5 +1975,13 @@ describe('installed classifier', () => {
     expect(decide('maintainability', spawned(`NEEDS_CONTEXT: callers of alpha()\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
       outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
     });
+    expect(decide('maintainability', spawned(`NO_FINDINGS: none\nNEEDS_CONTEXT: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'unparsed-finding', findings: [],
+    });
+    for (const naming of ['NEEDS_CONTEXT: none (I can’t see the callers)', "NEEDS_CONTEXT: none (the body wasn't shown)"]) {
+      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
+        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+      });
+    }
   });
 });

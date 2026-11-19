@@ -197,8 +197,9 @@ The delegate returns, in this form:
   (any finding), immediately after the `Recommendation: <action> because
   <reason>` line (the prompt asks for it as the last line of the reply);
 - a reply that lacks context returns `NEEDS_CONTEXT: <what>` (a `NEEDS_CONTEXT`
-  line before the `Recommendation` saying nothing is missing is allowed and does
-  not request context).
+  line saying nothing is missing is allowed before the findings or
+  `NO_FINDINGS: none`, never between that marker and the `Recommendation`, and
+  does not request context).
 
 Every reply needs its closing `Recommendation` line, and a reply with no
 findings also needs the explicit `NO_FINDINGS: none` marker immediately before

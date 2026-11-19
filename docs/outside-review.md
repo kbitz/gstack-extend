@@ -107,10 +107,12 @@ only a completed execution, normalizes wrapped recommendation headings and
 lowercase priority labels and one-severity qualified labels, and permits a missing recommendation when the
 upstream structured validator independently establishes findings or an explicit
 no-findings conclusion. A context-request line saying nothing is missing is not
-a request; any other context line keeps coverage missing. When upstream's
-column-0 numbered-item rule (`4ed1711d`) leaves a reply with unlabeled items,
-recovery rewrites numbered met-criterion lines (`Met`) without severity tokens
-into `Criterion N:` lines and reclassifies. Refusals, failed execution, ambiguous prose and missing
+a request when its explanation, read with code-span text, names no missing,
+requested or caveated context; any other context line keeps coverage missing.
+When upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
+unlabeled items, recovery rewrites numbered met-criterion lines (`Met`) that
+carry no severity token or negated status (emphasis included) and no caveat
+after `Met.` into `Criterion N:` lines and reclassifies. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 
