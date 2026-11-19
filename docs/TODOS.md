@@ -181,6 +181,40 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** `codex_launch_surface` or `muse_launch_surface` changes.
 
+### [review:files=tests/telemetry.test.ts|bin/lib/telemetry.py] Test gap: Linked Muse data home
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** No run-mode case sets `XDG_DATA_HOME` to a symlink. The Muse reader rebuilds the log path under the unresolved data home before its no-follow walk, so a linked data home stays trusted, like a linked `CODEX_HOME`, but no test pins that.
+- **Hypothesis (untested):** Add a matrix case whose `XDG_DATA_HOME` is a symlink to a store holding a `paseo` open record, expecting `user-directed` / `host-app-session`.
+- **Upstream severity:** CRITICAL
+- **Found in:** `bin/lib/telemetry.py:1597`
+- **Evidence:** The native adversarial pass and the coverage audit both named the missing case, and the adversarial pass's own probe classified a linked data home as `host-app`. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/283 at `abb2c11` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** `muse_launch_surface`, `muse_log_store` or `head_records` changes.
+
+### [review:files=tests/telemetry.test.ts|bin/lib/telemetry.py] Test gap: Launch reader malformed records and raised errors
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** More malformed-input branches have no direct case: a padded or otherwise unclean Codex `originator` or `source`; a Muse open record whose payload is not an object, names another `kind` or holds a non-object `record`; a malformed JSON line inside the head read; and a reader that raises something other than an `OSError`, which `run_mode` still maps to `entrypoint-unavailable`.
+- **Hypothesis (untested):** Add rows beside the existing edge cases in the shared run-mode matrix, expecting `entrypoint-unavailable`. For the raising reader, patch one reader in a Python check and assert `run_mode` returns `unknown` / `entrypoint-unavailable`.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1557`
+- **Evidence:** The coverage audit at `abb2c11` traced these branches and found no test. The linked-directory cases reach the raise path only through real `OSError` reads. No failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/283 at `abb2c11` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** `codex_launch_surface`, `muse_launch_surface` or `run_mode` changes.
+
+### [review:files=bin/lib/telemetry.py] Base issue: Model readers trust suffix-matched and relative-home session logs
+- **Base issue:** present at merge base `1782cb0`; filed under `blocking=shown`
+- **Description:** `codex_turns` reads model and effort from any rollout whose file name only ends with the thread ID, and from a `CODEX_HOME` that is relative to the working directory. The launch-surface reader refuses both, but the model and effort fields still use them, so a row can carry a detected model from a log its own run-mode reader rejected. `muse_logs` may resolve a relative data home the same way; that part is unverified.
+- **Evidence:** A bounded probe of `codex_turns` returned the foreign model for a suffix-matched rollout and the planted model for a relative `CODEX_HOME`, identically at `abb2c11` and at merge base `1782cb0` (disposable copies; no work-tree change).
+- **Upstream severity:** CRITICAL
+- **Found in:** bin/lib/telemetry.py:1220
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/283 at abb2c11 (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** `codex_logs`, `muse_logs` or the model readers change.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
