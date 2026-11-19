@@ -1227,6 +1227,11 @@ describe('reply parsing and the receipt contract', () => {
         outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
       });
     }
+    // Review cycle 2: defect prose glued onto a nothing-missing line is never skipped as a context line.
+    const gluedProse = `NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.\n${maintLine}\n${rec}\nVERDICT: FINDINGS`;
+    expect(decide('maintainability', spawned(gluedProse), lastLineVerdict)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'needs-context', findings: [],
+    });
   });
 
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
@@ -1983,5 +1988,8 @@ describe('installed classifier', () => {
         outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
       });
     }
+    expect(decide('maintainability', spawned(`NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.\n${maintLine}\n${rec}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'needs-context', findings: [],
+    });
   });
 });

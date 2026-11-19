@@ -368,6 +368,54 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none (callers of alpha() were supplied).',
     'NEEDS_CONTEXT: none (the change does not touch any caller).',
   ] as const;
+  // Owner decision A (review cycle 2): an explanation may only affirm supplied context. A negation, absence,
+  // inability, request or hedge, another marker, a severity label or a `path:line`, or a deny word before the
+  // marker fails closed; a statement that the change does not touch, change, edit, modify, affect or depend on
+  // something is allowed.
+  const NAMING_CYCLE_2 = [
+    'NEEDS_CONTEXT: none. The callers are not in the diff.',
+    'NEEDS_CONTEXT: none (all supplied). Callers of alpha() are invisible.',
+    'NEEDS_CONTEXT: none (the callers are not in the prompt).',
+    "NEEDS_CONTEXT: none. The schema isn't in the supplied material.",
+    'NEEDS_CONTEXT: none (I have no access to the caller source).',
+    'NEEDS_CONTEXT: none (I did not receive the schema)',
+    "NEEDS_CONTEXT: none. The diff doesn't show the callers.",
+    'NEEDS_CONTEXT: none. Nothing about the callers was supplied.',
+    'NEEDS_CONTEXT: none. Only the diff was reviewed.',
+    'NEEDS_CONTEXT: none. For the delegate path, NEEDS_CONTEXT: the callers of recover() in cli.ts.',
+    'NEEDS_CONTEXT: none. [P1] `src/alpha.ts`: the retry loop drops the write on timeout.',
+    'NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.',
+    '`callers absent` NEEDS_CONTEXT: none',
+  ] as const;
+  const NONE_CYCLE_2 = [
+    'NEEDS_CONTEXT: none of the above depends on missing context. The fix does not depend on any caller.',
+  ] as const;
+
+  // Value: protects=owner decision A for context lines: a negating, hedging or requesting explanation, a glued marker,
+  //   label or path:line, and a deny word before the marker keep coverage missing, while a supplied-context explanation,
+  //   the allowed non-dependency statement and a numbered nothing-missing line are credited; fails_when=the remainder scan
+  //   credits any naming line or the numbered line stays an unlabeled item; why_new=cycle 2 of Track 90A's review
+  //   reproduced each; seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
+  test('fails closed on negation, absence, hedges, glued markers and text before the marker (owner decision A)', () => {
+    for (const line of NAMING_CYCLE_2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CYCLE_2) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CYCLE_2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.needs_context]).toEqual([gate, line, false, true]);
+        }
+        for (const line of NONE_CYCLE_2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+        }
+      }
+    }
+    for (const gate of gates) {
+      const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', numberedCleanVerdict);
+      expect([gate, numbered.credited, numbered.parse, numbered.classification.verdict]).toEqual([gate, true, 'recovered', 'clean']);
+    }
+  });
 
   // Value: protects=a context line that names missing context in a contraction, typographic apostrophe, request, caveat or code span
   //   stays uncredited (criteria 1 and 4) while nested calls and benign negations still read as nothing missing; fails_when=the deny
@@ -390,6 +438,14 @@ describe('nothing-missing context lines (Track 90A)', () => {
         }
       }
     }
+  });
+
+  // Value: protects=the glued `path:line` check stays linear on a long dotted token in an untrusted reply; fails_when=the
+  //   path pattern backtracks quadratically (it hung on a 1 MiB `a.a.` run during review), so this test exceeds its
+  //   timeout; why_new=cycle 2 of Track 90A's review measured the hang; seam=contextLine(); no_claim=a wall-clock bound
+  test('keeps the glued path:line check linear on long dotted tokens', () => {
+    expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}`)).toBe('none');
+    expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}ts:14`)).toBe('missing');
   });
 
   test('credits nothing-missing replies through run() and keeps a naming line uncredited', async () => {
@@ -430,13 +486,15 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
         ]);
       }
-      for (const line of NONE_REVIEW_FIXES) {
+      const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
+      expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
@@ -457,7 +515,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     '   - Checked the delimiter and parenthetical branches.',
     '2. **Missing-context lines still fail closed.** Met.',
     '3. **Delegated reply parser uses the same predicate.** Met, by inspection.',
-    '4. **Existing gates remain unchanged for missing context.** Met. Every negative fixture still returns unverified.',
+    '4. **Existing gates remain unchanged for missing context.** Met. The change does not touch the negative fixtures.',
     '5. **Structured met-criterion reply is credited.** Met.',
     '6. **Release files are untouched on the branch.** Met.',
     '7. **Baseline record preserves missing outside coverage.** Met.',
@@ -537,6 +595,15 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
       ['emphasized unmet after Met', '1. **Criterion holds.** Met. __Unmet__ for empty input.'],
       ['caveat after Met', '4. **Retry handling.** Met. However, src/alpha.ts drops the write when the timeout fires.'],
       ['defect sentence after Met', '2. **Retry handling.** Met. The retry counter resets on error and drops the last attempt.'],
+      // Owner decision A (review cycle 2): only the bold title, a delimiter and the status may precede `Met`, and the
+      // one sentence allowed after `Met.` states that the change does not touch, change, edit, modify or affect something.
+      ['caveat in the statement before Met', '1. **Handles empty and non-empty input.** Fails on empty input; non-empty input: Met.'],
+      ['caveat between the bold title and Met', '1. **Retry handling** (however, src/alpha.ts drops writes on timeout): Met.'],
+      ['unverified path after Met', '4. **Retry handling.** Met. Could not verify the timeout path.'],
+      ['untested note after Met', '4. **Retry handling.** Met. Not covered by tests.'],
+      ['hedge after Met', '4. **Retry handling.** Met. Only on the happy path.'],
+      ['defect sentence without a keyword after Met', '1. **Input validation.** Met. src/auth.ts accepts expired tokens.'],
+      ['any other sentence after Met', '4. **Existing gates remain unchanged.** Met. Every negative fixture still returns unverified.'],
     ] as const).map(([label, line]) => [
       label,
       [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
@@ -550,6 +617,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     ['bold statement with an internal colon, final em dash', '1. **Full-review evidence: baseline usable** — Met.'],
     ['bold statement with an internal colon, final colon', '1. **Track 90A: parser**: Met.'],
     ['benign negation after Met', '6. **Release files are untouched on the branch.** Met. The branch does not edit any release file.'],
+    ['trailing whitespace after Met', '1. **Criterion holds.** Met.  '],
   ].map(([label, line]) => [
     label,
     [line, 'NO_FINDINGS: none', 'Recommendation: approve because every criterion holds.', 'VERDICT: CLEAN'].join('\n'),
