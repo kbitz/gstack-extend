@@ -1080,6 +1080,9 @@ entry "Harden the bounded documentation audit before enabling it" in
 See the [documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)
 record.
 
+The rollout instructions below apply when interoperating with installs from
+before recording became the default.
+
 `run-state=record` follows the same rollout order and the same check, written as
 `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"` (exit 0 means
 supported): update the caller's own H-E parser first, since an older H-E parser
