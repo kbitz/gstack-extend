@@ -597,12 +597,6 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       if (voice?.part !== null && voice?.part !== undefined && canon.part !== null && canon.part !== voice.part) return invalid(state!.rev, [{ path: 'part', rule: 'invalid-value', expected: `matching-voice-part:${voice.part}` }]);
       if (canon.predecessor_attempt_id !== null && !voice?.attempts.some((a) => a.attempt_id === canon.predecessor_attempt_id)) return invalid(state!.rev, [{ path: 'predecessor_attempt_id', rule: 'invalid-reference', expected: 'prior-attempt-on-voice' }]);
       if (state!.passes.some((p) => p.voices.some((vo) => vo.attempts.some((a) => a.attempt_id === canon.attempt_id)))) return invalid(state!.rev, [{ path: 'attempt_id', rule: 'duplicate-value', expected: 'unique-attempt-id' }]);
-      if (canon.findings) {
-        const existingFindingIds = new Set<string>();
-        for (const p of state!.passes) for (const vo of p.voices) for (const a of vo.attempts) for (const f of a.findings ?? []) existingFindingIds.add(f.finding_id);
-        canon.findings.forEach((f, i) => { if (existingFindingIds.has(f.finding_id)) v.push({ path: `findings[${i}].finding_id`, rule: 'duplicate-value', expected: 'unique-finding-id-in-run' }); });
-        if (v.length > 0) return invalid(state!.rev, v);
-      }
 
       const attRecord: AttemptRecord = { attempt_id: canon.attempt_id, part: canon.part, outcome: canon.outcome, predecessor_attempt_id: canon.predecessor_attempt_id, dispatched_at: canon.dispatched_at, returned_at: canon.returned_at, delegate: canon.delegate, findings: canon.findings, recorded_at: nowIso };
       const nextVoices = voice
@@ -970,7 +964,7 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
       check: nullable((x): x is number => isPosInt(x) && x <= segCount),
       expected: `int-1..${segCount}|null`,
     };
-    const passIds = new Set<string>(), attemptIds = new Set<string>(), findingIds = new Set<string>();
+    const passIds = new Set<string>(), attemptIds = new Set<string>();
     const findingTargets = new Set<string>();
     array(root.passes, 'passes', (x, path) => {
       const p = object(x, STATE_KEYS.pass, { pass_id: R.uuid, segment: segRule, scope: R.enum(ENUMS.passScope), cycle: R.posInt, coverage: R.enum(ENUMS.passCoverage), delta_from: R.hex40N, required_voices: strings(R.voice.check, true), started_at: R.isoZ, completed_at: R.isoZN, state: R.enum(['open', 'completed']), recorded_at: R.isoZ, completed_recorded_at: R.isoZN }, path);
@@ -988,6 +982,7 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
           if (a.predecessor_attempt_id !== null) reference(prior.has(a.predecessor_attempt_id as string), `${ap}.predecessor_attempt_id`);
           unique(attemptIds, a.attempt_id, `${ap}.attempt_id`); prior.add(a.attempt_id as string);
           if (a.delegate !== null) object(a.delegate, STATE_KEYS.delegate, { provider: R.provider, model: R.safeId, outcome: R.enum(ENUMS.delegateOutcome), fallback_reason: R.enumN(ENUMS.fallbackReason), replay: R.bool, wall_ms: R.nonNegIntN, input_tokens: R.nonNegIntN, output_tokens: R.nonNegIntN, cache_read_input_tokens: R.nonNegIntN, cache_creation_input_tokens: R.nonNegIntN, call_id: R.hex64 }, `${ap}.delegate`);
+          const findingIds = new Set<string>();
           if (a.findings === null) {
             if (a.outcome === 'completed') v.push({ path: `${ap}.findings`, rule: 'invalid-type', expected: 'array' });
           } else array(a.findings, `${ap}.findings`, (x, fp) => {
