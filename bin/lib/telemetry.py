@@ -1587,8 +1587,11 @@ def codex_launch_surface():
 
 
 def muse_launch_surface():
-    log = newest(muse_logs(os.environ.get("MUSE_SESSION_ID", "")))
     home = muse_data_home()
+    # A relative data home (a relative HOME without XDG_DATA_HOME) would resolve against the checkout.
+    if not home.is_absolute():
+        return None
+    log = newest(muse_logs(os.environ.get("MUSE_SESSION_ID", "")))
     # muse_logs resolves the store; reread the same log through the unresolved store so a linked muse or
     # sessions directory under the data home is refused like any other linked directory.
     named = home / "muse/sessions" / log.relative_to(muse_log_store()) if log is not None else None

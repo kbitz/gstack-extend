@@ -5474,7 +5474,10 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
 
     writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
     writeCodexMeta('codex-rm-exec', 'codex_exec', 'exec');
-    symlinkSync(codexRolloutPath('codex-rm-term'), codexRolloutPath('codex-rm-sym'));
+    // The link's target names the linked thread, so only the leaf no-follow open can refuse it.
+    const codexSymTarget = join(fix.home, 'codex-sym-target.jsonl');
+    writeJsonl(codexSymTarget, [{ timestamp: iso(1790000000), type: 'session_meta', payload: { id: 'codex-rm-sym', originator: 'codex_cli_rs', source: 'vscode' } }]);
+    symlinkSync(codexSymTarget, codexRolloutPath('codex-rm-sym'));
     writeCodexMeta('codex-rm-over', 'codex_cli_rs', 'vscode', 70_000);
 
     writeMuseOpen('muse-rm-host', 'paseo');
@@ -5668,6 +5671,12 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       {
         name: 'a relative CODEX_HOME gives entrypoint-unavailable',
         finishEnv: { CODEX_HOME: relative(process.cwd(), realCodexHome), CODEX_THREAD_ID: 'codex-rm-term' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'a relative HOME without XDG_DATA_HOME gives Muse entrypoint-unavailable',
+        finishEnv: { HOME: relative(process.cwd(), fix.home), MUSE_SESSION_ID: 'muse-rm-host', PASEO_AGENT_ID: 'paseo-muse-rm' },
         mode: 'unknown',
         source: 'entrypoint-unavailable',
       },

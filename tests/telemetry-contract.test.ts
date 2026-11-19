@@ -2571,7 +2571,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     writeCodexMeta('codex-contract-term', 'codex_cli_rs', 'vscode');
     writeCodexMeta('codex-contract-exec', 'codex_exec', 'exec');
     writeCodexMeta('codex-contract-sub', 'codex_cli_rs', { subagent: 'review' });
-    symlinkSync(codexRollout('codex-contract-term'), codexRollout('codex-contract-sym'));
+    // The link's target names the linked thread, so only the leaf no-follow open can refuse it.
+    const codexSymTarget = join(fix.home, 'codex-contract-sym-target.jsonl');
+    writeLines(codexSymTarget, [{ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: 'codex-contract-sym', originator: 'codex_cli_rs', source: 'vscode' } }]);
+    symlinkSync(codexSymTarget, codexRollout('codex-contract-sym'));
     writeCodexMeta('codex-contract-over', 'codex_cli_rs', 'vscode', 70_000);
 
     writeMuseOpen('muse-contract-host', 'paseo');
