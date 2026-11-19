@@ -157,6 +157,16 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** Attempt selection or correction targeting changes.
 
+### [review:files=tests/outside-review.test.ts] Base issue: installed-only classifier tests lack the closing verdict line
+
+- **Base issue:** present at merge base `1782cb0`; filed under `blocking=shown`
+- **Description:** With `GSTACK_OUTSIDE_TEST_ROOT` pointing at installed gstack 1.101.0.0, five installed-only tests fail: the three qualified severity label cases, the golden verdicts through recovery and the installed transport check. Their advisory-only replies end on the Recommendation with no closing `VERDICT:` line, so the installed classifier reads them as `missing_verdict` (the closing verdict-line rule from 1.99.0.0). The default suite skips these tests.
+- **Evidence:** The installed-only run of `tests/outside-review.test.ts` and `tests/review-delegate.test.ts` fails the same five tests with the same assertions at `1782cb0` and at `15da31e`. The same reply with `VERDICT: FINDINGS` appended is credited.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/outside-review.test.ts`
+- **Context:** Filed by /review-and-prep on `mmm/41e6e394` at `15da31e` on 2026-11-19, before draft creation.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
