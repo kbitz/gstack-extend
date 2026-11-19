@@ -9,22 +9,31 @@ export type Classifier = (input: { text: string; gate: 'review' | 'structured'; 
 
 // One severity plus a qualifier is formatting. Never quotes (`>`, code spans) or a second severity, token or word.
 const QUALIFIED_LABEL = /^(\s*(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|__)?\[P[0-3])(?:\s*[,;:/—–-]\s*|\s+)([a-z][a-z -]*)\]/i;
-// A nothing-missing explanation may only affirm supplied context: any negation, absence, inability, request or hedge
-// names missing context, except a statement that the change does not touch, change, edit, modify, affect or depend on
-// something. Read lowercased, with code-span text kept and typographic apostrophes normalized.
-const CONTEXT_ALLOWED_NEGATION = /\b(?:does|do|did)(?: not|n't) (?:touch|change|edit|modify|affect|depend)\b/g;
-const CONTEXT_DENY = /\b(?:no|not|nothing|none|never|nor|neither|[a-z]+n't|cannot|without|unable|lack[a-z]*|missing|need(?:s|ed|ing)?|requir[a-z]*|unavailable|truncat[a-z]*|absent|omit[a-z]*|unknown|insufficient|incomplete|partial[a-z]*|only|except[a-z]*|but|however|although|though|unless|please|provide|supply|include|send|share|attach|paste|assum[a-z]*|guess[a-z]*|unclear|uncertain|unsure|hidden|invisible|unseen|elided|redacted|beyond|outside|elsewhere|cut[ -]?off|would|could|should|might|may|maybe|perhaps|probably|likely|seem[a-z]*|appear[a-z]*)\b/;
-// Another marker, a severity label, a review marker or a `path:line` glued onto the line is never an explanation.
-// The `path:line` check reads back a bounded extension from each `:digit`, so a long dotted token stays linear.
-const CONTEXT_GLUED = /needscontext|nofindings|\[p[0-3]\]|\brecommendation\b|\bverdict\b|(?<=\.[a-z0-9]{1,10}):\d/;
+// Text after `NEEDS_CONTEXT: none` and after `Met.` is credited only in the forms below (owner decision A); anything
+// else fails closed. All of it is read lowercased, with code-span text kept and typographic apostrophes normalized.
+// Only list, quote or heading markup may precede the context marker. Each repeat consumes a fixed token, so a long run
+// of markup stays linear.
+const CONTEXT_PREFIX = /^\s*(?:(?:[-+>]|\(?\d{1,3}[.)]|#{1,6}(?!#))\s*)*$/;
+// Another marker, a severity label or word, a review marker, a quote, brace or question, or a `name:line` reference is
+// never an explanation.
+const CONTEXT_GLUED = /needscontext|nofindings|\[p[0-3]\b|\bp[0-3]\b|\b(?:critical|high|medium|low|severity|recommendation|verdict)\b|["{}?]|:\d/;
+// Each part of an explanation (its parenthetical, then each sentence or clause) must say context was supplied, using
+// one of these words, or be the change statement below.
+const CONTEXT_AFFIRM = /\b(?:supplied|provided|included|present|shown|given|attached|available|visible|covered|contained|complete|sufficient)\b/;
+// A negation, absence, inability, request, hedge, contrast or subordinate clause, obligation or defect word: a part or a
+// list of names carrying one says more than that context was supplied or that the change leaves something alone.
+const NOT_AFFIRMING = /\b(?:no|not|nothing|none|never|nor|neither|[a-z]+n't|[a-z]+'(?:d|ll)|cannot|without|unable|lack[a-z]*|missing|need(?:s|ed|ing)?|requir[a-z]*|unavailable|truncat[a-z]*|absent|omit[a-z]*|unknown|insufficient|incomplete|partial[a-z]*|only|except[a-z]*|but|however|although|though|unless|until|yet|whereas|while|because|since|so|if|when|whether|which|who|whose|where|that|please|provide|supply|include|send|share|attach|paste|show|give|add|fetch|ask[a-z]*|let|want[a-z]*|wish[a-z]*|hop(?:e|es|ed|ing)|like|assum[a-z]*|guess[a-z]*|presum[a-z]*|apparent[a-z]*|possibl[a-z]*|suppos[a-z]*|believ[a-z]*|think|thought|expect[a-z]*|unclear|uncertain|unsure|unverif[a-z]*|untested|unchecked|unconfirm[a-z]*|unreview[a-z]*|hidden|invisible|unseen|elided|redacted|beyond|outside|elsewhere|cut[ -]?off|would|could|should|might|may|maybe|perhaps|probably|likely|seem[a-z]*|appear[a-z]*|must|todo|fixme|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|vulnerab[a-z]*|expos[a-z]*|bypass[a-z]*|skip[a-z]*|ignor[a-z]*|corrupt[a-z]*|overflow[a-z]*|hang[a-z]*|deadlock[a-z]*|race|stale|unsafe|insecure|invalid[a-z]*|issue[a-z]*|problem[a-z]*|risk[a-z]*|unmet|still)\b/;
+// The change statement: the change does not touch, change, edit, modify or affect (on a context line also: depend on)
+// a list of names. Its names carry no punctuation but commas and the dots inside a file name.
+const CHANGE_NOTE = /^(?:the |this )?(?:change|changes|diff|fix|patch|branch|commit|pr|pull request) (?:does|do|did)(?: not|n't) (touch|change|edit|modify|affect|depend on) ((?:[^.;:!?]|\.(?=\S))+)\.?$/;
+// A path is followed only by a list separator, a copula or a preposition, never by a verb.
+const PATH_TOKEN = /[/\\]|\.[a-z0-9]{1,10},?$/;
+const PATH_FOLLOWER = /^(?:and|or|was|were|is|are|has|have|in|of|from|for|to|by|with|at|on|via|through|as|plus)$/;
 const APOSTROPHES = /[‘’ʼ]/g;
 const NONE_PHRASE = /^none(?: of the above depends? on missing context)?/;
 // `none` (optionally the observed phrase), then the end, a sentence break or one parenthetical (one nested pair allowed)
 // that itself ends the value or is followed by a sentence break.
 const NONE_VALUE = /^none(?: of the above depends? on missing context)?(?:$|[.;](?:\s.*|$)| \((?:[^()]|\([^()]*\))+\)(?:$|[.;](?:\s.*|$)))/;
-// The one sentence a met line may add after `Met.`: that the change does not touch, change, edit, modify or affect
-// something. Anything else leaves the line unrewritten. A dot inside a file name does not end the sentence.
-const MET_NOTE = /^(?:the |this )?(?:diff|change|changes|branch|patch|commit|pr|pull request) (?:does|do|did)(?: not|n't) (?:touch|change|edit|modify|affect)\b(?:[^.;!?]|\.(?=\S))*\.?$/;
 // An unwrapped criterion statement carrying a contrast, failure, obligation or negation is a caveat, not a criterion.
 const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unless|whereas|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|must|should|todo|fixme|issue[a-z]*|problem[a-z]*|partial[a-z]*|unmet|missing|untested|unverified|not|no|never|[a-z]+n't|cannot|only)\b/;
 // Between a bold criterion title and its status: whitespace and at most one delimiter.
@@ -44,25 +53,50 @@ export function contextLine(line: string): 'none' | 'missing' | null {
   if (!/^NEEDSCONTEXT(?:\s*(?::|[—–-]|\||$)|\s+because\b)/i.test(body)) return null;
   if (plain.includes('|')) return 'missing';
   if (!/^NEEDSCONTEXT\s*[:—–-]/i.test(body)) return 'missing';
-  // The whole line is read with code-span text kept, so a code span cannot hide a deny word before or after the marker.
+  // The whole line is read with code-span text kept, so a code span cannot hide text before or after the marker.
   const kept = flatten(line);
   const marker = /needscontext\s*[:—–-]/.exec(kept);
-  if (!marker) return 'missing';
+  if (!marker || !CONTEXT_PREFIX.test(kept.slice(0, marker.index))) return 'missing';
   const value = kept.slice(marker.index + marker[0].length).trim();
   if (!NONE_VALUE.test(value)) return 'missing';
   const explanation = value.replace(NONE_PHRASE, '');
-  if (CONTEXT_GLUED.test(explanation) || CONTEXT_DENY.test(kept.slice(0, marker.index))
-    || CONTEXT_DENY.test(explanation.replace(CONTEXT_ALLOWED_NEGATION, ''))) return 'missing';
-  return 'none';
+  return !CONTEXT_GLUED.test(explanation) && contextParts(explanation).every(affirmsContext) ? 'none' : 'missing';
 }
 
-/** Whether `text` holds a Met status at `at`: undefined when it does not, false when it adds a sentence MET_NOTE refuses. */
+/** The parenthetical of a nothing-missing explanation, then each sentence or clause after it. */
+function contextParts(explanation: string): string[] {
+  const paren = /^ \(((?:[^()]|\([^()]*\))+)\)/.exec(explanation);
+  const parts = paren ? [paren[1]!, explanation.slice(paren[0].length)] : [explanation];
+  return parts.flatMap(part => part.split(/[.;!](?=\s|$)/)).map(part => part.trim()).filter(Boolean);
+}
+
+/** A part says context was supplied, with nothing after the affirming word but its object or place, or is the change statement. */
+function affirmsContext(part: string): boolean {
+  if (CHANGE_NOTE.test(part)) return changeStatement(part, true);
+  const word = CONTEXT_AFFIRM.exec(part);
+  return !!word && !NOT_AFFIRMING.test(part) && pathsListed(part)
+    && !/,|\b(?:and|or)\b/.test(part.slice(word.index + word[0].length));
+}
+
+/** Whether `text` is the change statement and its names carry nothing else. */
+function changeStatement(text: string, dependOn: boolean): boolean {
+  const note = CHANGE_NOTE.exec(text);
+  return !!note && (dependOn || note[1] !== 'depend on')
+    && !NOT_AFFIRMING.test(note[2]!) && !CONTEXT_GLUED.test(note[2]!) && pathsListed(note[2]!);
+}
+
+function pathsListed(text: string): boolean {
+  const words = text.trim().split(' ');
+  return words.every((word, i) => !PATH_TOKEN.test(word) || word.endsWith(',') || i + 1 === words.length || PATH_FOLLOWER.test(words[i + 1]!));
+}
+
+/** Whether `text` holds a Met status at `at`: undefined when it does not, false when it adds a sentence other than the change statement. */
 function metTail(text: string, at: number): boolean | undefined {
   MET_TAIL.lastIndex = at;
   const tail = MET_TAIL.exec(text);
   if (!tail) return undefined;
   const note = tail[1] ?? tail[2];
-  return note === undefined || MET_NOTE.test(flatten(note).trim());
+  return note === undefined || changeStatement(flatten(note).trim(), false);
 }
 
 function rewriteMetCriterion(line: string): string {

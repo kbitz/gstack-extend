@@ -27,6 +27,12 @@ let counter = 0;
 const fresh = (label: string) => { const dir = join(scratch, `${label}-${counter++}`); mkdirSync(dir, { recursive: true }); return dir; };
 const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
 
+// Track 90A review cycle 3: a code span before the marker, a request and an extensionless path:line name missing context.
+const CYCLE_3_DELEGATE_NAMING = [
+  '`src/alpha.ts:14 loses the write` NEEDS_CONTEXT: none',
+  'NEEDS_CONTEXT: none. Can you show the callers of parse()?',
+  'NEEDS_CONTEXT: none. Dockerfile:12 exposes the signing key in the image.',
+] as const;
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const ATTACKER = (() => { const inv = attackerInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const ADVERSARIAL_BODY = [
@@ -1232,6 +1238,12 @@ describe('reply parsing and the receipt contract', () => {
     expect(decide('maintainability', spawned(gluedProse), lastLineVerdict)).toMatchObject({
       outcome: 'fell-back', fallback_reason: 'needs-context', findings: [],
     });
+    // Review cycle 3: text before the marker, a request and an extensionless path:line are never skipped either.
+    for (const naming of CYCLE_3_DELEGATE_NAMING) {
+      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
+        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+      });
+    }
   });
 
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
@@ -1991,5 +2003,10 @@ describe('installed classifier', () => {
     expect(decide('maintainability', spawned(`NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.\n${maintLine}\n${rec}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
       outcome: 'fell-back', fallback_reason: 'needs-context', findings: [],
     });
+    for (const naming of CYCLE_3_DELEGATE_NAMING) {
+      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
+        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
+      });
+    }
   });
 });

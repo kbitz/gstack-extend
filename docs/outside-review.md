@@ -107,18 +107,26 @@ only a completed execution, normalizes wrapped recommendation headings and
 lowercase priority labels and one-severity qualified labels, and permits a missing recommendation when the
 upstream structured validator independently establishes findings or an explicit
 no-findings conclusion. A context-request line saying nothing is missing is not
-a request when its explanation, read with code-span text, only affirms supplied
-context: a negation, absence, inability, request or hedge (other than that the
-change does not touch, change, edit, modify, affect or depend on something),
-another marker, a severity label or a `path:line` keeps coverage missing, as does
-any other context line. When upstream's column-0 numbered-item rule (`4ed1711d`)
-leaves a reply with unlabeled items, recovery drops the number from a numbered
-nothing-missing context line and rewrites numbered met-criterion lines into
+a request only in an allowed form, read with code-span text: list, quote or
+heading markup alone before the marker, then `none` (or `none of the above
+depends on missing context`), and an explanation each of whose parts (its
+parenthetical, then each sentence or clause) either says context was supplied,
+with nothing after the affirming word but its object or place, or is the change
+statement: the change does not touch, change, edit, modify, affect or depend on a
+list of names. A part that affirms nothing, or carries a negation, absence,
+inability, request, hedge, contrast, obligation or defect word, another marker,
+a severity label or word, a quote, brace, question or `name:line`, or a path
+followed by a verb keeps coverage missing, as does any other context line. When
+upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
+unlabeled items, recovery drops the number from a numbered nothing-missing
+context line and rewrites numbered met-criterion lines into
 `Criterion N:` lines, then reclassifies. A met-criterion line carries no severity
 token or negated status (emphasis included); only a delimiter separates its bold
 title, or an unwrapped statement without a caveat, from `Met`, `Met.` or
-`Met, by inspection.`; and the one sentence allowed after `Met.` says the change
-does not touch, change, edit, modify or affect something. Refusals, failed execution, ambiguous prose and missing
+`Met, by inspection.`; and the one sentence allowed after `Met.` is the change
+statement without `depend on`. These forms are lexical: a defect clause that
+uses no listed word and sits before the affirming word or among the list of
+names is not detected. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 

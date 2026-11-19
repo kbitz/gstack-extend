@@ -390,6 +390,39 @@ describe('nothing-missing context lines (Track 90A)', () => {
   const NONE_CYCLE_2 = [
     'NEEDS_CONTEXT: none of the above depends on missing context. The fix does not depend on any caller.',
   ] as const;
+  // Owner decision A (review cycle 3): each part of the explanation (its parenthetical and each sentence or clause)
+  // must say context was supplied or state that the change does not touch, change, edit, modify, affect or depend on
+  // a list of names. A request, hedge or defect in other words, a sentence that affirms nothing, a clause after the
+  // affirmation, a path followed by a verb, a qualified label, severity word, quote, brace or question, another
+  // subject for the change statement, and any text before the marker but list, quote or heading markup fail closed.
+  const NAMING_CYCLE_3 = [
+    'NEEDS_CONTEXT: none. Can you show the callers of parse()?',
+    'NEEDS_CONTEXT: none (presumably the loader validates input)',
+    'NEEDS_CONTEXT: none (callers of parse() unverified)',
+    'NEEDS_CONTEXT: none. I am requesting the caller source.',
+    'NEEDS_CONTEXT: none (show me the callers of alpha())',
+    "NEEDS_CONTEXT: none. I'd like the callers.",
+    'NEEDS_CONTEXT: none. The retry loop drops the write when the timeout fires.',
+    'NEEDS_CONTEXT: none. Dockerfile:12 exposes the signing key in the image.',
+    'NEEDS_CONTEXT: none. Makefile:14 loses the write.',
+    'NEEDS_CONTEXT: none (all three interfaces were supplied). The tests agree.',
+    'NEEDS_CONTEXT: none (every caller was supplied and the token check accepts expired tokens)',
+    'NEEDS_CONTEXT: none (src/auth.ts accepts expired tokens and every caller was supplied)',
+    'NEEDS_CONTEXT: none (all supplied). [P1, security] The token check accepts expired tokens.',
+    'NEEDS_CONTEXT: none (all supplied). Critical: the token check accepts expired tokens.',
+    'NEEDS_CONTEXT: none (all supplied). {"callers": "supplied"}',
+    'NEEDS_CONTEXT: none (all supplied). bin/outside-review:14 was supplied.',
+    'NEEDS_CONTEXT: none (I did not touch the callers)',
+    'NEEDS_CONTEXT: none. The supplied excerpts do not touch the caller implementation.',
+    '`src/alpha.ts:14 loses the write` NEEDS_CONTEXT: none',
+    '`[P1] retry drops writes` NEEDS_CONTEXT: none',
+    'Status: NEEDS_CONTEXT: none',
+  ] as const;
+  const NONE_CYCLE_3 = [
+    'NEEDS_CONTEXT: none (all three interfaces were supplied). The tests were supplied too.',
+    'NEEDS_CONTEXT: none (callers in src/cli.ts were supplied).',
+    '- NEEDS_CONTEXT: none (the change does not touch `src/cli.ts` or its callers).',
+  ] as const;
 
   // Value: protects=owner decision A for context lines: a negating, hedging or requesting explanation, a glued marker,
   //   label or path:line, and a deny word before the marker keep coverage missing, while a supplied-context explanation,
@@ -414,6 +447,28 @@ describe('nothing-missing context lines (Track 90A)', () => {
     for (const gate of gates) {
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', numberedCleanVerdict);
       expect([gate, numbered.credited, numbered.parse, numbered.classification.verdict]).toEqual([gate, true, 'recovered', 'clean']);
+    }
+  });
+
+  // Value: protects=owner decision A for context lines: only a supplied-context affirmation or the change statement is
+  //   credited, so a request, hedge, defect, unaffirmed sentence, glued label or path, foreign subject or text before the
+  //   marker keeps coverage missing; fails_when=the explanation is screened with a deny list again or the prefix and glue
+  //   checks are dropped; why_new=cycle 3 of Track 90A's review reproduced each naming line as credited;
+  //   seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
+  test('credits only supplied-context affirmations and the change statement (owner decision A, cycle 3)', () => {
+    for (const line of NAMING_CYCLE_3) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CYCLE_3) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CYCLE_3) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_CYCLE_3) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+        }
+      }
     }
   });
 
@@ -444,7 +499,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
   //   path pattern backtracks quadratically (it hung on a 1 MiB `a.a.` run during review), so this test exceeds its
   //   timeout; why_new=cycle 2 of Track 90A's review measured the hang; seam=contextLine(); no_claim=a wall-clock bound
   test('keeps the glued path:line check linear on long dotted tokens', () => {
-    expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}`)).toBe('none');
+    expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}ts was supplied.`)).toBe('none');
     expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}ts:14`)).toBe('missing');
   });
 
@@ -486,7 +541,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -494,7 +549,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2]) {
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
@@ -604,6 +659,13 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
       ['hedge after Met', '4. **Retry handling.** Met. Only on the happy path.'],
       ['defect sentence without a keyword after Met', '1. **Input validation.** Met. src/auth.ts accepts expired tokens.'],
       ['any other sentence after Met', '4. **Existing gates remain unchanged.** Met. Every negative fixture still returns unverified.'],
+      // Owner decision A (review cycle 3): the change statement names only what the change leaves alone, so a contrast,
+      // a defect clause, a path followed by a verb or a colon after its list of names leaves the line unrewritten.
+      ['contrast clause after the change statement', '1. **Input validation.** Met. The change does not touch auth, but src/auth.ts accepts expired tokens.'],
+      ['defect clause after the change statement', '1. Parser handles empty input: Met. The change does not touch the lexer, but the new caller crashes on empty input.'],
+      ['defect verb after the change statement', '1. **Retry handling.** Met. The change does not touch the retry path, but the timeout branch still drops writes.'],
+      ['path and verb after the change statement', '1. **Input validation.** Met. The change does not touch auth, and src/auth.ts accepts expired tokens.'],
+      ['colon after the change statement', '1. **Input validation.** Met. The diff does not touch auth: the token check accepts expired tokens.'],
     ] as const).map(([label, line]) => [
       label,
       [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
@@ -618,6 +680,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     ['bold statement with an internal colon, final colon', '1. **Track 90A: parser**: Met.'],
     ['benign negation after Met', '6. **Release files are untouched on the branch.** Met. The branch does not edit any release file.'],
     ['trailing whitespace after Met', '1. **Criterion holds.** Met.  '],
+    ['change statement listing code spans', '6. **Release files are untouched on the branch.** Met. The diff does not touch `CHANGELOG.md`, `VERSION` or any package file.'],
   ].map(([label, line]) => [
     label,
     [line, 'NO_FINDINGS: none', 'Recommendation: approve because every criterion holds.', 'VERDICT: CLEAN'].join('\n'),
