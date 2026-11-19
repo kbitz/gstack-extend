@@ -124,21 +124,34 @@ export function renderDelegationPolicyLine(d: DelegationPolicy | null): string |
 }
 
 export function unresolvedFindings(state: ReviewRunState): string[] {
-  const open: string[] = [];
+  type Report = { voiceId: string; attemptId: string; finding: NonNullable<ReviewRunState['passes'][number]['voices'][number]['attempts'][number]['findings']>[number] };
+  const byId = new Map<string, { passId: string; reports: Report[] }>();
   for (const pass of state.passes) for (const voice of pass.voices) {
     if (voice.selected_attempt_id === null) continue;
     const att = voice.attempts.find((a) => a.attempt_id === voice.selected_attempt_id);
     for (const f of att?.findings ?? []) {
-      let adj = f.adjudication, res = f.resolution, rc = f.receipt_class;
-      for (const cor of state.corrections) {
-        if (cor.target.pass_id === pass.pass_id && cor.target.voice_id === voice.voice_id && cor.target.attempt_id === att!.attempt_id && cor.target.finding_id === f.finding_id) {
-          if (cor.adjudication !== null) adj = cor.adjudication;
-          if (cor.resolution !== null) res = cor.resolution;
-          if (cor.receipt_class !== null) rc = cor.receipt_class;
-        }
-      }
-      if (res === 'open' && adj !== 'rejected' && adj !== 'duplicate' && rc === null) open.push(`${f.finding_id} ${f.severity_source}`);
+      const report: Report = { voiceId: voice.voice_id, attemptId: att!.attempt_id, finding: f };
+      const cur = byId.get(f.finding_id);
+      if (!cur || cur.passId !== pass.pass_id) byId.set(f.finding_id, { passId: pass.pass_id, reports: [report] });
+      else cur.reports.push(report);
     }
+  }
+  const open: string[] = [];
+  for (const [findingId, { passId, reports }] of byId) {
+    let adj = reports[0]!.finding.adjudication, res = reports[0]!.finding.resolution, rc: string | null = null;
+    for (const r of reports) {
+      if (r.finding.adjudication !== null) adj = r.finding.adjudication;
+      if (r.finding.resolution !== null) res = r.finding.resolution;
+      if (r.finding.receipt_class !== null) rc = r.finding.receipt_class;
+    }
+    for (const cor of state.corrections) {
+      if (cor.target.pass_id === passId && cor.target.finding_id === findingId && reports.some((r) => r.voiceId === cor.target.voice_id && r.attemptId === cor.target.attempt_id)) {
+        if (cor.adjudication !== null) adj = cor.adjudication;
+        if (cor.resolution !== null) res = cor.resolution;
+        if (cor.receipt_class !== null) rc = cor.receipt_class;
+      }
+    }
+    if (res === 'open' && adj !== 'rejected' && adj !== 'duplicate' && rc === null) open.push(`${findingId} ${reports[0]!.finding.severity_source}`);
   }
   return open;
 }

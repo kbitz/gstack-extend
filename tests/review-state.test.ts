@@ -2427,15 +2427,6 @@ describe('bin/review-state', () => {
       { path: 'attempt_id', rule: 'duplicate-value', expected: 'unique-attempt-id' },
     ],
     [
-      'finding_id already recorded in run',
-      () => ({
-        pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
-        attempt_id: uid(22), outcome: 'completed',
-        findings: [{ finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:security'] }],
-      }),
-      { path: 'findings[0].finding_id', rule: 'duplicate-value', expected: 'unique-finding-id-in-run' },
-    ],
-    [
       'duplicate finding_id within the same attempt',
       () => ({
         pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
@@ -2545,6 +2536,36 @@ describe('bin/review-state', () => {
     expect(res.json.reason).toBe('invalid-input');
     expect(res.json.detail.violations).toContainEqual(expectedViolation);
     expect(readFileSync(statePath, 'utf8')).toBe(beforeBytes);
+  });
+
+  // Value: protects=cross-attempt finding_id acceptance and stored-state per-attempt uniqueness check; fails_when=a second voice recording F-1 is refused or fails show, or a stored attempt repeating F-1 within itself is accepted; why_new=T2; seam=applyCommand, validateStoredState, and show
+  test('accepts a repeated finding_id across attempts and reads it through show while refusing a duplicate within one stored attempt as corrupt', () => {
+    const { attemptState } = ensureRefusalSeeds();
+    const { dir, statePath } = dirFromSeed(attemptState);
+    const res = callCmd(dir, 'record pass', {
+      pass_id: uid(10), state: 'attempt', voice_id: 'specialist-sec', part: 'specialist:security',
+      attempt_id: uid(22), outcome: 'completed', predecessor_attempt_id: uid(21),
+      findings: [{ finding_id: 'F-1', severity_source: 'P1', severity_rubric: 'specialist', adjudication: 'accepted', resolution: 'open', found_by: ['specialist:security'] }],
+    });
+    expect(res.code).toBe(0);
+    expect(res.json.reason).toBe('recorded');
+    const st = JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState;
+    expect(st.passes[0]!.voices.find((v) => v.voice_id === 'core')!.attempts[0]!.findings!.map((f) => f.finding_id)).toEqual(['F-1']);
+    expect(st.passes[0]!.voices.find((v) => v.voice_id === 'specialist-sec')!.attempts[1]!.findings!.map((f) => f.finding_id)).toEqual(['F-1']);
+
+    const showOk = runCli(['show', '--dir', dir]);
+    expect(showOk.code).toBe(0);
+    expect(showOk.err).toBe('');
+
+    const corrupt = structuredClone(st);
+    corrupt.passes[0]!.voices[0]!.attempts[0]!.findings!.push(structuredClone(corrupt.passes[0]!.voices[0]!.attempts[0]!.findings![0]!));
+    const corruptBytes = JSON.stringify(corrupt);
+    writeFileSync(statePath, corruptBytes);
+    const showCorrupt = runCli(['show', '--dir', dir]);
+    expect(showCorrupt.code).toBe(1);
+    expect(showCorrupt.json.reason).toBe('corrupt');
+    expect(showCorrupt.json.detail.message).toBe('duplicate-value at passes[0].voices[0].attempts[0].findings[1].finding_id');
+    expect(readFileSync(statePath, 'utf8')).toBe(corruptBytes);
   });
 
   // Value: protects=voice-complete selection xor and completed-attempt-on-voice rules; fails_when=voice-complete accepts both/neither field or selects a missing, failed, or other-voice attempt; why_new=Track 80A T3 voice-selection gaps; seam=CLI and state file
@@ -4206,6 +4227,7 @@ describe('bin/review-state', () => {
       'findings[0].severity_rubric',
       'findings',
       'details.threshold',
+      'findings[0].finding_id',
     ]) {
       expect(d15, causePath).toContain('`' + causePath + '`');
     }
@@ -4216,6 +4238,7 @@ describe('bin/review-state', () => {
       '| C15 | `record pass` (`attempt`) `findings` | conditional nullability |',
       '| C18 |',
       '| C19 |',
+      '| C21 |',
     ]) {
       expect(d15, row).toContain(row);
     }
@@ -6117,6 +6140,143 @@ describe('bin/review-state', () => {
     for (const [dir, pass, voice] of [[newDir(), passId, 'qa'], [d, uid(1043), 'qa'], [d, passId, 'missing-voice']] as const) {
       expect(runCli(['build', 'record', 'pass', '--dir', dir, '--pass-id', pass, '--state', 'voice-complete', '--voice-id', voice]).json.detail).toEqual({ violations: expViol });
     }
+  });
+
+  // Value: protects=recording the same finding_id across multiple voices in one pass and again in a later pass; fails_when=record pass refuses a repeated finding_id across attempts with unique-finding-id-in-run or stored-state validation rejects the resulting state; why_new=replays PR #280 (C21); seam=build CLI, state store, show, render, and export
+  test("replays PR #280's multiply-reported finding (C21): two voices and a later pass record the same finding ID", () => {
+    const d = newDir();
+    const pass1Id = uid(1050), att1Core = uid(1051), att1Testing = uid(1052);
+    const pass2Id = uid(1053), att2Core = uid(1054);
+    const findingId = 'telemetry.py:1203:testing';
+    const findingSpec = `${findingId},P2,specialist:testing,qa,outside:challenge`;
+
+    expect(runCli(['build', 'start', '--dir', d, '--run-id', uid(1049), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('pr280'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core', '--voice', 'testing']).json.reason).toBe('recorded');
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'attempt',
+      '--voice-id', 'core', '--part', 'core', '--attempt-id', att1Core, '--outcome', 'completed',
+      '--finding', findingSpec,
+    ]).json.reason).toBe('recorded');
+    const rAtt2 = runCli([
+      'build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'attempt',
+      '--voice-id', 'testing', '--part', 'specialist:testing', '--attempt-id', att1Testing, '--outcome', 'completed',
+      '--finding', findingSpec,
+    ]);
+    expect([rAtt2.json.reason, rAtt2.json.detail.violations]).toEqual(['recorded', undefined]);
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', att1Core]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'voice-complete', '--voice-id', 'testing', '--selected-attempt-id', att1Testing]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass1Id, '--state', 'completed']).json.reason).toBe('recorded');
+
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'started', '--scope', 'local', '--cycle', '2', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core']).json.reason).toBe('recorded');
+    expect(runCli([
+      'build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'attempt',
+      '--voice-id', 'core', '--part', 'core', '--attempt-id', att2Core, '--outcome', 'completed',
+      '--finding', findingSpec,
+    ]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', att2Core]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d, '--pass-id', pass2Id, '--state', 'completed']).json.reason).toBe('recorded');
+
+    const st = JSON.parse(readFileSync(join(d, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    const expectedFoundBy = ['specialist:testing', 'qa', 'outside:challenge'];
+    const p1CoreFindings = st.passes[0]!.voices.find((v) => v.voice_id === 'core')!.attempts[0]!.findings!;
+    const p1TestingFindings = st.passes[0]!.voices.find((v) => v.voice_id === 'testing')!.attempts[0]!.findings!;
+    const p2CoreFindings = st.passes[1]!.voices.find((v) => v.voice_id === 'core')!.attempts[0]!.findings!;
+    expect(p1CoreFindings).toMatchObject([{ finding_id: findingId, found_by: expectedFoundBy }]);
+    expect(p1TestingFindings).toMatchObject([{ finding_id: findingId, found_by: expectedFoundBy }]);
+    expect(p2CoreFindings).toMatchObject([{ finding_id: findingId, found_by: expectedFoundBy }]);
+
+    const expRes = runCli(['export', '--dir', d]);
+    expect([expRes.code, expRes.err]).toEqual([0, '']);
+    const exportedAttempts = expRes.json.records.filter((r: any) => r.op === 'pass' && r.request.state === 'attempt');
+    expect(exportedAttempts.map((r: any) => [r.request.attempt_id, r.request.findings.map((f: any) => f.finding_id)])).toEqual([
+      [att1Core, [findingId]],
+      [att1Testing, [findingId]],
+      [att2Core, [findingId]],
+    ]);
+
+    const showRes = runCli(['show', '--dir', d]);
+    expect([showRes.code, showRes.err, showRes.json.unresolved]).toEqual([0, '', [`${findingId} P2`]]);
+  });
+
+  // Value: protects=unresolvedFindings folding across multiple voices and passes, latest-pass governing rule, and first-appearance order; fails_when=a multiply-reported finding appears twice in Unresolved:, a cycle-1 fix hides a cycle-2 re-report, a correction on pass 1 settles a pass-2 re-report, or repeated reports change first-appearance order; why_new=T3; seam=unresolvedFindings, render full-receipt, and build CLI
+  test('unresolvedFindings folds multiply-reported findings by first appearance, applies corrections on any governing report in the latest reporting pass, and renders Unresolved: once', () => {
+    // (a) Two voices report X in one pass with no correction: X is listed once (with first governing report's severity).
+    // Corrections (fixed on voice A, rejected on voice B, receipt_class on either report) remove X.
+    const d1 = newDir(), p1 = uid(1060), attA = uid(1061), attB = uid(1062);
+    expect(runCli(['build', 'start', '--dir', d1, '--run-id', uid(1059), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('t3-a'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p1, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core', '--voice', 'testing']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p1, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', attA, '--outcome', 'completed', '--finding', 'X,P1,core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p1, '--state', 'attempt', '--voice-id', 'testing', '--part', 'specialist:testing', '--attempt-id', attB, '--outcome', 'completed', '--finding', 'X,P2,specialist:testing']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p1, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', attA]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p1, '--state', 'voice-complete', '--voice-id', 'testing', '--selected-attempt-id', attB]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p1, '--state', 'completed']).json.reason).toBe('recorded');
+
+    const seedA = join(d1, 'review-run-state.json');
+    expect(unresolvedFindings(JSON.parse(readFileSync(seedA, 'utf8')) as ReviewRunState)).toEqual(['X P1']);
+
+    for (const [idx, corrArgs] of [
+      ['--voice-id', 'core', '--attempt-id', attA, '--adjudication', 'accepted', '--resolution', 'fixed', '--fixed-in', headSha],
+      ['--voice-id', 'testing', '--attempt-id', attB, '--adjudication', 'rejected'],
+      ['--voice-id', 'core', '--attempt-id', attA, '--receipt-class', 'non-blocking'],
+      ['--voice-id', 'testing', '--attempt-id', attB, '--receipt-class', 'test-gap-recorded'],
+    ].entries()) {
+      const { dir, statePath } = dirFromSeed(seedA);
+      expect(runCli(['build', 'record', 'correction', '--dir', dir, '--correction-id', uid(1063 + idx), '--pass-id', p1, '--finding-id', 'X', ...corrArgs]).json.reason).toBe('recorded');
+      expect(unresolvedFindings(JSON.parse(readFileSync(statePath, 'utf8')) as ReviewRunState)).toEqual([]);
+    }
+
+    // (b) X is fixed in pass 1 and re-reported in pass 2: X is listed once, as open.
+    // A new correction on the pass-1 report leaves X listed; a correction on the pass-2 report removes it.
+    expect(runCli(['build', 'record', 'correction', '--dir', d1, '--correction-id', uid(1070), '--pass-id', p1, '--voice-id', 'core', '--attempt-id', attA, '--finding-id', 'X', '--adjudication', 'accepted', '--resolution', 'fixed', '--fixed-in', headSha]).json.reason).toBe('recorded');
+    expect(unresolvedFindings(JSON.parse(readFileSync(seedA, 'utf8')) as ReviewRunState)).toEqual([]);
+
+    const p2 = uid(1071), att2A = uid(1072);
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p2, '--state', 'started', '--scope', 'local', '--cycle', '2', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p2, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', att2A, '--outcome', 'completed', '--finding', 'X,P2,core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p2, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', att2A]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', d1, '--pass-id', p2, '--state', 'completed']).json.reason).toBe('recorded');
+    expect(unresolvedFindings(JSON.parse(readFileSync(seedA, 'utf8')) as ReviewRunState)).toEqual(['X P2']);
+
+    // (c) A rendered full-receipt through render shows Unresolved: naming X once.
+    expect(runCli(['build', 'record', 'gate', '--dir', d1, '--gate-id', uid(1073), '--name', 'greptile', '--result', 'not-run', '--reason', 'no config', '--commit', headSha, '--base', baseSha, '--greptile-value', 'skipped — no config; do not run it']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'checkpoint', '--dir', d1, '--checkpoint-id', uid(1074), '--kind', 'ready', '--base', baseSha]).json.reason).toBe('recorded');
+    const rFull = callCmd(d1, 'render', { output: 'full-receipt' });
+    expect(rFull.code).toBe(0);
+    expect(readFileSync(rFull.json.files[0].path, 'utf8')).toContain('\nUnresolved: X P2\n');
+
+    // Targeting rule: a new correction on pass 1's report leaves X listed; a correction on pass 2's report removes it.
+    const { dir: dOldTarget, statePath: spOldTarget } = dirFromSeed(seedA);
+    expect(runCli(['build', 'record', 'correction', '--dir', dOldTarget, '--correction-id', uid(1075), '--pass-id', p1, '--voice-id', 'testing', '--attempt-id', attB, '--finding-id', 'X', '--adjudication', 'rejected']).json.reason).toBe('recorded');
+    expect(unresolvedFindings(JSON.parse(readFileSync(spOldTarget, 'utf8')) as ReviewRunState)).toEqual(['X P2']);
+
+    const { dir: dNewTarget, statePath: spNewTarget } = dirFromSeed(seedA);
+    expect(runCli(['build', 'record', 'correction', '--dir', dNewTarget, '--correction-id', uid(1076), '--pass-id', p2, '--voice-id', 'core', '--attempt-id', att2A, '--finding-id', 'X', '--adjudication', 'accepted', '--resolution', 'fixed', '--fixed-in', headSha]).json.reason).toBe('recorded');
+    expect(unresolvedFindings(JSON.parse(readFileSync(spNewTarget, 'utf8')) as ReviewRunState)).toEqual([]);
+
+    // (d) X and Y, both open, with X repeated: output order is first appearance.
+    const dOrder1 = newDir(), po1 = uid(1080), po1A = uid(1081), po1B = uid(1082), po2 = uid(1083), po2A = uid(1084);
+    expect(runCli(['build', 'start', '--dir', dOrder1, '--run-id', uid(1079), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('t3-d1'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po1, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core', '--voice', 'testing']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po1, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', po1A, '--outcome', 'completed', '--finding', 'X,P1,core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po1, '--state', 'attempt', '--voice-id', 'testing', '--part', 'specialist:testing', '--attempt-id', po1B, '--outcome', 'completed', '--finding', 'Y,P2,specialist:testing', '--finding', 'X,P1,specialist:testing']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po1, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', po1A]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po1, '--state', 'voice-complete', '--voice-id', 'testing', '--selected-attempt-id', po1B]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po1, '--state', 'completed']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po2, '--state', 'started', '--scope', 'local', '--cycle', '2', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po2, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', po2A, '--outcome', 'completed', '--finding', 'X,P1,core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po2, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', po2A]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder1, '--pass-id', po2, '--state', 'completed']).json.reason).toBe('recorded');
+    expect(unresolvedFindings(JSON.parse(readFileSync(join(dOrder1, 'review-run-state.json'), 'utf8')) as ReviewRunState)).toEqual(['X P1', 'Y P2']);
+
+    const dOrder2 = newDir(), qo1 = uid(1086), qo1A = uid(1087), qo1B = uid(1088);
+    expect(runCli(['build', 'start', '--dir', dOrder2, '--run-id', uid(1085), '--base', baseSha, '--plan-ref', 'docs/plan.md', '--plan-sha256', sha256('t3-d2'), '--policy-source', 'caller prompt', '--max-continuations', '1']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder2, '--pass-id', qo1, '--state', 'started', '--scope', 'local', '--cycle', '1', '--coverage', 'full', '--commit', headSha, '--base', baseSha, '--voice', 'core', '--voice', 'testing']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder2, '--pass-id', qo1, '--state', 'attempt', '--voice-id', 'core', '--part', 'core', '--attempt-id', qo1A, '--outcome', 'completed', '--finding', 'Y,P2,core', '--finding', 'X,P1,core']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder2, '--pass-id', qo1, '--state', 'attempt', '--voice-id', 'testing', '--part', 'specialist:testing', '--attempt-id', qo1B, '--outcome', 'completed', '--finding', 'X,P1,specialist:testing']).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder2, '--pass-id', qo1, '--state', 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', qo1A]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder2, '--pass-id', qo1, '--state', 'voice-complete', '--voice-id', 'testing', '--selected-attempt-id', qo1B]).json.reason).toBe('recorded');
+    expect(runCli(['build', 'record', 'pass', '--dir', dOrder2, '--pass-id', qo1, '--state', 'completed']).json.reason).toBe('recorded');
+    expect(unresolvedFindings(JSON.parse(readFileSync(join(dOrder2, 'review-run-state.json'), 'utf8')) as ReviewRunState)).toEqual(['Y P2', 'X P1']);
   });
 
   // Value: protects=separation of Git execution failures (timeout, spawn, signal), uncaught errors, and missing-Bun runtime from invalid-input; fails_when=Git execution failure returns commit-not-found or not-in-worktree, trace file is written before --dir validation or leaks payload, lock/tmp remains on throw, or missing Bun prints no envelope; why_new=Track 88A T1; seam=subprocess mock.module and /bin/sh launcher
