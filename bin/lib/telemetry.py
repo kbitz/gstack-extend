@@ -30,7 +30,7 @@ LOGGER_TIMEOUT_S = 15  # the delegated completion logger
 # Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
-HARNESSES = ("claude", "codex", "grok", "cursor")
+HARNESSES = ("claude", "codex", "grok", "cursor", "muse")
 OUTCOMES = ("success", "error", "abort", "blocked", "unknown")
 ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "sdk", "unknown"
 ROUTES = (ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN)
@@ -105,7 +105,7 @@ WORK_ITEM_ENV = "GSTACK_EXTEND_WORK_ITEM"
 REQUESTED_MODEL_ENV, REQUESTED_EFFORT_ENV = "GSTACK_EXTEND_MODEL", "GSTACK_EXTEND_EFFORT"
 REQUESTED_ENV = (("model", REQUESTED_MODEL_ENV), ("effort", REQUESTED_EFFORT_ENV))
 # Each marker counts on its own when valid_session(value) holds, matching detect().
-SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID")
+SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID", "MUSE_SESSION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
               "or set GSTACK_DIR to a gstack checkout")
 
@@ -1169,6 +1169,46 @@ def codex_logs(thread_id, codex_home=None):
     return list((root / "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
 
 
+def muse_logs(session_id, data_home=None):
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
+        return []
+    if data_home is None:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        data_home = xdg if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
+    store = (Path(data_home) / "muse/sessions").resolve()
+    found = []
+    for path in store.glob(f"*/*/*/{session_id}/session.jsonl"):
+        try:
+            # A linked date or session directory can redirect a regular-looking log.
+            if path.resolve() == path and path.is_file():
+                found.append(path)
+        except (OSError, RuntimeError):
+            continue
+    return found
+
+
+def muse_turns(session_id):
+    log = newest(muse_logs(session_id))
+    turns = []
+    for outer in tail_records(log) if log else ():
+        children = outer.get("children")
+        records = [outer] + ([child for child in children if isinstance(child, dict)] if isinstance(children, list) else [])
+        for record in records:
+            if record.get("payload_type") != "runtime.session":
+                continue
+            payload = record.get("payload")
+            event = payload.get("event") if isinstance(payload, dict) else None
+            if not isinstance(event, dict) or event.get("kind") != "model_completed":
+                continue
+            model = clean(event.get("model"))
+            raw_ts = record.get("recorded_at")
+            ts = integer(raw_ts) if isinstance(raw_ts, int) else None
+            if model is None or ts is None:
+                continue
+            turns.append((ts / 1_000_000, model, None))
+    return turns
+
+
 def claude_turns(session_id):
     # ~/.claude/projects/<cwd slug>/<session id>.jsonl records the model and effort each API response actually used.
     if not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
@@ -1279,7 +1319,7 @@ def process_argv0(pid):
 
 def harness_ancestor(candidates, table=None, pid=None):
     """Nearest marked harness; injectable table contains (ppid, argv0, comm)."""
-    names = {"claude": "claude", "codex": "codex", "cursor-agent": "cursor", "agent": "cursor", "grok": "grok"}
+    names = {"claude": "claude", "codex": "codex", "cursor-agent": "cursor", "agent": "cursor", "grok": "grok", "muse": "muse"}
     if table is None:
         ps = which("ps")
         if not ps:
@@ -1300,7 +1340,8 @@ def harness_ancestor(candidates, table=None, pid=None):
         parent, arg0, comm = table[current]
         arg0 = arg0 if arg0 is not None else process_argv0(current)
         for name in (arg0, comm):
-            agent = names.get(Path(name).name) if name else None
+            base = Path(name).name if name else ""
+            agent = "muse" if base.startswith("muse-bin") else names.get(base)
             if agent in candidates:
                 return agent
         current = parent
@@ -1354,6 +1395,8 @@ def detect(begin, end, root):
         readers.append(("codex", True, lambda: codex_turns(os.environ["CODEX_THREAD_ID"])))
     if os.environ.get("GROK_AGENT") == "1" or valid_session(os.environ.get("GROK_SESSION_ID")):  # Grok's shell forces "1"; a user-set profile name is not a marker
         readers.append(("grok", True, lambda: grok_turns(root, begin)))
+    if valid_session(os.environ.get("MUSE_SESSION_ID")):
+        readers.append(("muse", False, lambda: muse_turns(os.environ["MUSE_SESSION_ID"])))
     if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
         readers.append(("claude", False, lambda: claude_turns(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))))
     nearest = harness_ancestor({agent for agent, _, _ in readers}) if len(readers) > 1 else None
@@ -1528,7 +1571,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
             agent = explicit
             flagged.add("agent")
         elif explicit is not None:
-            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor or grok)")
+            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor, grok or muse)")
         model_flag, effort_flag = clean(values.get("--model")), clean(values.get("--effort"))
         if model_flag is not None:
             model = model_flag
@@ -2215,7 +2258,7 @@ def main(args):
         print("       gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...")
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown] [--blocked-reason TOKEN]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
-        print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
+        print("  finish provenance overrides: [--agent claude|codex|cursor|grok|muse] [--model ID] [--effort LEVEL] [--work-item ID]")
         print("  blocked_reason: --blocked-reason when --outcome blocked ([a-z0-9][a-z0-9-]{0,63}, local-only, otherwise null).")
         print("  work_item: --work-item, else the value start saved from GSTACK_EXTEND_WORK_ITEM, else that variable at finish;")
         print("  at most 200 printable characters, otherwise null.")

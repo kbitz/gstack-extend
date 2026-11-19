@@ -13,6 +13,102 @@
 - **Context:** Filed by /review-and-prep on `mmm/47c5f95a` at `6d18433` on 2026-11-18, before draft creation.
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Muse log lookup with a valid harness-only ID
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The invalid-marker fixture stops before the narrower Muse log lookup check.
+- **Hypothesis (untested):** Use a marker that passes fingerprint validation and falls outside the log ID grammar. Verify `agent: muse` and a null model.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1173`
+- **Evidence:** Muse coverage audit on `86ceda5`. The existing marker tests passed.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The Muse marker or log ID format changes.
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Muse canonical log path
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The relocated-store fixture proves that a valid store root can resolve to its canonical location. The descendant path and regular-file checks have static review coverage.
+- **Hypothesis (untested):** Exercise the descendant path validation in an isolated filesystem fixture and verify that ineligible candidates leave model attribution unknown.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1183`
+- **Evidence:** Muse testing specialist and coverage audit on `86ceda5`. The relocated-store replay passed.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The Muse session log locator changes.
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: duplicate dated Muse session logs
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The existing fixture separates named, sibling and subagent logs. It uses a single date directory for the named session.
+- **Hypothesis (untested):** Write two dated copies of one synthetic session with different modification times and verify that the newer copy supplies the model.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1191`
+- **Evidence:** Muse coverage audit on `86ceda5`. The named-session fixture passed.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The date sharding or newest-log selection changes.
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: wrong-shaped Muse event envelopes
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The parse fixtures reject malformed timestamps and missing models within valid event containers.
+- **Hypothesis (untested):** Put a wrong-shaped payload or event before a valid completion and verify the valid model is still attributed.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1194`
+- **Evidence:** Muse coverage audit on `86ceda5`. The timestamp and malformed-log probes passed.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The Muse event envelope or parser changes.
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Muse stage with only pre-start completions
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The existing stage-window fixture gives the in-window model two votes. It would still win if a pre-start completion entered the vote.
+- **Hypothesis (untested):** Give an idle stage only one valid pre-start completion and verify its model stays null.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1399`
+- **Evidence:** Muse testing specialist and coverage audit on `86ceda5`. The existing window fixture passed.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Muse model selection or the stage-window policy changes.
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Conflicting initial finding dispositions
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The folding fixture varies severity across selected reports and gives both reports the same initial disposition.
+- **Hypothesis (untested):** Give selected reports of one finding different initial adjudications and resolutions. Verify the later report in voice order supplies each field.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:142`
+- **Evidence:** Coverage audit on `61cb108` traced the voice-order fold and found no matching regression test.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The selected-report fold or its test fixtures change.
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Correction order across governing reports
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The committed fixtures apply one correction at a time across the governing reports. A one-off CLI probe exercised several corrections in record order.
+- **Hypothesis (untested):** Add a fixture with corrections to different reports in one pass. Check that an omitted field preserves its prior value and that correction record order wins over voice order.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:147`
+- **Evidence:** Coverage audit and passing synthetic CLI correction probe on `61cb108`.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The correction fold or target lookup changes.
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Correction targeting an unselected attempt
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The fold tests correct a report from an older pass and cover selected reports in the current pass. They do not correct a replaced attempt in the current pass.
+- **Hypothesis (untested):** Select a replacement attempt that reports the same finding, then correct the earlier attempt on that voice. Verify the selected report still determines the receipt.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:148`
+- **Evidence:** Coverage audit on `61cb108` traced selection and the full target tuple. No failure was reproduced.
+- **Context:** Filed by /review-and-prep before draft creation (2026-11-18).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Attempt selection or correction targeting changes.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
