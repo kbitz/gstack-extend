@@ -2,6 +2,54 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Lock derive subcommand help wording
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The live `derive --help` output describes an experimental internal helper and the default caller. No test pins both claims at the subcommand boundary.
+- **Hypothesis (untested):** Assert both claims using the telemetry launcher without starting a telemetry run.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py`
+- **Evidence:** The coverage audit traced the help branch and the parent checked its output directly.
+- **Context:** Filed by /review-and-prep on PR #281 at `0c5a42f` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Derive help or review-state activation changes.
+
+### [review:files=skills/review-and-prep.md|tests/handoff-contract.test.ts] Test gap: Default recording across an installed-agent resume
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The protocol checks pin default activation and resume instructions separately. They do not exercise an installed agent that starts without `run-state=record`, pauses, and resumes the same recorded run.
+- **Hypothesis (untested):** Exercise the default path in an isolated workflow with a controlled pause and verify the resumed checkpoint and retained receipt fields.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md`
+- **Evidence:** The coverage audit found the activation and resume locks. The focused suite passed.
+- **Context:** Filed by /review-and-prep on PR #281 at `0c5a42f` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The project next changes default activation or qualifies resume on an installed harness.
+
+### [review:files=docs/review-run-state-calls.md|skills/review-and-prep.md|tests/handoff-contract.test.ts] Test gap: Inline receipt output under installed version skew
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The tests exercise renderer output and pin the fallback instructions separately. They do not drive an installed agent through a missing calls document and compare its inline output to the versioned handoff grammar.
+- **Hypothesis (untested):** Use a controlled older install and a draft fixture. Check the inline markers, evidence locator and the applicable stop or pause line.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `docs/review-run-state-calls.md`
+- **Evidence:** The coverage audit checked the protocol and renderer suites. The focused suite passed.
+- **Context:** Filed by /review-and-prep on PR #281 at `0c5a42f` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The installed compatibility checks exercise older helper or calls-document combinations.
+
+### [review:files=src/review-state/export.ts|tests/workflow-metrics.test.ts] Test gap: Read back metrics for two voices reporting one finding
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The shared-finding fixture verifies both reports at export. It does not check that a later telemetry derive and read preserves the separate reports and attribution in the metrics sink.
+- **Hypothesis (untested):** Use an isolated sink with two selected attempts that report the same finding ID. Compare the derived event rows and the read result with the export contract.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/export.ts`
+- **Evidence:** The coverage audit traced the repeated-report fixture and the telemetry tests. The shared-finding fixture passed.
+- **Context:** Filed by /review-and-prep on PR #281 at `0c5a42f` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Per-report metrics attribution or its reader changes.
+
 ### [review:files=src/review-state/cli.ts|tests/review-state.test.ts] Test gap: Lock fence fallback wording in top-level review-state help
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
