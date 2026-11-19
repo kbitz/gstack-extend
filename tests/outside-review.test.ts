@@ -472,6 +472,90 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Owner decision A (continuation review): an affirmation uses only a closed vocabulary (affirming words, copulas,
+  // determiners, review-material nouns, attributive adjectives, a number after `all`, code names) and names nothing
+  // but in-prompt places after its affirming word; each change-statement name is a code name or a vocabulary noun.
+  // Outside material, exclusions, partial supply, unlisted negators or quantifiers, curly or single quotes, a
+  // predicative `requested`, two counts and a clause among the names therefore fail closed.
+  const NAMING_CONTINUATION = [
+    'NEEDS_CONTEXT: none (the callers are available in the repository).',
+    'NEEDS_CONTEXT: none (the schema is available upon request).',
+    'NEEDS_CONTEXT: none (the callers are available on GitHub).',
+    'NEEDS_CONTEXT: none (the callers are covered by CI).',
+    'NEEDS_CONTEXT: none (the callers are present in the original module).',
+    'NEEDS_CONTEXT: none (all files were supplied excluding the schema).',
+    'NEEDS_CONTEXT: none (everything was provided other than the test fixtures).',
+    'NEEDS_CONTEXT: none (all requested interfaces were supplied apart from the config schema)',
+    'NEEDS_CONTEXT: none (the callers were shown in part).',
+    'NEEDS_CONTEXT: none (the callers were partly supplied).',
+    'NEEDS_CONTEXT: none (the callers were incompletely provided).',
+    'NEEDS_CONTEXT: none (the provided diff ends before END_OF_REVIEW_MATERIAL)',
+    'NEEDS_CONTEXT: none (the diff was provided up to the 400-line cap)',
+    'NEEDS_CONTEXT: none. src/b.ts was provided empty.',
+    'NEEDS_CONTEXT: none. Context supplied is limited to the diff.',
+    'NEEDS_CONTEXT: none. The supplied context excludes the authentication middleware.',
+    'NEEDS_CONTEXT: none (supplied excerpts exclude the callers)',
+    'NEEDS_CONTEXT: none. The schema wasn`t provided.',
+    'NEEDS_CONTEXT: none. The callers werent provided.',
+    'NEEDS_CONTEXT: none. Nobody provided the callers.',
+    'NEEDS_CONTEXT: none. Zero callers were provided.',
+    'NEEDS_CONTEXT: none. Just the diff was provided.',
+    'NEEDS_CONTEXT: none. The diff alone was provided.',
+    'NEEDS_CONTEXT: none (all “requested” files were provided)',
+    "NEEDS_CONTEXT: none (all 'requested' files were provided)",
+    'NEEDS_CONTEXT: none. Three interfaces were supplied and four were requested.',
+    'NEEDS_CONTEXT: none. The callers were supplied and the schema was requested.',
+    'NEEDS_CONTEXT: none. The change does not touch auth, and the token validator accepts expired tokens.',
+    'NEEDS_CONTEXT: none. The change does not touch auth, and src/auth.ts is accepting expired tokens.',
+  ] as const;
+  const NONE_CONTINUATION = [
+    'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).',
+    'NEEDS_CONTEXT: none (every caller of alpha() was supplied in full).',
+    "NEEDS_CONTEXT: none. The module's callers were supplied as well.",
+    'NEEDS_CONTEXT: none (all four requested interfaces were provided by the context extension).',
+    'NEEDS_CONTEXT: none. Everything is visible above.',
+    'NEEDS_CONTEXT: none. The change does not touch `src/cli.ts`, its callers or the parse() helper.',
+  ] as const;
+
+  // Value: protects=owner decision A for context lines as a closed vocabulary: a nothing-missing explanation that places
+  //   the material outside the prompt, excludes part of it, says it was partial, or carries an unlisted negator,
+  //   quantifier, quote or clause keeps coverage missing, on the outside and numbered paths, while plain supplied-context
+  //   affirmations and the change statement stay credited; fails_when=any explanation word outside the vocabulary is
+  //   accepted again; why_new=the continuation review of Track 90A reproduced each naming line as credited at f15befa7;
+  //   seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
+  test('credits only a closed supplied-context vocabulary and change-statement names (owner decision A, continuation)', () => {
+    for (const line of NAMING_CONTINUATION) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CONTINUATION) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CONTINUATION) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_CONTINUATION) {
+          for (const [reply, verdict] of [[cleanReply(line), 'clean'], [findingsReply(line), 'findings']] as const) {
+            const res = recover(reply, gate, 0, '', classifier);
+            expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+              gate, line, true, 'valid', verdict, false,
+            ]);
+          }
+        }
+      }
+    }
+    // A numbered naming line keeps its number, so upstream's numbered-item rule still applies to it.
+    const numbered = [
+      '1. **Expired tokens are rejected.** Met.',
+      '2. NEEDS_CONTEXT: none (the provided login handler accepts expired tokens)',
+      'NO_FINDINGS: none',
+      'Recommendation: approve because every criterion holds.',
+      'VERDICT: CLEAN',
+    ].join('\n');
+    for (const gate of gates) {
+      const res = recover(numbered, gate, 0, '', numberedCleanVerdict);
+      expect([gate, res.credited, res.needs_context]).toEqual([gate, false, true]);
+    }
+  });
+
   // Value: protects=a context line that names missing context in a contraction, typographic apostrophe, request, caveat or code span
   //   stays uncredited (criteria 1 and 4) while nested calls and benign negations still read as nothing missing; fails_when=the deny
   //   scan misses these forms or reads code-span text as erased; why_new=cycle 1 of Track 90A's review reproduced each form as credited;
@@ -541,7 +625,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -549,7 +633,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3]) {
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
@@ -731,6 +815,40 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     }
   });
 
+  // Owner decision A (continuation review): a negation up to two words before `Met`, a condition, hedge or exception in an
+  // unwrapped statement, and a clause among the change statement's names leave the line unrewritten.
+  const CONTINUATION_MET_NEGATIVES = [
+    ['negation two words before Met', '1. **Expired tokens are rejected — not yet** Met.'],
+    ['negation and adverb before Met', '1. **Expired tokens are rejected — not fully** Met.'],
+    ['never before Met', '1. **Expired tokens are rejected — never** Met.'],
+    ['partly before Met', '1. **Expired tokens are rejected — only partly** Met.'],
+    ['condition in the statement', '1. Expired tokens are rejected if the cache is warm: Met'],
+    ['time condition in the statement', '1. Expired tokens are rejected when the cache is warm: Met'],
+    ['hedge in the statement', '1. Expired tokens are probably rejected: Met'],
+    ['exception in the statement', '1. Expired tokens are rejected apart from admin sessions: Met'],
+    ['clause among the change statement names', '1. **Authentication.** Met. The change does not touch auth, and the token validator accepts expired tokens.'],
+    ['copula after a path among the names', '1. **Input validation.** Met. The diff does not touch auth, and src/auth.ts is accepting expired tokens.'],
+  ].map(([label, line]) => [
+    label,
+    [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
+
+  // Value: protects=owner decision A for met-criterion lines: a negated status with words before `Met`, a caveat in an
+  //   unwrapped statement and a clause hidden among the change statement's names stay unlabeled items, so upstream's
+  //   numbered-item rule still rejects the reply; fails_when=the guard, the caveat list or the names check credits them
+  //   again; why_new=the continuation review of Track 90A reproduced each as credited clean at f15befa7;
+  //   seam=recover() with the numbered-item fixture classifier; no_claim=a model's wording
+  test('fails closed on negated statuses, statement caveats and clauses among the change statement names (continuation)', () => {
+    for (const gate of gates) {
+      for (const [label, text] of CONTINUATION_MET_NEGATIVES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
+    }
+  });
+
   // Value: protects=the met-criterion rewrite stays linear on a long whitespace run in an untrusted reply, so a degenerate reply
   //   cannot stall the runner; fails_when=the delimiter search backtracks quadratically (about 1.7 s at 32k spaces, over a minute at
   //   200k, so this test then exceeds its timeout); why_new=cycle 1 of Track 90A's review measured the quadratic search;
@@ -759,7 +877,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
           gate, label, true, 'recovered', 'clean',
         ]);
       }
-      for (const [label, text] of NEGATIVE_SHAPES) {
+      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES]) {
         const neg = recover(text, gate, 0, '', classifyOutsideReview);
         expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',

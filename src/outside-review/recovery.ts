@@ -17,25 +17,42 @@ const CONTEXT_PREFIX = /^\s*(?:(?:[-+>]|\(?\d{1,3}[.)]|#{1,6}(?!#))\s*)*$/;
 // Another marker, a severity label or word, a review marker, a quote, brace or question, or a `name:line` reference is
 // never an explanation.
 const CONTEXT_GLUED = /needscontext|nofindings|\[p[0-3]\b|\bp[0-3]\b|\b(?:critical|high|medium|low|severity|recommendation|verdict)\b|["{}?]|:\d/;
-// Each part of an explanation (its parenthetical, then each sentence or clause) must say context was supplied, using
-// one of these words, or be the change statement below.
-const CONTEXT_AFFIRM = /\b(?:supplied|provided|included|present|shown|given|attached|available|visible|covered|contained|complete|sufficient)\b/;
-// A negation, absence, inability, request, hedge, contrast or subordinate clause, obligation or defect word: a part or a
-// list of names carrying one says more than that context was supplied or that the change leaves something alone.
-const NOT_AFFIRMING = /\b(?:no|not|nothing|none|never|nor|neither|[a-z]+n't|[a-z]+'(?:d|ll)|cannot|without|unable|lack[a-z]*|missing|need(?:s|ed|ing)?|requir[a-z]*|unavailable|truncat[a-z]*|absent|omit[a-z]*|unknown|insufficient|incomplete|partial[a-z]*|only|except[a-z]*|but|however|although|though|unless|until|yet|whereas|while|because|since|so|if|when|whether|which|who|whose|where|that|please|provide|supply|include|send|share|attach|paste|show|give|add|fetch|ask[a-z]*|let|want[a-z]*|wish[a-z]*|hop(?:e|es|ed|ing)|like|assum[a-z]*|guess[a-z]*|presum[a-z]*|apparent[a-z]*|possibl[a-z]*|suppos[a-z]*|believ[a-z]*|think|thought|expect[a-z]*|unclear|uncertain|unsure|unverif[a-z]*|untested|unchecked|unconfirm[a-z]*|unreview[a-z]*|hidden|invisible|unseen|elided|redacted|beyond|outside|elsewhere|cut[ -]?off|would|could|should|might|may|maybe|perhaps|probably|likely|seem[a-z]*|appear[a-z]*|must|todo|fixme|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|vulnerab[a-z]*|expos[a-z]*|bypass[a-z]*|skip[a-z]*|ignor[a-z]*|corrupt[a-z]*|overflow[a-z]*|hang[a-z]*|deadlock[a-z]*|race|stale|unsafe|insecure|invalid[a-z]*|issue[a-z]*|problem[a-z]*|risk[a-z]*|unmet|still)\b/;
+// Each part of an explanation (its parenthetical, then each sentence or clause) is the change statement below, or says
+// context was supplied: it holds one of the affirming words and uses only the closed vocabulary below, so any other word
+// fails closed.
+const words = (list: string) => new Set(list.split(' '));
+const AFFIRMING = words('supplied provided included present shown given attached available visible covered contained complete sufficient');
+const DETERMINERS = words('the a an all every each both its their these those this any');
+const LINKS = words('it they them everything is are was were be been has have had and of also too verbatim above below here');
+// Review material a voice is given. After the affirming word, `in`, `within` and `by` name only one of these places.
+const PLACES = words('prompt diff diffs context material materials excerpt excerpts extension input message review section sections full');
+const PLACE_LINKS = words('in within by');
+const NOUNS = words('caller callers callee callees call calls interface interfaces file files test tests fixture fixtures type types '
+  + 'schema schemas contract contracts definition definitions function functions method methods class classes module modules '
+  + 'implementation implementations source sources code helper helpers doc docs documentation plan criteria criterion change '
+  + 'changes dependency dependencies import imports export exports signature signatures snippet snippets hunk hunks constant '
+  + 'constants handler handlers route routes component components template templates model models migration migrations query '
+  + 'queries config configuration body bodies script scripts command commands option options flag flags field fields parser '
+  + 'parsers library libraries package packages version changelog readme license lockfile manifest release');
+// Attributive only: each is followed by a noun, so `the schema was requested` is not an affirmation.
+const ATTRIBUTES = words('requested relevant referenced changed touched modified new existing related surrounding entire whole same negative positive');
+// A count only directly after `all`, so two counts cannot say part of the material was supplied.
+const COUNTS = words('two three four five six seven eight nine ten');
+// A code name: a token with a dot, slash or backslash, or one ending in call parentheses.
+const CODE_NAME = /^[a-z0-9][a-z0-9./\\-]*(?:\(\))?$/;
 // The change statement: the change does not touch, change, edit, modify or affect (on a context line also: depend on)
 // a list of names. Its names carry no punctuation but commas and the dots inside a file name.
 const CHANGE_NOTE = /^(?:the |this )?(?:change|changes|diff|fix|patch|branch|commit|pr|pull request) (?:does|do|did)(?: not|n't) (touch|change|edit|modify|affect|depend on) ((?:[^.;:!?]|\.(?=\S))+)\.?$/;
-// A path is followed only by a list separator, a copula or a preposition, never by a verb.
-const PATH_TOKEN = /[/\\]|\.[a-z0-9]{1,10},?$/;
-const PATH_FOLLOWER = /^(?:and|or|was|were|is|are|has|have|in|of|from|for|to|by|with|at|on|via|through|as|plus)$/;
 const APOSTROPHES = /[‘’ʼ]/g;
 const NONE_PHRASE = /^none(?: of the above depends? on missing context)?/;
 // `none` (optionally the observed phrase), then the end, a sentence break or one parenthetical (one nested pair allowed)
 // that itself ends the value or is followed by a sentence break.
 const NONE_VALUE = /^none(?: of the above depends? on missing context)?(?:$|[.;](?:\s.*|$)| \((?:[^()]|\([^()]*\))+\)(?:$|[.;](?:\s.*|$)))/;
-// An unwrapped criterion statement carrying a contrast, failure, obligation or negation is a caveat, not a criterion.
-const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unless|whereas|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|must|should|todo|fixme|issue[a-z]*|problem[a-z]*|partial[a-z]*|unmet|missing|untested|unverified|not|no|never|[a-z]+n't|cannot|only)\b/;
+// An unwrapped criterion statement carrying a contrast, failure, obligation, negation, condition, hedge or exception is a
+// caveat, not a criterion.
+const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unless|whereas|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|must|should|todo|fixme|issue[a-z]*|problem[a-z]*|partial[a-z]*|partly|unmet|missing|untested|unverified|not|no|never|[a-z]+n't|cannot|only|if|when|whenever|until|while|whether|provided that|assum[a-z]*|presum[a-z]*|probabl[a-z]*|likely|maybe|perhaps|possibl[a-z]*|apparent[a-z]*|seem[a-z]*|appear[a-z]*|mostly|largely|nearly|almost|mainly|generally|usually|sometimes|typically|apart|aside|besides|exclud[a-z]*|other than|save for|sans|minus)\b/;
+// A negated status: a negation up to two words before `Met` (emphasis removed).
+const NEGATED_STATUS = /\b(?:not|never|partially|partly)\b(?:[\t ,—–-]+[a-z]+){0,2}[\t ,.:;—–-]+met\b|\bunmet\b/i;
 // Between a bold criterion title and its status: whitespace and at most one delimiter.
 const TITLE_GAP = /(?:[\t ]*(?::|[—–]|[\t ]-))?[\t ]+/y;
 const flatten = (text: string) => text.replace(/[`*_]/g, '').replace(APOSTROPHES, "'").toLowerCase().replace(/\s+/g, ' ');
@@ -70,24 +87,44 @@ function contextParts(explanation: string): string[] {
   return parts.flatMap(part => part.split(/[.;!](?=\s|$)/)).map(part => part.trim()).filter(Boolean);
 }
 
-/** A part says context was supplied, with nothing after the affirming word but its object or place, or is the change statement. */
+/** A part is the change statement, or holds an affirming word and only vocabulary words, naming only places after it. */
 function affirmsContext(part: string): boolean {
   if (CHANGE_NOTE.test(part)) return changeStatement(part, true);
-  const word = CONTEXT_AFFIRM.exec(part);
-  return !!word && !NOT_AFFIRMING.test(part) && pathsListed(part)
-    && !/,|\b(?:and|or)\b/.test(part.slice(word.index + word[0].length));
+  const tokens = part.replace(/\bas well\b/g, 'too').split(' ').map(token => token.replace(/,$/, ''));
+  const first = tokens.findIndex(token => AFFIRMING.has(token));
+  return first >= 0 && tokens.every((token, i) => {
+    if (AFFIRMING.has(token) || DETERMINERS.has(token) || LINKS.has(token)) return true;
+    if (COUNTS.has(token)) return tokens[i - 1] === 'all';
+    if (ATTRIBUTES.has(token)) return nominal(tokens[i + 1]);
+    if (PLACE_LINKS.has(token)) return i < first || placeAt(tokens, i + 1);
+    return nominal(token);
+  });
 }
 
-/** Whether `text` is the change statement and its names carry nothing else. */
+/** A noun, place, attribute, code name or its possessive. */
+function nominal(token: string | undefined): boolean {
+  if (token === undefined) return false;
+  if (NOUNS.has(token) || PLACES.has(token) || ATTRIBUTES.has(token)) return true;
+  if (token.endsWith("'s")) return nominal(token.slice(0, -2));
+  return CODE_NAME.test(token) && (/[./\\]/.test(token) || token.endsWith('()'));
+}
+
+/** After determiners and affirming adjectives, a place in the review material. */
+function placeAt(tokens: string[], at: number): boolean {
+  let i = at;
+  while (i < tokens.length && (DETERMINERS.has(tokens[i]!) || AFFIRMING.has(tokens[i]!))) i += 1;
+  return PLACES.has(tokens[i] ?? '');
+}
+
+/** Whether `text` is the change statement and each of its names is a code name or vocabulary words. */
 function changeStatement(text: string, dependOn: boolean): boolean {
   const note = CHANGE_NOTE.exec(text);
-  return !!note && (dependOn || note[1] !== 'depend on')
-    && !NOT_AFFIRMING.test(note[2]!) && !CONTEXT_GLUED.test(note[2]!) && pathsListed(note[2]!);
-}
-
-function pathsListed(text: string): boolean {
-  const words = text.trim().split(' ');
-  return words.every((word, i) => !PATH_TOKEN.test(word) || word.endsWith(',') || i + 1 === words.length || PATH_FOLLOWER.test(words[i + 1]!));
+  return !!note && (dependOn || note[1] !== 'depend on') && !CONTEXT_GLUED.test(note[2]!)
+    && note[2]!.split(/,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+/).every(name => {
+      const tokens = name.trim().split(' ');
+      return tokens.every((token, i) => DETERMINERS.has(token) || token === 'of' || token === 'in'
+        || (ATTRIBUTES.has(token) ? nominal(tokens[i + 1]) : nominal(token)));
+    });
 }
 
 /** Whether `text` holds a Met status at `at`: undefined when it does not, false when it adds a sentence other than the change statement. */
@@ -103,7 +140,7 @@ function rewriteMetCriterion(line: string): string {
   const body = line.trimEnd();
   // Emphasis never hides a severity token or a negated status.
   const guard = body.replace(/[*_`]/g, '');
-  if (/\b(?:P[0-3]|critical|high|medium|low)\b/i.test(guard) || /\b(?:not|partially)\s+met\b|\bunmet\b/i.test(guard)) return line;
+  if (/\b(?:P[0-3]|critical|high|medium|low)\b/i.test(guard) || NEGATED_STATUS.test(guard)) return line;
   const match = /^(\*\*|__)?(?:\((\d{1,3})\)|(\d{1,3})[.)])[\t ]+(\S.*)$/.exec(body);
   if (!match) return line;
   const lead = match[1] ?? '';

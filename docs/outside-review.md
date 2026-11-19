@@ -58,10 +58,11 @@ Never put the request in the source checkout or retained telemetry.
 Supply acceptance criteria and the two installed review rubrics, not whole
 skills or session history. The **wrapper adds context**, selecting specific
 callers, contracts and tests before dispatch; it records why each is relevant.
-The voice has no tools. A `NEEDS_CONTEXT` line that says nothing is missing is
-not a request; any other `NEEDS_CONTEXT` line keeps coverage missing until the parent
-provides the named material in a justified extension. Recovery of marker syntax
-never resends the prompt and never calls a model.
+The voice has no tools. A `NEEDS_CONTEXT` line that says nothing is missing in an
+allowed form (**Recovery and storage**) is not a request; any other `NEEDS_CONTEXT`
+line keeps coverage missing until the parent provides the named material in a
+justified extension, and one that names no material leaves the voice as missing
+coverage. Recovery of marker syntax never resends the prompt and never calls a model.
 
 The CLI returns `results` (private review output, provider usage and per-phase
 classification) and content-free `measurements`. Exit codes: 0 credited with
@@ -110,23 +111,32 @@ no-findings conclusion. A context-request line saying nothing is missing is not
 a request only in an allowed form, read with code-span text: list, quote or
 heading markup alone before the marker, then `none` (or `none of the above
 depends on missing context`), and an explanation each of whose parts (its
-parenthetical, then each sentence or clause) either says context was supplied,
-with nothing after the affirming word but its object or place, or is the change
-statement: the change does not touch, change, edit, modify, affect or depend on a
-list of names. A part that affirms nothing, or carries a negation, absence,
-inability, request, hedge, contrast, obligation or defect word, another marker,
-a severity label or word, a quote, brace, question or `name:line`, or a path
-followed by a verb keeps coverage missing, as does any other context line. When
+parenthetical, then each sentence or clause) is the change statement or a
+supplied-context affirmation. The change statement says the change does not
+touch, change, edit, modify, affect or depend on a list of names, each a code
+name (a token with a dot, slash or call parentheses) or vocabulary nouns. An
+affirmation holds an affirming word (`supplied`, `provided`, `included`,
+`present`, `shown`, `given`, `attached`, `available`, `visible`, `covered`,
+`contained`, `complete`, `sufficient`) and only the closed vocabulary in
+`src/outside-review/recovery.ts`: determiners, copulas, `and`, `of`, review-material
+nouns, code names, attributive adjectives such as `requested` before a noun, and
+a count only after `all`; after the affirming word, `in`, `within` and `by`
+name only the prompt, diff, context, material, excerpts, extension or review, and
+`above`, `below`, `here`, `too`, `verbatim` and `in full` are allowed. Any
+other word, another marker, a severity label or word, a quote, brace, question or
+`name:line` keeps coverage missing, as does any other context line. When
 upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
 unlabeled items, recovery drops the number from a numbered nothing-missing
 context line and rewrites numbered met-criterion lines into
 `Criterion N:` lines, then reclassifies. A met-criterion line carries no severity
-token or negated status (emphasis included); only a delimiter separates its bold
-title, or an unwrapped statement without a caveat, from `Met`, `Met.` or
-`Met, by inspection.`; and the one sentence allowed after `Met.` is the change
-statement without `depend on`. These forms are lexical: a defect clause that
-uses no listed word and sits before the affirming word or among the list of
-names is not detected. Refusals, failed execution, ambiguous prose and missing
+token or negated status (emphasis included; a negation up to two words before
+`Met` counts); only a delimiter separates its bold title, or an unwrapped
+statement without a caveat (a contrast, failure, obligation, negation, condition,
+hedge or exception word), from `Met`, `Met.` or `Met, by inspection.`; and the
+one sentence allowed after `Met.` is the change statement without `depend on`.
+The met-criterion checks are lexical: a bold title is not read for caveats, and
+a caveat in an unwrapped statement that uses no listed word is not detected.
+Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 
