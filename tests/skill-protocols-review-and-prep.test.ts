@@ -1717,6 +1717,9 @@ describe('review-and-prep run-state=record', () => {
       if (!b.includes('takes precedence over opt-in wording in an older readable calls document')) {
         violations.push('missing skew precedence');
       }
+      if (!b.includes('Use the fence availability check in **Record cycle 1\'s full-review baseline**. Run an available fence without `REVIEW_STATE_DIR`.')) {
+        violations.push('missing fence availability check');
+      }
       return violations;
     };
 
@@ -1724,6 +1727,7 @@ describe('review-and-prep run-state=record', () => {
     expect(checkDefaultBullet(bullet.replace(defaultSentence, ''))).toContain('missing default sentence');
     expect(checkDefaultBullet(bullet.replace('**Grammar stage line**', ''))).toContain('missing fallback: Grammar stage line');
     expect(checkDefaultBullet(bullet.replace('takes precedence over', 'repeats'))).toContain('missing skew precedence');
+    expect(checkDefaultBullet(bullet.replace('Run an available fence', 'Run the fence'))).toContain('missing fence availability check');
 
     const actStart = callsRaw.indexOf('## Activation');
     const actEnd = callsRaw.indexOf('\n## ', actStart + 1);
@@ -1736,6 +1740,7 @@ describe('review-and-prep run-state=record', () => {
     expect(activation).toContain('`<extend-root>/docs/review-run-state-calls.md` is readable');
     expect(activation).toContain('`Run state: unavailable (helper-missing)`');
     expect(activation).toContain('`Run state: unavailable (calls-document-missing)`');
+    expect(activation).toContain('run an available fence without `REVIEW_STATE_DIR`');
   });
 
   // Value: protects=inline metrics write procedures owned by derive stay removed from skills/review-and-prep.md; fails_when=any removed inline run-begin, delegated-v3, corrections or context-override phrase returns; why_new=Track 89A T2; seam=none
@@ -1860,6 +1865,7 @@ describe('review-and-prep run-state=record', () => {
     expect(fixedStart).toBeGreaterThan(-1);
     expect(fixedEnd).toBeGreaterThan(fixedStart);
     const fixedSection = callsRaw.slice(fixedStart, fixedEnd);
+    expect(fixedSection).toContain('After the **Degraded path** stops recording, skip `derive` for the rest of the invocation.');
     const tableHeadings = [...fixedSection.matchAll(/`(##+ [^`]+)`/g)].map((m) => m[1]!);
     expect(tableHeadings.length).toBeGreaterThanOrEqual(15);
     for (const h of tableHeadings) {

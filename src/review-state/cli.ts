@@ -29,7 +29,7 @@ Usage:
 
 show and export are read-only: no --input, no lock, and no state writes.
 render reads review-run-state.json without locking or modifying it and writes output files in --dir.
-full-review-record prints one FULL_REVIEW_RECORD: line with its own exit codes (full-review-record --help), and every /review-and-prep invocation calls it, including when state recording is unavailable.
+full-review-record prints one FULL_REVIEW_RECORD: line with its own exit codes (full-review-record --help). /review-and-prep calls it when the fence command is available, including when state recording is unavailable.
 
 Environment:
   GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS  Lock wait in ms (integer 0..60000, default 5000)

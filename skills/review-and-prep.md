@@ -1083,8 +1083,9 @@ continuation.
   `"<extend-root>/bin/review-state" --version` fails, record nothing, add
   `Run state: unavailable (helper-missing)` and
   `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: helper-missing).`
-  to the full receipt, write every output inline, and run the fence without
-  `REVIEW_STATE_DIR`. When `<extend-root>/docs/review-run-state-calls.md` is
+  to the full receipt, and write every output inline. Use the fence availability
+  check in **Record cycle 1's full-review baseline**. Run an available fence
+  without `REVIEW_STATE_DIR`. When `<extend-root>/docs/review-run-state-calls.md` is
   missing or unreadable (an install older than the loaded skill), record
   nothing, add `Run state: unavailable (calls-document-missing)` and
   `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: calls-document-missing).`

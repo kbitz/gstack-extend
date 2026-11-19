@@ -6,7 +6,7 @@ The caller records its run state by default; `bin/review-state` and `review-run-
 
 ## Activation
 
-Active by default when (1) the skill preamble printed an `EXTEND_ROOT:` line, (2) `"<extend-root>/bin/review-state" --version` exits 0 (`src/review-state/cli.ts` prints `review-state <version|unknown>` and exits 0), using the skill's single `<extend-root>` definition after its preamble, and (3) `<extend-root>/docs/review-run-state-calls.md` is readable. A policy line carrying `run-state=record` behaves exactly as one without it. When the root check or `"<extend-root>/bin/review-state" --version` fails, the full receipt says `Run state: unavailable (helper-missing)` and `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: helper-missing).`; when this calls document is missing or unreadable, the skill's policy bullet records `Run state: unavailable (calls-document-missing)` and `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: calls-document-missing).`. In both unavailable cases the invocation writes no run, pass or correction metrics records, runs the fence without `REVIEW_STATE_DIR`, and writes each output inline from the skill's templates (and **Inline outputs** when this document is readable).
+Active by default when (1) the skill preamble printed an `EXTEND_ROOT:` line, (2) `"<extend-root>/bin/review-state" --version` exits 0 (`src/review-state/cli.ts` prints `review-state <version|unknown>` and exits 0), using the skill's single `<extend-root>` definition after its preamble, and (3) `<extend-root>/docs/review-run-state-calls.md` is readable. A policy line carrying `run-state=record` behaves exactly as one without it. When the root check or `"<extend-root>/bin/review-state" --version` fails, the full receipt says `Run state: unavailable (helper-missing)` and `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: helper-missing).`; when this calls document is missing or unreadable, the skill's policy bullet records `Run state: unavailable (calls-document-missing)` and `Workflow metrics (local, optional): capture=unavailable (run-state unavailable: calls-document-missing).`. In both unavailable cases the invocation writes no run, pass or correction metrics records and writes each output inline from the skill's templates (and **Inline outputs** when this document is readable). Use the skill's baseline fence availability check and run an available fence without `REVIEW_STATE_DIR`.
 
 ## Directory, inputs and IDs
 
@@ -62,6 +62,8 @@ Separate `finish --outcome stopped` example with available full-review evidence:
 ```
 
 ## Fixed points
+
+Use these calls to start recording and while recording remains active. After the **Degraded path** stops recording, skip `derive` for the rest of the invocation.
 
 | Skill heading | Call | When |
 |---|---|---|
