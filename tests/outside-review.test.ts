@@ -556,6 +556,61 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Continuation review, cycle 2: a code name is a call or a file name with a listed extension, never an abbreviation or
+  // words joined by a slash or dot; a part never opens with a copula; an attribute never follows a copula; and each comma
+  // clause with its own copula holds its own affirming word.
+  const NAMING_CONTINUATION_C2 = [
+    'NEEDS_CONTEXT: none. The callers are supplied w/o their tests.',
+    'NEEDS_CONTEXT: none (all callers w/o src/a.ts supplied)',
+    'NEEDS_CONTEXT: none (the diff is supplied, the callers n/a)',
+    'NEEDS_CONTEXT: none. The callers are supplied, the tests are n.a.',
+    'NEEDS_CONTEXT: none. 0.5 of the callers are supplied.',
+    'NEEDS_CONTEXT: none. The diff is supplied, the callers and tests are missing/stale.',
+    'NEEDS_CONTEXT: none (the callers and/or the tests were supplied)',
+    'NEEDS_CONTEXT: none (the diff is visible, the callers not.visible)',
+    'NEEDS_CONTEXT: none. The diff is available, the callers are requested context.',
+    'NEEDS_CONTEXT: none. Are all the callers supplied',
+    'NEEDS_CONTEXT: none. The diff is complete, the requested context is config.ts and the callers of parse().',
+    'NEEDS_CONTEXT: none (the diff is supplied, the callers are the requested material)',
+    'NEEDS_CONTEXT: none. Had the full callers been supplied, the tests are covered.',
+  ] as const;
+  const NONE_CONTINUATION_C2 = [
+    'NEEDS_CONTEXT: none (all callers, tests and fixtures were supplied).',
+    'NEEDS_CONTEXT: none (x.h, package.json and the callers of parse() were supplied).',
+    'NEEDS_CONTEXT: none. The diff is supplied, the callers are present in the prompt.',
+  ] as const;
+
+  // Value: protects=owner decision A's closed vocabulary against abbreviations and joined words read as code names,
+  //   clauses that borrow another clause's affirming word, predicate attributes and copula-first questions; fails_when=a
+  //   slash or dot token without a listed extension, a comma clause without its own affirming word, or an inverted part is
+  //   credited again; why_new=cycle 2 of the continuation review reproduced each as credited at cb43794c;
+  //   seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
+  test('reads code names by shape and each comma clause on its own (owner decision A, continuation cycle 2)', () => {
+    for (const line of NAMING_CONTINUATION_C2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CONTINUATION_C2) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CONTINUATION_C2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_CONTINUATION_C2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+        }
+      }
+    }
+  });
+
+  // Value: protects=a degenerate possessive token in an untrusted reply costs linear time, so one reply cannot block the
+  //   event loop that runs other reviewers' timeouts; fails_when=possessive suffixes are stripped recursively (about 40 s
+  //   at a million suffixes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the continuation review measured
+  //   decide() blocked 18 s on an 800 KB reply; seam=contextLine(); no_claim=a wall-clock bound
+  test('reads a long possessive token in linear time', () => {
+    expect(contextLine(`NEEDS_CONTEXT: none. x${"'s".repeat(1_000_000)} was supplied.`)).toBe('missing');
+    expect(contextLine("NEEDS_CONTEXT: none. The module's callers were supplied.")).toBe('none');
+  }, 10_000);
+
   // Owner decision "1 a" (2026-11-19): the observed cycle-2 reply shape, the value form followed by a sentence that
   // references a severity-tagged finding and says it relies only on a supplied excerpt, stays uncredited under rule A.
   // Reconstructs the shape, not the text. The value form alone stays credited.
@@ -651,7 +706,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -659,7 +714,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION]) {
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
@@ -854,6 +909,12 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     ['exception in the statement', '1. Expired tokens are rejected apart from admin sessions: Met'],
     ['clause among the change statement names', '1. **Authentication.** Met. The change does not touch auth, and the token validator accepts expired tokens.'],
     ['copula after a path among the names', '1. **Input validation.** Met. The diff does not touch auth, and src/auth.ts is accepting expired tokens.'],
+    // Continuation review, cycle 2: absence and deferral words in an unwrapped statement, and an abbreviation among the names.
+    ['without in the statement', '1. Every caller is covered without a test for the CRLF path: Met'],
+    ['lacks in the statement', '1. Every caller is covered, the CRLF path lacks a test: Met'],
+    ['skipped in the statement', '1. Every caller is covered; CRLF path skipped: Met'],
+    ['pending in the statement', '1. Every caller is covered, the CRLF test is pending: Met'],
+    ['abbreviation among the change statement names', '1. Parser handles CRLF: Met. The diff does not touch the tests w/o a fixture.'],
   ].map(([label, line]) => [
     label,
     [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),

@@ -23,7 +23,8 @@ const CONTEXT_GLUED = /needscontext|nofindings|\[p[0-3]\b|\bp[0-3]\b|\b(?:critic
 const words = (list: string) => new Set(list.split(' '));
 const AFFIRMING = words('supplied provided included present shown given attached available visible covered contained complete sufficient');
 const DETERMINERS = words('the a an all every each both its their these those this any');
-const LINKS = words('it they them everything is are was were be been has have had and of also too verbatim above below here');
+const COPULAS = words('is are was were be been has have had');
+const LINKS = words('it they them everything and of also too verbatim above below here');
 // Review material a voice is given. After the affirming word, `in`, `within` and `by` name only one of these places.
 const PLACES = words('prompt diff diffs context material materials excerpt excerpts extension input message review section sections full');
 const PLACE_LINKS = words('in within by');
@@ -38,8 +39,10 @@ const NOUNS = words('caller callers callee callees call calls interface interfac
 const ATTRIBUTES = words('requested relevant referenced changed touched modified new existing related surrounding entire whole same negative positive');
 // A count only directly after `all`, so two counts cannot say part of the material was supplied.
 const COUNTS = words('two three four five six seven eight nine ten');
-// A code name: a token with a dot, slash or backslash, or one ending in call parentheses.
-const CODE_NAME = /^[a-z0-9][a-z0-9./\\-]*(?:\(\))?$/;
+// A code name: a call (`name()`), or a file name or path ending in a listed source or document extension. An abbreviation
+// or words joined by a slash or dot (`w/o`, `n/a`, `n.a`, `0.5`) are not names. Each path segment ends at a separator,
+// so the match stays linear.
+const CODE_NAME = /^(?:[a-z0-9$][a-z0-9$.]*\(\)|(?:[a-z0-9.-]+[/\\])*[a-z0-9-][a-z0-9.-]*\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonl|md|mdx|txt|yaml|yml|toml|lock|sh|bash|zsh|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sql|html|css|scss|xml|ini|cfg|conf|csv|lua|pl|ex|exs|hs|ml|scala|clj|dart|vue|svelte|gradle|mod|sum|nix|tf|proto|graphql))$/;
 // The change statement: the change does not touch, change, edit, modify or affect (on a context line also: depend on)
 // a list of names. Its names carry no punctuation but commas and the dots inside a file name.
 const CHANGE_NOTE = /^(?:the |this )?(?:change|changes|diff|fix|patch|branch|commit|pr|pull request) (?:does|do|did)(?: not|n't) (touch|change|edit|modify|affect|depend on) ((?:[^.;:!?]|\.(?=\S))+)\.?$/;
@@ -50,7 +53,7 @@ const NONE_PHRASE = /^none(?: of the above depends? on missing context)?/;
 const NONE_VALUE = /^none(?: of the above depends? on missing context)?(?:$|[.;](?:\s.*|$)| \((?:[^()]|\([^()]*\))+\)(?:$|[.;](?:\s.*|$)))/;
 // An unwrapped criterion statement carrying a contrast, failure, obligation, negation, condition, hedge or exception is a
 // caveat, not a criterion.
-const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unless|whereas|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|must|should|todo|fixme|issue[a-z]*|problem[a-z]*|partial[a-z]*|partly|unmet|missing|untested|unverified|not|no|never|[a-z]+n't|cannot|only|if|when|whenever|until|while|whether|provided that|assum[a-z]*|presum[a-z]*|probabl[a-z]*|likely|maybe|perhaps|possibl[a-z]*|apparent[a-z]*|seem[a-z]*|appear[a-z]*|mostly|largely|nearly|almost|mainly|generally|usually|sometimes|typically|apart|aside|besides|exclud[a-z]*|other than|save for|sans|minus)\b/;
+const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unless|whereas|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|must|should|todo|fixme|issue[a-z]*|problem[a-z]*|partial[a-z]*|partly|unmet|missing|untested|unverified|not|no|never|[a-z]+n't|cannot|only|if|when|whenever|until|while|whether|provided that|assum[a-z]*|presum[a-z]*|probabl[a-z]*|likely|maybe|perhaps|possibl[a-z]*|apparent[a-z]*|seem[a-z]*|appear[a-z]*|mostly|largely|nearly|almost|mainly|generally|usually|sometimes|typically|apart|aside|besides|exclud[a-z]*|other than|save for|sans|minus|without|lack[a-z]*|skip[a-z]*|pending|incomplet[a-z]*|absent|defer[a-z]*|tbd|wip|n\/a|w\/o)\b/;
 // A negated status: a negation up to two words before `Met` (emphasis removed).
 const NEGATED_STATUS = /\b(?:not|never|partially|partly)\b(?:[\t ,—–-]+[a-z]+){0,2}[\t ,.:;—–-]+met\b|\bunmet\b/i;
 // Between a bold criterion title and its status: whitespace and at most one delimiter.
@@ -87,26 +90,40 @@ function contextParts(explanation: string): string[] {
   return parts.flatMap(part => part.split(/[.;!](?=\s|$)/)).map(part => part.trim()).filter(Boolean);
 }
 
-/** A part is the change statement, or holds an affirming word and only vocabulary words, naming only places after it. */
+/**
+ * A part is the change statement, or a statement (never opening with a copula) that holds an affirming word and only
+ * vocabulary words, names only places after its first affirming word, and whose every comma clause with its own copula
+ * holds its own affirming word.
+ */
 function affirmsContext(part: string): boolean {
   if (CHANGE_NOTE.test(part)) return changeStatement(part, true);
-  const tokens = part.replace(/\bas well\b/g, 'too').split(' ').map(token => token.replace(/,$/, ''));
+  const raw = part.replace(/\bas well\b/g, 'too').split(' ');
+  const tokens = raw.map(token => token.replace(/,$/, ''));
   const first = tokens.findIndex(token => AFFIRMING.has(token));
-  return first >= 0 && tokens.every((token, i) => {
-    if (AFFIRMING.has(token) || DETERMINERS.has(token) || LINKS.has(token)) return true;
-    if (COUNTS.has(token)) return tokens[i - 1] === 'all';
-    if (ATTRIBUTES.has(token)) return nominal(tokens[i + 1]);
-    if (PLACE_LINKS.has(token)) return i < first || placeAt(tokens, i + 1);
-    return nominal(token);
-  });
+  if (first < 0 || COPULAS.has(tokens[0]!)) return false;
+  let copula = false, affirmed = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]!;
+    if (COPULAS.has(token)) copula = true;
+    else if (AFFIRMING.has(token)) affirmed = true;
+    else if (ATTRIBUTES.has(token) ? COPULAS.has(tokens[i - 1] ?? '') || !nominal(tokens[i + 1])
+      : COUNTS.has(token) ? tokens[i - 1] !== 'all'
+        : PLACE_LINKS.has(token) ? i > first && !placeAt(tokens, i + 1)
+          : !DETERMINERS.has(token) && !LINKS.has(token) && !nominal(token)) return false;
+    // A comma closes a clause: one with its own copula must have affirmed.
+    if (raw[i]!.endsWith(',') || i + 1 === tokens.length) {
+      if (copula && !affirmed) return false;
+      copula = false; affirmed = false;
+    }
+  }
+  return true;
 }
 
-/** A noun, place, attribute, code name or its possessive. */
+/** A noun, place, attribute, code name or one of those with a possessive `'s`. */
 function nominal(token: string | undefined): boolean {
   if (token === undefined) return false;
-  if (NOUNS.has(token) || PLACES.has(token) || ATTRIBUTES.has(token)) return true;
-  if (token.endsWith("'s")) return nominal(token.slice(0, -2));
-  return CODE_NAME.test(token) && (/[./\\]/.test(token) || token.endsWith('()'));
+  const stem = token.endsWith("'s") ? token.slice(0, -2) : token;
+  return NOUNS.has(stem) || PLACES.has(stem) || ATTRIBUTES.has(stem) || CODE_NAME.test(stem);
 }
 
 /** After determiners and affirming adjectives, a place in the review material. */

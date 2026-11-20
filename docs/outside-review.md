@@ -111,29 +111,35 @@ no-findings conclusion. A context-request line saying nothing is missing is not
 a request only in an allowed form, read with code-span text: list, quote or
 heading markup alone before the marker, then `none` (or `none of the above
 depends on missing context`), and an explanation each of whose parts (its
-parenthetical, then each sentence or clause) is the change statement or a
-supplied-context affirmation. The change statement says the change does not
-touch, change, edit, modify, affect or depend on a list of names, each a code
-name (a token with a dot, slash or call parentheses) or vocabulary nouns. An
+parenthetical, then each sentence) is the change statement or a supplied-context
+affirmation. The change statement says the change does not touch, change, edit,
+modify, affect or depend on a list of names, each a code name or vocabulary nouns
+with determiners, `of` and `in`. A code name is a call (`name()`) or a file name
+or path ending in a listed source or document extension; an abbreviation or words
+joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. An
 affirmation holds an affirming word (`supplied`, `provided`, `included`,
 `present`, `shown`, `given`, `attached`, `available`, `visible`, `covered`,
-`contained`, `complete`, `sufficient`) and only the closed vocabulary in
-`src/outside-review/recovery.ts`: determiners, copulas, `and`, `of`, review-material
-nouns, code names, attributive adjectives such as `requested` before a noun, and
-a count only after `all`; after the affirming word, `in`, `within` and `by`
-name only the prompt, diff, context, material, excerpts, extension or review, and
-`above`, `below`, `here`, `too`, `verbatim` and `in full` are allowed. Any
-other word, another marker, a severity label or word, a quote, brace, question or
-`name:line` keeps coverage missing, as does any other context line. When
+`contained`, `complete`, `sufficient`) and uses only the closed vocabulary listed
+in `src/outside-review/recovery.ts`: determiners, copulas, pronouns, `and`, `of`,
+`also`, `too`, `as well`, `verbatim`, `above`, `below`, `here`, review-material
+nouns and places, code names and their possessive `'s`, attributive adjectives
+such as `requested` directly before a noun (never after a copula), and a count
+only after `all`. After its first affirming word, `in`, `within` and `by` name
+only a place in the review material (the prompt, diff, context, material, excerpt,
+extension, input, message, review, a section, or `in full`). A part never opens
+with a copula, and each comma clause with its own copula holds its own affirming
+word. Any other word, another marker, a severity label or word, a quote, brace,
+question or `name:line` keeps coverage missing, as does any other context line. When
 upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
 unlabeled items, recovery drops the number from a numbered nothing-missing
 context line and rewrites numbered met-criterion lines into
 `Criterion N:` lines, then reclassifies. A met-criterion line carries no severity
 token or negated status (emphasis included; a negation up to two words before
-`Met` counts); only a delimiter separates its bold title, or an unwrapped
-statement without a caveat (a contrast, failure, obligation, negation, condition,
-hedge or exception word), from `Met`, `Met.` or `Met, by inspection.`; and the
-one sentence allowed after `Met.` is the change statement without `depend on`.
+`Met` counts); only whitespace and at most one delimiter separate its bold title,
+and a delimiter separates an unwrapped statement without a caveat (a contrast,
+failure, obligation, negation, condition, hedge, exception, absence or deferral
+word), from `Met`, `Met.` or `Met, by inspection.` (optionally bold); and the one
+sentence allowed after `Met.` is the change statement without `depend on`.
 The met-criterion checks are lexical: a bold title is not read for caveats, and
 a caveat in an unwrapped statement that uses no listed word is not detected.
 Refusals, failed execution, ambiguous prose and missing
