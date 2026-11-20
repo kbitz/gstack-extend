@@ -1353,11 +1353,16 @@ interface Cycle1 {
   continuation: boolean;
   scope: 'full' | 'delta';
   anchor: boolean;
-  reviewers: 'complete' | 'incomplete';
+  reviewers: 'complete' | 'outside-unverified' | 'outside-unavailable' | 'incomplete';
   requiredProbes: 'pass' | 'reproduced' | 'incomplete';
   snapshotTree: string;
   baseTree: string;
-  fixReview?: { snapshot: 'same' | 'other'; scope: 'delta' | 'full'; fixReviewed: boolean } | null;
+  fixReview?: {
+    snapshot: 'same' | 'other';
+    scope: 'delta' | 'full';
+    fixReviewed: boolean;
+    reviewers?: 'complete' | 'outside-unverified' | 'outside-unavailable';
+  } | null;
 }
 const UNAVAILABLE_REASONS = ['anchor-changed', 'tree-differs', 'reviewer-incomplete', 'record-missing'];
 /** The skill's rules: which row a cap stop may print for a cycle 1 record. */
@@ -1368,10 +1373,15 @@ function rowFor(record: Cycle1 | null, carried: string | null): { row: string; r
   const unavailable = (reason: string) => ({ row: 'Full-review evidence: unavailable', reason });
   if (record === null) return unavailable('record-missing');
   if (!record.anchor) return unavailable('anchor-changed');
-  if (record.reviewers !== 'complete' || record.requiredProbes === 'incomplete') return unavailable('reviewer-incomplete');
+  const reviewersOk = record.reviewers === 'complete' || record.reviewers === 'outside-unverified';
+  if (!reviewersOk || record.requiredProbes === 'incomplete') return unavailable('reviewer-incomplete');
   if (record.snapshotTree !== record.baseTree) return unavailable('tree-differs');
   if (record.requiredProbes === 'pass') return { row: '' };
-  if (!record.fixReview || record.fixReview.snapshot !== 'same' || !record.fixReview.fixReviewed) {
+  const fixReviewersOk =
+    record.fixReview?.reviewers === undefined ||
+    record.fixReview.reviewers === 'complete' ||
+    record.fixReview.reviewers === 'outside-unverified';
+  if (!record.fixReview || record.fixReview.snapshot !== 'same' || !record.fixReview.fixReviewed || !fixReviewersOk) {
     return unavailable('reviewer-incomplete');
   }
   if (record.fixReview.scope === 'delta' || record.fixReview.scope === 'full') return { row: '' };
@@ -1489,6 +1499,12 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     { name: 'reproduced probes with fix-reviewed=false', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: false } } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
     { name: 'reproduced probes confirmed by a delta cycle 2', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } } as Cycle1, carried: null, hold: false, reason: undefined },
     { name: 'reproduced probes confirmed by a full-scope cycle 2', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: true } } as Cycle1, carried: null, hold: false, reason: undefined },
+    { name: 'an unverified outside voice in cycle 1 (missing coverage)', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unverified', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: false, reason: undefined },
+    { name: 'an unavailable outside voice in cycle 1', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unavailable', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    { name: 'reproduced probes with an unverified outside voice in cycle 2', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unverified', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true, reviewers: 'outside-unverified' } } as Cycle1, carried: null, hold: false, reason: undefined },
+    { name: 'reproduced probes with an unavailable outside voice in cycle 2', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: false, reviewers: 'outside-unavailable' } } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
+    // Only the cycle-2 reviewer check can hold this record: criterion 8's unavailable boundary on its own.
+    { name: 'an unavailable outside voice in cycle 2 holds even when fix-reviewed reads true', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true, reviewers: 'outside-unavailable' } } as Cycle1, carried: null, hold: true, reason: 'reviewer-incomplete' },
   ])('$name', ({ record, carried, hold, reason }) => {
     const decided = rowFor(record, carried);
     const row = decided.row === '' ? completedRow : decided.row;
@@ -1496,6 +1512,19 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(v.mismatches.map((m) => m.binding)).toEqual(hold ? ['delta-base'] : []);
     expect(decided.reason).toBe(reason);
     if (decided.reason) expect(UNAVAILABLE_REASONS).toContain(decided.reason);
+  });
+
+  test('workflow-handoffs.md states what completed=true covers when an outside voice stayed unverified', () => {
+    const doc = squash(DOC);
+    for (const phrase of [
+      "In the `Full-review evidence:` row, `completed=true` covers the first-cycle baseline: every selected reviewer completed, except an outside voice (`outside:challenge`, `outside:structured`) that the dedicated evidence comment's per-stage results record as missing coverage (`missing coverage (unverified: <reason>)`);",
+      'every required probe ran to a result on B; and a cycle 2 reviewed the fixes for any reproduced defect (`fix-reviewed=true`, under the same unverified-outside-voice rule).',
+      'It never claims a clean review.',
+      'An `unavailable` outside voice remains `reviewer-incomplete`.',
+      'A `repair-only` continuation reruns any outside voice recorded as missing coverage at full scope (verified merge base to its candidate snapshot).',
+    ]) {
+      expect(has(doc, phrase), phrase).toBe(true);
+    }
   });
 
   // Value: protects=the consumer model's eligible branches match the skill's stop-table eligible rows; fails_when=the stop table or the model adds or drops an eligible branch; why_new=Track 84A T2 producer-to-model tie; seam=none; no_claim=installed-agent execution
