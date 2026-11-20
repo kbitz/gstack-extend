@@ -256,12 +256,17 @@ const numberedCleanVerdict: Classifier = (input) => {
 
 describe('nothing-missing context lines (Track 90A)', () => {
   const gates = ['review', 'structured'] as const;
-  const OBSERVED_NONE_FORMS = [
-    'NEEDS_CONTEXT: none (the context extension supplied all three requested interfaces).',
-    'NEEDS_CONTEXT: none of the above depends on missing context. Every caller and schema was supplied in the prompt.',
+  // Owner decision A (continuation 3): a context line saying nothing is missing is credited only as `none`, the observed
+  // sentence, or `none` and one change statement.
+  const OBSERVED_SENTENCE = 'NEEDS_CONTEXT: none of the above depends on missing context.';
+  const ALLOWED_NONE_FORMS = [
+    'NEEDS_CONTEXT: none',
+    OBSERVED_SENTENCE,
+    'NEEDS_CONTEXT: none (the change does not touch any caller).',
+    'NEEDS_CONTEXT: none. The change does not touch `src/cli.ts`, its callers or the parse() helper.',
   ] as const;
   const FORMATTING_NONE_VARIANTS = [
-    ...OBSERVED_NONE_FORMS,
+    ...ALLOWED_NONE_FORMS,
     '**NEEDS_CONTEXT:** none',
     '- NEEDS_CONTEXT: none',
     '`NEEDS_CONTEXT:` none',
@@ -271,8 +276,12 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT - none',
     'NEEDS_CONTEXT: None.',
     '**NEEDS_CONTEXT: none**',
-    'NEEDS_CONTEXT: none; all callers are present above.',
     'NEEDS_CONTEXT: none of the above depend on missing context.',
+    'NEEDS_CONTEXT: none of the above depends on missing context',
+    'NEEDS_CONTEXT: none; the diff does not change the parser.',
+    '- NEEDS_CONTEXT: none (the change does not touch `src/cli.ts` or its callers).',
+    "NEEDS_CONTEXT: none. The branch doesn't edit any release file.",
+    'NEEDS_CONTEXT: none (the fix does not depend on the parse() helper)',
   ] as const;
   const FAIL_CLOSED_MISSING = [
     'NEEDS_CONTEXT: none of the callers are visible',
@@ -291,66 +300,42 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'Verdict: NEEDS_CONTEXT',
     'NEEDS_CONTEXT: callers',
   ] as const;
-
-  const findingsReply = (ctxLine: string) => [
-    '[P1] `src/alpha.ts`: state check skips the duplicate branch when the map is empty.',
-    '',
-    ctxLine,
-    'Recommendation: request changes because the duplicate branch is reachable.',
-    'VERDICT: FINDINGS',
-  ].join('\n');
-
-  const cleanReply = (ctxLine: string) => [
-    'Checked every hunk against the supplied callers and contracts.',
-    ctxLine,
-    'NO_FINDINGS: none',
-    'Recommendation: approve because every criterion holds.',
-    'VERDICT: CLEAN',
-  ].join('\n');
-
-  test('credits findings and clean replies carrying nothing-missing context lines and fails closed on missing-context forms', () => {
-    for (const line of FORMATTING_NONE_VARIANTS) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const line of FAIL_CLOSED_MISSING) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    expect(contextLine('No NEEDS_CONTEXT: all callers present')).toBeNull();
-
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        // (a) Findings reply with each observed value form + trailing sentence.
-        for (const line of OBSERVED_NONE_FORMS) {
-          const res = recover(findingsReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-            gate, line, true, 'valid', 'findings', false,
-          ]);
-        }
-        // (b) NO_FINDINGS reply beside it.
-        for (const line of OBSERVED_NONE_FORMS) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-            gate, line, true, 'valid', 'clean', false,
-          ]);
-        }
-        // (c) Formatting variants table.
-        for (const line of FORMATTING_NONE_VARIANTS) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-            gate, line, true, 'valid', 'clean', false,
-          ]);
-        }
-        // (d) Fail-closed table, plus a reply carrying both a nothing-missing line and a naming line.
-        for (const line of [...FAIL_CLOSED_MISSING, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
-          for (const reply of [findingsReply(line), cleanReply(line)]) {
-            const res = recover(reply, gate, 0, '', classifier);
-            expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-              gate, line, false, 'failed', 'unverified', true,
-            ]);
-          }
-        }
-      }
-    }
-  });
-
-  // Lines that name missing context through a contraction, a typographic apostrophe, a request, a caveat or a
-  // code-span deny word, and nothing-missing lines with a nested call or a benign negation (review fixes).
+  // Complete replies an earlier grammar credited and the allowlist leaves uncredited, accepted as this Track's limitation
+  // (owner decision A, continuation 3): supplied-context affirmations, the observed sentence followed by another sentence,
+  // and `none` followed by anything but one change statement.
+  const UNCREDITED_COMPLETE_REPLIES = [
+    'NEEDS_CONTEXT: none (the context extension supplied all three requested interfaces).',
+    'NEEDS_CONTEXT: none of the above depends on missing context. Every caller and schema was supplied in the prompt.',
+    'NEEDS_CONTEXT: none of the above depends on missing context. The fix does not depend on any caller.',
+    'NEEDS_CONTEXT: none; all callers are present above.',
+    'NEEDS_CONTEXT: none (callers of alpha() were supplied).',
+    'NEEDS_CONTEXT: none (all three interfaces were supplied). The tests were supplied too.',
+    'NEEDS_CONTEXT: none (callers in src/cli.ts were supplied).',
+    'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).',
+    'NEEDS_CONTEXT: none (every caller of alpha() was supplied in full).',
+    "NEEDS_CONTEXT: none. The module's callers were supplied as well.",
+    'NEEDS_CONTEXT: none (all four requested interfaces were provided by the context extension).',
+    'NEEDS_CONTEXT: none. Everything is visible above.',
+    'NEEDS_CONTEXT: none (all callers, tests and fixtures were supplied).',
+    'NEEDS_CONTEXT: none (x.h, package.json and the callers of parse() were supplied).',
+    'NEEDS_CONTEXT: none. The diff is supplied, the callers are present in the prompt.',
+    'NEEDS_CONTEXT: none. The full diff was supplied in full, the callers are present in the full excerpt.',
+    'NEEDS_CONTEXT: none (the requested interfaces were provided by the context extension).',
+    'NEEDS_CONTEXT: none (the context extension provided all three requested interfaces).',
+    'NEEDS_CONTEXT: none (the callers are present and the schema was provided).',
+    'NEEDS_CONTEXT: none (the entire requested interface was supplied in full).',
+    'NEEDS_CONTEXT: none (the callers are all present).',
+    'NEEDS_CONTEXT: none (the callers present are sufficient).',
+    'NEEDS_CONTEXT: none (the callers are present in the supplied diff).',
+    'NEEDS_CONTEXT: none (all of the callers were supplied).',
+    'NEEDS_CONTEXT: none. Also, the tests were supplied.',
+    'NEEDS_CONTEXT: none (the tests have also been supplied).',
+    'NEEDS_CONTEXT: none (the supplied callers are complete).',
+    'NEEDS_CONTEXT: none (the callers in the supplied diff were provided).',
+    'NEEDS_CONTEXT: none. The change does not touch the parser. The diff does not change the tests.',
+    'NEEDS_CONTEXT: none (the change does not touch any caller). The tests agree.',
+  ] as const;
+  // Naming lines the Track 90A review, cycle 1 found credited.
   const NAMING_REVIEW_FIXES = [
     'NEEDS_CONTEXT: none (I can’t see the callers)',
     "NEEDS_CONTEXT: none (the body wasn't shown)",
@@ -364,14 +349,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. Diff was cut off.',
     'NEEDS_CONTEXT: none (callers of alpha() would help)',
   ] as const;
-  const NONE_REVIEW_FIXES = [
-    'NEEDS_CONTEXT: none (callers of alpha() were supplied).',
-    'NEEDS_CONTEXT: none (the change does not touch any caller).',
-  ] as const;
-  // Owner decision A (review cycle 2): an explanation may only affirm supplied context. A negation, absence,
-  // inability, request or hedge, another marker, a severity label or a `path:line`, or a deny word before the
-  // marker fails closed; a statement that the change does not touch, change, edit, modify, affect or depend on
-  // something is allowed.
+  // Naming lines the Track 90A review, cycle 2 found credited.
   const NAMING_CYCLE_2 = [
     'NEEDS_CONTEXT: none. The callers are not in the diff.',
     'NEEDS_CONTEXT: none (all supplied). Callers of alpha() are invisible.',
@@ -387,14 +365,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.',
     '`callers absent` NEEDS_CONTEXT: none',
   ] as const;
-  const NONE_CYCLE_2 = [
-    'NEEDS_CONTEXT: none of the above depends on missing context. The fix does not depend on any caller.',
-  ] as const;
-  // Owner decision A (review cycle 3): each part of the explanation (its parenthetical and each sentence or clause)
-  // must say context was supplied or state that the change does not touch, change, edit, modify, affect or depend on
-  // a list of names. A request, hedge or defect in other words, a sentence that affirms nothing, a clause after the
-  // affirmation, a path followed by a verb, a qualified label, severity word, quote, brace or question, another
-  // subject for the change statement, and any text before the marker but list, quote or heading markup fail closed.
+  // Naming lines the Track 90A review, cycle 3 found credited.
   const NAMING_CYCLE_3 = [
     'NEEDS_CONTEXT: none. Can you show the callers of parse()?',
     'NEEDS_CONTEXT: none (presumably the loader validates input)',
@@ -418,65 +389,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     '`[P1] retry drops writes` NEEDS_CONTEXT: none',
     'Status: NEEDS_CONTEXT: none',
   ] as const;
-  const NONE_CYCLE_3 = [
-    'NEEDS_CONTEXT: none (all three interfaces were supplied). The tests were supplied too.',
-    'NEEDS_CONTEXT: none (callers in src/cli.ts were supplied).',
-    '- NEEDS_CONTEXT: none (the change does not touch `src/cli.ts` or its callers).',
-  ] as const;
-
-  // Value: protects=owner decision A for context lines: a negating, hedging or requesting explanation, a glued marker,
-  //   label or path:line, and a deny word before the marker keep coverage missing, while a supplied-context explanation,
-  //   the allowed non-dependency statement and a numbered nothing-missing line are credited; fails_when=the remainder scan
-  //   credits any naming line or the numbered line stays an unlabeled item; why_new=cycle 2 of Track 90A's review
-  //   reproduced each; seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
-  test('fails closed on negation, absence, hedges, glued markers and text before the marker (owner decision A)', () => {
-    for (const line of NAMING_CYCLE_2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CYCLE_2) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CYCLE_2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.needs_context]).toEqual([gate, line, false, true]);
-        }
-        for (const line of NONE_CYCLE_2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
-        }
-      }
-    }
-    for (const gate of gates) {
-      const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', numberedCleanVerdict);
-      expect([gate, numbered.credited, numbered.parse, numbered.classification.verdict]).toEqual([gate, true, 'recovered', 'clean']);
-    }
-  });
-
-  // Value: protects=owner decision A for context lines: only a supplied-context affirmation or the change statement is
-  //   credited, so a request, hedge, defect, unaffirmed sentence, glued label or path, foreign subject or text before the
-  //   marker keeps coverage missing; fails_when=the explanation is screened with a deny list again or the prefix and glue
-  //   checks are dropped; why_new=cycle 3 of Track 90A's review reproduced each naming line as credited;
-  //   seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
-  test('credits only supplied-context affirmations and the change statement (owner decision A, cycle 3)', () => {
-    for (const line of NAMING_CYCLE_3) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CYCLE_3) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CYCLE_3) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_CYCLE_3) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
-        }
-      }
-    }
-  });
-
-  // Owner decision A (continuation review): an affirmation uses only a closed vocabulary (affirming words, copulas,
-  // determiners, review-material nouns, attributive adjectives, a number after `all`, code names) and names nothing
-  // but in-prompt places after its affirming word; each change-statement name is a code name or a vocabulary noun.
-  // Outside material, exclusions, partial supply, unlisted negators or quantifiers, curly or single quotes, a
-  // predicative `requested`, two counts and a clause among the names therefore fail closed.
+  // Naming lines the first continuation review, cycle 1 found credited.
   const NAMING_CONTINUATION = [
     'NEEDS_CONTEXT: none (the callers are available in the repository).',
     'NEEDS_CONTEXT: none (the schema is available upon request).',
@@ -508,57 +421,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. The change does not touch auth, and the token validator accepts expired tokens.',
     'NEEDS_CONTEXT: none. The change does not touch auth, and src/auth.ts is accepting expired tokens.',
   ] as const;
-  const NONE_CONTINUATION = [
-    'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).',
-    'NEEDS_CONTEXT: none (every caller of alpha() was supplied in full).',
-    "NEEDS_CONTEXT: none. The module's callers were supplied as well.",
-    'NEEDS_CONTEXT: none (all four requested interfaces were provided by the context extension).',
-    'NEEDS_CONTEXT: none. Everything is visible above.',
-    'NEEDS_CONTEXT: none. The change does not touch `src/cli.ts`, its callers or the parse() helper.',
-  ] as const;
-
-  // Value: protects=owner decision A for context lines as a closed vocabulary: a nothing-missing explanation that places
-  //   the material outside the prompt, excludes part of it, says it was partial, or carries an unlisted negator,
-  //   quantifier, quote or clause keeps coverage missing, on the outside and numbered paths, while plain supplied-context
-  //   affirmations and the change statement stay credited; fails_when=any explanation word outside the vocabulary is
-  //   accepted again; why_new=the continuation review of Track 90A reproduced each naming line as credited at f15befa7;
-  //   seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
-  test('credits only a closed supplied-context vocabulary and change-statement names (owner decision A, continuation)', () => {
-    for (const line of NAMING_CONTINUATION) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CONTINUATION) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CONTINUATION) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_CONTINUATION) {
-          for (const [reply, verdict] of [[cleanReply(line), 'clean'], [findingsReply(line), 'findings']] as const) {
-            const res = recover(reply, gate, 0, '', classifier);
-            expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-              gate, line, true, 'valid', verdict, false,
-            ]);
-          }
-        }
-      }
-    }
-    // A numbered naming line keeps its number, so upstream's numbered-item rule still applies to it.
-    const numbered = [
-      '1. **Expired tokens are rejected.** Met.',
-      '2. NEEDS_CONTEXT: none (the provided login handler accepts expired tokens)',
-      'NO_FINDINGS: none',
-      'Recommendation: approve because every criterion holds.',
-      'VERDICT: CLEAN',
-    ].join('\n');
-    for (const gate of gates) {
-      const res = recover(numbered, gate, 0, '', numberedCleanVerdict);
-      expect([gate, res.credited, res.needs_context]).toEqual([gate, false, true]);
-    }
-  });
-
-  // Continuation review, cycle 2: a code name is a call or a file name with a listed extension, never an abbreviation or
-  // words joined by a slash or dot; a part never opens with a copula; an attribute never follows a copula; and each comma
-  // clause with its own copula holds its own affirming word.
+  // Naming lines the first continuation review, cycle 2 found credited.
   const NAMING_CONTINUATION_C2 = [
     'NEEDS_CONTEXT: none. The callers are supplied w/o their tests.',
     'NEEDS_CONTEXT: none (all callers w/o src/a.ts supplied)',
@@ -574,36 +437,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none (the diff is supplied, the callers are the requested material)',
     'NEEDS_CONTEXT: none. Had the full callers been supplied, the tests are covered.',
   ] as const;
-  const NONE_CONTINUATION_C2 = [
-    'NEEDS_CONTEXT: none (all callers, tests and fixtures were supplied).',
-    'NEEDS_CONTEXT: none (x.h, package.json and the callers of parse() were supplied).',
-    'NEEDS_CONTEXT: none. The diff is supplied, the callers are present in the prompt.',
-  ] as const;
-
-  // Value: protects=owner decision A's closed vocabulary against abbreviations and joined words read as code names,
-  //   clauses that borrow another clause's affirming word, predicate attributes and copula-first questions; fails_when=a
-  //   slash or dot token without a listed extension, a comma clause without its own affirming word, or an inverted part is
-  //   credited again; why_new=cycle 2 of the continuation review reproduced each as credited at cb43794c;
-  //   seam=contextLine() and recover(); no_claim=an exhaustive list of phrasings
-  test('reads code names by shape and each comma clause on its own (owner decision A, continuation cycle 2)', () => {
-    for (const line of NAMING_CONTINUATION_C2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CONTINUATION_C2) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CONTINUATION_C2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_CONTINUATION_C2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
-        }
-      }
-    }
-  });
-
-  // Continuation review, cycle 3: a part never opens with an affirming word (a condition or an imperative), a comma clause
-  // after an affirmed clause holds its own affirming word, and `full` names a place only in `in full`.
+  // Naming lines the first continuation review, cycle 3 found credited.
   const NAMING_CONTINUATION_C3 = [
     'NEEDS_CONTEXT: none (provided the callers are supplied).',
     'NEEDS_CONTEXT: none. Present the callers of save().',
@@ -613,36 +447,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. The diff is supplied, the callers of save().',
     'NEEDS_CONTEXT: none. The callers are available in the full src/caller.ts file.',
   ] as const;
-  const NONE_CONTINUATION_C3 = [
-    'NEEDS_CONTEXT: none (every caller of alpha() was supplied in full).',
-    'NEEDS_CONTEXT: none. The full diff was supplied in full, the callers are present in the full excerpt.',
-    'NEEDS_CONTEXT: none (the requested interfaces were provided by the context extension).',
-  ] as const;
-
-  // Value: protects=owner decision A against an affirming verb used as a condition or an imperative, a bare fragment after
-  //   an affirmed clause, and `full` standing in for a place outside the prompt; fails_when=a part that opens with an
-  //   affirming word, a fragment clause or `in the full <file>` is credited again; why_new=cycle 3 of the continuation
-  //   review reproduced each as credited at ce8b0a73; seam=contextLine() and recover(); no_claim=an exhaustive list
-  test('rejects conditional and imperative openings, trailing fragments and full as a place (continuation cycle 3)', () => {
-    for (const line of NAMING_CONTINUATION_C3) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CONTINUATION_C3) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CONTINUATION_C3) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_CONTINUATION_C3) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
-        }
-      }
-    }
-  });
-
-  // Second continuation review, cycle 1: each clause (a part split at commas and at `and`) keeps the opening rule and,
-  // after an affirmed clause, holds its own affirming word; `provided` and `given` never read as a condition; an attribute
-  // needs its noun within its clause; and `full` is a place only after `in`.
+  // Naming lines the second continuation review, cycle 1 found credited.
   const NAMING_CONTINUATION_2 = [
     'NEEDS_CONTEXT: none. The diff is supplied, complete the schema.',
     'NEEDS_CONTEXT: none. The diff is supplied, present the callers of save().',
@@ -659,36 +464,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none (the callers are supplied within full).',
     'NEEDS_CONTEXT: none (the callers are supplied by full).',
   ] as const;
-  const NONE_CONTINUATION_2 = [
-    'NEEDS_CONTEXT: none (the context extension provided all three requested interfaces).',
-    'NEEDS_CONTEXT: none (the callers are present and the schema was provided).',
-    'NEEDS_CONTEXT: none (the entire requested interface was supplied in full).',
-  ] as const;
-
-  // Value: protects=owner decision A against a request, question or condition in a later clause, an affirmation borrowed
-  //   across `and`, an attribute read as a predicate before a comma and `within full` or `by full` as a place;
-  //   fails_when=any of them is credited again; why_new=the second continuation review reproduced each as credited at
-  //   d0e2a9a9; seam=contextLine() and recover(); no_claim=an exhaustive list
-  test('reads every clause on its own and rejects conditions, predicate attributes and other full places (continuation 2)', () => {
-    for (const line of NAMING_CONTINUATION_2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CONTINUATION_2) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CONTINUATION_2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_CONTINUATION_2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
-        }
-      }
-    }
-  });
-
-  // Second continuation review, cycle 2: a clause names its subject before its predicate (a leading `also` or preposition
-  // supplies none), each copula is followed by its affirming word, and a later affirming word follows a copula or is an
-  // attribute, so neither a request nor a run-on second predicate affirms.
+  // Naming lines the second continuation review, cycle 2 found credited.
   const NAMING_CONTINUATION_2_C2 = [
     'NEEDS_CONTEXT: none. Also present the callers of save().',
     'NEEDS_CONTEXT: none. The diff is supplied and also complete the schema.',
@@ -704,39 +480,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. The callers are supplied, the tests too provided the diff is complete.',
     'NEEDS_CONTEXT: none. The callers of parse() be supplied.',
   ] as const;
-  const NONE_CONTINUATION_2_C2 = [
-    'NEEDS_CONTEXT: none (the callers are all present).',
-    'NEEDS_CONTEXT: none (the callers present are sufficient).',
-    'NEEDS_CONTEXT: none (the callers are present in the supplied diff).',
-    'NEEDS_CONTEXT: none (all of the callers were supplied).',
-    'NEEDS_CONTEXT: none. Also, the tests were supplied.',
-    'NEEDS_CONTEXT: none (the tests have also been supplied).',
-  ] as const;
-
-  // Value: protects=owner decision A against a request whose clause has no subject before its predicate (behind `also` or
-  //   a leading preposition), a second predicate run on after the first and a copula that does not lead to its affirming
-  //   word; fails_when=any of them is credited again, or the qualified and attributive controls stop being credited;
-  //   why_new=cycle 2 of the second continuation review reproduced each as credited at 973d4534; seam=contextLine() and
-  //   recover(); no_claim=an exhaustive list
-  test('requires a subject before the predicate and links each later affirming word (continuation 2, cycle 2)', () => {
-    for (const line of NAMING_CONTINUATION_2_C2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CONTINUATION_2_C2) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_CONTINUATION_2_C2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_CONTINUATION_2_C2) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
-        }
-      }
-    }
-  });
-
-  // Second continuation review, cycle 3: only a predicate affirms a clause; an attribute (`the supplied code`) describes
-  // its noun.
+  // Naming lines the second continuation review, cycle 3 found credited.
   const NAMING_CONTINUATION_2_C3 = [
     'NEEDS_CONTEXT: none. The diff is supplied, the requested callers of the supplied code.',
     'NEEDS_CONTEXT: none (the supplied callers)',
@@ -745,50 +489,159 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. The diff is supplied,',
     'NEEDS_CONTEXT: none. The change does not depend on save() and the',
   ] as const;
-  const NONE_CONTINUATION_2_C3 = [
-    'NEEDS_CONTEXT: none (the supplied callers are complete).',
-    'NEEDS_CONTEXT: none (the callers in the supplied diff were provided).',
-  ] as const;
 
-  // Value: protects=owner decision A against a clause whose only affirming word is an attribute of another noun, which
-  //   left the requested callers read as supplied, and against a part that stops mid-sentence or a change-statement name
-  //   of determiners alone, whose gap a wrapped reply names on the next line; fails_when=an attribute affirms a clause
-  //   again, an unfinished part or an empty name is credited, or a predicate after an attribute stops being credited; why_new=cycle 3 of the second continuation review reproduced the credit at
-  //   6644358b; seam=contextLine() and recover(); no_claim=an exhaustive list
-  test('reads only a predicate as an affirmation, never an attribute (continuation 2, cycle 3)', () => {
-    for (const line of NAMING_CONTINUATION_2_C3) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_CONTINUATION_2_C3) expect([line, contextLine(line)]).toEqual([line, 'none']);
+  const findingsReply = (ctxLine: string) => [
+    '[P1] `src/alpha.ts`: state check skips the duplicate branch when the map is empty.',
+    '',
+    ctxLine,
+    'Recommendation: request changes because the duplicate branch is reachable.',
+    'VERDICT: FINDINGS',
+  ].join('\n');
+
+  const cleanReply = (ctxLine: string) => [
+    'Checked every hunk against the supplied callers and contracts.',
+    ctxLine,
+    'NO_FINDINGS: none',
+    'Recommendation: approve because every criterion holds.',
+    'VERDICT: CLEAN',
+  ].join('\n');
+
+  // Value: protects=owner decision A (continuation 3): `none`, the observed sentence and `none` with one change
+  //   statement, in their formatting variants, are credited on findings and clean replies, while a line naming missing
+  //   context still fails closed (criteria 1 and 4); fails_when=an allowed form stops being credited or a missing-context
+  //   form is credited; why_new=the owner replaced the explanation grammar with this allowlist; seam=contextLine() and
+  //   recover() with the strict and last-line classifiers; no_claim=an exhaustive list of phrasings
+  test('credits only the three allowed forms and fails closed on missing-context forms (owner decision A, continuation 3)', () => {
+    for (const line of FORMATTING_NONE_VARIANTS) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const line of FAIL_CLOSED_MISSING) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    expect(contextLine('No NEEDS_CONTEXT: all callers present')).toBeNull();
+
     for (const classifier of [classify, lastLineVerdict]) {
       for (const gate of gates) {
-        for (const line of NAMING_CONTINUATION_2_C3) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        for (const line of ALLOWED_NONE_FORMS) {
+          for (const [reply, verdict] of [[findingsReply(line), 'findings'], [cleanReply(line), 'clean']] as const) {
+            const res = recover(reply, gate, 0, '', classifier);
+            expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+              gate, line, true, 'valid', verdict, false,
+            ]);
+          }
         }
-        for (const line of NONE_CONTINUATION_2_C3) {
+        for (const line of FORMATTING_NONE_VARIANTS) {
           const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+            gate, line, true, 'valid', 'clean', false,
+          ]);
+        }
+        // A nothing-missing line beside a naming line still fails closed.
+        for (const line of [...FAIL_CLOSED_MISSING, `${OBSERVED_SENTENCE}\nNEEDS_CONTEXT: callers of alpha()`]) {
+          for (const reply of [findingsReply(line), cleanReply(line)]) {
+            const res = recover(reply, gate, 0, '', classifier);
+            expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+              gate, line, false, 'failed', 'unverified', true,
+            ]);
+          }
         }
       }
     }
   });
 
-  // Value: protects=a long attribute run in an untrusted reply costs linear time on both explanation paths, so one reply
-  //   cannot block the event loop that runs other reviewers' timeouts; fails_when=each attribute rescans the rest of its
-  //   run (about 2 s at 16k attributes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the second continuation
-  //   review measured the quadratic scan; seam=contextLine(); no_claim=a wall-clock bound
+  // Value: protects=owner decision A (continuation 3): every other context line fails closed, including each naming line
+  //   an earlier review found credited and each complete reply the earlier explanation grammar credited; fails_when=any
+  //   explanation other than one change statement is credited again; why_new=the owner replaced the grammar with the
+  //   allowlist after three cycles of false credits; seam=contextLine() and recover(); no_claim=an exhaustive list
+  test('fails closed on every other explanation, including complete replies the earlier grammar credited (owner decision A, continuation 3)', () => {
+    const lines = [...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION,
+      ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2,
+      ...NAMING_CONTINUATION_2_C3, ...UNCREDITED_COMPLETE_REPLIES];
+    for (const line of lines) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of lines) {
+          for (const reply of [cleanReply(line), findingsReply(line)]) {
+            const res = recover(reply, gate, 0, '', classifier);
+            expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+          }
+        }
+      }
+    }
+  });
+
+  // Owner decision A (continuation 3): a context line is read on its own line, so a nothing-missing sentence that carries
+  // on to the next line is none of the allowed forms.
+  const CONTINUED_CONTEXT_LINES = [
+    ['NEEDS_CONTEXT: none of the above depends on missing context', 'except the callers of parse(), which were not supplied.'],
+    ['NEEDS_CONTEXT: none', 'of the callers are visible.'],
+    ['NEEDS_CONTEXT: none (the change does not touch any caller)', 'and the callers of save() are missing.'],
+    ['NEEDS_CONTEXT: none. The change does not touch the parser', 'or its callers, which are missing.'],
+    ['- NEEDS_CONTEXT: none', '  but the callers of save() were not supplied.'],
+  ] as const;
+
+  // Value: protects=owner decision A (continuation 3) on wrapped replies: a nothing-missing line whose sentence carries on
+  //   to the next line keeps coverage missing, while a line followed by a blank line or a marker line stays credited;
+  //   fails_when=the line is read without the line after it, so a gap named on the continuation is credited;
+  //   why_new=the second continuation review's adversarial reviewer showed a continued sentence credited; seam=recover();
+  //   no_claim=sentences wrapped before the marker
+  test('fails closed on a nothing-missing sentence that continues on the next line (owner decision A, continuation 3)', () => {
+    for (const [first, next] of CONTINUED_CONTEXT_LINES) {
+      expect([first, contextLine(first)]).toEqual([first, 'none']);
+      for (const classifier of [classify, lastLineVerdict]) {
+        for (const gate of gates) {
+          for (const reply of [cleanReply(`${first}\n${next}`), findingsReply(`${first}\n${next}`)]) {
+            const res = recover(reply, gate, 0, '', classifier);
+            expect([gate, first, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
+              gate, first, false, 'failed', 'unverified', true,
+            ]);
+          }
+        }
+      }
+    }
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        const res = recover(cleanReply('NEEDS_CONTEXT: none\n\nEvery hunk was read.'), gate, 0, '', classifier);
+        expect([gate, res.credited, res.parse, res.classification.verdict]).toEqual([gate, true, 'valid', 'clean']);
+      }
+    }
+  });
+
+  // Value: protects=a numbered nothing-missing line is not an unlabeled item, while a numbered naming line keeps its
+  //   number, so upstream's numbered-item rule still applies to it; fails_when=the numbered line stays an unlabeled item
+  //   or the naming line is credited; why_new=cycle 2 of Track 90A's review and the first continuation review reproduced
+  //   each; seam=recover() with the numbered-item classifier; no_claim=other numbered shapes
+  test('drops the number from a numbered nothing-missing line and keeps a numbered naming line uncredited', () => {
+    const naming = [
+      '1. **Expired tokens are rejected.** Met.',
+      '2. NEEDS_CONTEXT: none (the provided login handler accepts expired tokens)',
+      'NO_FINDINGS: none',
+      'Recommendation: approve because every criterion holds.',
+      'VERDICT: CLEAN',
+    ].join('\n');
+    for (const gate of gates) {
+      const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', numberedCleanVerdict);
+      expect([gate, numbered.credited, numbered.parse, numbered.classification.verdict]).toEqual([gate, true, 'recovered', 'clean']);
+      const res = recover(naming, gate, 0, '', numberedCleanVerdict);
+      expect([gate, res.credited, res.needs_context]).toEqual([gate, false, true]);
+    }
+  });
+
+  // Value: protects=a long attribute run, a degenerate possessive token or a long dotted token in an untrusted reply
+  //   costs linear time on the change-statement path, so one reply cannot block the event loop that runs other
+  //   reviewers' timeouts; fails_when=each attribute rescans the rest of its run (about 2 s at 16k attributes),
+  //   possessive suffixes are stripped recursively, or the path pattern backtracks quadratically, so a test exceeds its
+  //   10 s timeout; why_new=Track 90A's reviews measured each; seam=contextLine(); no_claim=a wall-clock bound
   test('reads a long attribute run in linear time', () => {
     const run = 'new '.repeat(50_000);
-    expect(contextLine(`NEEDS_CONTEXT: none (the ${run}callers were supplied).`)).toBe('none');
+    expect(contextLine(`NEEDS_CONTEXT: none (the ${run}callers were supplied).`)).toBe('missing');
     expect(contextLine(`NEEDS_CONTEXT: none (the change does not depend on the ${run}callers).`)).toBe('none');
   }, 10_000);
 
-  // Value: protects=a degenerate possessive token in an untrusted reply costs linear time, so one reply cannot block the
-  //   event loop that runs other reviewers' timeouts; fails_when=possessive suffixes are stripped recursively (about 40 s
-  //   at a million suffixes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the continuation review measured
-  //   decide() blocked 18 s on an 800 KB reply; seam=contextLine(); no_claim=a wall-clock bound
   test('reads a long possessive token in linear time', () => {
-    expect(contextLine(`NEEDS_CONTEXT: none. x${"'s".repeat(1_000_000)} was supplied.`)).toBe('missing');
-    expect(contextLine("NEEDS_CONTEXT: none. The module's callers were supplied.")).toBe('none');
+    expect(contextLine(`NEEDS_CONTEXT: none. The change does not touch x${"'s".repeat(1_000_000)}.`)).toBe('missing');
+    expect(contextLine("NEEDS_CONTEXT: none. The change does not touch the module's callers.")).toBe('none');
+  }, 10_000);
+
+  test('keeps the glued path:line check linear on long dotted tokens', () => {
+    expect(contextLine(`NEEDS_CONTEXT: none. The change does not touch ${'a.'.repeat(200_000)}ts.`)).toBe('none');
+    expect(contextLine(`NEEDS_CONTEXT: none. The change does not touch ${'a.'.repeat(200_000)}ts:14`)).toBe('missing');
   }, 10_000);
 
   // Owner decision "1 a" (2026-11-19): the observed cycle-2 reply shape, the value form followed by a sentence that
@@ -797,8 +650,8 @@ describe('nothing-missing context lines (Track 90A)', () => {
   const OBSERVED_CYCLE_2_SENTENCE = 'NEEDS_CONTEXT: none of the above depends on missing context. The P2 retry interaction relies only on the supplied `retry.ts` excerpt.';
   const OBSERVED_CYCLE_2_VALUE = 'NEEDS_CONTEXT: none of the above depends on missing context.';
 
-  // Value: protects=the owner's choice that criterion 1 covers the observed value form and the allowed explanations, not
-  //   the observed sentence (a severity-tagged finding reference that relies only on a supplied excerpt); fails_when=that
+  // Value: protects=the owner's choice that criterion 1 covers the observed value form, not the observed sentence
+  //   (a severity-tagged finding reference that relies only on a supplied excerpt); fails_when=that
   //   sentence is credited, so a finding mentioned only in a context line passes the coverage gate, or the bare value form
   //   stops being credited; why_new=the continuation review's Red Team showed the shape uncredited and the owner kept it
   //   so; seam=contextLine() and recover(); no_claim=the consumer's original wording
@@ -817,42 +670,11 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
-  // Value: protects=a context line that names missing context in a contraction, typographic apostrophe, request, caveat or code span
-  //   stays uncredited (criteria 1 and 4) while nested calls and benign negations still read as nothing missing; fails_when=the deny
-  //   scan misses these forms or reads code-span text as erased; why_new=cycle 1 of Track 90A's review reproduced each form as credited;
-  //   seam=contextLine() and recover() with the strict and last-line classifiers; no_claim=an exhaustive deny list
-  test('fails closed on contractions, typographic apostrophes, requests, caveats and code-span deny words', () => {
-    for (const line of NAMING_REVIEW_FIXES) expect([line, contextLine(line)]).toEqual([line, 'missing']);
-    for (const line of NONE_REVIEW_FIXES) expect([line, contextLine(line)]).toEqual([line, 'none']);
-    for (const classifier of [classify, lastLineVerdict]) {
-      for (const gate of gates) {
-        for (const line of NAMING_REVIEW_FIXES) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
-        }
-        for (const line of NONE_REVIEW_FIXES) {
-          const res = recover(cleanReply(line), gate, 0, '', classifier);
-          expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-            gate, line, true, 'valid', 'clean', false,
-          ]);
-        }
-      }
-    }
-  });
-
-  // Value: protects=the glued `path:line` check stays linear on a long dotted token in an untrusted reply; fails_when=the
-  //   path pattern backtracks quadratically (it hung on a 1 MiB `a.a.` run during review), so this test exceeds its
-  //   timeout; why_new=cycle 2 of Track 90A's review measured the hang; seam=contextLine(); no_claim=a wall-clock bound
-  test('keeps the glued path:line check linear on long dotted tokens', () => {
-    expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}ts was supplied.`)).toBe('none');
-    expect(contextLine(`NEEDS_CONTEXT: none. ${'a.'.repeat(200_000)}ts:14`)).toBe('missing');
-  });
-
   test('credits nothing-missing replies through run() and keeps a naming line uncredited', async () => {
     await temporary(async dir => {
       const results = await run(request, '+diff', dir, 'model', async (_prefix, task) => ({
         status: 'completed',
-        result: task === TASKS.challenge ? findingsReply(OBSERVED_NONE_FORMS[0]) : cleanReply(OBSERVED_NONE_FORMS[1]),
+        result: task === TASKS.challenge ? findingsReply(ALLOWED_NONE_FORMS[2]) : cleanReply(OBSERVED_SENTENCE),
       }), lastLineVerdict);
       expect(results.map(r => [r.phase, r.credited, r.parse, r.classification.verdict, r.needs_context])).toEqual([
         ['challenge', true, 'valid', 'findings', false],
@@ -876,7 +698,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
   test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier gives the same outcomes for nothing-missing and fail-closed context lines (installed only)', async () => {
     const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
     for (const gate of gates) {
-      for (const line of OBSERVED_NONE_FORMS) {
+      for (const line of ALLOWED_NONE_FORMS) {
         const found = recover(findingsReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, found.credited, found.parse, found.classification.verdict, found.needs_context]).toEqual([
           gate, line, true, 'valid', 'findings', false,
@@ -886,7 +708,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2, ...NAMING_CONTINUATION_2_C3, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2, ...NAMING_CONTINUATION_2_C3, ...UNCREDITED_COMPLETE_REPLIES, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_SENTENCE}\nNEEDS_CONTEXT: callers of alpha()`, ...CONTINUED_CONTEXT_LINES.map(pair => pair.join('\n'))]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -894,12 +716,6 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2, ...NONE_CONTINUATION_C3, ...NONE_CONTINUATION_2, ...NONE_CONTINUATION_2_C2, ...NONE_CONTINUATION_2_C3]) {
-        const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
-        expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
-          gate, line, true, 'valid', 'clean', false,
-        ]);
-      }
     }
   });
 });

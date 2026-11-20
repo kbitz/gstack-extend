@@ -108,40 +108,24 @@ only a completed execution, normalizes wrapped recommendation headings and
 lowercase priority labels and one-severity qualified labels, and permits a missing recommendation when the
 upstream structured validator independently establishes findings or an explicit
 no-findings conclusion. A context-request line saying nothing is missing is not
-a request only in an allowed form, read with code-span text: list, quote or
-heading markup alone before the marker, then `none` (or `none of the above
-depends on missing context`, also with `depend`), and an explanation each of whose parts (its
-parenthetical, then each sentence) is the change statement or a supplied-context
-affirmation. The change statement says `change` (or `changes`, `diff`, `fix`,
-`patch`, `branch`, `commit`, `PR` or `pull request`), optionally after `the` or
-`this`, does, do or did not (or `n't`) touch,
-change, edit, modify, affect or depend on a list of names, each a code name or
-vocabulary nouns with determiners, attributes, `of` and `in` (determiners alone name
-nothing). A code name is a call (`name()`) or a file name
+a request only in one of three forms, read on its own line with code-span text:
+list, quote or heading markup alone before the marker, then `none`, the observed
+sentence `none of the above depends on missing context` (also with `depend`), each
+with an optional period, or `none` and one change statement, as a sentence after
+`.` or `;` or as a parenthetical. The change statement says `change` (or
+`changes`, `diff`, `fix`, `patch`, `branch`, `commit`, `PR` or `pull request`),
+optionally after `the` or `this`, does, do or did not (or `n't`) touch, change,
+edit, modify, affect or depend on a list of names, each a code name or vocabulary
+nouns (each with an optional possessive `'s`) with determiners, attributes, `of`
+and `in` (determiners alone name nothing), from the closed lists in
+`src/outside-review/recovery.ts`. A code name is a call (`name()`) or a file name
 or path ending in a listed source or document extension; an abbreviation or words
-joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. An
-affirmation holds an affirming word (`supplied`, `provided`, `included`,
-`present`, `shown`, `given`, `attached`, `available`, `visible`, `covered`,
-`contained`, `complete`, `sufficient`) as a predicate, never only as an attribute
-(`the supplied code`), and uses only the closed vocabulary listed
-in `src/outside-review/recovery.ts`: determiners, copulas, pronouns, `of`,
-`also`, `too`, `as well`, `verbatim`, `above`, `below`, `here`, review-material
-nouns and places and code names (each with an optional possessive `'s`), attributive adjectives
-such as `requested` followed in their clause by a noun (never after a copula), and a count
-only after `all`. After its first predicate affirming word, `in`, `within` and `by` take
-only `in full` or, after determiners, affirming words and attributes, a place in
-the review material (the prompt, diff, context, material, excerpt, extension,
-input, message, review or a section). A part splits into clauses at commas and at
-`and`; one that ends in a comma or `and` stops mid-sentence and affirms nothing. Each clause names its subject (a noun, place, code name, `it`, `they` or
-`everything`, not after an earlier `in`, `within`, `by` or an `of` that does not
-follow a determiner) before its first copula and before its first affirming word
-that is not an attribute (one after a determiner, count or attribute and before its
-noun). Each copula is followed by an affirming word, with only other copulas or
-`all`, `both`, `each`, `also` or `too` between; once the predicate starts, another copula only
-continues a copula or directly follows the affirming word that started it, and
-another affirming word follows a copula or is an attribute. A clause with its own
-copula, or one after an affirmed clause, holds its own predicate affirming word. Any other word, another marker, a severity label or word, a quote, brace,
-question or `name:line` keeps coverage missing, as does any other context line.
+joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. Any other
+explanation, including one that says context was supplied, a second sentence, a
+marker, a severity label or word, a quote, brace, question or `name:line`, keeps
+coverage missing, as does any other context line and a nothing-missing line whose
+text carries on to the next line (one that is not blank and starts no list item,
+quote, heading, table row, fence or marker line).
 Lines inside a code fence are quoted text, never a context request or a criterion;
 fences are read as the installed classifier reads them: a line that starts, after
 spaces or tabs only, with three or more backticks or tildes opens one, and the next
