@@ -225,6 +225,36 @@
 - **Context:** Filed by /review-and-prep on `mmm/41e6e394` at `15da31e` on 2026-11-19, before draft creation.
 - **Effort:** ? (user triages in /roadmap)
 
+### [review:files=src/outside-review/recovery.ts] Base issue: context requests the marker detection misses
+
+- **Base issue:** present at merge base `b48054a`; filed under `blocking=shown`
+- **Description:** A `NEEDS_CONTEXT` request written with a fullwidth colon, as `NEEDS CONTEXT` or `Needs context`, after a task-list checkbox, or on a line that a U+2028 separator or a lone CR splits from the text before it is never seen as a context request, so a reply carrying it is credited clean with `needs_context: false`.
+- **Evidence:** Synthetic replies through `recover()` with installed gstack 1.101.0.0 were credited the same way at the merge base and at `cd5a7c1`; the marker detection and line split are unchanged on this branch. A plain `\n` line break fails closed as intended.
+- **Upstream severity:** CRITICAL
+- **Found in:** `src/outside-review/recovery.ts:66` (marker detection) and `:191` (line split)
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `cd5a7c1` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/upstream-check/probe.ts] Base issue: upstream-check golden advisory cases lack the closing verdict line
+
+- **Base issue:** present at merge base `b48054a`; filed under `blocking=shown`
+- **Description:** The two advisory cases in `GOLDEN_CASES` end on the Recommendation with no closing `VERDICT:` line, so installed gstack 1.101.0.0 reads them as `missing_verdict` and `bin/upstream-check` reports classifier drift for `review-advisory` and `structured-advisory` against the current upstream. This is the same root cause as the installed-only test entry above, but it also affects a shipped diagnostic.
+- **Evidence:** Both cases came back `unverified` and uncredited through `recover()` at the merge base and at this branch's head; the two not-ready cases still match.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/probe.ts:31`
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `cd5a7c1` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/outside-review/recovery.ts] Base issue: numbered criterion lines without a Recommendation stay uncredited on the challenge gate
+
+- **Base issue:** present at merge base `b48054a`; filed under `blocking=shown`
+- **Description:** A challenge (review-gate) reply whose criteria are numbered `… Met` lines and that omits the Recommendation line stays `unverified` (`missing_markers`), while the same reply with bulleted lines is credited through the structured fallback. The met-criterion rewrite reclassifies on the original gate only, so it does not reach this case.
+- **Evidence:** The reply returned `unverified` with `missing_markers` at the merge base and at this branch's head; on the structured gate it is credited clean.
+- **Upstream severity:** CRITICAL
+- **Found in:** `src/outside-review/recovery.ts:213`
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `cd5a7c1` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
