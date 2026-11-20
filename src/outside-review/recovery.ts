@@ -19,9 +19,10 @@ const CONTEXT_PREFIX = /^\s*(?:(?:[-+>]|\(?\d{1,3}[.)]|#{1,6}(?!#))\s*)*$/;
 // never a change-statement name.
 const CONTEXT_GLUED = /needscontext|nofindings|\[p[0-3]\b|\bp[0-3]\b|\b(?:critical|high|medium|low|severity|recommendation|verdict)\b|["{}?]|:\d/;
 // Each change-statement name is one or more noun phrases joined by `of` or `in`; a noun phrase is determiners, then
-// attributes, then one or two nouns, places or code names (`the parse() helper`).
+// attributes, then a noun, place or code name, optionally after one modifier (`the parse() helper`, `any package file`).
 const words = (list: string) => new Set(list.split(' '));
-const DETERMINERS = words('the a an all every each both its their these those this any');
+// Not `this`, `all`, `each` or another word that can stand alone as a subject.
+const DETERMINERS = words('the a an any its their');
 // Review material a voice is given.
 const PLACES = words('prompt diff diffs context material materials excerpt excerpts extension input message review section sections');
 const NOUNS = words('caller callers callee callees call calls interface interfaces file files test tests fixture fixtures type types '
@@ -54,6 +55,10 @@ const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unle
 // emphasis, punctuation or unusual spacing cannot separate them.
 const NEGATED_STATUS = /\b(?:not|never|cannot|[a-z]+n t|no longer|hardly|barely|scarcely|seldom|rarely|nowhere|partially|partly)(?: [a-z]+){0,2} met\b|\bunmet\b/;
 const letters = (text: string) => text.toLowerCase().replace(/[^a-z]+/g, ' ');
+// The letters with every other mark dropped, so punctuation or markup inside a word (`n*o*t`, `[n](#)ot`) cannot split it.
+const joined = (text: string) => text.toLowerCase().replace(/[^a-z\s]+/g, '').replace(/\s+/g, ' ');
+// The letters with every mark but an apostrophe dropped and the apostrophes read as spaces (`is**n**`t` reads `isn t`).
+const marked = (text: string) => letters(text.replace(/[^a-z\s'‘’ʼ`]+/gi, ''));
 // An `n't` word with any mark for its apostrophe (`isn´t`), read on a statement's letters.
 const CONTRACTION = /\b[a-z]+n t\b/;
 // Between a bold criterion title and its status: whitespace and at most one delimiter.
@@ -68,33 +73,79 @@ const MET_SPLIT = /(?::|[—–]|[\t ]-)[\t ]+(?=(?:\*\*|__)?Met\b)/g;
 // A line that interrupts paragraph text, as CommonMark reads it: blank, or after at most three spaces a bullet item or an
 // item numbered 1 with text, a quote, heading or fence, or a marker line (a marker followed by a colon or the line's
 // end). Any other line, a table row or an item with another number included, carries on the text of the line above it.
-const NEW_BLOCK = /^[\t ]*$|^ {0,3}(?:[-+*][\t ]+\S|1[.)][\t ]+\S|>|#{1,6}(?:[\t ]|$)|`{3,}|~{3,}|(?:\*\*|__)?(?:NO_FINDINGS|NEEDS_CONTEXT|Recommendation|Verdict)(?:\*\*|__)?[\t ]*(?::|$))/i;
-// A bullet or numbered item.
-const ITEM = /^[\t ]*(?:[-+*][\t ]|(?:\*\*|__)?\(?\d{1,3}[.)](?:[\t ]|$))/;
+const NEW_BLOCK = /^[\t ]*$|^ {0,3}(?:[-+*][\t ]+\S|1[.)][\t ]+\S|>|#{1,6}(?:[\t ]|$)|`{3,}[^`]*$|~{3,}|(?:\*\*|__)?(?:NO_FINDINGS|NEEDS_CONTEXT|Recommendation|Verdict)(?:\*\*|__)?[\t ]*(?::|$))/i;
+// A CommonMark list item after at most three spaces, its text one to four spaces after the bullet or number; the match
+// ends where its text starts. A parenthesized or emphasized number is paragraph text, not an item.
+const ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?: {1,4}(?! )|$)/;
+// Container markup (spaces, tabs, quote marks, list bullets or numbers) at the start of a line, then a fence marker that
+// CommonMark could read as one, or the `<` that may start an HTML block.
+const NESTED_FENCE = /^(?:[\t >]|[-+*](?=[\t ])|\d{1,9}[.)](?=[\t ]))*(?:`{3,}(?!`)(?=[^`]*$)|~{3})/;
+// A quote mark or list item right after a list item's marker: markup inside the item.
+const NESTED = /^ {0,3}(?:>|[-+*](?:[\t ]|$)|\d{1,9}[.)](?:[\t ]|$))/;
+const HTML_START = /^(?:[\t >]|[-+*](?=[\t ])|\d{1,9}[.)](?=[\t ]))*</;
 // A met-criterion line is read only as printable ASCII text with typographic apostrophes, quotes and dashes, and without
-// a character entity, HTML tag or comment, or backslash, so no invisible or encoded character can split or hide a word.
+// any `&`, `<` or backslash (entities, HTML), so no invisible or encoded character can split or hide a word.
 const MET_TEXT = /^[\x20-\x7e\t‘’ʼ“”—–]*$/;
-const MET_HIDDEN = /&#?[a-z0-9]{1,8};|<[!/a-z]|\\/i;
-const QUOTE = /[\t ]*>/y;
+const MET_HIDDEN = /[&<\\]/;
+// A quote mark after at most three spaces.
+const QUOTE = / {0,3}>/y;
 
-/** The index after at most `depth` quote marks at the start of `text`. */
-function quotes(text: string, depth: number): number {
+/** The index after at most `depth` quote marks at the start of `text`, and how many it read. */
+function quotes(text: string, depth: number): { at: number; count: number } {
   let at = 0;
-  for (let n = 0; n < depth; n += 1) {
+  let count = 0;
+  while (count < depth) {
     QUOTE.lastIndex = at;
     if (!QUOTE.test(text)) break;
     at = QUOTE.lastIndex;
+    count += 1;
   }
-  return at;
+  return { at, count };
 }
 
-/** Whether `next` carries on the text of `line`. */
-function continues(line: string, next: string | undefined): boolean {
+/**
+ * For each line, the most quote marks on the lines before it since the last line that is blank within its quotes: a line
+ * may lazily carry on a quoted paragraph that deep.
+ */
+function paragraphQuotes(lines: string[]): number[] {
+  let deepest = 0;
+  return lines.map(line => {
+    const before = deepest;
+    const own = quotes(line, Infinity);
+    deepest = /^[\t ]*$/.test(line.slice(own.at)) ? 0 : Math.max(deepest, own.count);
+    return before;
+  });
+}
+
+/** The columns of the spaces and tabs that start `line`, a tab advancing to the next multiple of four. */
+function columns(line: string): number {
+  let column = 0;
+  for (const char of line) {
+    if (char === ' ') column += 1;
+    else if (char === '\t') column += 4 - (column % 4);
+    else break;
+  }
+  return column;
+}
+
+/** Whether `next` carries on the text of `line`, which may lazily carry on a paragraph `outer` quotes deep. */
+function continues(line: string, next: string | undefined, outer: number): boolean {
   if (next === undefined) return false;
-  // Inside a quote a continuation repeats the quote marks, so the next line is read within as many quotes as the line's
-  // markup opens; after a list item, another list item at any indentation is its sibling or sub-item.
-  const rest = next.slice(quotes(next, /^[^\p{L}`]*/u.exec(line)![0].split('>').length - 1));
-  return !NEW_BLOCK.test(rest) && !(ITEM.test(line.slice(quotes(line, Infinity))) && ITEM.test(rest));
+  // A continuation repeats the quote marks of the paragraph it carries on, so the next line is read within them, and a
+  // line blank within them ends it.
+  const own = quotes(line, Infinity);
+  const rest = next.slice(quotes(next, Math.max(own.count, outer)).at);
+  if (/^[\t ]*$/.test(rest)) return false;
+  const body = line.slice(own.at);
+  const item = ITEM.exec(body);
+  // A quote or list item inside the line's list item is not read: any next line that is not blank carries the text on.
+  if (item && NESTED.test(body.slice(item[0].length))) return true;
+  if (NEW_BLOCK.test(rest)) return false;
+  // After a list item, a line indented to the item's text is read from there, and a list item left of it starts the
+  // next item. A tab in the indentation is not read: the line carries on.
+  if (!item || /^ *\t/.test(rest)) return true;
+  const column = item[0].length;
+  return columns(rest) >= column ? !NEW_BLOCK.test(rest.slice(column)) : !ITEM.test(rest);
 }
 
 export function contextLine(line: string): 'none' | 'missing' | null {
@@ -122,14 +173,22 @@ function nominal(token: string | undefined): boolean {
   return NOUNS.has(stem) || PLACES.has(stem) || CODE_NAME.test(stem);
 }
 
-/** Determiners, then attributes, then one or two nouns, places or code names, in one pass. */
+/**
+ * Determiners, then attributes, then a noun, place or code name, in one pass. A modifier before it is a code name, a
+ * possessive or a vocabulary noun without a final `s`, and then the head is a vocabulary noun, so no verb such as
+ * `exports` can carry an object (`the handler exports secrets.json`).
+ */
 function nounPhrase(phrase: string): boolean {
   const tokens = phrase.split(' ');
   let i = 0;
   while (i < tokens.length && DETERMINERS.has(tokens[i]!)) i += 1;
   while (i < tokens.length && ATTRIBUTES.has(tokens[i]!)) i += 1;
-  const nouns = tokens.length - i;
-  return nouns >= 1 && nouns <= 2 && tokens.slice(i).every(token => nominal(token));
+  const rest = tokens.slice(i);
+  if (rest.length === 1) return nominal(rest[0]);
+  if (rest.length !== 2) return false;
+  const [modifier, head] = rest as [string, string];
+  const vocabulary = (token: string) => { const stem = token.endsWith("'s") ? token.slice(0, -2) : token; return NOUNS.has(stem) || PLACES.has(stem); };
+  return vocabulary(head) && (CODE_NAME.test(modifier) || (modifier.endsWith("'s") && nominal(modifier)) || (vocabulary(modifier) && !modifier.endsWith('s')));
 }
 
 /** Whether `text` is the change statement and each of its names is noun phrases joined by `of` or `in`. */
@@ -150,10 +209,10 @@ function metTail(text: string, at: number): boolean | undefined {
 
 function rewriteMetCriterion(line: string): string {
   const body = line.trimEnd();
-  // Emphasis and code marks never hide a severity token or a negated status, read with the marks as spaces or as nothing.
+  // Marks never hide a severity token or a negated status: the line is read with them as spaces and as nothing.
   const guard = body.replace(/[*_`]/g, '');
   if (!MET_TEXT.test(body) || MET_HIDDEN.test(body) || /\b(?:P[0-3]|critical|high|medium|low)\b/i.test(guard)
-    || NEGATED_STATUS.test(letters(body)) || NEGATED_STATUS.test(letters(guard))) return line;
+    || [letters(body), joined(body), marked(body)].some(text => NEGATED_STATUS.test(text))) return line;
   const match = /^(\*\*|__)?(?:\((\d{1,3})\)|(\d{1,3})[.)])[\t ]+(\S.*)$/.exec(body);
   if (!match) return line;
   const lead = match[1] ?? '';
@@ -173,7 +232,8 @@ function rewriteMetCriterion(line: string): string {
     if (!split.index) continue;
     const met = metTail(rest, split.index + split[0].length);
     const statement = rest.slice(0, split.index);
-    return met === undefined ? line : rewrite(met && !STATEMENT_CAVEAT.test(flatten(statement)) && !CONTRACTION.test(letters(statement)));
+    return met === undefined ? line : rewrite(met && !STATEMENT_CAVEAT.test(flatten(statement)) && !STATEMENT_CAVEAT.test(joined(statement))
+      && ![letters(statement), marked(statement)].some(text => CONTRACTION.test(text)));
   }
   return line;
 }
@@ -183,28 +243,60 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
   const original = classify({ text, gate, exit, stderr });
   const credited = (r: Classification) => r.verdict === 'clean' || r.verdict === 'findings';
   if (exit !== 0 || original.execution.state !== 'ran') return { classification: original, parse: 'not-applicable', credited: false, needs_context: false };
-  // Fences as the installed classifier reads them (a marker after spaces or tabs only, closed by any later marker of its
-  // kind at least as long), and as CommonMark reads them (closed only by a line that holds just such a marker).
+  // Fences as the installed classifier reads them: a marker after spaces or tabs only, closed by any later marker of its
+  // kind at least as long.
   let fence: string | undefined;
-  let shown: string | undefined;
+  // And as CommonMark reads them, while that reading is certain: it opens on a marker after at most three spaces (no
+  // backtick after a backtick marker) and closes on a line that holds just such a marker, after at most three spaces. A
+  // line left of the opening marker (its list item may have ended), another possible closing marker, a marker after list
+  // or quote markup, after a tab or at four or more columns, or a line that may start an HTML block ends that certainty,
+  // and every later line is read as text.
+  let open: { marker: string; column: number } | undefined;
+  let certain = true;
+  // And as the merge base read them, for its end-of-reply check: a classifier marker opens a fence that only a line
+  // holding just a marker of its kind, at least as long, closes. A reply that ends inside one fails closed.
+  let bare: string | undefined;
+  const shown = (line: string): boolean => {
+    if (!certain) return true;
+    if (open) {
+      if (/^[\t ]*$/.test(line)) return false;
+      const closing = /^[\t ]*(`{3,}|~{3,})[\t ]*$/.exec(line)?.[1];
+      const closes = closing !== undefined && closing[0] === open.marker[0] && closing.length >= open.marker.length;
+      if (columns(line) >= open.column && (!closes || /^ {0,3}[`~]/.test(line))) {
+        if (closes) open = undefined;
+        return false;
+      }
+      open = undefined;
+      certain = false;
+      return true;
+    }
+    const opening = /^ {0,3}(`{3,}(?!`)(?=[^`]*$)|~{3,})/.exec(line)?.[1];
+    if (opening) {
+      open = { marker: opening, column: columns(line) };
+      return false;
+    }
+    if (NESTED_FENCE.test(line) || HTML_START.test(line)) certain = false;
+    return true;
+  };
   let needsContext = false;
   const raw = text.replace(/\r\n/g, '\n').split('\n');
+  const rawQuotes = paragraphQuotes(raw);
   const normalized = raw.map((line, i) => {
     const marker = /^[\t ]*(`{3,}|~{3,})/.exec(line)?.[1];
+    const fenced = fence !== undefined;
     if (marker) {
       if (!fence) fence = marker;
       else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
-      if (!shown) shown = marker;
-      else if (marker[0] === shown[0] && marker.length >= shown.length && /^[\t ]*(?:`+|~+)[\t ]*$/.test(line)) shown = undefined;
-      return line;
+      if (!bare) bare = marker;
+      else if (marker[0] === bare[0] && marker.length >= bare.length && /^[\t ]*(?:`+|~+)[\t ]*$/.test(line)) bare = undefined;
     }
     // A context line is read wherever either reading shows it as text, and a nothing-missing context line whose text
     // carries on to the next line is none of the allowed forms.
-    if (!fence || !shown) {
+    if (shown(line) || (!marker && !fenced)) {
       const context = contextLine(line);
-      if (context === 'missing' || (context === 'none' && continues(line, raw[i + 1]))) needsContext = true;
+      if (context === 'missing' || (context === 'none' && continues(line, raw[i + 1], rawQuotes[i]!))) needsContext = true;
     }
-    if (fence) return line;
+    if (marker || fenced) return line;
     // Only label positions, never identifiers or quoted examples in finding prose.
     return line.replace(/^(\s*(?:>\s*)?(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|__|`)?\[?)p([0-3])\b/i, '$1P$2')
       .replace(QUALIFIED_LABEL, (label, prefix: string, qualifier: string) =>
@@ -214,7 +306,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         (span, before: string | undefined, priority: string) => before === undefined ? span : `${before}P${priority}`);
   }).join('\n').replace(/^(\s*(?:[-*] |#{1,6} )?)(?:\*\*|__)?(Recommendation|Verdict)(?:\*\*|__)?\s*:\s*\n\s*/gim, '$1$2: ');
   let checked = classify({ text: normalized, gate, exit, stderr });
-  if (needsContext || fence) return { classification: { ...checked, verdict: 'unverified' as const }, parse: 'failed', credited: false, needs_context: needsContext };
+  if (needsContext || fence || bare) return { classification: { ...checked, verdict: 'unverified' as const }, parse: 'failed', credited: false, needs_context: needsContext };
   if (!credited(checked) && gate === 'review' && checked.reason === 'missing_markers') {
     // Completion recommendation is presentation, not a second review. Only recover
     // when the stricter structured gate already establishes findings/no-findings.
@@ -225,6 +317,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
   if (!credited(checked) && typeof checked.findings.unlabeled === 'number' && checked.findings.unlabeled > 0) {
     let metFence: string | undefined;
     const lines = normalized.split('\n');
+    const lineQuotes = paragraphQuotes(lines);
     const rewritten = lines.map((line, i) => {
       const marker = /^[\t ]*(`{3,}|~{3,})/.exec(line)?.[1];
       if (metFence) {
@@ -239,7 +332,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         return /^\s*(?:`{3,}|~{3,})/.test(dropped) ? line : dropped;
       }
       // A criterion whose text carries on to the next line is not read whole, so it stays an unlabeled item.
-      return continues(line, lines[i + 1]) ? line : rewriteMetCriterion(line);
+      return continues(line, lines[i + 1], lineQuotes[i]!) ? line : rewriteMetCriterion(line);
     }).join('\n');
     if (rewritten !== normalized) {
       const metChecked = classify({ text: rewritten, gate, exit, stderr });
