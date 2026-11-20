@@ -1792,17 +1792,20 @@ With neither variable set, every path is what it was before this section.
   non-empty `GSTACK_HOME` records `run_mode: "unknown"`,
   `run_mode_source: "malformed-signal"`; and any non-empty
   `GSTACK_EXTEND_WORKSPACE_OWNER` (even whitespace-only or malformed) without an orchestration signal records
-  `run_mode: "unknown"`, `run_mode_source: "host-managed-workspace"`. Only a
-  detected Claude session whose `CLAUDE_CODE_ENTRYPOINT` is `cli`
-  (`run_mode_source: "cli"`) or `Paseo` (`run_mode_source: "paseo-entrypoint"`)
-  with none of those signals set records `run_mode: "user-directed"`, while other
-  Claude entrypoints (`entrypoint-unqualified` or `entrypoint-unavailable`),
-  non-Claude harnesses (`harness-unqualified`), and unattributed runs
-  (`no-harness`) record `run_mode: "unknown"`. An orchestrator that launches
-  workers through Paseo or Claude's `cli` entrypoint must set
-  `GSTACK_EXTEND_RUN_MODE=orchestrated` (or `GSTACK_EXTEND_WORKSPACE_OWNER`), or
-  its workers are counted as hand use (`user-directed`); `run_mode_source` shows
-  why each row got its mode.
+  `run_mode: "unknown"`, `run_mode_source: "host-managed-workspace"`. A detected
+  harness whose own environment or named session log provides qualifying
+  `terminal` or `host-app` launch-surface evidence ([Run mode](telemetry.md#run-mode))
+  with none of those signals set records `run_mode: "user-directed"` and
+  `run_mode_source` `"terminal-session"` or `"host-app-session"` (or Claude's
+  legacy `"cli"` and `"paseo-entrypoint"`), while non-interactive or unlisted
+  launch surfaces (`entrypoint-unqualified`), missing or unreadable
+  launch-surface evidence (`entrypoint-unavailable`), harnesses without
+  qualifying launch-surface evidence or with an `--agent` override naming a different harness
+  (`harness-unqualified`), and unattributed runs (`no-harness`) record
+  `run_mode: "unknown"`. An orchestrator that launches workers through Paseo or
+  a terminal entrypoint must set `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
+  `GSTACK_EXTEND_WORKSPACE_OWNER`), or its workers are counted as hand use
+  (`user-directed`); `run_mode_source` shows why each row got its mode.
 - **Other upstream variables are not followed.** `GSTACK_STATE_DIR` and
   `CLAUDE_PLUGIN_DATA` select an upstream root, but these paths do not read them.
 - **A fresh root is used and created.** When either variable is set to an absolute

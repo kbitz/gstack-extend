@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.104.0] - 2026-11-19
+
+### Changed
+
+- Stage runs started by hand in Codex, Grok, Cursor or Muse are now classified by the same rule as Claude, so a harness whose own session shows a terminal or host-app launch records `user-directed`, and `docs/telemetry.md` shows each harness's status and evidence.
+- Stage runs started by hand in Codex or Muse now record `user-directed` when the harness's own session log shows a terminal or host-app launch, by the same rule as Claude.
+- Version 4 stage-run rows can now carry the `run_mode_source` values `terminal-session` and `host-app-session`, so a consumer that validates rows against a pinned copy of `docs/stage-runs.schema.json` needs the updated schema.
+- Orchestrators must send a run-mode signal for every Codex or Muse launch, including resumed sessions, or the run can be recorded as `user-directed`.
+
+### Upgrade notes
+
+- Stage-run rows can now carry the `run_mode_source` values `terminal-session` and `host-app-session`, and rows from harnesses other than Claude can record `user-directed`, so a consumer that validates rows against a pinned copy of `docs/stage-runs.schema.json` or assumes only Claude rows are `user-directed` needs the updated schema and logic.
+
 ## [0.103.0] - 2026-11-19
 
 ### Changed
