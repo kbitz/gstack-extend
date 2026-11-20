@@ -556,6 +556,32 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Owner decision "1 a" (2026-11-19): the observed cycle-2 reply shape, the value form followed by a sentence that
+  // references a severity-tagged finding and says it relies only on a supplied excerpt, stays uncredited under rule A.
+  // Reconstructs the shape, not the text. The value form alone stays credited.
+  const OBSERVED_CYCLE_2_SENTENCE = 'NEEDS_CONTEXT: none of the above depends on missing context. The P2 retry interaction relies only on the supplied `retry.ts` excerpt.';
+  const OBSERVED_CYCLE_2_VALUE = 'NEEDS_CONTEXT: none of the above depends on missing context.';
+
+  // Value: protects=the owner's choice that criterion 1 covers the observed value form and the allowed explanations, not
+  //   the observed sentence (a severity-tagged finding reference that relies only on a supplied excerpt); fails_when=that
+  //   sentence is credited, so a finding mentioned only in a context line passes the coverage gate, or the bare value form
+  //   stops being credited; why_new=the continuation review's Red Team showed the shape uncredited and the owner kept it
+  //   so; seam=contextLine() and recover(); no_claim=the consumer's original wording
+  test('keeps the observed cycle-2 sentence uncredited while its value form stays credited (owner decision 1 a)', () => {
+    expect(contextLine(OBSERVED_CYCLE_2_SENTENCE)).toBe('missing');
+    expect(contextLine(OBSERVED_CYCLE_2_VALUE)).toBe('none');
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        const sentence = recover(cleanReply(OBSERVED_CYCLE_2_SENTENCE), gate, 0, '', classifier);
+        expect([gate, sentence.credited, sentence.parse, sentence.needs_context]).toEqual([gate, false, 'failed', true]);
+        const value = recover(cleanReply(OBSERVED_CYCLE_2_VALUE), gate, 0, '', classifier);
+        expect([gate, value.credited, value.parse, value.classification.verdict, value.needs_context]).toEqual([
+          gate, true, 'valid', 'clean', false,
+        ]);
+      }
+    }
+  });
+
   // Value: protects=a context line that names missing context in a contraction, typographic apostrophe, request, caveat or code span
   //   stays uncredited (criteria 1 and 4) while nested calls and benign negations still read as nothing missing; fails_when=the deny
   //   scan misses these forms or reads code-span text as erased; why_new=cycle 1 of Track 90A's review reproduced each form as credited;
@@ -625,7 +651,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,

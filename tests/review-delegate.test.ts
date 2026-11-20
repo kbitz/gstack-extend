@@ -40,6 +40,8 @@ const CONTINUATION_DELEGATE_NAMING = [
   'NEEDS_CONTEXT: none (the callers are available in the repository).',
   'NEEDS_CONTEXT: none. The schema wasn`t provided.',
   'NEEDS_CONTEXT: none. The change does not touch auth, and the token validator accepts expired tokens.',
+  // Owner decision "1 a": the observed cycle-2 sentence shape stays uncredited.
+  'NEEDS_CONTEXT: none of the above depends on missing context. The P2 retry interaction relies only on the supplied `retry.ts` excerpt.',
 ] as const;
 const CONTINUATION_DELEGATE_NONE = 'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).';
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
