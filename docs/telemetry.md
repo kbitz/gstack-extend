@@ -1747,7 +1747,7 @@ table below is the reader's reference; the schema is authoritative where they di
 | `effort_source` | `flag`, `detected`, `requested`, or `unknown`: where `effort` came from |
 | `workspace_host` | `GSTACK_EXTEND_WORKSPACE_OWNER` label (1–200 printable Unicode code points, not blank), or null; see [Host attribution](#host-attribution) |
 | `run_mode` | `user-directed`, `orchestrated`, or `unknown`: whether the run was driven interactively by a user or launched by an orchestrator; see [Run mode](#run-mode) |
-| `run_mode_source` | `session-kind`, `work-item`, `run-mode-env`, `unrecognized-run-mode-env`, `launcher-state-root`, `malformed-signal`, `host-managed-workspace`, `cli`, `paseo-entrypoint`, `entrypoint-unqualified`, `entrypoint-unavailable`, `harness-unqualified`, or `no-harness`: which signal decided `run_mode`; see [Run mode](#run-mode) |
+| `run_mode_source` | `session-kind`, `work-item`, `run-mode-env`, `unrecognized-run-mode-env`, `launcher-state-root`, `malformed-signal`, `host-managed-workspace`, `cli`, `paseo-entrypoint`, `terminal-session`, `host-app-session`, `entrypoint-unqualified`, `entrypoint-unavailable`, `harness-unqualified`, or `no-harness`: which signal decided `run_mode` (`cli` and `paseo-entrypoint` are Claude's legacy equivalents of `terminal-session` and `host-app-session`); see [Run mode](#run-mode) |
 | `questions` | Non-negative integer count of distinct `AskUserQuestion` tool-use blocks in the stage window on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
 | `user_wait_s` | Non-negative integer rounded total seconds waiting on `AskUserQuestion` tool results and post-`end_turn` human resumes in the stage window on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
 | `resumes` | Non-negative integer count of in-window human prompts immediately following an `end_turn` assistant record on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
@@ -1822,7 +1822,40 @@ Quiet mode remains silent and optional telemetry remains nonfatal.
 
 `run_mode` and `run_mode_source` classify whether a stage run was driven interactively
 by a user (`user-directed`), launched by an orchestrator (`orchestrated`), or lacks
-sufficient evidence (`unknown`). Finish evaluates signals in this exact 10-rule precedence:
+sufficient evidence (`unknown`). One by-hand rule applies to every harness: a
+detected harness, launch-surface evidence of a terminal or orchestrator-host
+session from the detected session's own environment or named session log, and no
+orchestration or workspace-owner signal give `user-directed`, with
+`run_mode_source` naming the evidence.
+
+Each qualified harness provides one evidence reader that maps raw evidence from
+the detected session's own environment or its own named regular session log
+(read within the first 64 KiB, `LOG_HEAD_BYTES`, from inside the harness's
+configured home, which must be absolute, never through a linked directory or log
+inside that home, and never from a sibling log, a non-regular file or directory presence) onto two shared launch-surface
+classes:
+
+- `terminal` — the session's own evidence names the harness's own interactive
+  terminal UI or CLI client, recording `run_mode: "user-directed"` and
+  `run_mode_source: "terminal-session"` (`"cli"` for Claude). A host app that
+  drives a harness's own interactive client without naming itself in the session
+  log also maps to `terminal` (`"terminal-session"`).
+- `host-app` — the session's own evidence names an orchestrator-host client in
+  the shared host table (`HOST_APP_CLIENTS` in `bin/lib/telemetry.py`, compared
+  exactly and case-sensitively as one provider of orchestrator-host evidence under
+  [SPEC O4.2](SPEC.md#o4-publish-the-orchestration-contract)), recording
+  `run_mode: "user-directed"` and `run_mode_source: "host-app-session"`
+  (`"paseo-entrypoint"` for Claude). `HOST_APP_CLIENTS` is the only place that
+  lists which client names mean a host app.
+
+Claude's `"cli"` and `"paseo-entrypoint"` are the legacy equivalents of
+`"terminal-session"` and `"host-app-session"`. Claude keeps its existing
+`entrypoint_raw` field and maps `CLAUDE_CODE_ENTRYPOINT=Paseo` in its reader.
+Codex and Muse launch-surface fields stay in their logs. Telemetry emits only
+the mapped source and omits the raw log values from debug traces. A log read
+failure yields `unknown` and finish continues.
+
+Finish evaluates signals in this exact 10-rule precedence:
 
 1. `GSTACK_SESSION_KIND` equal to `spawned` or `unattended` → `orchestrated` / `session-kind`.
 2. An accepted launcher work item saved at start from `GSTACK_EXTEND_WORK_ITEM`, else supplied by that variable at finish → `orchestrated` / `work-item`. A manual `--work-item` finish flag alone does not classify a run as orchestrated.
@@ -1832,29 +1865,45 @@ sufficient evidence (`unknown`). Finish evaluates signals in this exact 10-rule 
 6. A malformed non-empty `GSTACK_SESSION_KIND`, a rejected saved or finish-environment `GSTACK_EXTEND_WORK_ITEM`, or a relative non-empty `GSTACK_HOME` → `unknown` / `malformed-signal`.
 7. Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, including whitespace-only or malformed values → `unknown` / `host-managed-workspace`. A host-managed checkout without an orchestration signal is not proof of hand use, even when its attribution label is rejected.
 8. No detected harness → `unknown` / `no-harness`.
-9. Detected or final harness other than Claude (including an `--agent` override to/from another harness) → `unknown` / `harness-unqualified`.
-10. Detected and final harness both Claude: missing, empty or unclean `CLAUDE_CODE_ENTRYPOINT` → `unknown` / `entrypoint-unavailable`; exactly `cli` → `user-directed` / `cli`; exactly `Paseo` → `user-directed` / `paseo-entrypoint`; every other entrypoint (`sdk-*`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, …) → `unknown` / `entrypoint-unqualified`.
+9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (`grok`, `cursor`) → `unknown` / `harness-unqualified`.
+10. Detected and final harness match and have a launch-surface reader (`claude`, `codex`, `muse`): the reader returns no class (evidence missing, unclean, unreadable, past the 64 KiB `LOG_HEAD_BYTES` head-read bound, reached through a link inside the harness's configured home or under a relative one, from a non-regular file, or the reader raised) → `unknown` / `entrypoint-unavailable`; the reader returns `other` (a headless, SDK, exec, subagent, or unlisted client surface) → `unknown` / `entrypoint-unqualified`; the reader returns `terminal` → `user-directed` / `terminal-session` (`cli` for Claude); the reader returns `host-app` → `user-directed` / `host-app-session` (`paseo-entrypoint` for Claude).
 
 `PASEO_AGENT_ID` is never read: Paseo sets it for every agent it launches, so it
 cannot distinguish the owner's hand session in the Paseo app from an
 orchestrated worker launched through Paseo. The run-mode signal separates them.
-An orchestrator that launches workers through Paseo (or through Claude's `cli`
-entrypoint) without setting `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
+An orchestrator that launches workers through an orchestrator host or a terminal
+entrypoint without setting `GSTACK_EXTEND_RUN_MODE=orchestrated` (or
 `GSTACK_EXTEND_WORKSPACE_OWNER`, `GSTACK_EXTEND_WORK_ITEM`, or
 `GSTACK_SESSION_KIND=spawned|unattended`) will have those workers counted as
-`user-directed` (`paseo-entrypoint` or `cli`); `run_mode_source` shows why each
-row got its mode. Historical v3 rows that recorded `run_mode_source` `Paseo`,
-`sdk-cli`, `sdk-ts`, `acp`, or `none` remain valid under the v3 schema branch.
-The classifier never inspects parent process command lines or orchestrator
-directories. Hand-use capture is qualified for the owner's observed Claude `cli` and `paseo-entrypoint` launch types plus an orchestrated interactive run; see [the hand-use record](acceptance/hand-use-telemetry.md) for dated readbacks, the per-harness launch inventory, and upstream requests. This is not fleet-wide SPEC O6 acceptance.
+`user-directed` (`terminal-session`, `host-app-session`, `cli`, or
+`paseo-entrypoint`); `run_mode_source` shows why each row got its mode.
+Codex's rollout header records the thread's creation surface. In
+[Codex CLI 0.170.0](https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/rollout/src/recorder.rs#L1020-L1032),
+resuming a thread appends to its existing rollout without a fresh header, so a
+resumed thread keeps its creation class: a thread started in the TUI and resumed
+with `codex exec resume` reads `terminal-session`, and one started with
+`codex exec` and resumed in the TUI reads `entrypoint-unqualified`. A launcher
+(an orchestrator or a script) that resumes a thread must supply a run-mode
+signal. Muse's open record likewise supplies the recorded client for the
+named session, so orchestrators must signal every launch, including a reopen.
+Historical v3 rows that recorded `run_mode_source` `Paseo`, `sdk-cli`, `sdk-ts`,
+`acp`, or `none` remain valid under the v3 schema branch. The classifier never
+inspects parent process command lines or orchestrator directories. Hand-use
+capture is qualified by real readbacks for the owner's observed Claude `cli` and
+`paseo-entrypoint` launch types plus an orchestrated interactive run, while
+non-Claude classifications (`codex` `terminal-session` and `muse`
+`host-app-session`) are fixture-qualified until their post-merge by-hand
+readbacks; see [the hand-use record](acceptance/hand-use-telemetry.md) for dated
+readbacks, pending non-Claude readbacks, the per-harness launch inventory, and
+upstream request status. This is not fleet-wide SPEC O6 acceptance.
 
-| Harness | Harness detection status | Detection markers and session logs | By-hand classification status | By-hand signal or reason `run_mode` stays `unknown` |
-|---|---|---|---|---|
-| `claude` | Qualified (terminal CLI and Paseo) | `CLAUDECODE=1` or `CLAUDE_CODE_SESSION_ID`; model and effort from `~/.claude/projects/*/<session>.jsonl` (`CLAUDE_CONFIG_DIR` honored) | Qualified (`cli` and `paseo-entrypoint`) | `CLAUDE_CODE_ENTRYPOINT=cli` → `user-directed` / `cli`; `CLAUDE_CODE_ENTRYPOINT=Paseo` (injected by Paseo's `claude-code-entrypoint-env` plugin) → `user-directed` / `paseo-entrypoint`; missing/empty → `unknown` / `entrypoint-unavailable`; other values → `unknown` / `entrypoint-unqualified` |
-| `grok` | Detection supported when valid `GROK_SESSION_ID` or `GROK_AGENT=1` is present (session-ID-only path fixture-qualified; no real post-fix by-hand readback); unmarked under ACP `terminal/create` (`paseo 0.15.2` + `grok 1.0.77`) | `GROK_SESSION_ID` (valid session ID, including hook/MCP and session-id-only launches) or `GROK_AGENT=1` (terminal shell; non-`"1"` profile names are ignored); model and effort from `~/.grok/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}`. Under `grok acp`, `xai-grok-shell-terminal`'s `terminal/create` RPC delegates command execution to Paseo's sibling terminal without forwarding `GROK_SESSION_ID` or `GROK_AGENT=1` (`run_mode_source="no-harness"` when unmarked) | Unqualified (`unknown` / `harness-unqualified` when detected) | Neither Grok's environment nor `~/.grok/sessions/<encoded-cwd>/<session>/{summary.json,events.jsonl}` records an entrypoint distinguishing interactive by-hand use from ACP or orchestrated runs, and Paseo only injects a provider entrypoint for Claude |
-| `codex` | Qualified (terminal CLI, `codex exec`, and Paseo app-server) | `CODEX_THREAD_ID`; model and effort from `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (`CODEX_HOME` honored) | Unqualified (`unknown` / `harness-unqualified`) | Neither `CODEX_*` environment variables nor rollout `session_meta.payload` (`originator` / `source` only record shapes such as `("codex_cli_rs", "vscode")` or `("codex_exec", "exec")`, while Paseo's app-server client passes hardcoded `clientInfo.name="codex_app_server_daemon"`) distinguishes a by-hand launch from an orchestrated worker |
-| `cursor` | Qualified when `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` is exported | `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID` (`CURSOR_INVOKED_AS` for `route="cli"`); transcripts under `~/.cursor/projects/*/agent-transcripts/` break cross-harness ties while model and effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified`) | Neither `CURSOR_AGENT`, `CURSOR_CONVERSATION_ID`, `CURSOR_INVOKED_AS`, nor Cursor's agent transcripts expose an entrypoint distinguishing interactive by-hand sessions from ACP or headless worker launches |
-| `muse` | Fixture-qualified when a valid `MUSE_SESSION_ID` is present, using the Muse 1.4.23 log format. Paseo shell export was observed with Muse 1.4.20. Terminal export and real post-change readbacks remain unverified | `MUSE_SESSION_ID` (`MUSE_THREAD_ID` and the per-call `MUSE_TOOL_USE_ID` are unused); model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`; only the named session log is read, and a missing log leaves model `null`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT` | Unqualified (`unknown` / `harness-unqualified` when detected) | Muse exports no entrypoint variable. `session.opened.observed` `client_info_name` names the client (`paseo` under Paseo). Paseo launches both by-hand and orchestrated sessions, and the terminal client name is unverified |
+| Harness | Detection | Evidence read by reader | What maps to `terminal` (`terminal-session`; Claude `cli`) | What maps to `host-app` (`host-app-session`; Claude `paseo-entrypoint`) | Reason for any class that cannot qualify |
+|---|---|---|---|---|---|
+| `claude` | `CLAUDECODE=1` or non-empty `CLAUDE_CODE_SESSION_ID`; model and effort from `$CLAUDE_CONFIG_DIR/projects/*/<session>.jsonl` (default `~/.claude`) | `CLAUDE_CODE_ENTRYPOINT` from the detected session's environment (`clean(raw) == raw`) | `CLAUDE_CODE_ENTRYPOINT=cli` → `user-directed` / `cli` (legacy mapping for `terminal-session`; qualified by real readback) | `CLAUDE_CODE_ENTRYPOINT=Paseo` → `user-directed` / `paseo-entrypoint` (legacy mapping for `host-app-session`; qualified by real readback) | Both classes qualify. Any other clean `CLAUDE_CODE_ENTRYPOINT` (`sdk-*`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, lowercase `paseo`, …) maps to `other` (`unknown` / `entrypoint-unqualified`); missing, empty or unclean values return no class (`unknown` / `entrypoint-unavailable`) |
+| `grok` | Valid `GROK_SESSION_ID` or `GROK_AGENT=1` (non-`"1"` profile names ignored); model and effort from `$GROK_HOME/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}` (default `~/.grok`). Unmarked under ACP `terminal/create` (`grok 1.0.77` and `1.0.89`), which spawns commands in the host's sibling terminal without forwarding `GROK_SESSION_ID` or `GROK_AGENT=1` (`agent: null`, `unknown` / `no-harness`) | None (no reader; detected runs record `unknown` / `harness-unqualified`) | None (unqualified) | None (unqualified) | Grok exposes no positive launch-surface evidence: `GROK_AGENT=1` is exported on both interactive and headless shell runs, `summary.json` records `session_kind` only for `"headless"` and `"subagent"` while omitting it on both interactive CLI and ACP (`grok acp`) sessions, and ACP `terminal/create` exports no Grok marker (`no-harness`) |
+| `codex` | Non-empty `CODEX_THREAD_ID`; model and effort from `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (default `~/.codex`) | First `type: "session_meta"` record (`payload.originator` and `payload.source`), whose `payload.id` must name `CODEX_THREAD_ID`, within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own named regular rollout log under an absolute `CODEX_HOME` | `(payload.originator, payload.source)` in `{("codex_cli_rs", "vscode"), ("codex-tui", "vscode")}` → `user-directed` / `terminal-session` (fixture-qualified; post-merge readback pending). Host-app `codex app-server` sessions that pass Codex's non-originating `clientInfo.name="codex_app_server_daemon"` share `("codex_cli_rs", "vscode")` and also classify as `terminal-session` | None (unqualified) | `host-app` cannot qualify separately because `codex app-server` sessions using Codex's non-originating `clientInfo.name="codex_app_server_daemon"` record the same `("codex_cli_rs", "vscode")` pair as the terminal TUI instead of a host client name. Non-interactive `("codex_exec", "exec")`, subagent object sources (`{"subagent": ...}`), and any other clean `(originator, source)` map to `other` (`unknown` / `entrypoint-unqualified`); a missing, symlinked, over-bound or malformed rollout, a linked `sessions` or date directory inside `CODEX_HOME`, a header naming another thread, or a relative `CODEX_HOME` returns no class (`unknown` / `entrypoint-unavailable`) |
+| `cursor` | `CURSOR_AGENT` or non-empty `CURSOR_CONVERSATION_ID` (`CURSOR_INVOKED_AS` for `route="cli"`); transcripts under `~/.cursor/projects/*/agent-transcripts/` break cross-harness ties while model and effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` | None (no reader; detected runs record `unknown` / `harness-unqualified`) | None (unqualified) | None (unqualified) | Cursor exposes nothing that separates launch surfaces: `CURSOR_AGENT=1`, `CURSOR_CONVERSATION_ID`, and `CURSOR_INVOKED_AS` (`"cursor-agent"` or `"agent"`) are identical across interactive terminal use, ACP (`cursor-agent acp`) sessions, and headless runs, and agent transcripts record only `role` and `message.content` |
+| `muse` | Valid `MUSE_SESSION_ID`; model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT` | First `payload_type: "session.opened.observed"` record (`payload.kind == "session_opened"`, `payload.record.client_info_name`) within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own named top-level regular `session.jsonl` | None (unqualified) | `payload.record.client_info_name` in `HOST_APP_CLIENTS` → `user-directed` / `host-app-session` (fixture-qualified; post-merge readback pending) | `terminal` cannot qualify because Muse records `client_info_name` only at the MSP serve open boundary and omits it on both interactive `tui` and headless `exec` opens (as well as pre-`#23124` `1.4.14` logs and subagent logs), and exports no entrypoint environment variable. Any other clean non-empty `client_info_name` maps to `other` (`unknown` / `entrypoint-unqualified`); missing `client_info_name`, missing `session.opened.observed`, or a missing, symlinked or over-bound log, or one reached through a linked `muse`, `sessions`, date or session directory inside the data home, or a relative data home (a relative `HOME` with no absolute `XDG_DATA_HOME`), returns no class (`unknown` / `entrypoint-unavailable`) |
 
 <a id="hand-run-usability-signals"></a>
 
@@ -2208,7 +2257,10 @@ the existing ones, and a reader pinned to an older copy reports rows with a newe
 version as unsupported (step 3) instead of misreading them.
 
 The `muse` value extends the shared `agent` enum. Update pinned schema copies
-before validating version 4 rows with `agent: "muse"`.
+before validating version 4 rows with `agent: "muse"`. The `terminal-session`
+and `host-app-session` values likewise extend the v4 `run_mode_source` enum and
+`user-directed` branch, so update pinned schema copies before validating
+version 4 rows that carry them.
 
 The v2/v3 `host_agent_id` and v4 `workspace_host` patterns require Unicode property escapes and Unicode-mode
 ECMA-262 regex evaluation, as provided by the pinned Ajv's default
