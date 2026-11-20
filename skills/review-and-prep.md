@@ -2807,7 +2807,10 @@ explicit work decision in this session.
 Then run what that authorized policy names: `repair-only`, a fresh
 `/review` as a delta re-review from the delta base with the unresolved findings
 as context (rerunning any outside voice recorded as missing coverage at full
-scope, per **Bound Claude Code outside calls**); `full`, a fresh full-scope `/review`. `stop`, `none supplied` or
+scope, verified merge base to its candidate snapshot, regardless of the delta,
+light-default and size gates: through `bin/outside-review` where **Bound Claude
+Code outside calls** applies, otherwise through `/review`'s own outside block for
+that voice, given the full-scope diff); `full`, a fresh full-scope `/review`. `stop`, `none supplied` or
 `k` above `n` holds for the user. A new cycle stop repeats this procedure.
 A cycle stop is a deliberate pause: run `SHARED:telemetry-finish` with
 `--outcome blocked`, as the manual-testing pause does.

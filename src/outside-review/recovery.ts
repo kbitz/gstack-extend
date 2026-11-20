@@ -26,7 +26,7 @@ const DETERMINERS = words('the a an all every each both its their these those th
 const COPULAS = words('is are was were be been has have had');
 const LINKS = words('it they them everything and of also too verbatim above below here');
 // Review material a voice is given. After the affirming word, `in`, `within` and `by` name only one of these places.
-const PLACES = words('prompt diff diffs context material materials excerpt excerpts extension input message review section sections full');
+const PLACES = words('prompt diff diffs context material materials excerpt excerpts extension input message review section sections');
 const PLACE_LINKS = words('in within by');
 const NOUNS = words('caller callers callee callees call calls interface interfaces file files test tests fixture fixtures type types '
   + 'schema schemas contract contracts definition definitions function functions method methods class classes module modules '
@@ -36,7 +36,7 @@ const NOUNS = words('caller callers callee callees call calls interface interfac
   + 'queries config configuration body bodies script scripts command commands option options flag flags field fields parser '
   + 'parsers library libraries package packages version changelog readme license lockfile manifest release');
 // Attributive only: each is followed by a noun, so `the schema was requested` is not an affirmation.
-const ATTRIBUTES = words('requested relevant referenced changed touched modified new existing related surrounding entire whole same negative positive');
+const ATTRIBUTES = words('requested relevant referenced changed touched modified new existing related surrounding entire whole full same negative positive');
 // A count only directly after `all`, so two counts cannot say part of the material was supplied.
 const COUNTS = words('two three four five six seven eight nine ten');
 // A code name: a call (`name()`), or a file name or path ending in a listed source or document extension. An abbreviation
@@ -91,32 +91,41 @@ function contextParts(explanation: string): string[] {
 }
 
 /**
- * A part is the change statement, or a statement (never opening with a copula) that holds an affirming word and only
- * vocabulary words, names only places after its first affirming word, and whose every comma clause with its own copula
- * holds its own affirming word.
+ * A part is the change statement, or a statement (never opening with a copula or an affirming word) that holds an
+ * affirming word and only vocabulary words, names only places after its first affirming word, and whose every comma
+ * clause with its own copula, or after an affirmed clause, holds its own affirming word.
  */
 function affirmsContext(part: string): boolean {
   if (CHANGE_NOTE.test(part)) return changeStatement(part, true);
   const raw = part.replace(/\bas well\b/g, 'too').split(' ');
   const tokens = raw.map(token => token.replace(/,$/, ''));
   const first = tokens.findIndex(token => AFFIRMING.has(token));
-  if (first < 0 || COPULAS.has(tokens[0]!)) return false;
-  let copula = false, affirmed = false;
+  if (first < 1 || COPULAS.has(tokens[0]!)) return false;
+  let copula = false, affirmed = false, before = false;
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
     if (COPULAS.has(token)) copula = true;
     else if (AFFIRMING.has(token)) affirmed = true;
-    else if (ATTRIBUTES.has(token) ? COPULAS.has(tokens[i - 1] ?? '') || !nominal(tokens[i + 1])
-      : COUNTS.has(token) ? tokens[i - 1] !== 'all'
-        : PLACE_LINKS.has(token) ? i > first && !placeAt(tokens, i + 1)
-          : !DETERMINERS.has(token) && !LINKS.has(token) && !nominal(token)) return false;
-    // A comma closes a clause: one with its own copula must have affirmed.
+    else if (!contextWord(tokens, i, first)) return false;
+    // A comma closes a clause: one with its own copula, or one after an affirmed clause, must have affirmed.
     if (raw[i]!.endsWith(',') || i + 1 === tokens.length) {
-      if (copula && !affirmed) return false;
+      if ((copula || before) && !affirmed) return false;
+      before ||= affirmed;
       copula = false; affirmed = false;
     }
   }
   return true;
+}
+
+/** A vocabulary word other than a copula or an affirming word, in its place in the part. */
+function contextWord(tokens: string[], i: number, first: number): boolean {
+  const token = tokens[i]!, prev = tokens[i - 1] ?? '';
+  if (DETERMINERS.has(token) || LINKS.has(token)) return true;
+  if (token === 'full' && PLACE_LINKS.has(prev) && !nominal(tokens[i + 1])) return true;
+  if (ATTRIBUTES.has(token)) return !COPULAS.has(prev) && nominal(tokens[i + 1]);
+  if (COUNTS.has(token)) return prev === 'all';
+  if (PLACE_LINKS.has(token)) return i < first || placeAt(tokens, i + 1);
+  return nominal(token);
 }
 
 /** A noun, place, attribute, code name or one of those with a possessive `'s`. */
@@ -126,10 +135,11 @@ function nominal(token: string | undefined): boolean {
   return NOUNS.has(stem) || PLACES.has(stem) || ATTRIBUTES.has(stem) || CODE_NAME.test(stem);
 }
 
-/** After determiners and affirming adjectives, a place in the review material. */
+/** `full` (as in `in full`), or a place in the review material after determiners, affirming words and attributes. */
 function placeAt(tokens: string[], at: number): boolean {
+  if (tokens[at] === 'full' && !nominal(tokens[at + 1])) return true;
   let i = at;
-  while (i < tokens.length && (DETERMINERS.has(tokens[i]!) || AFFIRMING.has(tokens[i]!))) i += 1;
+  while (i < tokens.length && (DETERMINERS.has(tokens[i]!) || AFFIRMING.has(tokens[i]!) || ATTRIBUTES.has(tokens[i]!))) i += 1;
   return PLACES.has(tokens[i] ?? '');
 }
 

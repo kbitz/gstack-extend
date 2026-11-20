@@ -124,11 +124,12 @@ in `src/outside-review/recovery.ts`: determiners, copulas, pronouns, `and`, `of`
 `also`, `too`, `as well`, `verbatim`, `above`, `below`, `here`, review-material
 nouns and places, code names and their possessive `'s`, attributive adjectives
 such as `requested` directly before a noun (never after a copula), and a count
-only after `all`. After its first affirming word, `in`, `within` and `by` name
-only a place in the review material (the prompt, diff, context, material, excerpt,
-extension, input, message, review, a section, or `in full`). A part never opens
-with a copula, and each comma clause with its own copula holds its own affirming
-word. Any other word, another marker, a severity label or word, a quote, brace,
+only after `all`. After its first affirming word, `in`, `within` and `by` take
+only `in full` or, after determiners, affirming words and attributes, a place in
+the review material (the prompt, diff, context, material, excerpt, extension,
+input, message, review or a section). A part never opens with a copula or an
+affirming word, and each comma clause with its own copula, or after an affirmed
+clause, holds its own affirming word. Any other word, another marker, a severity label or word, a quote, brace,
 question or `name:line` keeps coverage missing, as does any other context line. When
 upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
 unlabeled items, recovery drops the number from a numbered nothing-missing

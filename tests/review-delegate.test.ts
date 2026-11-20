@@ -43,6 +43,8 @@ const CONTINUATION_DELEGATE_NAMING = [
   // Continuation cycle 2: an abbreviation is not a code name, and a comma clause needs its own affirming word.
   'NEEDS_CONTEXT: none (the diff is supplied w/o the callers of parse())',
   'NEEDS_CONTEXT: none. The diff is complete, the requested context is config.ts and the callers of parse().',
+  // Continuation cycle 3: an affirming word used as a condition never opens a part.
+  'NEEDS_CONTEXT: none (provided the callers are supplied).',
   // Owner decision "1 a": the observed cycle-2 sentence shape stays uncredited.
   'NEEDS_CONTEXT: none of the above depends on missing context. The P2 retry interaction relies only on the supplied `retry.ts` excerpt.',
 ] as const;

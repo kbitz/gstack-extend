@@ -589,7 +589,7 @@ function checkUnverifiedOutsideBaselineLock(text: string): string[] {
     !outside.includes(
       'A `repair-only` continuation whose corroborated full-review evidence records an outside voice as missing coverage runs that voice through `bin/outside-review` at full scope (verified merge base to its candidate snapshot), regardless of the delta, light-default or size gates.',
     ) ||
-    !stop.includes('(rerunning any outside voice recorded as missing coverage at full scope, per **Bound Claude Code outside calls**)')
+    !stop.includes('(rerunning any outside voice recorded as missing coverage at full scope, verified merge base to its candidate snapshot, regardless of the delta, light-default and size gates: through `bin/outside-review` where **Bound Claude Code outside calls** applies, otherwise through `/review`\'s own outside block for that voice, given the full-scope diff)')
   ) {
     violations.push('missing full-scope outside rerun rule for repair-only continuation');
   }
@@ -2149,6 +2149,11 @@ describe('kept contract locks fail on mutation', () => {
       name: 'unverified outside baseline: drop full-scope outside rerun in repair-only continuation',
       lock: checkUnverifiedOutsideBaselineLock,
       mutate: (t) => t.replace('at full scope (verified merge base to its candidate snapshot), regardless of the\ndelta, light-default or size gates.', 'at delta scope.'),
+    },
+    {
+      name: 'unverified outside baseline: rerun the missing outside voice only through bin/outside-review',
+      lock: checkUnverifiedOutsideBaselineLock,
+      mutate: (t) => t.replace(', otherwise through `/review`\'s own outside block for\nthat voice, given the full-scope diff)', ')'),
     },
     {
       name: 'unverified outside baseline: weaken readiness gate for unverified outside voice',

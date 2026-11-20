@@ -602,6 +602,44 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Continuation review, cycle 3: a part never opens with an affirming word (a condition or an imperative), a comma clause
+  // after an affirmed clause holds its own affirming word, and `full` names a place only in `in full`.
+  const NAMING_CONTINUATION_C3 = [
+    'NEEDS_CONTEXT: none (provided the callers are supplied).',
+    'NEEDS_CONTEXT: none. Present the callers of save().',
+    'NEEDS_CONTEXT: none (present the callers of save())',
+    'NEEDS_CONTEXT: none. Complete the schema.',
+    'NEEDS_CONTEXT: none. The diff is supplied, requested callers of save().',
+    'NEEDS_CONTEXT: none. The diff is supplied, the callers of save().',
+    'NEEDS_CONTEXT: none. The callers are available in the full src/caller.ts file.',
+  ] as const;
+  const NONE_CONTINUATION_C3 = [
+    'NEEDS_CONTEXT: none (every caller of alpha() was supplied in full).',
+    'NEEDS_CONTEXT: none. The full diff was supplied in full, the callers are present in the full excerpt.',
+    'NEEDS_CONTEXT: none (the requested interfaces were provided by the context extension).',
+  ] as const;
+
+  // Value: protects=owner decision A against an affirming verb used as a condition or an imperative, a bare fragment after
+  //   an affirmed clause, and `full` standing in for a place outside the prompt; fails_when=a part that opens with an
+  //   affirming word, a fragment clause or `in the full <file>` is credited again; why_new=cycle 3 of the continuation
+  //   review reproduced each as credited at ce8b0a73; seam=contextLine() and recover(); no_claim=an exhaustive list
+  test('rejects conditional and imperative openings, trailing fragments and full as a place (continuation cycle 3)', () => {
+    for (const line of NAMING_CONTINUATION_C3) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CONTINUATION_C3) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CONTINUATION_C3) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_CONTINUATION_C3) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+        }
+      }
+    }
+  });
+
   // Value: protects=a degenerate possessive token in an untrusted reply costs linear time, so one reply cannot block the
   //   event loop that runs other reviewers' timeouts; fails_when=possessive suffixes are stripped recursively (about 40 s
   //   at a million suffixes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the continuation review measured
@@ -706,7 +744,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -714,7 +752,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2]) {
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2, ...NONE_CONTINUATION_C3]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
