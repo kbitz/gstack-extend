@@ -605,6 +605,15 @@ describe('nothing-missing context lines (Track 90A)', () => {
     ['- NEEDS_CONTEXT: none', '  2) the callers of save() are missing'],
     ['- > NEEDS_CONTEXT: none', '  > 2. the callers of save() are missing'],
     ['> NEEDS_CONTEXT: none', '\t> # the callers of save() are missing'],
+    // Cycle 3: a nested quote mark after the optional space and up to three more spaces, or after a tab, still nests.
+    ['>    > NEEDS_CONTEXT: none', '>> of the callers are visible.'],
+    ['>    > NEEDS_CONTEXT: none of the above depends on missing context', '> > except the callers of save(), which were not supplied.'],
+    ['>\t> NEEDS_CONTEXT: none', '>> of the callers are visible.'],
+    // A line that leaves the quote and starts no block there is lazy text, even past the item's text column.
+    ['> - NEEDS_CONTEXT: none', '    - the callers of save() were not supplied'],
+    ['> - NEEDS_CONTEXT: none', '    > except the callers of save(), which were not supplied.'],
+    ['> - NEEDS_CONTEXT: none', '    1. except the callers of save(), which were not supplied.'],
+    ['> > - NEEDS_CONTEXT: none', '>     # the callers of save() were not supplied'],
   ] as const;
 
   // Value: protects=owner decision A (continuation 3) on wrapped replies: a nothing-missing line whose sentence carries on
@@ -631,13 +640,17 @@ describe('nothing-missing context lines (Track 90A)', () => {
         for (const control of ['NEEDS_CONTEXT: none\n\nEvery hunk was read.', '> NEEDS_CONTEXT: none\n>\n> Every hunk was read.',
           '1. NEEDS_CONTEXT: none\n2. Every hunk was read.', '- NEEDS_CONTEXT: none\n- Every hunk was read.',
           '- NEEDS_CONTEXT: none\n  - Every hunk was read.', '1. NEEDS_CONTEXT: none\n   - Every hunk was read.',
-          '> Callers were checked.\nNEEDS_CONTEXT: none\n\nEvery hunk was read.', '> - NEEDS_CONTEXT: none\n> - Every hunk was read.']) {
+          '> Callers were checked.\nNEEDS_CONTEXT: none\n\nEvery hunk was read.', '> - NEEDS_CONTEXT: none\n> - Every hunk was read.',
+          '>    > NEEDS_CONTEXT: none\n>    >\n>    > Every hunk was read.']) {
           const res = recover(cleanReply(control), gate, 0, '', classifier);
           expect([gate, control, res.credited, res.classification.verdict]).toEqual([gate, control, true, 'clean']);
         }
         // A nothing-missing line that may lazily carry on a quoted paragraph is read within that paragraph's quotes.
         for (const lazy of ['> Callers were checked.\nNEEDS_CONTEXT: none\n> the callers of save() are missing',
-          '> > Callers were checked.\n> NEEDS_CONTEXT: none\n> > the callers of save() are missing']) {
+          '> > Callers were checked.\n> NEEDS_CONTEXT: none\n> > the callers of save() are missing',
+          '- > Requested: the callers of save()\nNEEDS_CONTEXT: none\n  > except the callers of save(), which were not supplied.',
+          // An item numbered other than 1 right after paragraph text is that paragraph's text.
+          'The review covered the parser.\n2) NEEDS_CONTEXT: none\n    # the callers of save() were not supplied']) {
           const res = recover(cleanReply(lazy), gate, 0, '', classifier);
           expect([gate, lazy, res.credited, res.needs_context]).toEqual([gate, lazy, false, true]);
         }
@@ -724,6 +737,9 @@ describe('nothing-missing context lines (Track 90A)', () => {
   // A finding between two lines that start with triple-backtick inline code, which the classifier reads as fence markers.
   const SPAN_HIDDEN_FINDING = ['```save()``` is called from three places.', '[P1] src/store.ts:10 the save path drops data on retry',
     '```load()``` is unchanged.', 'NO_FINDINGS: none', 'Recommendation: ship because no defects were found', 'VERDICT: CLEAN'].join('\n');
+  // A reply whose closing lines sit inside a fence CommonMark never closes, though the classifier reads them as text.
+  const OPEN_FENCE_END = ['```x`', 'code', '````sh', 'more', '```', 'NEEDS_CONTEXT: the callers of save()', '``` x', '```x', '```',
+    '', 'NO_FINDINGS: none', 'Recommendation: ship because no defects were found', 'VERDICT: CLEAN'].join('\n');
 
   // Value: protects=the merge base's end-of-reply check: a reply that ends inside a fence a classifier marker opened and
   //   no line holding just a marker closed fails closed, so lines that start with triple-backtick inline code cannot hide
@@ -734,6 +750,20 @@ describe('nothing-missing context lines (Track 90A)', () => {
     for (const classifier of [classify, lastLineVerdict]) {
       for (const gate of gates) {
         const res = recover(SPAN_HIDDEN_FINDING, gate, 0, '', classifier);
+        expect([gate, res.credited, res.parse]).toEqual([gate, false, 'failed']);
+      }
+    }
+  });
+
+  // Value: protects=a reply that ends inside a fence the certain CommonMark reading never closed fails closed, as the merge
+  //   base's reading does, so verdict lines a reader sees as code cannot credit a reply; fails_when=only the classifier's
+  //   and the merge base's readings are checked at the end again; why_new=cycle 3 of the third continuation review's
+  //   adversarial reviewer reproduced it as credited at 478c8834 while the merge base kept coverage missing;
+  //   seam=recover(); no_claim=fences after the CommonMark reading becomes uncertain
+  test('fails closed when the reply ends inside a fence the CommonMark reading never closed (continuation 3, cycle 3)', () => {
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        const res = recover(OPEN_FENCE_END, gate, 0, '', classifier);
         expect([gate, res.credited, res.parse]).toEqual([gate, false, 'failed']);
       }
     }
@@ -1196,6 +1226,22 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     label as string,
     [...(lines as string[]), 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
   ] as const);
+  // Cycle 3 of the third continuation review: a negator inside a link, reference or image whose destination or label puts
+  // hidden words between it and `Met`, and a criterion that carries on the text of the line above it.
+  const CONTINUATION_3_C3_MET_NEGATIVES = [
+    ['a link destination inside the title', ['1. **The authentication requirement is [not](https://example.com)** Met.']],
+    ['a link destination path inside the title', ['1. **The requirement is [not](src/parser.ts#L20)** Met.']],
+    ['a reference label inside the title', ['1. **The requirement is [not][a b c d]** Met.', '', '[a b c d]: https://example.com']],
+    ['an image inside the title', ['1. **The requirement is ![not](https://example.com/x.png)** Met.']],
+    ['a criterion carrying on the line above', ['1. **Callers updated.** Met.', '', 'The retry test was never', '2. added: Met.']],
+    ['an item numbered 2 right after paragraph text', ['Criteria were checked.', '2) Callers updated: Met.', '    - except the save path, which drops data on retry']],
+  ].map(([label, lines]) => [
+    label as string,
+    [...(lines as string[]), 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
+  // Numbered criteria that start their own list after a paragraph or a heading are read as criteria.
+  const LIST_AFTER_TEXT = ['Criteria:', '## Criteria'].map(first => [first, '1. Callers updated: Met.', '2. Tests added: Met.',
+    'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'));
   // A context request between fence-like lines the installed classifier does not read as fences (a no-break space before
   // the backticks), after a numbered or a bulleted criterion.
   const NBSP_FENCED_REQUEST = (first: string) => [first, '\u00a0```', 'NEEDS_CONTEXT: the callers of save()', '\u00a0```',
@@ -1262,6 +1308,27 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
         expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',
         ]);
+      }
+    }
+  });
+
+  // Value: protects=owner decision A for met-criterion lines: a link, reference or image that hides words between a negator
+  //   and `Met` leaves the line an unlabeled item, and so does a criterion that carries on the paragraph above it, while
+  //   criteria listed after a paragraph or heading stay credited; fails_when=a hidden destination or label is read as
+  //   ordinary words again, or a criterion is read without the line above it; why_new=cycle 3 of the third continuation
+  //   review's outside voices and security specialist reproduced each as credited at 478c8834; seam=recover() with the
+  //   numbered-item fixture classifier; no_claim=a model's wording
+  test('fails closed on a negator behind a link and a criterion carrying on the line above (continuation 3, cycle 3)', () => {
+    for (const gate of gates) {
+      for (const [label, text] of CONTINUATION_3_C3_MET_NEGATIVES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
+      for (const text of LIST_AFTER_TEXT) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, text, res.credited, res.classification.verdict]).toEqual([gate, text, true, 'clean']);
       }
     }
   });
@@ -1380,7 +1447,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
           gate, label, true, 'recovered', 'clean',
         ]);
       }
-      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES, ...CONTINUATION_2_C2_MET_NEGATIVES, ...CONTINUATION_2_C3_MET_NEGATIVES, ...CONTINUATION_3_MET_NEGATIVES, ...CONTINUATION_3_C2_MET_NEGATIVES, ...CONTINUED_MET_SHAPES]) {
+      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES, ...CONTINUATION_2_C2_MET_NEGATIVES, ...CONTINUATION_2_C3_MET_NEGATIVES, ...CONTINUATION_3_MET_NEGATIVES, ...CONTINUATION_3_C2_MET_NEGATIVES, ...CONTINUATION_3_C3_MET_NEGATIVES, ...CONTINUED_MET_SHAPES]) {
         const neg = recover(text, gate, 0, '', classifyOutsideReview);
         expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',

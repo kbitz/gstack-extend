@@ -84,11 +84,12 @@ const NESTED_FENCE = /^(?:[\t >]|[-+*](?=[\t ])|\d{1,9}[.)](?=[\t ]))*(?:`{3,}(?
 const NESTED = /^ {0,3}(?:>|[-+*](?:[\t ]|$)|\d{1,9}[.)](?:[\t ]|$))/;
 const HTML_START = /^(?:[\t >]|[-+*](?=[\t ])|\d{1,9}[.)](?=[\t ]))*</;
 // A met-criterion line is read only as printable ASCII text with typographic apostrophes, quotes and dashes, and without
-// any `&`, `<` or backslash (entities, HTML), so no invisible or encoded character can split or hide a word.
+// any `&`, `<` or backslash (entities, HTML) or a link destination or reference (`](`, `][`), so no invisible, encoded or
+// hidden text can split a word or stand between a negator and the status.
 const MET_TEXT = /^[\x20-\x7e\t‘’ʼ“”—–]*$/;
-const MET_HIDDEN = /[&<\\]/;
-// A quote mark after at most three spaces.
-const QUOTE = / {0,3}>/y;
+const MET_HIDDEN = /[&<\\]|\][(\[]/;
+// A quote mark after at most three spaces, with the one space that may follow it.
+const QUOTE = / {0,3}> ?/y;
 
 /** The index after at most `depth` quote marks at the start of `text`, and how many it read. */
 function quotes(text: string, depth: number): { at: number; count: number } {
@@ -104,6 +105,14 @@ function quotes(text: string, depth: number): { at: number; count: number } {
 }
 
 /**
+ * How many quote marks open `line`, read after any spaces, tabs or list markers, so the count is never short of
+ * CommonMark's.
+ */
+function quoteDepth(line: string): number {
+  return /^(?:[\t ]*(?:>|(?:[-+*]|\d{1,9}[.)])(?=[\t ])))*/.exec(line)![0].split('>').length - 1;
+}
+
+/**
  * For each line, the most quote marks on the lines before it since the last line that is blank within its quotes: a line
  * may lazily carry on a quoted paragraph that deep.
  */
@@ -111,8 +120,7 @@ function paragraphQuotes(lines: string[]): number[] {
   let deepest = 0;
   return lines.map(line => {
     const before = deepest;
-    const own = quotes(line, Infinity);
-    deepest = /^[\t ]*$/.test(line.slice(own.at)) ? 0 : Math.max(deepest, own.count);
+    deepest = /^[\t ]*$/.test(line.slice(quotes(line, Infinity).at)) ? 0 : Math.max(deepest, quoteDepth(line));
     return before;
   });
 }
@@ -128,19 +136,32 @@ function columns(line: string): number {
   return column;
 }
 
-/** Whether `next` carries on the text of `line`, which may lazily carry on a paragraph `outer` quotes deep. */
-function continues(line: string, next: string | undefined, outer: number): boolean {
+/**
+ * Whether `next` carries on the text of `line`, which may lazily carry on a paragraph `outer` quotes deep and follows
+ * `prev`.
+ */
+function continues(line: string, next: string | undefined, outer: number, prev?: string): boolean {
   if (next === undefined) return false;
   // A continuation repeats the quote marks of the paragraph it carries on, so the next line is read within them, and a
   // line blank within them ends it.
   const own = quotes(line, Infinity);
-  const rest = next.slice(quotes(next, Math.max(own.count, outer)).at);
+  const depth = Math.max(quoteDepth(line), outer);
+  const matched = quotes(next, depth);
+  const rest = next.slice(matched.at);
   if (/^[\t ]*$/.test(rest)) return false;
   const body = line.slice(own.at);
-  const item = ITEM.exec(body);
+  let item = ITEM.exec(body);
+  // An item numbered other than 1 cannot interrupt paragraph text: after a line that is neither blank nor a list item,
+  // it is that paragraph's text.
+  if (item && /^ {0,3}\d/.test(item[0]) && Number(/\d+/.exec(item[0])![0]) !== 1 && prev !== undefined) {
+    const above = prev.slice(quotes(prev, Infinity).at);
+    if (!/^[\t ]*$/.test(above) && !ITEM.test(above)) item = null;
+  }
   // A quote or list item inside the line's list item is not read: any next line that is not blank carries the text on.
   if (item && NESTED.test(body.slice(item[0].length))) return true;
   if (NEW_BLOCK.test(rest)) return false;
+  // A next line that leaves one of the paragraph's quotes and starts no block there is lazy text.
+  if (matched.count < depth) return true;
   // After a list item, a line indented to the item's text is read from there, and a list item left of it starts the
   // next item. A tab in the indentation is not read: the line carries on.
   if (!item || /^ *\t/.test(rest)) return true;
@@ -294,7 +315,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
     // carries on to the next line is none of the allowed forms.
     if (shown(line) || (!marker && !fenced)) {
       const context = contextLine(line);
-      if (context === 'missing' || (context === 'none' && continues(line, raw[i + 1], rawQuotes[i]!))) needsContext = true;
+      if (context === 'missing' || (context === 'none' && continues(line, raw[i + 1], rawQuotes[i]!, raw[i - 1]))) needsContext = true;
     }
     if (marker || fenced) return line;
     // Only label positions, never identifiers or quoted examples in finding prose.
@@ -306,7 +327,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         (span, before: string | undefined, priority: string) => before === undefined ? span : `${before}P${priority}`);
   }).join('\n').replace(/^(\s*(?:[-*] |#{1,6} )?)(?:\*\*|__)?(Recommendation|Verdict)(?:\*\*|__)?\s*:\s*\n\s*/gim, '$1$2: ');
   let checked = classify({ text: normalized, gate, exit, stderr });
-  if (needsContext || fence || bare) return { classification: { ...checked, verdict: 'unverified' as const }, parse: 'failed', credited: false, needs_context: needsContext };
+  if (needsContext || fence || bare || open) return { classification: { ...checked, verdict: 'unverified' as const }, parse: 'failed', credited: false, needs_context: needsContext };
   if (!credited(checked) && gate === 'review' && checked.reason === 'missing_markers') {
     // Completion recommendation is presentation, not a second review. Only recover
     // when the stricter structured gate already establishes findings/no-findings.
@@ -331,8 +352,10 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         const dropped = line.replace(/^((?:\*\*|__)?)(?:\(\d{1,3}\)|\d{1,3}[.)])[\t ]+/, '$1');
         return /^\s*(?:`{3,}|~{3,})/.test(dropped) ? line : dropped;
       }
-      // A criterion whose text carries on to the next line is not read whole, so it stays an unlabeled item.
-      return continues(line, lines[i + 1], lineQuotes[i]!) ? line : rewriteMetCriterion(line);
+      // A criterion whose text carries on to the next line, or carries on the text of the line above, is not read whole,
+      // so it stays an unlabeled item.
+      const above = i > 0 && !/^[\t ]*$/.test(lines[i - 1]!) && continues(lines[i - 1]!, line, lineQuotes[i - 1]!, lines[i - 2]);
+      return above || continues(line, lines[i + 1], lineQuotes[i]!, lines[i - 1]) ? line : rewriteMetCriterion(line);
     }).join('\n');
     if (rewritten !== normalized) {
       const metChecked = classify({ text: rewritten, gate, exit, stderr });
