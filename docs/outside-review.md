@@ -110,37 +110,41 @@ upstream structured validator independently establishes findings or an explicit
 no-findings conclusion. A context-request line saying nothing is missing is not
 a request only in an allowed form, read with code-span text: list, quote or
 heading markup alone before the marker, then `none` (or `none of the above
-depends on missing context`), and an explanation each of whose parts (its
+depends on missing context`, also with `depend`), and an explanation each of whose parts (its
 parenthetical, then each sentence) is the change statement or a supplied-context
-affirmation. The change statement says the change does not touch, change, edit,
-modify, affect or depend on a list of names, each a code name or vocabulary nouns
-with determiners, `of` and `in`. A code name is a call (`name()`) or a file name
+affirmation. The change statement says the change (or `changes`, the diff, fix,
+patch, branch, commit, PR or pull request) does, do or did not (or `n't`) touch,
+change, edit, modify, affect or depend on a list of names, each a code name or
+vocabulary nouns with determiners, attributes, `of` and `in`. A code name is a call (`name()`) or a file name
 or path ending in a listed source or document extension; an abbreviation or words
 joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. An
 affirmation holds an affirming word (`supplied`, `provided`, `included`,
 `present`, `shown`, `given`, `attached`, `available`, `visible`, `covered`,
 `contained`, `complete`, `sufficient`) and uses only the closed vocabulary listed
-in `src/outside-review/recovery.ts`: determiners, copulas, pronouns, `and`, `of`,
+in `src/outside-review/recovery.ts`: determiners, copulas, pronouns, `of`,
 `also`, `too`, `as well`, `verbatim`, `above`, `below`, `here`, review-material
-nouns and places, code names and their possessive `'s`, attributive adjectives
-such as `requested` directly before a noun (never after a copula), and a count
+nouns and places and code names (each with an optional possessive `'s`), attributive adjectives
+such as `requested` followed in their clause by a noun (never after a copula), and a count
 only after `all`. After its first affirming word, `in`, `within` and `by` take
 only `in full` or, after determiners, affirming words and attributes, a place in
 the review material (the prompt, diff, context, material, excerpt, extension,
-input, message, review or a section). A part never opens with a copula or an
-affirming word, and each comma clause with its own copula, or after an affirmed
-clause, holds its own affirming word. Any other word, another marker, a severity label or word, a quote, brace,
+input, message, review or a section). A part splits into clauses at commas and at
+`and`: no clause opens with a copula or an affirming word, a clause with its own
+copula, or one after an affirmed clause, holds its own affirming word, and
+`provided` or `given` affirms only directly after a copula or before any copula or
+affirming word of its clause. Any other word, another marker, a severity label or word, a quote, brace,
 question or `name:line` keeps coverage missing, as does any other context line. When
 upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
 unlabeled items, recovery drops the number from a numbered nothing-missing
 context line and rewrites numbered met-criterion lines into
 `Criterion N:` lines, then reclassifies. A met-criterion line carries no severity
-token or negated status (emphasis included; a negation up to two words before
-`Met` counts); only whitespace and at most one delimiter separate its bold title,
-and a delimiter separates an unwrapped statement without a caveat (a contrast,
+token or negated status (`not`, `never`, `cannot`, an `n't` word, `partially` or
+`partly` up to two words before `Met`, whatever emphasis, punctuation or spacing
+separates them, or `unmet`); only whitespace and at most one delimiter separate its bold title,
+and the first delimiter followed by `Met` separates an unwrapped statement without a caveat (a contrast,
 failure, obligation, negation, condition, hedge, exception, absence or deferral
-word), from `Met`, `Met.` or `Met, by inspection.` (optionally bold); and the one
-sentence allowed after `Met.` is the change statement without `depend on`.
+word) from `Met`, `Met.` or `Met, by inspection` (its period optional; each optionally bold), or the line is
+left as it is; and the one sentence allowed after `Met.` is the change statement without `depend on`.
 The met-criterion checks are lexical: a bold title is not read for caveats, and
 a caveat in an unwrapped statement that uses no listed word is not detected.
 Refusals, failed execution, ambiguous prose and missing

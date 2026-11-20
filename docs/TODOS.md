@@ -228,11 +228,11 @@
 ### [review:files=src/outside-review/recovery.ts] Base issue: context requests the marker detection misses
 
 - **Base issue:** present at merge base `b48054a`; filed under `blocking=shown`
-- **Description:** A `NEEDS_CONTEXT` request written with a fullwidth colon, as `NEEDS CONTEXT` or `Needs context`, after a task-list checkbox, or on a line that a U+2028 separator or a lone CR splits from the text before it is never seen as a context request, so a reply carrying it is credited clean with `needs_context: false`.
-- **Evidence:** Synthetic replies through `recover()` with installed gstack 1.101.0.0 were credited the same way at the merge base and at `cd5a7c1`; the marker detection and line split are unchanged on this branch. A plain `\n` line break fails closed as intended.
+- **Description:** A `NEEDS_CONTEXT` request written with a fullwidth colon, as `NEEDS CONTEXT` or `Needs context`, after a task-list checkbox, with no colon or dash after the marker (`NEEDS_CONTEXT the callers …`, `NEEDS_CONTEXT (the callers …)`, `NEEDS_CONTEXT, …`, `NEEDS_CONTEXT. The callers … are missing.`, `NEEDS_CONTEXT = …`), or on a line that a U+2028 separator or a lone CR splits from the text before it is never seen as a context request, so a reply carrying it is credited clean with `needs_context: false`. The delegated path falls back as `unparsed-finding` instead. Reading every line that starts with the marker as a request would also fail closed on prose lines that begin with it.
+- **Evidence:** Synthetic replies through `recover()` with installed gstack 1.101.0.0 were credited the same way at the merge base and at `cd5a7c1`, and the forms without a delimiter at the merge base and at `d0e2a9a`; the marker detection and line split are unchanged on this branch. A plain `\n` line break fails closed as intended.
 - **Upstream severity:** CRITICAL
-- **Found in:** `src/outside-review/recovery.ts:66` (marker detection) and `:191` (line split)
-- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `cd5a7c1` (2026-11-19).
+- **Found in:** `src/outside-review/recovery.ts:81` (marker detection) and `:228` (line split)
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `cd5a7c1` (2026-11-19); the forms without a delimiter were added at `d0e2a9a` (2026-11-20).
 - **Effort:** ? (user triages in /roadmap)
 
 ### [review:files=src/upstream-check/probe.ts] Base issue: upstream-check golden advisory cases lack the closing verdict line
@@ -251,8 +251,28 @@
 - **Description:** A challenge (review-gate) reply whose criteria are numbered `… Met` lines and that omits the Recommendation line stays `unverified` (`missing_markers`), while the same reply with bulleted lines is credited through the structured fallback. The met-criterion rewrite reclassifies on the original gate only, so it does not reach this case.
 - **Evidence:** The reply returned `unverified` with `missing_markers` at the merge base and at this branch's head; on the structured gate it is credited clean.
 - **Upstream severity:** CRITICAL
-- **Found in:** `src/outside-review/recovery.ts:213`
+- **Found in:** `src/outside-review/recovery.ts:246` (structured fallback) and `:252` (met-criterion rewrite)
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `cd5a7c1` (2026-11-19).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/outside-review/recovery.ts|docs/outside-review.md] Wording gap: complete replies that the allowed forms leave uncredited
+
+- **Wording gap:** filed under the owner's decision of 2026-11-20 (fix only false credits; file other wording gaps as non-blocking work)
+- **Description:** The nothing-missing and met-criterion readings fail closed on anything outside their allowed forms (`docs/outside-review.md`, Recovery and storage), so some complete replies stay uncredited and their voice reruns as missing coverage. Examples: a clause that opens with an affirming word (`the callers are supplied and visible`), `provided` or `given` after an affirmation other than directly after a copula (`the callers are complete given above`), a place outside the listed review material (`the callers are supplied in the plan`), a negation within two words of `Met` that does not negate the status (`Callers don't change. Met.`), and a caveat word in an unwrapped statement used in a positive sense. The met-criterion checks also stay lexical in the other direction: a bold title is not read for caveats, and a first status that uses no listed word on a two-criterion line (`Callers updated: Open — tests added: Met.`) is folded into the statement and credited.
+- **Evidence:** The second continuation review of this PR read these forms through `contextLine()` and `recover()` at `d0e2a9a` and after its fixes; none names missing context, so none was fixed under the owner's decision.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/outside-review/recovery.ts:119` (clause reading) and `:193` (met-criterion rewrite)
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `d0e2a9a` (2026-11-20).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/review-and-prep.md|src/review-state/fence.ts|src/outside-review/prompt.ts] Follow-up: the repair-only outside rerun rests on prose
+
+- **Follow-up:** reviewer reading, not reproduced; filed under the owner's decision of 2026-11-20 as non-blocking work
+- **Description:** A first-cycle baseline may now say `completed=true` while an outside voice stayed unverified, and only the free-text stage result `missing coverage (unverified: <reason>)` tells a repair-only continuation to rerun that voice at full scope. The fence accepts any non-empty stage result, so a paraphrased record skips the rerun without a trace. The rerun also cannot target the structured voice alone: `bin/outside-review` runs the challenge whenever `structured` is true, and the skill does not say whether that extra challenge counts toward readiness or replaces the voice's delta-scope call in the same continuation.
+- **Evidence:** Read from `skills/review-and-prep.md` (Completion values, Bound Claude Code outside calls and the continuation step), `src/review-state/fence.ts` (stage-result validation) and `src/outside-review/prompt.ts` (phase selection) at `d0e2a9a`; the plan's risks name the prose-only rule.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md:1224` and `src/review-state/fence.ts:115`
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/284 at `d0e2a9a` (2026-11-20).
 - **Effort:** ? (user triages in /roadmap)
 
 ## Completed

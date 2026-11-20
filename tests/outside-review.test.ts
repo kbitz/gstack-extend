@@ -640,6 +640,52 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Second continuation review, cycle 1: each clause (a part split at commas and at `and`) keeps the opening rule and,
+  // after an affirmed clause, holds its own affirming word; `provided` and `given` never read as a condition; an attribute
+  // needs its noun within its clause; and `full` is a place only after `in`.
+  const NAMING_CONTINUATION_2 = [
+    'NEEDS_CONTEXT: none. The diff is supplied, complete the schema.',
+    'NEEDS_CONTEXT: none. The diff is supplied, present the callers of save().',
+    'NEEDS_CONTEXT: none. The diff is supplied, are the callers supplied.',
+    'NEEDS_CONTEXT: none (the callers are sufficient, provided the tests are supplied).',
+    'NEEDS_CONTEXT: none (the callers are sufficient provided the tests are supplied).',
+    'NEEDS_CONTEXT: none (the callers are complete given the schema is supplied).',
+    'NEEDS_CONTEXT: none. The diff is supplied and the requested context is config.ts.',
+    'NEEDS_CONTEXT: none. The diff is complete and the requested context is config.ts and the callers of parse().',
+    'NEEDS_CONTEXT: none (schema requested, callers supplied)',
+    'NEEDS_CONTEXT: none (callers requested, tests requested, diff supplied)',
+    'NEEDS_CONTEXT: none (types.ts referenced, callers supplied)',
+    "NEEDS_CONTEXT: none (the schema requested's, callers supplied)",
+    'NEEDS_CONTEXT: none (the callers are supplied within full).',
+    'NEEDS_CONTEXT: none (the callers are supplied by full).',
+  ] as const;
+  const NONE_CONTINUATION_2 = [
+    'NEEDS_CONTEXT: none (the context extension provided all three requested interfaces).',
+    'NEEDS_CONTEXT: none (the callers are present and the schema was provided).',
+    'NEEDS_CONTEXT: none (the entire requested interface was supplied in full).',
+  ] as const;
+
+  // Value: protects=owner decision A against a request, question or condition in a later clause, an affirmation borrowed
+  //   across `and`, an attribute read as a predicate before a comma and `within full` or `by full` as a place;
+  //   fails_when=any of them is credited again; why_new=the second continuation review reproduced each as credited at
+  //   d0e2a9a9; seam=contextLine() and recover(); no_claim=an exhaustive list
+  test('reads every clause on its own and rejects conditions, predicate attributes and other full places (continuation 2)', () => {
+    for (const line of NAMING_CONTINUATION_2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CONTINUATION_2) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CONTINUATION_2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_CONTINUATION_2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+        }
+      }
+    }
+  });
+
   // Value: protects=a degenerate possessive token in an untrusted reply costs linear time, so one reply cannot block the
   //   event loop that runs other reviewers' timeouts; fails_when=possessive suffixes are stripped recursively (about 40 s
   //   at a million suffixes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the continuation review measured
@@ -744,7 +790,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -752,7 +798,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2, ...NONE_CONTINUATION_C3]) {
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2, ...NONE_CONTINUATION_C3, ...NONE_CONTINUATION_2]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
@@ -974,6 +1020,49 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     }
   });
 
+  // Second continuation review, cycle 1: the first delimiter followed by `Met` starts the status, a negation counts
+  // whatever punctuation or spacing separates it from `Met` (and `cannot` or an `n't` word is one), and only a bold
+  // `Met.` takes a sentence after it.
+  const CONTINUATION_2_MET_NEGATIVES = [
+    ['a first status other than Met', '1. Callers updated: Met? Tests added: Met.'],
+    ['a parenthesized negation before Met', '1. **Expired tokens are rejected — not (yet)** Met.'],
+    ['a nonbreaking space in the negation', '1. **Expired tokens are rejected — not yet** Met.'],
+    ['a contracted negation before Met', "1. **Expired tokens are rejected — isn't** Met."],
+    ['cannot before Met', '1. **Expired tokens cannot be** Met.'],
+    ['a sentence after a bold Met, by inspection.', '1. The parser keeps CR lines — **Met, by inspection.** The change does not touch the tests.'],
+    ['a sentence after a bold Met, by inspection', '1. The parser keeps CR lines — **Met, by inspection** The change does not touch the tests.'],
+  ].map(([label, line]) => [
+    label,
+    [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
+  const CONTINUATION_2_MET_POSITIVES = [
+    ['a bold Met, by inspection.', '1. The parser keeps CR lines — **Met, by inspection.**'],
+    ['Met, by inspection without its period', '1. The parser keeps CR lines — Met, by inspection'],
+  ].map(([label, line]) => [
+    label,
+    [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
+
+  // Value: protects=owner decision A for met-criterion lines: a second status cannot hide a first status that is not Met,
+  //   punctuation, a nonbreaking space or a contraction cannot hide a negation, and a bold `Met, by inspection.` takes no
+  //   sentence; fails_when=any of them is credited clean again, or the inspection forms stop being credited;
+  //   why_new=the second continuation review reproduced each as credited at d0e2a9a9; seam=recover() with the
+  //   numbered-item fixture classifier; no_claim=a model's wording
+  test('fails closed on a hidden first status, a punctuated or contracted negation and a sentence after a bold inspection status (continuation 2)', () => {
+    for (const gate of gates) {
+      for (const [label, text] of CONTINUATION_2_MET_NEGATIVES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
+      for (const [label, text] of CONTINUATION_2_MET_POSITIVES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict]).toEqual([gate, label, true, 'recovered', 'clean']);
+      }
+    }
+  });
+
   // Value: protects=the met-criterion rewrite stays linear on a long whitespace run in an untrusted reply, so a degenerate reply
   //   cannot stall the runner; fails_when=the delimiter search backtracks quadratically (about 1.7 s at 32k spaces, over a minute at
   //   200k, so this test then exceeds its timeout); why_new=cycle 1 of Track 90A's review measured the quadratic search;
@@ -1002,7 +1091,13 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
           gate, label, true, 'recovered', 'clean',
         ]);
       }
-      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES]) {
+      for (const [label, text] of CONTINUATION_2_MET_POSITIVES) {
+        const positive = recover(text, gate, 0, '', classifyOutsideReview);
+        expect([gate, label, positive.credited, positive.parse, positive.classification.verdict]).toEqual([
+          gate, label, true, 'recovered', 'clean',
+        ]);
+      }
+      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES]) {
         const neg = recover(text, gate, 0, '', classifyOutsideReview);
         expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',

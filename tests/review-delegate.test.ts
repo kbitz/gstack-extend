@@ -47,6 +47,11 @@ const CONTINUATION_DELEGATE_NAMING = [
   'NEEDS_CONTEXT: none (provided the callers are supplied).',
   // Owner decision "1 a": the observed cycle-2 sentence shape stays uncredited.
   'NEEDS_CONTEXT: none of the above depends on missing context. The P2 retry interaction relies only on the supplied `retry.ts` excerpt.',
+  // Second continuation review: a request in a later clause, an affirmation borrowed across `and` and a predicate
+  // attribute before a comma.
+  'NEEDS_CONTEXT: none. The diff is supplied, present the callers of save().',
+  'NEEDS_CONTEXT: none. The diff is supplied and the requested context is config.ts.',
+  'NEEDS_CONTEXT: none (schema requested, callers supplied)',
 ] as const;
 const CONTINUATION_DELEGATE_NONE = 'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).';
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
