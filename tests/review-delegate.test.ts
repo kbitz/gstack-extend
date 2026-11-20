@@ -52,6 +52,11 @@ const CONTINUATION_DELEGATE_NAMING = [
   'NEEDS_CONTEXT: none. The diff is supplied, present the callers of save().',
   'NEEDS_CONTEXT: none. The diff is supplied and the requested context is config.ts.',
   'NEEDS_CONTEXT: none (schema requested, callers supplied)',
+  // Second continuation review, cycle 2: a request with no subject before its predicate, and a second predicate run on
+  // after the first.
+  'NEEDS_CONTEXT: none. Also present the callers of save().',
+  'NEEDS_CONTEXT: none. The diff is supplied present the callers of save().',
+  'NEEDS_CONTEXT: none. Everything provided the callers of save() are supplied.',
 ] as const;
 const CONTINUATION_DELEGATE_NONE = 'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).';
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();

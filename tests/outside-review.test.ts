@@ -686,6 +686,65 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
   });
 
+  // Second continuation review, cycle 2: a clause names its subject before its predicate (a leading `also` or preposition
+  // supplies none), each copula is followed by its affirming word, and a later affirming word follows a copula or is an
+  // attribute, so neither a request nor a run-on second predicate affirms.
+  const NAMING_CONTINUATION_2_C2 = [
+    'NEEDS_CONTEXT: none. Also present the callers of save().',
+    'NEEDS_CONTEXT: none. The diff is supplied and also complete the schema.',
+    'NEEDS_CONTEXT: none. In the prompt present the callers of save().',
+    'NEEDS_CONTEXT: none (of the callers present the tests).',
+    'NEEDS_CONTEXT: none. The diff is supplied present the callers of save().',
+    'NEEDS_CONTEXT: none (the callers are supplied complete the schema).',
+    'NEEDS_CONTEXT: none (the callers are supplied are they).',
+    'NEEDS_CONTEXT: none (also given the schema, the callers are complete).',
+    'NEEDS_CONTEXT: none. Also is the diff complete.',
+    'NEEDS_CONTEXT: none. Everything provided the callers of save() are supplied.',
+    'NEEDS_CONTEXT: none (also present them)',
+    'NEEDS_CONTEXT: none. The callers are supplied, the tests too provided the diff is complete.',
+    'NEEDS_CONTEXT: none. The callers of parse() be supplied.',
+  ] as const;
+  const NONE_CONTINUATION_2_C2 = [
+    'NEEDS_CONTEXT: none (the callers are all present).',
+    'NEEDS_CONTEXT: none (the callers present are sufficient).',
+    'NEEDS_CONTEXT: none (the callers are present in the supplied diff).',
+    'NEEDS_CONTEXT: none (all of the callers were supplied).',
+    'NEEDS_CONTEXT: none. Also, the tests were supplied.',
+    'NEEDS_CONTEXT: none (the tests have also been supplied).',
+  ] as const;
+
+  // Value: protects=owner decision A against a request whose clause has no subject before its predicate (behind `also` or
+  //   a leading preposition), a second predicate run on after the first and a copula that does not lead to its affirming
+  //   word; fails_when=any of them is credited again, or the qualified and attributive controls stop being credited;
+  //   why_new=cycle 2 of the second continuation review reproduced each as credited at 973d4534; seam=contextLine() and
+  //   recover(); no_claim=an exhaustive list
+  test('requires a subject before the predicate and links each later affirming word (continuation 2, cycle 2)', () => {
+    for (const line of NAMING_CONTINUATION_2_C2) expect([line, contextLine(line)]).toEqual([line, 'missing']);
+    for (const line of NONE_CONTINUATION_2_C2) expect([line, contextLine(line)]).toEqual([line, 'none']);
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const line of NAMING_CONTINUATION_2_C2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.needs_context]).toEqual([gate, line, false, 'failed', true]);
+        }
+        for (const line of NONE_CONTINUATION_2_C2) {
+          const res = recover(cleanReply(line), gate, 0, '', classifier);
+          expect([gate, line, res.credited, res.parse, res.classification.verdict]).toEqual([gate, line, true, 'valid', 'clean']);
+        }
+      }
+    }
+  });
+
+  // Value: protects=a long attribute run in an untrusted reply costs linear time on both explanation paths, so one reply
+  //   cannot block the event loop that runs other reviewers' timeouts; fails_when=each attribute rescans the rest of its
+  //   run (about 2 s at 16k attributes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the second continuation
+  //   review measured the quadratic scan; seam=contextLine(); no_claim=a wall-clock bound
+  test('reads a long attribute run in linear time', () => {
+    const run = 'new '.repeat(50_000);
+    expect(contextLine(`NEEDS_CONTEXT: none (the ${run}callers were supplied).`)).toBe('none');
+    expect(contextLine(`NEEDS_CONTEXT: none (the change does not depend on the ${run}callers).`)).toBe('none');
+  }, 10_000);
+
   // Value: protects=a degenerate possessive token in an untrusted reply costs linear time, so one reply cannot block the
   //   event loop that runs other reviewers' timeouts; fails_when=possessive suffixes are stripped recursively (about 40 s
   //   at a million suffixes, so this test exceeds its 10 s timeout); why_new=cycle 2 of the continuation review measured
@@ -790,7 +849,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_NONE_FORMS[0]}\nNEEDS_CONTEXT: callers of alpha()`]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -798,7 +857,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
       }
       const numbered = recover(cleanReply('1. NEEDS_CONTEXT: none'), gate, 0, '', classifyOutsideReview);
       expect([gate, numbered.credited, numbered.classification.verdict]).toEqual([gate, true, 'clean']);
-      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2, ...NONE_CONTINUATION_C3, ...NONE_CONTINUATION_2]) {
+      for (const line of [...NONE_REVIEW_FIXES, ...NONE_CYCLE_2, ...NONE_CYCLE_3, ...NONE_CONTINUATION, ...NONE_CONTINUATION_C2, ...NONE_CONTINUATION_C3, ...NONE_CONTINUATION_2, ...NONE_CONTINUATION_2_C2]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, true, 'valid', 'clean', false,
@@ -1063,6 +1122,62 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     }
   });
 
+  // Second continuation review, cycle 2: `no longer`, `hardly`, `barely`, `scarcely`, `seldom`, `rarely` and `nowhere` negate
+  // a status too, and an `n't` word in a statement counts whatever mark stands for its apostrophe.
+  const CONTINUATION_2_C2_MET_NEGATIVES = [
+    ['no longer before Met', '1. **Expired tokens are no longer** Met.'],
+    ['hardly before Met', '1. **Expired tokens are hardly** Met.'],
+    ['barely before Met', '1. **Expired tokens are barely** Met.'],
+    ['scarcely before Met', '1. **Expired tokens are scarcely** Met.'],
+    ['seldom before Met', '1. **The limit is seldom** Met.'],
+    ['rarely before Met', '1. **The limit is rarely** Met.'],
+    ['nowhere near Met', '1. **The limit is nowhere near** Met.'],
+    ['an acute accent for the apostrophe', '1. The parser isn\u00B4t handling empty input: Met.'],
+    ['an entity for the apostrophe', '1. The parser isn&#39;t handling empty input: Met.'],
+  ].map(([label, line]) => [
+    label,
+    [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
+  // A nothing-missing context line written with a triple-backtick span on each side of a numbered finding.
+  const FENCED_CONTEXT_REPLY = ['1. ```NEEDS_CONTEXT```: none', '2. The parser drops the last line.', '3. ```NEEDS_CONTEXT```: none',
+    'Recommendation: ship because it is fine', 'VERDICT: CLEAN'].join('\n');
+
+  // Value: protects=owner decision A for met-criterion lines: the other negative adverbs before `Met` keep the line an
+  //   unlabeled item, and so does an `n't` caveat written without an ASCII apostrophe, so upstream's numbered-item rule
+  //   still rejects the reply; fails_when=any of them is credited clean again; why_new=cycle 2 of the second continuation
+  //   review reproduced `no longer`, `hardly` and `isn´t` as credited at 973d4534;
+  //   seam=recover() with the numbered-item fixture classifier; no_claim=a model's wording
+  test('fails closed on the other negative adverbs before Met and an n\'t caveat with another apostrophe (continuation 2, cycle 2)', () => {
+    for (const gate of gates) {
+      for (const [label, text] of CONTINUATION_2_C2_MET_NEGATIVES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
+    }
+  });
+
+  // Value: protects=dropping the number from a nothing-missing context line never creates a code fence marker, so the
+  //   classifier cannot hide a numbered finding between two such lines; fails_when=the number is dropped from a line whose
+  //   rest opens a fence; why_new=cycle 2 of the second continuation review reproduced the hidden finding as credited clean
+  //   at 973d4534 with installed gstack; seam=recover() with a recording classifier; no_claim=other line-start markup
+  test('keeps the number on a nothing-missing context line that would open a code fence', () => {
+    for (const gate of gates) {
+      const seen: string[] = [];
+      const res = recover(FENCED_CONTEXT_REPLY, gate, 0, '', input => { seen.push(input.text); return numberedCleanVerdict(input); });
+      expect([gate, res.credited, seen.some(text => /^[\t ]*(?:`{3,}|~{3,})/m.test(text))]).toEqual([gate, false, false]);
+    }
+  });
+
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('a finding between numbered code-span context lines stays uncredited (installed only)', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    for (const gate of gates) {
+      const res = recover(FENCED_CONTEXT_REPLY, gate, 0, '', classifyOutsideReview);
+      expect([gate, res.credited, res.parse]).toEqual([gate, false, 'failed']);
+    }
+  });
+
   // Value: protects=the met-criterion rewrite stays linear on a long whitespace run in an untrusted reply, so a degenerate reply
   //   cannot stall the runner; fails_when=the delimiter search backtracks quadratically (about 1.7 s at 32k spaces, over a minute at
   //   200k, so this test then exceeds its timeout); why_new=cycle 1 of Track 90A's review measured the quadratic search;
@@ -1097,7 +1212,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
           gate, label, true, 'recovered', 'clean',
         ]);
       }
-      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES]) {
+      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES, ...CONTINUATION_2_C2_MET_NEGATIVES]) {
         const neg = recover(text, gate, 0, '', classifyOutsideReview);
         expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',

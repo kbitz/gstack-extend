@@ -22,11 +22,13 @@ const CONTEXT_GLUED = /needscontext|nofindings|\[p[0-3]\b|\bp[0-3]\b|\b(?:critic
 // fails closed.
 const words = (list: string) => new Set(list.split(' '));
 const AFFIRMING = words('supplied provided included present shown given attached available visible covered contained complete sufficient');
-// These also read as a condition (`provided the tests are supplied`), so they affirm only directly after a copula or
-// before any copula or affirming word of their clause.
-const CONDITIONS = words('provided given');
+// Only these may stand between a copula and its affirming word (`the callers are all present`).
+const QUALIFIERS = words('all both each also too');
+// A clause's subject: a noun, place or code name, or one of these.
+const SUBJECTS = words('it they everything');
 const DETERMINERS = words('the a an all every each both its their these those this any');
-const COPULAS = words('is are was were be been has have had');
+// Not `be`: here it only forms a command or a wish (`the callers be supplied`).
+const COPULAS = words('is are was were been has have had');
 // `and` is not a word of a clause: like a comma, it starts the next clause.
 const LINKS = words('it they them everything of also too verbatim above below here');
 // Review material a voice is given. After the affirming word, `in`, `within` and `by` name only one of these places.
@@ -59,10 +61,13 @@ const NONE_VALUE = /^none(?: of the above depends? on missing context)?(?:$|[.;]
 // An unwrapped criterion statement carrying a contrast, failure, obligation, negation, condition, hedge or exception is a
 // caveat, not a criterion.
 const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unless|whereas|fail[a-z]*|drop[a-z]*|lose|loses|losing|lost|loss|leak[a-z]*|crash[a-z]*|break[a-z]*|broke[a-z]*|bug[a-z]*|defect[a-z]*|error[a-z]*|wrong|incorrect[a-z]*|regress[a-z]*|must|should|todo|fixme|issue[a-z]*|problem[a-z]*|partial[a-z]*|partly|unmet|missing|untested|unverified|not|no|never|[a-z]+n't|cannot|only|if|when|whenever|until|while|whether|provided that|assum[a-z]*|presum[a-z]*|probabl[a-z]*|likely|maybe|perhaps|possibl[a-z]*|apparent[a-z]*|seem[a-z]*|appear[a-z]*|mostly|largely|nearly|almost|mainly|generally|usually|sometimes|typically|apart|aside|besides|exclud[a-z]*|other than|save for|sans|minus|without|lack[a-z]*|skip[a-z]*|pending|incomplet[a-z]*|absent|defer[a-z]*|tbd|wip|n\/a|w\/o)\b/;
-// A negated status: a negation (`not`, `never`, `cannot`, an `n't` word, `partially`, `partly`) up to two words before
-// `Met`, read on the line's letters only, so emphasis, punctuation or unusual spacing cannot separate them.
-const NEGATED_STATUS = /\b(?:not|never|cannot|[a-z]+n t|partially|partly)(?: [a-z]+){0,2} met\b|\bunmet\b/;
+// A negated status: a negation (`not`, `never`, `cannot`, an `n't` word, `no longer`, `hardly`, `barely`, `scarcely`,
+// `seldom`, `rarely`, `nowhere`, `partially`, `partly`) up to two words before `Met`, read on the line's letters only, so
+// emphasis, punctuation or unusual spacing cannot separate them.
+const NEGATED_STATUS = /\b(?:not|never|cannot|[a-z]+n t|no longer|hardly|barely|scarcely|seldom|rarely|nowhere|partially|partly)(?: [a-z]+){0,2} met\b|\bunmet\b/;
 const letters = (text: string) => text.toLowerCase().replace(/[^a-z]+/g, ' ');
+// An `n't` word with any mark for its apostrophe (`isn´t`, `isn&#39;t`), read on a statement's letters.
+const CONTRACTION = /\b[a-z]+n t\b/;
 // Between a bold criterion title and its status: whitespace and at most one delimiter.
 const TITLE_GAP = /(?:[\t ]*(?::|[—–]|[\t ]-))?[\t ]+/y;
 const flatten = (text: string) => text.replace(/[`*_]/g, '').replace(APOSTROPHES, "'").toLowerCase().replace(/\s+/g, ' ');
@@ -112,25 +117,44 @@ function clauses(part: string): string[][] {
 
 /**
  * A part is the change statement, or a statement that holds an affirming word and only vocabulary words and names only
- * places after its first affirming word. No clause opens with a copula or an affirming word; a clause with its own
- * copula, or one after an affirmed clause, holds its own affirming word; and a condition word affirms only directly after
- * a copula or before any copula or affirming word of its clause.
+ * places after its first affirming word. Each clause names its subject before its first copula and before its first
+ * affirming word that is not an attribute, so no clause opens with either; each copula is followed by its affirming word;
+ * after the predicate starts, a copula only continues a copula or follows the participle that started it, and any later
+ * affirming word follows a copula or is an attribute; and a clause with its own copula, or one after an affirmed clause,
+ * holds its own affirming word. So neither a request (`also present the callers`, `supplied present the callers`) nor a
+ * condition (`complete given the schema`, `everything provided the callers are supplied`) affirms.
  */
 function affirmsContext(part: string): boolean {
   if (CHANGE_NOTE.test(part)) return changeStatement(part, true);
   let seen = false, before = false;
   for (const clause of clauses(part)) {
-    if (COPULAS.has(clause[0]!) || AFFIRMING.has(clause[0]!)) return false;
-    let copula = false, affirmed = false;
+    // predicate: a copula or an affirming word that is not an attribute has been read; participle: the position of that
+    // affirming word when it started the predicate; linked: a copula still waits for its affirming word; prepositional: a
+    // preposition came before any subject, so its noun is not the subject.
+    let subject = false, prepositional = false, predicate = false, copula = false, affirmed = false, linked = false;
+    let participle = -1;
     for (let i = 0; i < clause.length; i += 1) {
       const token = clause[i]!;
-      if (COPULAS.has(token)) copula = true;
-      else if (AFFIRMING.has(token)) {
-        if (CONDITIONS.has(token) && (copula || affirmed) && !COPULAS.has(clause[i - 1] ?? '')) return false;
+      if (COPULAS.has(token)) {
+        // After the predicate a copula only continues a copula (`have been`) or directly follows the participle that
+        // started it (`the callers present are sufficient`); anywhere else it starts a second clause, such as a condition.
+        if (!subject || (predicate && !linked && participle !== i - 1)) return false;
+        predicate = copula = linked = true;
+      } else if (AFFIRMING.has(token)) {
+        if (linked) linked = false;
+        else if (!attributive(clause, i)) {
+          if (predicate || !subject) return false;
+          predicate = true;
+          participle = i;
+        }
         affirmed = true;
-      } else if (!contextWord(clause, i, seen || affirmed)) return false;
+      } else if (linked ? !QUALIFIERS.has(token) : !contextWord(clause, i, seen || affirmed)) return false;
+      else if (!predicate) {
+        if (PLACE_LINKS.has(token) || (token === 'of' && !DETERMINERS.has(clause[i - 1] ?? ''))) prepositional ||= !subject;
+        else if (!prepositional && (SUBJECTS.has(token) || nominal(token))) subject = true;
+      }
     }
-    if ((copula || before) && !affirmed) return false;
+    if (linked || ((copula || before) && !affirmed)) return false;
     before ||= affirmed;
     seen ||= affirmed;
   }
@@ -148,6 +172,12 @@ function contextWord(tokens: string[], i: number, afterAffirming: boolean): bool
   return nominal(token);
 }
 
+/** An affirming word used as an attribute: after a determiner, count or attribute, and before its noun. */
+function attributive(tokens: string[], i: number): boolean {
+  const prev = tokens[i - 1] ?? '';
+  return (DETERMINERS.has(prev) || COUNTS.has(prev) || ATTRIBUTES.has(prev)) && headNoun(tokens, i + 1);
+}
+
 /** A noun, place or code name, or one of those with a possessive `'s`. */
 function nominal(token: string | undefined): boolean {
   if (token === undefined) return false;
@@ -155,11 +185,18 @@ function nominal(token: string | undefined): boolean {
   return NOUNS.has(stem) || PLACES.has(stem) || CODE_NAME.test(stem);
 }
 
+// Each token array's head-noun answers, computed once from its end, so a long attribute run stays linear.
+const HEADS = new WeakMap<string[], boolean[]>();
+
 /** Attributes, then a noun, place or code name, from `at` to the end of the clause. */
 function headNoun(tokens: string[], at: number): boolean {
-  let i = at;
-  while (ATTRIBUTES.has(tokens[i] ?? '')) i += 1;
-  return nominal(tokens[i]);
+  let heads = HEADS.get(tokens);
+  if (!heads) {
+    heads = Array<boolean>(tokens.length + 1).fill(false);
+    for (let i = tokens.length - 1; i >= 0; i -= 1) heads[i] = ATTRIBUTES.has(tokens[i]!) ? heads[i + 1]! : nominal(tokens[i]);
+    HEADS.set(tokens, heads);
+  }
+  return heads[at] ?? false;
 }
 
 /** `full` after `in` (as in `in full`), or a place in the review material after determiners, affirming words and attributes. */
@@ -213,7 +250,8 @@ function rewriteMetCriterion(line: string): string {
   for (const split of rest.matchAll(MET_SPLIT)) {
     if (!split.index) continue;
     const met = metTail(rest, split.index + split[0].length);
-    return met === undefined ? line : rewrite(met && !STATEMENT_CAVEAT.test(flatten(rest.slice(0, split.index))));
+    const statement = rest.slice(0, split.index);
+    return met === undefined ? line : rewrite(met && !STATEMENT_CAVEAT.test(flatten(statement)) && !CONTRACTION.test(letters(statement)));
   }
   return line;
 }
@@ -259,8 +297,12 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         return line;
       }
       if (marker) { metFence = marker; return line; }
-      // A numbered nothing-missing context line is not a criterion: drop its number so it is not an unlabeled item.
-      if (contextLine(line) === 'none') return line.replace(/^((?:\*\*|__)?)(?:\(\d{1,3}\)|\d{1,3}[.)])[\t ]+/, '$1');
+      // A numbered nothing-missing context line is not a criterion: drop its number so it is not an unlabeled item, unless
+      // the rest would then open a code fence and hide the lines after it from the classifier.
+      if (contextLine(line) === 'none') {
+        const dropped = line.replace(/^((?:\*\*|__)?)(?:\(\d{1,3}\)|\d{1,3}[.)])[\t ]+/, '$1');
+        return /^\s*(?:`{3,}|~{3,})/.test(dropped) ? line : dropped;
+      }
       return rewriteMetCriterion(line);
     }).join('\n');
     if (rewritten !== normalized) {
