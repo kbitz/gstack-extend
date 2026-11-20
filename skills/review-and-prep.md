@@ -1317,7 +1317,8 @@ index flags or change Git identity/configuration to make a snapshot succeed.
 
 Tell the nested `/review` its delta base B and candidate snapshot S. Every
 diff, numstat, name-status and reviewer-prompt diff command compares `"B" "S"`
-with its usual pathspecs, and scope detection runs `gstack-diff-scope "B"` and
+with its usual pathspecs (except a `repair-only` continuation's full-scope
+outside rerun, which compares the verified merge base to S), and scope detection runs `gstack-diff-scope "B"` and
 `gstack-state-matrix detect --diff-base "B"`. Before using delta scope, inspect
 the installed `gstack-diff-scope` input collection. Its `B...HEAD`, changes
 against HEAD and current untracked-path union can omit a snapshot's reverted
@@ -1350,8 +1351,10 @@ its small-diff, simplification, Red Team and structured-review size gates, its
 scope signals, the always-on native adversarial pass and the outside challenge
 its preflight allows. Never pick or skip a reviewer yourself, and never use a
 force flag to skip. The only exceptions are the light review default's
-repair-cycle skips and a bounded-wait host's Red Team rule, each recorded with
-its reason. `repair-cycles=light` selects those same skips. Its
+repair-cycle skips, a bounded-wait host's Red Team rule and a `repair-only`
+continuation's full-scope rerun of an outside voice the corroborated full-review
+evidence records as missing coverage, each recorded with its reason.
+`repair-cycles=light` selects the light default's skips. Its
 plan-completion audit stays informational; Step 2's matrix governs.
 
 For a wrapper re-review, B is the newest commit on this branch whose content a
