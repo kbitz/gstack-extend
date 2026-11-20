@@ -1268,8 +1268,7 @@ or retry. An unresolved parse stays `outside_status: unverified`,
 `GATE: MISSING COVERAGE`; an execution failure stays unavailable. Neither is
 clean or PASS, and the native pass never substitutes for outside completion.
 Retain the upstream review-log schema and record parse detail in `voices.jsonl`.
-If a `NEEDS_CONTEXT` line names missing context (the adapter's `needs_context`;
-a nothing-missing line in an allowed form does not), keep it unverified. The parent identifies
+If the response says `NEEDS_CONTEXT`, keep it unverified. The parent identifies
 the missing excerpts and supplies them only in a separately justified context
 extension, recording why the input changed; never repeat unchanged content to
 repair markers. An unresolved `.claim` requires reconciliation with the original

@@ -5,7 +5,7 @@
  */
 import { isAbsolute } from 'node:path';
 import { CLOSING_LINES, bytes, hash } from '../outside-review/prompt';
-import { contextLine, recover, type Classification, type Classifier } from '../outside-review/recovery';
+import { recover, type Classification, type Classifier } from '../outside-review/recovery';
 
 export const SPECIALIST_PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
 export const ATTACKER_PARTS = ['adversarial', 'red-team'] as const;
@@ -309,9 +309,6 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
       return { ok: false };
     }
     if (/^Recommendation: .+ because\b.+$/.test(line.trim())) { recommendation = true; continue; }
-    // A nothing-missing context line may sit before or among the findings or before `NO_FINDINGS: none`, never between
-    // that marker and the Recommendation it must immediately precede.
-    if (!clean && contextLine(line) === 'none') continue;
     if (line.trim() === 'NO_FINDINGS: none' && !clean && !findings.length) { clean = true; continue; }
     const label = LABEL_LINE.exec(line);
     if (!label || clean) return { ok: false };

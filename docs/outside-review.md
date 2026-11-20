@@ -58,11 +58,9 @@ Never put the request in the source checkout or retained telemetry.
 Supply acceptance criteria and the two installed review rubrics, not whole
 skills or session history. The **wrapper adds context**, selecting specific
 callers, contracts and tests before dispatch; it records why each is relevant.
-The voice has no tools. A `NEEDS_CONTEXT` line that says nothing is missing in an
-allowed form (**Recovery and storage**) is not a request; any other `NEEDS_CONTEXT`
-line keeps coverage missing until the parent provides the named material in a
-justified extension, and one that names no material leaves the voice as missing
-coverage. Recovery of marker syntax never resends the prompt and never calls a model.
+The voice has no tools. `NEEDS_CONTEXT` keeps coverage missing until the parent
+provides the named material in a justified extension. Recovery of marker syntax
+never resends the prompt and never calls a model.
 
 The CLI returns `results` (private review output, provider usage and per-phase
 classification) and content-free `measurements`. Exit codes: 0 credited with
@@ -107,82 +105,7 @@ The installed classifier owns severity and execution checks. Recovery accepts
 only a completed execution, normalizes wrapped recommendation headings and
 lowercase priority labels and one-severity qualified labels, and permits a missing recommendation when the
 upstream structured validator independently establishes findings or an explicit
-no-findings conclusion. A context-request line saying nothing is missing is not
-a request only in one of three forms, read on its own line with code-span text:
-list, quote or heading markup alone before the marker, then `none`, the observed
-sentence `none of the above depends on missing context` (also with `depend`), each
-with an optional period, or `none` and one change statement, as a sentence after
-`.` or `;` or as a parenthetical. The change statement says `change` (or
-`changes`, `diff`, `fix`, `patch`, `branch`, `commit`, `PR` or `pull request`),
-optionally after `the` or `this`, does, do or did not (or `n't`) touch, change,
-edit, modify, affect or depend on a list of names. Each name is one or more noun
-phrases joined by `of` or `in`; a noun phrase is determiners (`the`, `a`, `an`,
-`any`, `its` or `their`, never a word that can stand alone as a subject, such as
-`this` or `all`), then attributes, then a code name or vocabulary noun, optionally
-after one modifier (a code name, a possessive, or a vocabulary noun without a final
-`s`), when the noun after it must be a vocabulary noun (each word with an optional
-possessive `'s`), from the closed lists in `src/outside-review/recovery.ts`. A code name is a call (`name()`) or a file name
-or path ending in a listed source or document extension; an abbreviation or words
-joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. Any other
-explanation, including one that says context was supplied, a second sentence, a
-marker, a severity label or word, a quote, brace, question or `name:line`, keeps
-coverage missing, as does any other context line and a nothing-missing line whose
-text carries on to the next line. A next line carries it on unless, read within as
-many quotes as the context line opens or as the quoted paragraph it may lazily carry
-on (the most quote marks on the lines since the last blank one, each counted through
-any spaces, tabs or list markers), a quote mark with its one following space counting
-after at most three spaces, it is blank or, after at most three spaces, starts a bullet item or
-an item numbered 1 with text, a quote, a heading, a fence (three backticks with no
-backtick after them on the line, or three tildes) or a marker line (a marker followed
-by a colon or the line's end). After a CommonMark list item (a bullet, or a number
-and `.` or `)`, after at most three spaces with its text one to four spaces later; a
-parenthesized or emphasized number is paragraph text), a next line indented to the
-item's text is read by the same rule from there, and one left of it carries the text
-on unless it starts another such item. A tab in the next line's indentation carries
-the text on, and after a list item that holds a quote or another item, so does any
-line that is not blank. A next line that leaves one of those quotes and starts none of
-those blocks carries the text on, and an item numbered other than 1 right after a line
-that is neither blank nor a list item is that paragraph's text, not an item. A gap named on a separate line
-before or after a nothing-missing line is not read: owner decision A accepts that
-residual risk. Lines inside a code fence are quoted text, never a criterion; fences are read
-as the installed classifier reads them: a line that starts, after spaces or tabs
-only, with three or more backticks or tildes opens one, and the next such line of the
-same kind at least as long closes it. A context request still counts unless it is
-also inside a fence as CommonMark certainly reads them: a marker after at most three
-spaces opens one (for backticks, with no backtick later on the line), and only a line
-holding just such a marker, after at most three spaces, closes it, so an info-string
-line such as ```` ```sh ```` cannot hide a request. That reading stops hiding lines for
-the rest of the reply at the first line it cannot be sure of: inside a fence, a line
-that starts left of the opening marker (its list item may have ended) or another bare
-marker of its kind at four or more columns or after a tab; outside one, a marker after
-list or quote markup, at four or more columns or after a tab, or a line whose text
-after such markup starts with `<` (it may start an HTML block). As at the merge base,
-a reply also fails closed when it ends inside a fence that a classifier marker opened
-and no later line holding just a marker of its kind, at least as long, closed, or
-inside a fence the certain CommonMark reading never closed. When
-upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
-unlabeled items, recovery drops the number from a numbered nothing-missing
-context line (unless the rest would then open a code fence) and rewrites numbered
-met-criterion lines into
-`Criterion N:` lines, then reclassifies. A met-criterion line is read only as
-printable ASCII text with typographic apostrophes, quotes and dashes, and without `&`,
-`<` or a backslash (character entities, HTML) or a link destination or reference
-(`](`, `][`); any other line is left as it is.
-It carries no severity token or negated status (`not`, `never`, `cannot`, an `n't`
-word, `no longer`, `hardly`, `barely`, `scarcely`, `seldom`, `rarely`, `nowhere`,
-`partially` or `partly` up to two words before `Met`, whatever emphasis, code mark,
-link, punctuation or spacing separates or splits them, or `unmet`); only whitespace and at most one delimiter separate its bold title,
-and the first delimiter followed by `Met` separates an unwrapped statement without a caveat (a contrast,
-failure, obligation, negation, condition, hedge, exception, absence or deferral
-word, an `n't` word counting whatever mark or backtick stands for its apostrophe,
-emphasis inside the word included)
-from `Met`, `Met.` or `Met, by inspection` (its period optional; each optionally bold), or the line is
-left as it is; and the one sentence allowed after `Met.` is the change statement without `depend on`.
-A met-criterion line whose text carries on to the next line, or carries on the text
-of the non-blank line above it, read as for a context line, is also left as it is.
-The met-criterion checks are lexical: a bold title is not read for caveats, and
-a caveat in an unwrapped statement that uses no listed word is not detected.
-Refusals, failed execution, ambiguous prose and missing
+no-findings conclusion. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 

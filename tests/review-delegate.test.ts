@@ -27,51 +27,6 @@ let counter = 0;
 const fresh = (label: string) => { const dir = join(scratch, `${label}-${counter++}`); mkdirSync(dir, { recursive: true }); return dir; };
 const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
 
-// Track 90A review cycle 3: a code span before the marker, a request and an extensionless path:line name missing context.
-const CYCLE_3_DELEGATE_NAMING = [
-  '`src/alpha.ts:14 loses the write` NEEDS_CONTEXT: none',
-  'NEEDS_CONTEXT: none. Can you show the callers of parse()?',
-  'NEEDS_CONTEXT: none. Dockerfile:12 exposes the signing key in the image.',
-] as const;
-// Track 90A continuation review: an explanation that names outside material, an exclusion or an unlisted negator, or a
-// clause among the change statement's names, falls back as needs-context.
-const CONTINUATION_DELEGATE_NAMING = [
-  'NEEDS_CONTEXT: none (all requested interfaces were supplied apart from the config schema)',
-  'NEEDS_CONTEXT: none (the callers are available in the repository).',
-  'NEEDS_CONTEXT: none. The schema wasn`t provided.',
-  'NEEDS_CONTEXT: none. The change does not touch auth, and the token validator accepts expired tokens.',
-  // Continuation cycle 2: an abbreviation is not a code name, and a comma clause needs its own affirming word.
-  'NEEDS_CONTEXT: none (the diff is supplied w/o the callers of parse())',
-  'NEEDS_CONTEXT: none. The diff is complete, the requested context is config.ts and the callers of parse().',
-  // Continuation cycle 3: an affirming word used as a condition never opens a part.
-  'NEEDS_CONTEXT: none (provided the callers are supplied).',
-  // Owner decision "1 a": the observed cycle-2 sentence shape stays uncredited.
-  'NEEDS_CONTEXT: none of the above depends on missing context. The P2 retry interaction relies only on the supplied `retry.ts` excerpt.',
-  // Second continuation review: a request in a later clause, an affirmation borrowed across `and` and a predicate
-  // attribute before a comma.
-  'NEEDS_CONTEXT: none. The diff is supplied, present the callers of save().',
-  'NEEDS_CONTEXT: none. The diff is supplied and the requested context is config.ts.',
-  'NEEDS_CONTEXT: none (schema requested, callers supplied)',
-  // Second continuation review, cycle 2: a request with no subject before its predicate, and a second predicate run on
-  // after the first.
-  'NEEDS_CONTEXT: none. Also present the callers of save().',
-  'NEEDS_CONTEXT: none. The diff is supplied present the callers of save().',
-  'NEEDS_CONTEXT: none. Everything provided the callers of save() are supplied.',
-  // Second continuation review, cycle 3: an attribute never affirms a clause.
-  'NEEDS_CONTEXT: none. The diff is supplied, the requested callers of the supplied code.',
-] as const;
-const CONTINUATION_DELEGATE_NONE = 'NEEDS_CONTEXT: none (the change does not touch the parse() helper).';
-// Owner decision A (continuation 3): only `none`, the observed sentence and `none` with one change statement are
-// credited, so complete replies an earlier grammar credited, and a nothing-missing sentence that continues on the next
-// line, fall back as needs-context.
-const ALLOWLIST_DELEGATE_UNCREDITED = [
-  'NEEDS_CONTEXT: none (the requested interfaces are present in the supplied diff).',
-  'NEEDS_CONTEXT: none (the context extension supplied all three requested interfaces).',
-  'NEEDS_CONTEXT: none of the above depends on missing context. Every caller was supplied.',
-  'NEEDS_CONTEXT: none of the above depends on missing context\nexcept the callers of parse(), which were not supplied.',
-  'NEEDS_CONTEXT: none. The change does not touch the parser, the handler exports secrets.json in the response.json body.',
-  'NEEDS_CONTEXT: none. The change does not touch tests, this exports secrets.json in response.json.',
-] as const;
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const ATTACKER = (() => { const inv = attackerInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const ADVERSARIAL_BODY = [
@@ -1236,68 +1191,6 @@ describe('reply parsing and the receipt contract', () => {
       ['src/epsilon.ts', 7, 'red-team'],
       ['src/zeta.ts', 7, 'red-team'],
     ]);
-
-    // Track 90A: nothing-missing context lines are credited by decide() and parseFindings, while naming lines and
-    // post-Recommendation context lines fail closed.
-    for (const noneLine of [
-      'NEEDS_CONTEXT: none of the above depends on missing context.',
-      'NEEDS_CONTEXT: none (the change does not touch any caller).',
-    ]) {
-      expect(decide('maintainability', spawned(`${maintLine}\n${noneLine}\n${rec}\nVERDICT: FINDINGS`), lastLineVerdict)).toMatchObject({
-        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean',
-        findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
-      });
-      expect(decide('maintainability', spawned(`${noneLine}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
-        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean', findings: [],
-      });
-      expect(parseFindings(`NO_FINDINGS: none\n${rec}\n${noneLine}\nVERDICT: CLEAN`, 'maintainability')).toEqual({ ok: false });
-      expect(parseFindings(`NO_FINDINGS: none\n${rec}\nVERDICT: CLEAN\n${noneLine}`, 'maintainability')).toEqual({ ok: false });
-    }
-    expect(decide('maintainability', spawned('NEEDS_CONTEXT: review material truncated'), lastLineVerdict)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-    });
-    expect(decide('maintainability', spawned(`NEEDS_CONTEXT: callers of alpha()\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-    });
-
-    // Review fixes: a context line between NO_FINDINGS and the Recommendation breaks their documented adjacency, and a
-    // naming line written with a contraction or a typographic apostrophe still falls back as needs-context.
-    const adjacent = `NO_FINDINGS: none\nNEEDS_CONTEXT: none\n${rec}\nVERDICT: CLEAN`;
-    expect(parseFindings(adjacent, 'maintainability')).toEqual({ ok: false });
-    expect(decide('maintainability', spawned(adjacent), lastLineVerdict)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'unparsed-finding', findings: [],
-    });
-    for (const naming of ['NEEDS_CONTEXT: none (I can’t see the callers)', "NEEDS_CONTEXT: none (the body wasn't shown)"]) {
-      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
-    // Review cycle 2: defect prose glued onto a nothing-missing line is never skipped as a context line.
-    const gluedProse = `NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.\n${maintLine}\n${rec}\nVERDICT: FINDINGS`;
-    expect(decide('maintainability', spawned(gluedProse), lastLineVerdict)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'needs-context', findings: [],
-    });
-    // Review cycle 3: text before the marker, a request and an extensionless path:line are never skipped either.
-    for (const naming of CYCLE_3_DELEGATE_NAMING) {
-      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
-    // Continuation review: outside material, exclusions, negators and clauses among the change statement's names fall
-    // back as needs-context; one change statement is credited.
-    for (const naming of CONTINUATION_DELEGATE_NAMING) {
-      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
-    expect(decide('maintainability', spawned(`${maintLine}\n${CONTINUATION_DELEGATE_NONE}\n${rec}\nVERDICT: FINDINGS`), lastLineVerdict)).toMatchObject({
-      outcome: 'credited', fallback_reason: null, parse: 'valid',
-    });
-    for (const uncredited of ALLOWLIST_DELEGATE_UNCREDITED) {
-      expect(decide('maintainability', spawned(`${uncredited}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), lastLineVerdict)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
   });
 
   test('the receipt keys name only keys the runner outputs, and the part keys are the documented set', () => {
@@ -2025,55 +1918,5 @@ describe('installed classifier', () => {
       verdict: 'clean',
       findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
     });
-
-    const rec = 'Recommendation: merge, optionally extracting the constant, because the finding is informational.';
-    const maintLine = '[P3] {"severity":"INFORMATIONAL","confidence":80,"path":"src/alpha.ts","line":14,"category":"maintainability","summary":"fictional maintainability note","fix":"extract constant"}';
-    for (const noneLine of [
-      'NEEDS_CONTEXT: none of the above depends on missing context.',
-      'NEEDS_CONTEXT: none (the change does not touch any caller).',
-    ]) {
-      expect(decide('maintainability', spawned(`${maintLine}\n${noneLine}\n${rec}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
-        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean',
-        findings: [{ severity: 'INFORMATIONAL', confidence: 8, path: 'src/alpha.ts', line: 14, category: 'maintainability', summary: 'fictional maintainability note', fix: 'extract constant', specialist: 'maintainability' }],
-      });
-      expect(decide('maintainability', spawned(`${noneLine}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-        outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean', findings: [],
-      });
-    }
-    expect(decide('maintainability', spawned('NEEDS_CONTEXT: review material truncated'), classifyOutsideReview)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-    });
-    expect(decide('maintainability', spawned(`NEEDS_CONTEXT: callers of alpha()\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-    });
-    expect(decide('maintainability', spawned(`NO_FINDINGS: none\nNEEDS_CONTEXT: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'unparsed-finding', findings: [],
-    });
-    for (const naming of ['NEEDS_CONTEXT: none (I can’t see the callers)', "NEEDS_CONTEXT: none (the body wasn't shown)"]) {
-      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
-    expect(decide('maintainability', spawned(`NEEDS_CONTEXT: none. src/alpha.ts:14 loses the write when the timeout fires.\n${maintLine}\n${rec}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
-      outcome: 'fell-back', fallback_reason: 'needs-context', findings: [],
-    });
-    for (const naming of CYCLE_3_DELEGATE_NAMING) {
-      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
-    for (const naming of CONTINUATION_DELEGATE_NAMING) {
-      expect(decide('maintainability', spawned(`${naming}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
-    expect(decide('maintainability', spawned(`${maintLine}\n${CONTINUATION_DELEGATE_NONE}\n${rec}\nVERDICT: FINDINGS`), classifyOutsideReview)).toMatchObject({
-      outcome: 'credited', fallback_reason: null, parse: 'valid',
-    });
-    for (const uncredited of ALLOWLIST_DELEGATE_UNCREDITED) {
-      expect(decide('maintainability', spawned(`${uncredited}\nNO_FINDINGS: none\n${rec}\nVERDICT: CLEAN`), classifyOutsideReview)).toMatchObject({
-        outcome: 'fell-back', fallback_reason: 'needs-context', parse: 'failed', verdict: 'unverified', findings: [],
-      });
-    }
   });
 });

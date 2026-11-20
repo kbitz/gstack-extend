@@ -196,11 +196,7 @@ The delegate returns, in this form:
 - an optional last line, `VERDICT: CLEAN` (no findings) or `VERDICT: FINDINGS`
   (any finding), immediately after the `Recommendation: <action> because
   <reason>` line (the prompt asks for it as the last line of the reply);
-- a reply that lacks context returns `NEEDS_CONTEXT: <what>` (a `NEEDS_CONTEXT`
-  line saying nothing is missing in an allowed form, as `docs/outside-review.md`
-  **Recovery and storage** states, is allowed before or among the findings or
-  before `NO_FINDINGS: none`, never between that marker and the `Recommendation`,
-  and does not request context).
+- a reply that lacks context returns `NEEDS_CONTEXT: <what>`.
 
 Every reply needs its closing `Recommendation` line, and a reply with no
 findings also needs the explicit `NO_FINDINGS: none` marker immediately before
@@ -237,7 +233,7 @@ parts actually run on the host. Otherwise, the first matching reason wins:
 | `timeout` | The delegate ran past its configured timeout. |
 | `failed` | Its temporary directory could not be created or cleaned up, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
 | `refused` | The installed classifier read the reply as a refusal. |
-| `needs-context` | The reply has a `NEEDS_CONTEXT` line other than a nothing-missing line in an allowed form (including `NEEDS_CONTEXT: review material truncated` when the delegate finds the closing `END_OF_REVIEW_MATERIAL` line missing because the prompt was cut off). |
+| `needs-context` | The reply says `NEEDS_CONTEXT` (including when the delegate finds the closing `END_OF_REVIEW_MATERIAL` line missing because the prompt was cut off). |
 | `uncredited` | The installed classifier did not credit the reply. |
 | `unparsed-finding` | Any reply content is outside the required form, a finding has malformed fields, or the classifier saw findings the runner could not parse. |
 | `worktree-changed` | The work tree or HEAD changed during the calls; applies to every part that call dispatched. |
