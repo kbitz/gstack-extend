@@ -116,21 +116,23 @@ affirmation. The change statement says `change` (or `changes`, `diff`, `fix`,
 `patch`, `branch`, `commit`, `PR` or `pull request`), optionally after `the` or
 `this`, does, do or did not (or `n't`) touch,
 change, edit, modify, affect or depend on a list of names, each a code name or
-vocabulary nouns with determiners, attributes, `of` and `in`. A code name is a call (`name()`) or a file name
+vocabulary nouns with determiners, attributes, `of` and `in` (determiners alone name
+nothing). A code name is a call (`name()`) or a file name
 or path ending in a listed source or document extension; an abbreviation or words
 joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. An
 affirmation holds an affirming word (`supplied`, `provided`, `included`,
 `present`, `shown`, `given`, `attached`, `available`, `visible`, `covered`,
-`contained`, `complete`, `sufficient`) and uses only the closed vocabulary listed
+`contained`, `complete`, `sufficient`) as a predicate, never only as an attribute
+(`the supplied code`), and uses only the closed vocabulary listed
 in `src/outside-review/recovery.ts`: determiners, copulas, pronouns, `of`,
 `also`, `too`, `as well`, `verbatim`, `above`, `below`, `here`, review-material
 nouns and places and code names (each with an optional possessive `'s`), attributive adjectives
 such as `requested` followed in their clause by a noun (never after a copula), and a count
-only after `all`. After its first affirming word, `in`, `within` and `by` take
+only after `all`. After its first predicate affirming word, `in`, `within` and `by` take
 only `in full` or, after determiners, affirming words and attributes, a place in
 the review material (the prompt, diff, context, material, excerpt, extension,
 input, message, review or a section). A part splits into clauses at commas and at
-`and`. Each clause names its subject (a noun, place, code name, `it`, `they` or
+`and`; one that ends in a comma or `and` stops mid-sentence and affirms nothing. Each clause names its subject (a noun, place, code name, `it`, `they` or
 `everything`, not after an earlier `in`, `within`, `by` or an `of` that does not
 follow a determiner) before its first copula and before its first affirming word
 that is not an attribute (one after a determiner, count or attribute and before its
@@ -138,8 +140,12 @@ noun). Each copula is followed by an affirming word, with only other copulas or
 `all`, `both`, `each`, `also` or `too` between; once the predicate starts, another copula only
 continues a copula or directly follows the affirming word that started it, and
 another affirming word follows a copula or is an attribute. A clause with its own
-copula, or one after an affirmed clause, holds its own affirming word. Any other word, another marker, a severity label or word, a quote, brace,
-question or `name:line` keeps coverage missing, as does any other context line. When
+copula, or one after an affirmed clause, holds its own predicate affirming word. Any other word, another marker, a severity label or word, a quote, brace,
+question or `name:line` keeps coverage missing, as does any other context line.
+Lines inside a code fence are quoted text, never a context request or a criterion;
+fences are read as the installed classifier reads them: a line that starts, after
+spaces or tabs only, with three or more backticks or tildes opens one, and the next
+such line of the same kind at least as long closes it. When
 upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
 unlabeled items, recovery drops the number from a numbered nothing-missing
 context line (unless the rest would then open a code fence) and rewrites numbered
@@ -147,12 +153,16 @@ met-criterion lines into
 `Criterion N:` lines, then reclassifies. A met-criterion line carries no severity
 token or negated status (`not`, `never`, `cannot`, an `n't` word, `no longer`,
 `hardly`, `barely`, `scarcely`, `seldom`, `rarely`, `nowhere`, `partially` or
-`partly` up to two words before `Met`, whatever emphasis, punctuation or spacing
-separates them, or `unmet`); only whitespace and at most one delimiter separate its bold title,
+`partly` up to two words before `Met`, whatever emphasis, punctuation, character
+entity or spacing separates them, or `unmet`); only whitespace and at most one delimiter separate its bold title,
 and the first delimiter followed by `Met` separates an unwrapped statement without a caveat (a contrast,
 failure, obligation, negation, condition, hedge, exception, absence or deferral
-word, an `n't` word counting whatever mark stands for its apostrophe) from `Met`, `Met.` or `Met, by inspection` (its period optional; each optionally bold), or the line is
+word, an `n't` word counting whatever mark, character entity or backtick stands
+for its apostrophe) from `Met`, `Met.` or `Met, by inspection` (its period optional; each optionally bold), or the line is
 left as it is; and the one sentence allowed after `Met.` is the change statement without `depend on`.
+A met-criterion line whose text carries on to the next line (one that is not blank
+and starts no list item, quote, heading, table row, fence or marker line) is also
+left as it is.
 The met-criterion checks are lexical: a bold title is not read for caveats, and
 a caveat in an unwrapped statement that uses no listed word is not detected.
 Refusals, failed execution, ambiguous prose and missing

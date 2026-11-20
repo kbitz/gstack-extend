@@ -66,6 +66,8 @@ const STATEMENT_CAVEAT = /\b(?:however|but|except[a-z]*|although|though|yet|unle
 // emphasis, punctuation or unusual spacing cannot separate them.
 const NEGATED_STATUS = /\b(?:not|never|cannot|[a-z]+n t|no longer|hardly|barely|scarcely|seldom|rarely|nowhere|partially|partly)(?: [a-z]+){0,2} met\b|\bunmet\b/;
 const letters = (text: string) => text.toLowerCase().replace(/[^a-z]+/g, ' ');
+// A character entity (`&apos;`, `&#x27;`) reads as a mark, so it cannot hide an `n't` word from the letters checks.
+const entities = (text: string) => text.replace(/&#?[a-z0-9]{1,8};/gi, ' ');
 // An `n't` word with any mark for its apostrophe (`isn´t`, `isn&#39;t`), read on a statement's letters.
 const CONTRACTION = /\b[a-z]+n t\b/;
 // Between a bold criterion title and its status: whitespace and at most one delimiter.
@@ -77,6 +79,9 @@ const MET_TAIL = /(?:(?:\*\*|__)?Met(?:\*\*|__)?(?:, by inspection\.?|\.(?:[\t ]
 // A delimiter, whitespace, then a Met status. Each start is tried in constant work plus its own whitespace run, so long
 // whitespace runs in an untrusted reply stay linear.
 const MET_SPLIT = /(?::|[—–]|[\t ]-)[\t ]+(?=(?:\*\*|__)?Met\b)/g;
+// A line that starts a new block: blank, a list item, quote, heading, table row or fence, or a marker line. Any other line
+// carries on the text of the line above it.
+const NEW_BLOCK = /^[\t ]*(?:$|[-+*][\t ]|(?:\*\*|__)?\(?\d{1,3}[.)](?:[\t ]|$)|>|#{1,6}(?:[\t ]|$)|\||`{3,}|~{3,}|(?:\*\*|__)?(?:NO_FINDINGS|NEEDS_CONTEXT|Recommendation|Verdict)\b)/i;
 
 export function contextLine(line: string): 'none' | 'missing' | null {
   const plain = line.replace(/`([^`]*)`/g, (_span, inner: string) => /^NEEDS_CONTEXT:?$/i.test(inner.trim()) ? inner : '')
@@ -103,7 +108,7 @@ function contextParts(explanation: string): string[] {
   return parts.flatMap(part => part.split(/[.;!](?=\s|$)/)).map(part => part.trim()).filter(Boolean);
 }
 
-/** A part's clauses: its words (`as well` read as `too`) split at commas and at `and`. */
+/** A part's clauses: its words (`as well` read as `too`) split at commas and at `and`; none when the part ends unfinished. */
 function clauses(part: string): string[][] {
   const out: string[][] = [[]];
   for (const raw of part.replace(/\bas well\b/g, 'too').split(' ')) {
@@ -112,6 +117,8 @@ function clauses(part: string): string[][] {
     else if (token) out[out.length - 1]!.push(token);
     if (raw.endsWith(',')) out.push([]);
   }
+  // A part that ends in a comma or `and` stops mid-sentence, so it affirms nothing.
+  if (out.length > 1 && out[out.length - 1]!.length === 0) return [];
   return out.filter(clause => clause.length > 0);
 }
 
@@ -141,8 +148,10 @@ function affirmsContext(part: string): boolean {
         if (!subject || (predicate && !linked && participle !== i - 1)) return false;
         predicate = copula = linked = true;
       } else if (AFFIRMING.has(token)) {
+        // Only a predicate says context was supplied; an attribute (`the supplied code`) describes its noun.
         if (linked) linked = false;
-        else if (!attributive(clause, i)) {
+        else if (attributive(clause, i)) continue;
+        else {
           if (predicate || !subject) return false;
           predicate = true;
           participle = i;
@@ -213,8 +222,9 @@ function changeStatement(text: string, dependOn: boolean): boolean {
   return !!note && (dependOn || note[1] !== 'depend on') && !CONTEXT_GLUED.test(note[2]!)
     && note[2]!.split(/,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+/).every(name => {
       const tokens = name.trim().split(' ');
-      return tokens.every((token, i) => DETERMINERS.has(token) || token === 'of' || token === 'in'
-        || (ATTRIBUTES.has(token) ? headNoun(tokens, i + 1) : nominal(token)));
+      // Each name holds a noun, place or code name; determiners alone (`and the`) name nothing.
+      return tokens.some(token => nominal(token)) && tokens.every((token, i) => DETERMINERS.has(token) || token === 'of'
+        || token === 'in' || (ATTRIBUTES.has(token) ? headNoun(tokens, i + 1) : nominal(token)));
     });
 }
 
@@ -231,7 +241,7 @@ function rewriteMetCriterion(line: string): string {
   const body = line.trimEnd();
   // Emphasis never hides a severity token or a negated status.
   const guard = body.replace(/[*_`]/g, '');
-  if (/\b(?:P[0-3]|critical|high|medium|low)\b/i.test(guard) || NEGATED_STATUS.test(letters(guard))) return line;
+  if (/\b(?:P[0-3]|critical|high|medium|low)\b/i.test(guard) || NEGATED_STATUS.test(letters(entities(body)))) return line;
   const match = /^(\*\*|__)?(?:\((\d{1,3})\)|(\d{1,3})[.)])[\t ]+(\S.*)$/.exec(body);
   if (!match) return line;
   const lead = match[1] ?? '';
@@ -251,7 +261,7 @@ function rewriteMetCriterion(line: string): string {
     if (!split.index) continue;
     const met = metTail(rest, split.index + split[0].length);
     const statement = rest.slice(0, split.index);
-    return met === undefined ? line : rewrite(met && !STATEMENT_CAVEAT.test(flatten(statement)) && !CONTRACTION.test(letters(statement)));
+    return met === undefined ? line : rewrite(met && !STATEMENT_CAVEAT.test(flatten(statement)) && !CONTRACTION.test(letters(entities(statement))));
   }
   return line;
 }
@@ -264,9 +274,11 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
   let fence: string | undefined;
   let needsContext = false;
   const normalized = text.replace(/\r\n/g, '\n').split('\n').map(line => {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    // Fences as the installed classifier reads them: a marker after spaces or tabs only, closed by any later marker of
+    // its kind at least as long.
+    const marker = /^[\t ]*(`{3,}|~{3,})/.exec(line)?.[1];
     if (fence) {
-      if (marker && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = undefined;
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
       return line;
     }
     if (marker) { fence = marker; return line; }
@@ -290,10 +302,11 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
   let metRecovered = false;
   if (!credited(checked) && typeof checked.findings.unlabeled === 'number' && checked.findings.unlabeled > 0) {
     let metFence: string | undefined;
-    const rewritten = normalized.split('\n').map(line => {
-      const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    const lines = normalized.split('\n');
+    const rewritten = lines.map((line, i) => {
+      const marker = /^[\t ]*(`{3,}|~{3,})/.exec(line)?.[1];
       if (metFence) {
-        if (marker && marker[0] === metFence[0] && marker.length >= metFence.length && line.trim() === marker) metFence = undefined;
+        if (marker && marker[0] === metFence[0] && marker.length >= metFence.length) metFence = undefined;
         return line;
       }
       if (marker) { metFence = marker; return line; }
@@ -303,7 +316,9 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         const dropped = line.replace(/^((?:\*\*|__)?)(?:\(\d{1,3}\)|\d{1,3}[.)])[\t ]+/, '$1');
         return /^\s*(?:`{3,}|~{3,})/.test(dropped) ? line : dropped;
       }
-      return rewriteMetCriterion(line);
+      // A criterion whose text carries on to the next line is not read whole, so it stays an unlabeled item.
+      const next = lines[i + 1];
+      return next !== undefined && !NEW_BLOCK.test(next) ? line : rewriteMetCriterion(line);
     }).join('\n');
     if (rewritten !== normalized) {
       const metChecked = classify({ text: rewritten, gate, exit, stderr });
