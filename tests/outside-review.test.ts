@@ -490,6 +490,12 @@ describe('nothing-missing context lines (Track 90A)', () => {
     'NEEDS_CONTEXT: none. The change does not depend on save() and the',
   ] as const;
 
+  // Change-statement names that hide a clause, which the third continuation review found credited.
+  const NAMING_CONTINUATION_3 = [
+    'NEEDS_CONTEXT: none. The change does not touch the parser, the handler exports secrets.json in the response.json body.',
+    'NEEDS_CONTEXT: none. The change does not touch tests, the module imports the test fixtures.',
+    'NEEDS_CONTEXT: none (the change does not touch the handler exports secrets.json).',
+  ] as const;
   const findingsReply = (ctxLine: string) => [
     '[P1] `src/alpha.ts`: state check skips the duplicate branch when the map is empty.',
     '',
@@ -552,7 +558,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
   test('fails closed on every other explanation, including complete replies the earlier grammar credited (owner decision A, continuation 3)', () => {
     const lines = [...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION,
       ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2,
-      ...NAMING_CONTINUATION_2_C3, ...UNCREDITED_COMPLETE_REPLIES];
+      ...NAMING_CONTINUATION_2_C3, ...NAMING_CONTINUATION_3, ...UNCREDITED_COMPLETE_REPLIES];
     for (const line of lines) expect([line, contextLine(line)]).toEqual([line, 'missing']);
     for (const classifier of [classify, lastLineVerdict]) {
       for (const gate of gates) {
@@ -574,6 +580,13 @@ describe('nothing-missing context lines (Track 90A)', () => {
     ['NEEDS_CONTEXT: none (the change does not touch any caller)', 'and the callers of save() are missing.'],
     ['NEEDS_CONTEXT: none. The change does not touch the parser', 'or its callers, which are missing.'],
     ['- NEEDS_CONTEXT: none', '  but the callers of save() were not supplied.'],
+    ['> NEEDS_CONTEXT: none', '> because the callers of save() were not supplied.'],
+    ['> **NEEDS_CONTEXT:** none', '> (the callers of `save()` were not in the excerpt)'],
+    ['- > NEEDS_CONTEXT: none', '  > of the callers of save() are visible.'],
+    ['>> NEEDS_CONTEXT: none', '>> of the callers of save() are visible.'],
+    ['NEEDS_CONTEXT: none', '| the callers of save() were not supplied |'],
+    ['NEEDS_CONTEXT: none', '2. the callers of save() were not supplied'],
+    ['NEEDS_CONTEXT: none', 'Recommendation requires caller source that was not supplied.'],
   ] as const;
 
   // Value: protects=owner decision A (continuation 3) on wrapped replies: a nothing-missing line whose sentence carries on
@@ -597,8 +610,37 @@ describe('nothing-missing context lines (Track 90A)', () => {
     }
     for (const classifier of [classify, lastLineVerdict]) {
       for (const gate of gates) {
-        const res = recover(cleanReply('NEEDS_CONTEXT: none\n\nEvery hunk was read.'), gate, 0, '', classifier);
-        expect([gate, res.credited, res.parse, res.classification.verdict]).toEqual([gate, true, 'valid', 'clean']);
+        for (const control of ['NEEDS_CONTEXT: none\n\nEvery hunk was read.', '> NEEDS_CONTEXT: none\n>\n> Every hunk was read.',
+          '1. NEEDS_CONTEXT: none\n2. Every hunk was read.']) {
+          const res = recover(cleanReply(control), gate, 0, '', classifier);
+          expect([gate, control, res.credited, res.classification.verdict]).toEqual([gate, control, true, 'clean']);
+        }
+      }
+    }
+  });
+
+  // Value: protects=a context request counts wherever the installed classifier's or CommonMark's fence reading shows it as
+  //   text, so info-string lines (```sh, ```bash) that the two read differently cannot hide it, while a request quoted in a
+  //   fence both readings agree on stays an example; fails_when=context lines are read under the classifier's fences
+  //   alone again; why_new=the third continuation review's security specialist and adversarial reviewer reproduced the
+  //   hidden request as credited at 4a39c415; seam=recover(); no_claim=other fence dialects
+  test('reads a context request wherever either fence reading shows it as text (continuation 3)', () => {
+    const F = '```';
+    const hidden = [
+      ['[P2] a.ts:3 unclear name.', F, 'Run:', `${F}sh`, 'x', F, 'NEEDS_CONTEXT: the callers of save()', F, `${F}sh`, 'y', F,
+        'Recommendation: merge because advisory only.', 'VERDICT: FINDINGS'],
+      ['Suggested doc:', `${F}markdown`, '## Usage', `${F}bash`, 'bun install', F, 'NEEDS_CONTEXT: the callers of save() in src/store.ts', F,
+        'NO_FINDINGS: none', 'Recommendation: merge because nothing blocks.', 'VERDICT: CLEAN'],
+    ].map(lines => lines.join('\n'));
+    const quoted = ['[P2] a.ts:3 unclear name.', F, 'NEEDS_CONTEXT: the callers of save()', F,
+      'Recommendation: merge because advisory only.', 'VERDICT: FINDINGS'].join('\n');
+    for (const classifier of [classify, lastLineVerdict]) {
+      for (const gate of gates) {
+        for (const reply of hidden) {
+          const res = recover(reply, gate, 0, '', classifier);
+          expect([gate, res.credited, res.needs_context]).toEqual([gate, false, true]);
+        }
+        expect([gate, recover(quoted, gate, 0, '', classifier).needs_context]).toEqual([gate, false]);
       }
     }
   });
@@ -708,7 +750,7 @@ describe('nothing-missing context lines (Track 90A)', () => {
           gate, line, true, 'valid', 'clean', false,
         ]);
       }
-      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2, ...NAMING_CONTINUATION_2_C3, ...UNCREDITED_COMPLETE_REPLIES, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_SENTENCE}\nNEEDS_CONTEXT: callers of alpha()`, ...CONTINUED_CONTEXT_LINES.map(pair => pair.join('\n'))]) {
+      for (const line of [...FAIL_CLOSED_MISSING, ...NAMING_REVIEW_FIXES, ...NAMING_CYCLE_2, ...NAMING_CYCLE_3, ...NAMING_CONTINUATION, ...NAMING_CONTINUATION_C2, ...NAMING_CONTINUATION_C3, ...NAMING_CONTINUATION_2, ...NAMING_CONTINUATION_2_C2, ...NAMING_CONTINUATION_2_C3, ...NAMING_CONTINUATION_3, ...UNCREDITED_COMPLETE_REPLIES, OBSERVED_CYCLE_2_SENTENCE, `${OBSERVED_SENTENCE}\nNEEDS_CONTEXT: callers of alpha()`, ...CONTINUED_CONTEXT_LINES.map(pair => pair.join('\n'))]) {
         const res = recover(cleanReply(line), gate, 0, '', classifyOutsideReview);
         expect([gate, line, res.credited, res.parse, res.classification.verdict, res.needs_context]).toEqual([
           gate, line, false, 'failed', 'unverified', true,
@@ -1001,6 +1043,22 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
     label,
     [line, 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
   ] as const);
+  // Third continuation review: a negator split or hidden by emphasis, a code mark, a character entity, an invisible
+  // character or an HTML comment, a clause among the change-statement names, and a prose line that only starts with a
+  // marker word.
+  const CONTINUATION_3_MET_NEGATIVES = [
+    ['emphasis inside the negator', ['1. **The requirement is n*o*t** Met.']],
+    ['a code mark inside the negator', ['1. **The requirement is n`ot** Met.']],
+    ['a letter entity inside the negator', ['1. **The requirement is n&#111;t** Met.']],
+    ['a zero-width space inside the negator', ['1. **The requirement is n\u200bot** Met.']],
+    ['an HTML comment inside the negator', ['1. **The requirement is n<!-- -->ot** Met.']],
+    ['a clause among the change-statement names', ['1. **Release files.** Met. The change does not touch the parser, the handler exports secrets.json in the response.json body.']],
+    ['a prose line that starts with a marker word', ['1. Callers updated: Met.', 'Recommendation requires the callers of save().']],
+    ['a table row after the criterion', ['1. Callers updated: Met.', '| load.ts still reads the old flag |']],
+  ].map(([label, lines]) => [
+    label as string,
+    [...(lines as string[]), 'NO_FINDINGS: none', 'Recommendation: approve because covered.', 'VERDICT: CLEAN'].join('\n'),
+  ] as const);
   // A context request between fence-like lines the installed classifier does not read as fences (a no-break space before
   // the backticks), after a numbered or a bulleted criterion.
   const NBSP_FENCED_REQUEST = (first: string) => [first, '\u00a0```', 'NEEDS_CONTEXT: the callers of save()', '\u00a0```',
@@ -1029,6 +1087,23 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
   test('fails closed on the other negative adverbs before Met and an n\'t caveat with another apostrophe (continuation 2, cycle 2)', () => {
     for (const gate of gates) {
       for (const [label, text] of CONTINUATION_2_C2_MET_NEGATIVES) {
+        const res = recover(text, gate, 0, '', numberedCleanVerdict);
+        expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
+          gate, label, false, 'failed', 'unverified', 'untagged_review',
+        ]);
+      }
+    }
+  });
+
+  // Value: protects=owner decision A for met-criterion lines: a negator hidden or split by emphasis, a code mark, a character
+  //   entity, an invisible character or an HTML comment, a clause among the change-statement names, and a criterion whose
+  //   text carries on in a prose line or table row keep the line an unlabeled item; fails_when=any of them is credited
+  //   clean again; why_new=the third continuation review's outside voices reproduced the emphasis, code-mark, entity,
+  //   names and marker-word shapes as credited at 4a39c415; seam=recover() with the numbered-item fixture classifier;
+  //   no_claim=a model's wording
+  test('fails closed on a hidden negator, a clause among the names and a carried-on criterion (continuation 3)', () => {
+    for (const gate of gates) {
+      for (const [label, text] of CONTINUATION_3_MET_NEGATIVES) {
         const res = recover(text, gate, 0, '', numberedCleanVerdict);
         expect([gate, label, res.credited, res.parse, res.classification.verdict, res.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',
@@ -1151,7 +1226,7 @@ describe('numbered met-criterion recovery (Track 90A, upstream 4ed1711d)', () =>
           gate, label, true, 'recovered', 'clean',
         ]);
       }
-      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES, ...CONTINUATION_2_C2_MET_NEGATIVES, ...CONTINUATION_2_C3_MET_NEGATIVES, ...CONTINUED_MET_SHAPES]) {
+      for (const [label, text] of [...NEGATIVE_SHAPES, ...CONTINUATION_MET_NEGATIVES, ...CONTINUATION_2_MET_NEGATIVES, ...CONTINUATION_2_C2_MET_NEGATIVES, ...CONTINUATION_2_C3_MET_NEGATIVES, ...CONTINUATION_3_MET_NEGATIVES, ...CONTINUED_MET_SHAPES]) {
         const neg = recover(text, gate, 0, '', classifyOutsideReview);
         expect([gate, label, neg.credited, neg.parse, neg.classification.verdict, neg.classification.reason]).toEqual([
           gate, label, false, 'failed', 'unverified', 'untagged_review',

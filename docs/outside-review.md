@@ -115,38 +115,45 @@ with an optional period, or `none` and one change statement, as a sentence after
 `.` or `;` or as a parenthetical. The change statement says `change` (or
 `changes`, `diff`, `fix`, `patch`, `branch`, `commit`, `PR` or `pull request`),
 optionally after `the` or `this`, does, do or did not (or `n't`) touch, change,
-edit, modify, affect or depend on a list of names, each a code name or vocabulary
-nouns (each with an optional possessive `'s`) with determiners, attributes, `of`
-and `in` (determiners alone name nothing), from the closed lists in
-`src/outside-review/recovery.ts`. A code name is a call (`name()`) or a file name
+edit, modify, affect or depend on a list of names. Each name is one or more noun
+phrases joined by `of` or `in`; a noun phrase is determiners, then attributes, then
+one or two code names or vocabulary nouns (each with an optional possessive `'s`),
+from the closed lists in `src/outside-review/recovery.ts`. A code name is a call (`name()`) or a file name
 or path ending in a listed source or document extension; an abbreviation or words
 joined by a slash or dot (`w/o`, `n/a`, `n.a.`, `0.5`) are not names. Any other
 explanation, including one that says context was supplied, a second sentence, a
 marker, a severity label or word, a quote, brace, question or `name:line`, keeps
 coverage missing, as does any other context line and a nothing-missing line whose
-text carries on to the next line (one that is not blank and starts no list item,
-quote, heading, table row, fence or marker line).
-Lines inside a code fence are quoted text, never a context request or a criterion;
-fences are read as the installed classifier reads them: a line that starts, after
-spaces or tabs only, with three or more backticks or tildes opens one, and the next
-such line of the same kind at least as long closes it. When
+text carries on to the next line. A next line carries it on unless, read within as
+many quotes as the context line's markup opens, it is blank or, after at most three
+spaces, starts a bullet item or an item numbered 1 with text, a quote, heading or
+fence, or a marker line (a marker followed by a colon or the line's end); after a list
+item, another list item is its sibling or sub-item. A gap named on a separate line
+before or after a nothing-missing line is not read: owner decision A accepts that
+residual risk. Lines inside a code fence are quoted text, never a criterion; fences are read
+as the installed classifier reads them: a line that starts, after spaces or tabs
+only, with three or more backticks or tildes opens one, and the next such line of the
+same kind at least as long closes it. A context request still counts unless it is
+also inside a fence as CommonMark reads them, where only a line holding just such a
+marker closes one, so an info-string line such as ```` ```sh ```` cannot hide it. When
 upstream's column-0 numbered-item rule (`4ed1711d`) leaves a reply with
 unlabeled items, recovery drops the number from a numbered nothing-missing
 context line (unless the rest would then open a code fence) and rewrites numbered
 met-criterion lines into
-`Criterion N:` lines, then reclassifies. A met-criterion line carries no severity
-token or negated status (`not`, `never`, `cannot`, an `n't` word, `no longer`,
-`hardly`, `barely`, `scarcely`, `seldom`, `rarely`, `nowhere`, `partially` or
-`partly` up to two words before `Met`, whatever emphasis, punctuation, character
-entity or spacing separates them, or `unmet`); only whitespace and at most one delimiter separate its bold title,
+`Criterion N:` lines, then reclassifies. A met-criterion line is read only as
+printable ASCII text with typographic apostrophes, quotes and dashes, and without a
+character entity, HTML tag or comment, or backslash; any other line is left as it is.
+It carries no severity token or negated status (`not`, `never`, `cannot`, an `n't`
+word, `no longer`, `hardly`, `barely`, `scarcely`, `seldom`, `rarely`, `nowhere`,
+`partially` or `partly` up to two words before `Met`, whatever emphasis, code mark,
+punctuation or spacing separates or splits them, or `unmet`); only whitespace and at most one delimiter separate its bold title,
 and the first delimiter followed by `Met` separates an unwrapped statement without a caveat (a contrast,
 failure, obligation, negation, condition, hedge, exception, absence or deferral
-word, an `n't` word counting whatever mark, character entity or backtick stands
-for its apostrophe) from `Met`, `Met.` or `Met, by inspection` (its period optional; each optionally bold), or the line is
+word, an `n't` word counting whatever mark or backtick stands for its apostrophe)
+from `Met`, `Met.` or `Met, by inspection` (its period optional; each optionally bold), or the line is
 left as it is; and the one sentence allowed after `Met.` is the change statement without `depend on`.
-A met-criterion line whose text carries on to the next line (one that is not blank
-and starts no list item, quote, heading, table row, fence or marker line) is also
-left as it is.
+A met-criterion line whose text carries on to the next line, read as for a
+context line, is also left as it is.
 The met-criterion checks are lexical: a bold title is not read for caveats, and
 a caveat in an unwrapped statement that uses no listed word is not detected.
 Refusals, failed execution, ambiguous prose and missing
