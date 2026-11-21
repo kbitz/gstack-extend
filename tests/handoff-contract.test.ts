@@ -1531,17 +1531,17 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
   test('each skill stop-table row maps directly to its model inputs and outcome', () => {
     const tableLines = stopSection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
     const tableCells = tableLines.map((l) => l.trim().slice(1, -1).split('|').map((c) => c.trim()));
-    const stopTableMap: ReadonlyArray<{ key: string; inputs: ReadonlyArray<Cycle1 | null> }> = [
+    const stopTableMap: ReadonlyArray<{ conditions: string; inputs: ReadonlyArray<Cycle1 | null> }> = [
       {
-        key: 'no record | any',
+        conditions: 'no record | any',
         inputs: [null],
       },
       {
-        key: '`completed=false` (`anchor-changed`) | any',
+        conditions: '`completed=false` (`anchor-changed`) | any',
         inputs: [{ continuation: false, scope: 'full', anchor: false, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' }],
       },
       {
-        key: '`completed=false` (`reviewer-incomplete`) | any',
+        conditions: '`completed=false` (`reviewer-incomplete`) | any',
         inputs: [
           { continuation: false, scope: 'full', anchor: true, reviewers: 'incomplete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
           { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unavailable', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
@@ -1549,22 +1549,22 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
         ],
       },
       {
-        key: '`completed=true`, snapshot tree differs from T | not read',
+        conditions: '`completed=true`, snapshot tree differs from T | not read',
         inputs: [{ continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'U', baseTree: 'T' }],
       },
       {
-        key: '`completed=true`, snapshot tree equals T | not read',
+        conditions: '`completed=true`, snapshot tree equals T | not read',
         inputs: [
           { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
           { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unverified', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
         ],
       },
       {
-        key: '`completed=pending-fix-review`, snapshot tree differs from T | any',
+        conditions: '`completed=pending-fix-review`, snapshot tree differs from T | any',
         inputs: [{ continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'U', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } }],
       },
       {
-        key: '`completed=pending-fix-review`, tree equals T | no readable record, one for another snapshot, or `fix-reviewed=false`',
+        conditions: '`completed=pending-fix-review`, tree equals T | no readable record, one for another snapshot, or `fix-reviewed=false`',
         inputs: [
           { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: null },
           { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'other', scope: 'delta', fixReviewed: true } },
@@ -1573,22 +1573,22 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
         ],
       },
       {
-        key: '`completed=pending-fix-review`, tree equals T | same snapshot, scope `delta from <S1>`, `fix-reviewed=true`',
+        conditions: '`completed=pending-fix-review`, tree equals T | same snapshot, scope `delta from <S1>`, `fix-reviewed=true`',
         inputs: [
           { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } },
           { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unverified', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true, reviewers: 'outside-unverified' } },
         ],
       },
       {
-        key: '`completed=pending-fix-review`, tree equals T | same snapshot, scope `full`, `fix-reviewed=true`',
+        conditions: '`completed=pending-fix-review`, tree equals T | same snapshot, scope `full`, `fix-reviewed=true`',
         inputs: [{ continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: true } }],
       },
     ];
-    expect(tableCells.map((r) => `${r[0]} | ${r[1]}`)).toEqual(stopTableMap.map((m) => m.key));
+    expect(tableCells.map((r) => `${r[0]} | ${r[1]}`)).toEqual(stopTableMap.map((m) => m.conditions));
     for (let i = 0; i < tableCells.length; i++) {
       const [c1, c2, outcomeCell] = tableCells[i]!;
       const entry = stopTableMap[i]!;
-      expect(entry.inputs.length, entry.key).toBeGreaterThan(0);
+      expect(entry.inputs.length, entry.conditions).toBeGreaterThan(0);
       for (const input of entry.inputs) {
         const decided = rowFor(input, null);
         if (outcomeCell === 'the row') {
