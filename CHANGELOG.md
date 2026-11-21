@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.107.0] - 2026-11-21
+
+### Added
+
+- Outside and delegated reviews recognize the documented exact no-missing-context form, and structured outside reviews recognize exact met-criterion lines.
+
+### Upgrade notes
+
+- Reconcile unresolved review calls before upgrading because the revised prompts change saved-call identities.
+
 ## [0.106.0] - 2026-11-20
 
 ### Added

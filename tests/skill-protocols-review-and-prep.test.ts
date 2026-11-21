@@ -3086,6 +3086,24 @@ describe('Track 86B single-statement locks', () => {
     return match ? [`unexpected Track ID in skill: ${match[0]}`] : [];
   }
 
+  function checkOutsideNeedsContextHelperLock(text: string): string[] {
+    const outside = skillSection(text, '### Bound Claude Code outside calls').replace(/\s+/g, ' ');
+    const violations: string[] = [];
+    if (outside.includes('If the response says `NEEDS_CONTEXT`, keep it unverified.')) {
+      violations.push('outside section still keys unverified rule on raw NEEDS_CONTEXT reply text');
+    }
+    if (!outside.includes('If the helper reports `needs_context: true` (see `docs/outside-review.md#exact-reply-forms`), keep the voice unverified:')) {
+      violations.push('outside section missing helper needs_context: true rule and docs/outside-review.md#exact-reply-forms link');
+    }
+    if (!outside.includes('when that reply names no specific missing material (for example a misplaced or malformed no-missing-context line), record the voice as missing coverage and make no context extension;')) {
+      violations.push('outside section missing no-context-extension clause for a reply naming no specific missing material');
+    }
+    if (!outside.includes('Report a credited reply\'s counted no-missing-context line as "no missing context" and never print the token itself in stage output or in a `User-facing change:` line.')) {
+      violations.push('outside section missing no-token-in-stage-output clause');
+    }
+    return violations;
+  }
+
   const SINGLE_STATEMENT_CHECKS: ReadonlyArray<{
     name: string;
     lock: (text: string) => string[];
@@ -3128,6 +3146,15 @@ describe('Track 86B single-statement locks', () => {
       name: 'skill contains no Track <digits><letter> ID',
       lock: checkNoTrackIdInSkillLock,
       mutate: (t) => `${t}\n<!-- Track 86B -->\n`,
+    },
+    {
+      name: 'outside section keys unverified rule on helper needs_context, forbids empty extension, and forbids printing the token',
+      lock: checkOutsideNeedsContextHelperLock,
+      mutate: (t) =>
+        t.replace(
+          'If the helper reports `needs_context: true` (see `docs/outside-review.md#exact-reply-forms`), keep the voice unverified:',
+          'If the response says `NEEDS_CONTEXT`, keep it unverified.',
+        ),
     },
   ];
 

@@ -1305,10 +1305,10 @@ or retry. An unresolved parse stays `outside_status: unverified`,
 `GATE: MISSING COVERAGE`; an execution failure stays unavailable. Neither is
 clean or PASS, and the native pass never substitutes for outside completion.
 Retain the upstream review-log schema and record parse detail in `voices.jsonl`.
-If the response says `NEEDS_CONTEXT`, keep it unverified. The parent identifies
+If the helper reports `needs_context: true` (see `docs/outside-review.md#exact-reply-forms`), keep the voice unverified: when that reply names no specific missing material (for example a misplaced or malformed no-missing-context line), record the voice as missing coverage and make no context extension; otherwise the parent identifies
 the missing excerpts and supplies them only in a separately justified context
 extension, recording why the input changed; never repeat unchanged content to
-repair markers. An unresolved `.claim` requires reconciliation with the original
+repair markers. Report a credited reply's counted no-missing-context line as "no missing context" and never print the token itself in stage output or in a `User-facing change:` line. An unresolved `.claim` requires reconciliation with the original
 process/result, never deleting the claim or choosing a fresh directory to retry.
 
 ### Scope a re-review to its delta

@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from './helpers/child-stdio';
-import { recover } from '../src/outside-review/recovery';
+import { NOTHING_MISSING } from '../src/outside-review/prompt';
+import { exactForms, recover } from '../src/outside-review/recovery';
 import { attackerInventory, delegateInventory } from '../src/upstream-check/cli';
 import {
   ADVERSARIAL_SCHEMA, ATTACH_LIMIT, ATTACKER_PARTS, CLAUDE_CODE_DISALLOWED_FLAGS, CLAUDE_CODE_PREFIX_FLAGS, CONFIG_SCHEMA, DELEGATE_POLICY, FALLBACK_REASONS, MATERIAL_END, MATERIAL_RULE, PART_KEYS, PARTS, POLICY_FORMAT, RECEIPT_KEYS, RED_TEAM_FRAMING, REFUSAL_REASONS, SETTLED_RULE, SPECIALIST_PARTS, TOOLS_POLICY,
@@ -1200,6 +1201,120 @@ describe('reply parsing and the receipt contract', () => {
     expect(docs).toContain(PART_KEYS.join(' '));
     for (const reason of [...FALLBACK_REASONS, ...REFUSAL_REASONS]) expect(docs, reason).toContain(`\`${reason}\``);
   });
+
+  test('D1, D2, D3, D4: exact no-missing-context token in parseFindings and decide(), shared exactForms predicate, and documented example', async () => {
+    const { classifyOutsideReview: strictClassifier } = await import(`data:text/javascript;base64,${Buffer.from(CLASSIFIER).toString('base64')}`);
+    const spawned = (stdout: string) => ({ exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false, stdout, stderr: '', wall_ms: 5 });
+    const findingLine = '[P2] {"severity":"INFORMATIONAL","confidence":80,"path":"src/outside-review/recovery.ts","line":20,"category":"maintainability","summary":"keep the pre-pass pure","fix":"avoid mutating caller arrays"}';
+    const recClean = 'Recommendation: merge because nothing is wrong.';
+    const recFindings = 'Recommendation: merge, optionally applying the advisory note, because no blocking defect was found.';
+
+    // D1: clean reply with first-line token, and findings reply with token after findings and a blank line
+    const cleanWithToken = `NEEDS_CONTEXT: none\nNO_FINDINGS: none\n${recClean}\nVERDICT: CLEAN`;
+    expect(decide('maintainability', spawned(cleanWithToken), strictClassifier)).toMatchObject({
+      outcome: 'credited', fallback_reason: null, parse: 'valid', verdict: 'clean', findings: [],
+    });
+
+    // D1 & D4: documented delegated findings example reply from docs/outside-review.md#exact-reply-forms
+    const findingsWithToken = `${findingLine}\n\nNEEDS_CONTEXT: none\n${recFindings}\nVERDICT: FINDINGS`;
+    expect(decide('maintainability', spawned(findingsWithToken), strictClassifier)).toMatchObject({
+      outcome: 'credited',
+      fallback_reason: null,
+      parse: 'valid',
+      verdict: 'clean',
+      findings: [{
+        severity: 'INFORMATIONAL', confidence: 8, path: 'src/outside-review/recovery.ts', line: 20,
+        category: 'maintainability', summary: 'keep the pre-pass pure', fix: 'avoid mutating caller arrays', specialist: 'maintainability',
+      }],
+    });
+
+    // D2: tokens that do not count fall back as needs-context (strict CLASSIFIER stand-in)
+    const needsContextCases = [
+      // directly under a finding line
+      `${findingLine}\nNEEDS_CONTEXT: none\n${recFindings}\nVERDICT: FINDINGS`,
+      // followed by a finding (with blank line between)
+      `${findingLine}\n\nNEEDS_CONTEXT: none\n\n${findingLine}\n${recFindings}\nVERDICT: FINDINGS`,
+      // followed by a finding (without blank line between)
+      `${findingLine}\n\nNEEDS_CONTEXT: none\n${findingLine}\n${recFindings}\nVERDICT: FINDINGS`,
+      // written twice
+      `${findingLine}\n\nNEEDS_CONTEXT: none\n\nNEEDS_CONTEXT: none\n${recFindings}\nVERDICT: FINDINGS`,
+      // as the first line followed by a finding (with blank line)
+      `NEEDS_CONTEXT: none\n\n${findingLine}\n${recFindings}\nVERDICT: FINDINGS`,
+      // as the first line directly followed by a finding
+      `NEEDS_CONTEXT: none\n${findingLine}\n${recFindings}\nVERDICT: FINDINGS`,
+      // material truncated
+      'NEEDS_CONTEXT: review material truncated',
+      // reply made only of the token (E2)
+      'NEEDS_CONTEXT: none',
+    ];
+    for (const reply of needsContextCases) {
+      expect([reply, decide('maintainability', spawned(reply), strictClassifier)]).toEqual([
+        reply,
+        expect.objectContaining({ outcome: 'fell-back', fallback_reason: 'needs-context', findings: [] }),
+      ]);
+    }
+
+    // D2: counted forms rejected by parseFindings fall back as unparsed-finding (strict CLASSIFIER stand-in)
+    const unparsedCases = [
+      // counted token after NO_FINDINGS: none
+      `NO_FINDINGS: none\n\nNEEDS_CONTEXT: none\n${recClean}\nVERDICT: CLEAN`,
+      // counted token after Recommendation (blank lines around it, before VERDICT)
+      `NO_FINDINGS: none\n${recClean}\n\nNEEDS_CONTEXT: none\n\nVERDICT: CLEAN`,
+      // counted 3. MET line
+      `3. MET\n\nNO_FINDINGS: none\n${recClean}\nVERDICT: CLEAN`,
+    ];
+    for (const reply of unparsedCases) {
+      expect([reply, decide('maintainability', spawned(reply), strictClassifier)]).toEqual([
+        reply,
+        expect.objectContaining({ outcome: 'fell-back', fallback_reason: 'unparsed-finding', findings: [] }),
+      ]);
+    }
+
+    // D2 structured-fallback case: counted token above a Recommendation: line with no because-clause followed by VERDICT: CLEAN
+    const structuredFallbackClassifier = ({ text, gate }: { text: string; gate: 'review' | 'structured' }) => {
+      if (gate === 'review' && !/^Recommendation: .+ because\b.+/m.test(text)) {
+        return { execution: { state: 'ran' }, findings: { highest: null }, verdict: 'unavailable' as const, reason: 'missing_markers' };
+      }
+      return { execution: { state: 'ran' }, findings: { highest: null }, verdict: /VERDICT: CLEAN/.test(text) ? 'clean' as const : 'unverified' as const };
+    };
+    const noBecauseReply = 'NEEDS_CONTEXT: none\nNO_FINDINGS: none\nRecommendation: approve without reason.\nVERDICT: CLEAN';
+    expect(decide('maintainability', spawned(noBecauseReply), structuredFallbackClassifier as any)).toMatchObject({
+      outcome: 'fell-back', fallback_reason: 'unparsed-finding', parse: 'recovered', verdict: 'clean', findings: [],
+    });
+
+    // D3(a): pure predicate table
+    expect(exactForms(['NEEDS_CONTEXT: none', 'NO_FINDINGS: none', recClean, 'VERDICT: CLEAN'])).toEqual(['nothing-missing', null, null, null]);
+    expect(exactForms(['1. MET', '2. MET', '', 'NO_FINDINGS: none', recClean, 'VERDICT: CLEAN'])).toEqual(['met', 'met', null, null, null, null]);
+    expect(exactForms(['NEEDS_CONTEXT: none'])).toEqual([null]);
+    expect(exactForms(['NO_FINDINGS: none', recClean, 'VERDICT: CLEAN', '', 'NEEDS_CONTEXT: none'])).toEqual([null, null, null, null, null]);
+
+    // D3(b): static check on src/ for single source of truth
+    const delegateSource = readFileSync(join(REPO, 'src/review-delegate/delegate.ts'), 'utf8');
+    expect(delegateSource).toMatch(/import \{[^}]*\bexactForms\b[^}]*\} from '\.\.\/outside-review\/recovery'/);
+    const walkTs = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+      e.isDirectory() ? walkTs(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : []);
+    const srcFiles = walkTs(join(REPO, 'src'));
+    const tokenHits: string[] = [];
+    const metHits: string[] = [];
+    for (const file of srcFiles) {
+      const rel = file.slice(REPO.length + 1).replace(/\\/g, '/');
+      for (const line of readFileSync(file, 'utf8').split('\n')) {
+        if (line.includes('NEEDS_CONTEXT: none')) tokenHits.push(rel);
+        if (/\bMET\b/.test(line)) metHits.push(rel);
+      }
+    }
+    expect(tokenHits).toEqual(['src/outside-review/prompt.ts']);
+    expect(metHits.sort()).toEqual(['src/outside-review/prompt.ts', 'src/outside-review/recovery.ts']);
+
+    // D3(c): each intended difference between outside recover() and delegated decide()
+    for (const diffReply of unparsedCases) {
+      const outsideRes = recover(diffReply, 'review', 0, '', strictClassifier);
+      const delegatedRes = decide('maintainability', spawned(diffReply), strictClassifier);
+      expect([diffReply, outsideRes.credited, outsideRes.needs_context, delegatedRes.outcome, delegatedRes.fallback_reason]).toEqual([
+        diffReply, true, false, 'fell-back', 'unparsed-finding',
+      ]);
+    }
+  });
 });
 
 describe('documentation', () => {
@@ -1438,10 +1553,13 @@ describe('tools mode', () => {
 
   test('effectiveArgv, callId, and buildPrompt bind the new confidence policy and tools-mode flags', () => {
     expect(DELEGATE_POLICY.endsWith(POLICY_FORMAT)).toBe(true);
+    const TOKEN_SENTENCES = `If no essential context is missing, write no NEEDS_CONTEXT line, or write the exact line "${NOTHING_MISSING}" on its own line after a blank line, or as the reply's first line, directly or after blank lines before the closing lines ("NO_FINDINGS: none" when clean, then the Recommendation, then the VERDICT line).\nWrite "${NOTHING_MISSING}" only when nothing essential is missing; if you would qualify it in any way, write NEEDS_CONTEXT: <what is missing> instead, because every other NEEDS_CONTEXT line reads as missing context, and put no formatting (no bold, list marker, quote or code span) on "${NOTHING_MISSING}" or the closing lines.\n`;
     const diffPrompt = buildPrompt('testing', 'aaaa', 'bbbb', 'diff-body', 'checklist-body');
-    // The instructions-first layout and end-of-material marker intentionally invalidate old cached calls.
-    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('629f054612e3ca366cba089fb99ede9f8d4999ff3caed369ba2168eb92809968');
-    const preReorderPrompt = `${DELEGATE_POLICY}${JSON.stringify({ part: 'testing', base: 'aaaa', candidate: 'bbbb' })}\n${JSON.stringify({ diff: 'diff-body', checklist: 'checklist-body' })}\n`;
+    // The no-missing-context token sentences intentionally invalidate old cached calls.
+    expect(createHash('sha256').update(diffPrompt).digest('hex')).toBe('c051f855c7b399cd363deeec99d6b5c8aeb7ff063a2122c0cd2218a8c1bf2fff');
+    const pre91bPrompt = diffPrompt.replace(TOKEN_SENTENCES, '');
+    expect(createHash('sha256').update(pre91bPrompt).digest('hex')).toBe('629f054612e3ca366cba089fb99ede9f8d4999ff3caed369ba2168eb92809968');
+    const preReorderPrompt = `${DELEGATE_POLICY.replace(TOKEN_SENTENCES, '')}${JSON.stringify({ part: 'testing', base: 'aaaa', candidate: 'bbbb' })}\n${JSON.stringify({ diff: 'diff-body', checklist: 'checklist-body' })}\n`;
     expect(createHash('sha256').update(preReorderPrompt).digest('hex')).toBe('3f34fb694b0d14cf837278bf6c6454f98cfef9d9febcfab8687e72594600ca57');
     const preVerdictPrompt = preReorderPrompt.replace(
       'After the findings, write Recommendation: <action> because <specific reason>.\nEnd with exactly one more line, the last line of the reply: VERDICT: CLEAN if you report no findings, or VERDICT: FINDINGS if you report any finding.',
@@ -1452,6 +1570,7 @@ describe('tools mode', () => {
     const legacyPrompt = preVerdictPrompt.replace('Rule: confidence is an integer from 0 to 100 for every part; use this scale even when a checklist uses another confidence scale.\n', '');
     // Independent legacy bytes from origin/main@5b54ffe.
     expect(createHash('sha256').update(legacyPrompt).digest('hex')).toBe('33a606a718152f541918b576e5c55769c958a49a81fabcd2875ed5d05980a957');
+    expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(pre91bPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(preReorderPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(preVerdictPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
     expect(callId(diffPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha')).not.toBe(callId(legacyPrompt, { argv: ['/bin/delegate'], timeout_s: 30, model: 'model-a' }, 'alpha'));
@@ -1487,7 +1606,8 @@ describe('tools mode', () => {
     if (!diffParsed.ok) return;
     const diffProv = diffParsed.config.providers.alpha!;
     expect(effectiveArgv(diffProv)).toEqual(['/bin/echo', 'hi']);
-    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('06d1ac2dc855ec6c0300727db3b25913cb9b8fb6c1296b11c6a0e75872da3e45');
+    expect(callId(diffPrompt, diffProv, 'alpha')).toBe('12ad63ca083caeab6c7e9486116a7492f9dc52cd005269fdf93099c2d3d14ac5');
+    expect(callId(pre91bPrompt, diffProv, 'alpha')).toBe('06d1ac2dc855ec6c0300727db3b25913cb9b8fb6c1296b11c6a0e75872da3e45');
     expect(callId(preReorderPrompt, diffProv, 'alpha')).toBe('23810f73bf2daa28c81a4bda1461110796bd5ee3d4e6cf322ed12630df8e055c');
     expect(callId(preVerdictPrompt, diffProv, 'alpha')).toBe('b8d806cb3ad984da1ab076a59e6fb333fc2f43f48b829fc7d3a7559fc042d2f9');
     expect(callId(legacyPrompt, diffProv, 'alpha')).toBe('b218b7573fa01e79e0e81fb639f5594afe5bb41cbe0a9893a3fd195410109c55');
