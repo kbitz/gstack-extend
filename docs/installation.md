@@ -4,7 +4,13 @@
 
 ## Installation
 
-**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex / OpenCode / Cursor, see below), [Git](https://git-scm.com/), [Bun](https://bun.sh/). The commands that start Bun with `--no-env-file --no-install --config=/dev/null` (the `/roadmap` audit tools, `gstack-extend init`, the merge gate, `bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps` and `bin/docs-ship`) need Bun v1.3.3 or newer. `setup` checks for `bun` and fails fast with install instructions if it's missing; it does not check the version.
+**Requirements** include [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/). The commands
+that start Bun with `--no-env-file --no-install --config=/dev/null` (the
+`/roadmap` audit tools, `gstack-extend init`, the merge gate, `bin/layout-scaffold`,
+`bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps` and
+`bin/docs-ship`) need Bun v1.3.3 or newer. Setup checks for the binary and
+prints installation instructions if it is missing.
 
 Clone and run setup:
 
@@ -20,8 +26,9 @@ git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-ext
 bun --cwd ~/.claude/skills/gstack-extend run setup
 ```
 
-Default install is Claude (`~/.claude/skills/<name>/SKILL.md`). For every
-detected agent (Claude, Codex, OpenCode, Cursor):
+The default install is Claude Code (`~/.claude/skills/<name>/SKILL.md`).
+To select an agent explicitly, use `--host claude` or `--host codex`.
+To run setup for its detected host paths, use:
 
 ```bash
 ~/.claude/skills/gstack-extend/setup --host auto
@@ -31,16 +38,19 @@ detected agent (Claude, Codex, OpenCode, Cursor):
 |------|------|
 | Claude | `~/.claude/skills/<name>/` |
 | Codex | `~/.codex/skills/<name>/` |
-| OpenCode | `~/.config/opencode/skills/<name>/` |
-| Cursor | `~/.cursor/skills/<name>/` |
+| OpenCode (legacy path) | `~/.config/opencode/skills/<name>/` |
+| Cursor (legacy path) | `~/.cursor/skills/<name>/` |
 
 Each skill is its own directory with `SKILL.md`. The package checkout is never linked as a skill.
 
-For Cursor only, run `setup --host cursor` from the checkout. Auto mode detects
-Cursor when `cursor` is on PATH or `~/.cursor` exists, including an existing
-skill install. Detection can create `~/.cursor/skills`; without either signal,
-auto mode leaves `~/.cursor` absent. Explicit `--host cursor` installs even
-without a detected Cursor installation.
+Setup still recognizes the legacy Cursor and OpenCode paths. An install that
+uses only those paths cannot resolve a checkout through the start command.
+For recovery, install explicitly for Claude Code or Codex and run the
+[first-run check](#start-command) in that host.
+
+Auto mode detects Cursor when `cursor` is on PATH or `~/.cursor` exists,
+including an existing skill install. Detection can create `~/.cursor/skills`.
+Explicit `--host cursor` can write legacy copies on a machine without Cursor.
 
 Cursor receives regular-file copies with the authored shell paths, a multiline
 description, and no `allowed-tools` frontmatter, plus an `.extend-root` pointer
