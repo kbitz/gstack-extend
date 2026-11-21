@@ -14,6 +14,42 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** the release that ships PR #284 is cut, or the handoff contract's versioning rule next changes.
 
+### [review:files=src/outside-review/run.ts|tests/outside-review.test.ts] Test gap: Check replay across an outside prompt upgrade
+
+- **Test gap:** no demonstrated defect. Recorded under `test-gaps=record`.
+- **Description:** Outside replay tests cover identical input. The delegated prompt has an upgrade identity pin. The outside adapter has no fixture that seeds a prior-prompt result.
+- **Hypothesis (untested):** Seed a saved result for the old outside prompt, change the prompt bytes, and use a fake provider to assert that the earlier result is not replayed.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/outside-review/run.ts:26`
+- **Evidence:** Track 91B's coverage audit traced the prompt prefix into the call ID and found no assertion at the saved-result boundary for an upgrade. The existing replay and parser tests passed.
+- **Context:** Filed by /review-and-prep for Track 91B on `mmm/defd2a37` at `d530be3` (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** An outside prompt or its saved-call identity changes.
+
+### [review:files=src/outside-review/cli.ts|tests/outside-review.test.ts] Test gap: Exercise exact replies through the outside CLI
+
+- **Test gap:** no demonstrated defect. Recorded under `test-gaps=record`.
+- **Description:** Installed classifier tests cover exact forms at recovery. The fake-provider CLI fixture still uses the earlier reply shapes.
+- **Hypothesis (untested):** Exercise an exact-token or MET reply through the CLI. Assert the exit, reported credit, and replay with no second dispatch.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/outside-review/cli.ts`
+- **Evidence:** Track 91B's coverage audit traced the CLI result to the same recovery function. The installed fixture and recovery tests passed.
+- **Context:** Filed by /review-and-prep for Track 91B on `mmm/defd2a37` at `d530be3` (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** Outside CLI result handling or replay changes.
+
+### [review:files=src/review-delegate/cli.ts|tests/review-delegate.test.ts] Test gap: Exercise a counted token through the delegated receipt and replay
+
+- **Test gap:** no demonstrated defect. Recorded under `test-gaps=record`.
+- **Description:** The delegated exact-token tests assert the decision and parsed findings. They do not pass that same reply through the CLI receipt and replay.
+- **Hypothesis (untested):** Return a finding and a counted token from a fake delegate. Check the part receipt, original findings, and replay with no second dispatch.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-delegate/cli.ts`
+- **Evidence:** Track 91B's coverage audit traced the CLI through `decide()`. The decision tests and existing receipt and replay tests passed.
+- **Context:** Filed by /review-and-prep for Track 91B on `mmm/defd2a37` at `d530be3` (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The delegated runner's receipt serialization or replay changes.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
