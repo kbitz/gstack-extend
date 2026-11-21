@@ -923,11 +923,12 @@ When the parsed policy carries both `in-cap=full` and
 `continuation=repair-only`, print on the next line:
 `Review policy warning: in-cap=full with continuation=repair-only — after a first cycle that reproduces a defect, repair-only stays available only if the full-scope second cycle completes and reruns each reproduced probe by its key.`
 When the parsed policy carries `doc-audit-gap=auto` without
-`full-suite=external` or `post-audit=classify`, also print this phase-status line:
+`full-suite=external` or `post-audit=classify`, print this warning after the
+`in-cap=full` warning when both apply:
 `Review policy warning: doc-audit-gap=auto needs full-suite=external and post-audit=classify on the same line; it is inert on this run (missing: <keys>)`
-It is a phase-status line like the parsed policy: outside any copyable handoff,
-not a receipt line, and it changes no key, gate, outcome or continuation. A
-line read as `none supplied` prints no warning.
+Both warnings are phase-status lines beside the parsed policy and outside any
+copyable handoff or receipt. They change no key, gate, outcome or continuation.
+A line read as `none supplied` prints no warning.
 
 An installation without the value reads the whole line as `none supplied`,
 so a caller first runs the bullet's capability check (exit 0 means supported)
@@ -985,7 +986,8 @@ continuation.
 - `doc-audit-gap=auto` (its only value) is opt-in and runs **Under
   `doc-audit-gap=auto`** inside **Classify changes after the documentation
   audit's last attempt** when the same line also carries `full-suite=external`
-  and `post-audit=classify`, and is otherwise independent. `auto` turns on all
+  and `post-audit=classify`, and is otherwise independent. The light review
+  default never sets it. `auto` turns on all
   three additions together (the `undocumented-internal` class, qualifying base
   merges where Git 2.36 or later supports `--remerge-diff`, and one extra
   documentation audit attempt per review when the pull request edits no SPEC),
@@ -3100,7 +3102,10 @@ except for `doc-audit-gap=auto`'s single extra documentation audit attempt per
 review under **Under `doc-audit-gap=auto`** below;
 installed `ship/sections/documentation.md`): the later-change rule after the
 gates list, a final-gate repair, the external gate's freeze re-entry and
-readiness. Run it before the audit's blocked recovery. It is not applied, and
+readiness. When **Under `doc-audit-gap=auto`** is active, also enter it if this
+invocation's last audit attempt returned `blocked` and upstream's attempt
+budget is exhausted, even if no freshness check found the audit stale. Run it
+before the audit's blocked recovery. It is not applied, and
 blocked recovery runs as today, recording `post-audit: not applied — <reason>`,
 when:
 
@@ -3234,8 +3239,9 @@ blocked recovery, the value changes classify in exactly three ways: the
 `undocumented-internal` class, qualifying base merges and one extra audit
 attempt. Everything else in classify, including its other classes, its bounded
 re-audit and its other not-applied conditions, is unchanged (when the
-invocation's last attempt was `blocked` with no accepted audit, reuse cannot
-apply and only the extra-audit check below runs before the owner stop). Commit
+invocation's last attempt was `blocked`, reuse cannot apply even if an earlier
+audit was accepted. Only the extra-audit check below runs before the owner stop).
+Commit
 pending work first, checked as an empty
 `git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none`
 (non-empty is `dirty-tree`, including pending changes inside submodules).
@@ -3246,8 +3252,9 @@ empty and classify runs as today, with nothing added. Otherwise the walk reaches
 (otherwise the result is `walk-missed-snapshot`), and the post-audit changes are
 the commits on `git rev-list --first-parent S..HEAD`. Every `git diff` and
 `git log` command in this paragraph group passes
-`--no-renames --no-ext-diff --no-textconv --ignore-submodules=none`, so local
-Git configuration cannot hide a change; a gitlink or symlink path is listed and
+`--no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative`
+to keep paths repository-relative and prevent local Git configuration from
+hiding a change. A gitlink or symlink path is listed and
 then fails `undocumented-internal` as doubt. Each git command and the NUL-split
 script (**Bound the documentation audit** item 3) write stdout, stderr and the
 exit status to files in the evidence directory; `evidence=` locators point
@@ -3260,7 +3267,7 @@ there, and any unexpected command or script failure is `command-failed`.
    non-merge commit `<commit>` on `git rev-list --first-parent S..HEAD` is
    `undocumented-internal` when all three hold:
    - (a) None of its changed paths
-     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --name-only -z <commit>^ <commit>`)
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <commit>^ <commit>`)
      is protected: under `docs/`; any `.md`, `.mdx`, `.markdown`, `.rst` or
      `.adoc` file anywhere; a file whose base name, ignoring case, is `README`,
      `AGENTS`, `CLAUDE`, `CHANGELOG` or `SPEC` with no extension or with `.txt`
@@ -3278,7 +3285,7 @@ there, and any unexpected command or script failure is `command-failed`.
      `already-documented`) decide as today.
    - (c) For each path of the change, the parent (the agent running
      `/review-and-prep`, not a subagent) reads its full diff
-     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none <commit>^ <commit>`)
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative <commit>^ <commit>`)
      and decides whether it changes user-visible text (messages, prompts, skill
      or help text), a flag, a help line, a config key or its default, an
      environment variable or a command a person runs (the last three read the
@@ -3302,16 +3309,16 @@ there, and any unexpected command or script failure is `command-failed`.
      (otherwise `merge-unqualified`).
    - Only after the two-parent check passes (because on a non-merge commit it
      prints the ordinary diff),
-     `git log -1 --remerge-diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --format= --name-only -z <merge>`
+     `git log -1 --remerge-diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --no-show-signature --format= --name-only -z <merge>`
      exits 0 and prints nothing, which means no hand-resolved conflict, no edit
      made inside the merge and a merge Git's default strategy reproduces. An
      error from `--remerge-diff` on Git older than 2.36 is `git-too-old` (naming
      the `git --version` output and `needs Git 2.36+`); any listed path is
      `merge-unqualified`, so `class=base-merge` is the only merge outcome.
    - Its two-way merge guard holds across the base side's changed paths
-     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --name-only -z <merge>^1...<merge>^2`)
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <merge>^1...<merge>^2`)
      and the pull request's own changed paths
-     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --name-only -z <fetched base tip>...HEAD`);
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <fetched base tip>...HEAD`);
      any failure is `merge-guard-failed`:
      (1) **Overlap:** the base side's changed paths share none with the pull
      request's own changed paths;
@@ -3339,9 +3346,9 @@ there, and any unexpected command or script failure is `command-failed`.
      continuation (`/review-and-prep continue`), and the counter file
      `doc-audit-extra.txt` in this invocation's evidence directory, which a
      resume reuses, holds no `Doc-audit extra: action=extra-audit` line (an
-     absent file means none; a file that cannot be read, or a line that does not
-     match the `Doc-audit extra:` template below, counts as one already used;
-     the counter counts `action=extra-audit` lines only). The extra-audit
+     absent file means none). A file that cannot be read or any line that fails
+     the `Doc-audit extra:` template below counts as one already used. Among
+     well-formed lines, only `action=extra-audit` lines count. The extra-audit
      allowance belongs to one invocation and its resumes; a continuation runs
      none; an ordinary new `/review-and-prep` run on the same pull request, such
      as one after a `/ship-and-land` hand-back, is a new review round with
@@ -3349,7 +3356,7 @@ there, and any unexpected command or script failure is `command-failed`.
    - The base fetch at the trigger succeeded; a failed fetch means no extra
      audit (`Doc-audit extra: action=today; … reason=base-fetch-failed`).
    - The pull request changes no SPEC: no path in
-     `git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --name-only -z <fetched base tip>...HEAD`
+     `git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <fetched base tip>...HEAD`
      is a SPEC. A path is a SPEC when its base name, ignoring case and with
      every extension removed, is `SPEC`, at any depth (`SPEC`, `SPEC.md`,
      `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the
@@ -3401,10 +3408,11 @@ there, and any unexpected command or script failure is `command-failed`.
      `base-fetch-failed`, `merge-unqualified`, `merge-guard-failed`,
      `git-too-old`, `docs-roots-unreadable`, `command-failed`, or
      `classify-not-applied` followed by classify's own reason. Use
-     `reuse=applied` only when classify continues on the carried audit. If
-     classify leaves `owner=needed`, has no accepted audit or has an empty
-     walk without a reuse decision, use `classify-not-applied` with that
-     reason. An extra audit gets its own `Doc-audit extra:` lines;
+     `reuse=applied` only when classify continues on the carried audit, which
+     can include an empty walk with a valid audit. If classify leaves
+     `owner=needed`, has no accepted audit or declines reuse for another
+     classify condition, use `classify-not-applied` with that reason. An extra
+     audit gets its own `Doc-audit extra:` lines;
    - when the value did nothing:
      `doc-audit-gap: not applied — <token> <context>; evidence=<evidence locator>`,
      with `<token>` one of `full-suite-absent`, `post-audit-absent`, or
@@ -3422,9 +3430,10 @@ there, and any unexpected command or script failure is `command-failed`.
    accepted extra audit), the receipt and the PR body carry one veto line under
    **Take recommended fix-scope options without asking**:
    `Auto-chosen (veto by replying on this PR): documentation audit gap (blocked recovery's owner question) → <continue on carried audit <audit_id>|extra audit <audit_id>>`
-   naming the carried or new audit, the classes used, any qualifying merge and
-   the offered options: continue on the carried audit, run the extra audit, stop
-   for repair, accept a named risk.
+   Append the classes used, any qualifying merge and the offered options as
+   plain-text details after the chosen option on the same line. The offered
+   options are continue on the carried audit, run the extra audit, stop for
+   repair, accept a named risk.
 
 ### Bound the documentation audit
 

@@ -669,6 +669,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     '`doc-audit-gap=<value>: its only value is auto`',
     "a repeated `doc-audit-gap` key keeps today's repeated-key reason and pairs with other keys keep today's reason",
     '`auto` turns on all three additions together',
+    'The light review default never sets it. `auto` turns on all three additions together',
     'later values may narrow them, so a caller matches the exact value, not the key',
     'Its one extra attempt takes precedence over the "never a third attempt" wording in the `documentation-audit=final` and `post-audit=classify` bullets.',
     'Use `full-suite-absent` if the line lacks `full-suite=external` (including `full-suite=final`) and `post-audit-absent` otherwise. Name every missing companion in `<context>`',
@@ -677,6 +678,9 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   }
   if (!postAudit.includes('**Outcome.** When **Under `doc-audit-gap=auto`** is active, add `undocumented-internal` and `base-merge` to the following no-owner class list.')) {
     violations.push('classify outcome must include both new no-owner classes when active');
+  }
+  if (!postAudit.includes('When **Under `doc-audit-gap=auto`** is active, also enter it if this invocation\'s last audit attempt returned `blocked` and upstream\'s attempt budget is exhausted, even if no freshness check found the audit stale. Run it before the audit\'s blocked recovery.')) {
+    violations.push('the classify entry gate must reach the extra-audit check after an exhausted blocked attempt');
   }
 
   // D10 invariant carve-out names only doc-audit-gap=auto, and both cross-references exist
@@ -710,6 +714,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'writes the exact `--docs` arguments it passes to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt` in the evidence directory',
     "every path in that audit's snapshot `docs` list is also protected, and a missing or unreadable roots file is `docs-roots-unreadable`",
     'the value changes classify in exactly three ways: the `undocumented-internal` class, qualifying base merges and one extra audit attempt',
+    'invocation\'s last attempt was `blocked`, reuse cannot apply even if an earlier audit was accepted',
     '`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` (non-empty is `dirty-tree`, including pending changes inside submodules)',
     'When `S` equals `HEAD` the walk is empty and classify runs as today, with nothing added.',
     'the walk reaches `S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD` (otherwise the result is `walk-missed-snapshot`)',
@@ -722,7 +727,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     "The parent never reads a model's reply text to decide. Any yes, any doubt, or a diff the parent cannot read in full fails the class and makes the change `documented-behavior`",
     '(`user-visible <path>`, `doubt <path>` or `protected-path <path>`)',
     '`<merge>` has exactly two parents (`git rev-parse <merge>^@` prints two lines, `<merge>^1` and `<merge>^2`; an octopus or non-merge commit is `merge-unqualified`), and `git merge-base --is-ancestor <merge>^2 <fetched base tip>` exits 0',
-    'Only after the two-parent check passes (because on a non-merge commit it prints the ordinary diff), `git log -1 --remerge-diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --format= --name-only -z <merge>` exits 0 and prints nothing',
+    'Only after the two-parent check passes (because on a non-merge commit it prints the ordinary diff), `git log -1 --remerge-diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --no-show-signature --format= --name-only -z <merge>` exits 0 and prints nothing',
     'any listed path is `merge-unqualified`, so `class=base-merge` is the only merge outcome',
     '(1) **Overlap:** the base side\'s changed paths share none with the pull request\'s own changed paths;',
     '(2) **Forward:** no documentation file among the pull request\'s own changed paths names a base-side changed path;',
@@ -730,7 +735,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'changelogs, roadmaps, backlogs and archived plans are never searched files by a mention alone, and `CHANGELOG.md` and `VERSION` are never search terms',
     "The guard alone judges base-side paths; item 4's broad fallback, classify's not-applied checks and 1(a)–1(c) apply only to the first-parent changes' own contributions.",
     'this invocation is not a continuation (`/review-and-prep continue`), and the counter file `doc-audit-extra.txt` in this invocation\'s evidence directory, which a resume reuses, holds no `Doc-audit extra: action=extra-audit` line',
-    'an absent file means none; a file that cannot be read, or a line that does not match the `Doc-audit extra:` template below, counts as one already used; the counter counts `action=extra-audit` lines only',
+    'an absent file means none). A file that cannot be read or any line that fails the `Doc-audit extra:` template below counts as one already used. Among well-formed lines, only `action=extra-audit` lines count.',
     "The extra-audit allowance belongs to one invocation and its resumes; a continuation runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream's fresh budget and its own allowance.",
     'a failed fetch means no extra audit (`Doc-audit extra: action=today; … reason=base-fetch-failed`)',
     'A path is a SPEC when its base name, ignoring case and with every extension removed, is `SPEC`, at any depth (`SPEC`, `SPEC.md`, `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the project instructions name as the product spec; because the list uses `--no-renames`, a deleted, added or renamed spec (old and new names) all count.',
@@ -751,18 +756,18 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     '`reuse=applied` only when classify continues on the carried audit',
     '`Doc-audit extra: action=<extra-audit|result|today>; audit=<carried audit_id> <section-sha256>|none; new-audit=<audit_id|none>; result=<accepted|blocked|invalid|refused|interrupted|none>; head=<full SHA>; reason=<one line>; evidence=<evidence locator>`',
     '`Auto-chosen (veto by replying on this PR): documentation audit gap (blocked recovery\'s owner question) → <continue on carried audit <audit_id>|extra audit <audit_id>>`',
-    'the offered options: continue on the carried audit, run the extra audit, stop for repair, accept a named risk.',
+    'The offered options are continue on the carried audit, run the extra audit, stop for repair, accept a named risk.',
   ]) {
     if (!under.includes(required)) violations.push(`Under doc-audit-gap=auto missing: ${required}`);
   }
 
-  // E6: every git diff and git log command in the paragraph group carries the four flags
+  // E6: every git diff and git log command guards against filtering and formatting from config.
   const gitDiffLogCmds = [...under.matchAll(/`git (?:diff|log)\b[^`]+`/g)].map((m) => m[0]!);
   if (gitDiffLogCmds.length < 6) {
     violations.push(`expected at least 6 git diff/log commands in paragraph group, got ${gitDiffLogCmds.length}`);
   }
   for (const cmd of gitDiffLogCmds) {
-    for (const flag of ['--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none']) {
+    for (const flag of ['--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--no-relative']) {
       if (!cmd.includes(flag)) violations.push(`command ${cmd} missing ${flag}`);
     }
   }
@@ -2089,6 +2094,14 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
           prPaths: ['src/pr.ts'],
           remergePaths: [],
         });
+        git(cwd, ['config', 'diff.relative', 'true']);
+        const nested = join(cwd, 'docs');
+        const baseDiff = runCmd(nested, cmds.baseDiff.replaceAll('<merge>', merge));
+        const prDiff = runCmd(nested, cmds.prDiff.replace('<fetched base tip>', baseTip));
+        expect(baseDiff.status).toBe(0);
+        expect(prDiff.status).toBe(0);
+        expect(splitNul(baseDiff.stdout)).toEqual(['src/base.ts']);
+        expect(splitNul(prDiff.stdout)).toEqual(['src/pr.ts']);
       }
 
       // 2. Edit made inside the merge
@@ -2732,7 +2745,7 @@ describe('kept contract locks fail on mutation', () => {
     {
       name: 'doc-audit-gap=auto: drop --ignore-submodules=none from a paragraph-group git command',
       lock: checkDocAuditGapAutoLock,
-      mutate: (t) => t.replace('git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --name-only -z <commit>^ <commit>', 'git diff --no-renames --no-ext-diff --no-textconv --name-only -z <commit>^ <commit>'),
+      mutate: (t) => t.replace('git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <commit>^ <commit>', 'git diff --no-renames --no-ext-diff --no-textconv --no-relative --name-only -z <commit>^ <commit>'),
     },
     {
       name: 'capability grep -F lines: drop blocking=shown capability line',
