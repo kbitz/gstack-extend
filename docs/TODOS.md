@@ -2,6 +2,61 @@
 
 ## Unprocessed
 
+### [review:files=setup|tests/setup-hosts.test.ts] Test gap: preserve the preamble after failed publication
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The failure fixtures cover helper path rejection and unwritable staging. They do not exercise failure after a replacement is staged.
+- **Hypothesis (untested):** Inject a failed rename and check that the prior copy remains executable and the staging file is removed.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, `install_preamble`
+- **Evidence:** Track 92A coverage audit read the setup failure tests at `e576de6`.
+- **Context:** Filed by /review-and-prep for Track 92A start command (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=setup|tests/setup-hosts.test.ts] Test gap: verify setup lock refusals
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The schedule fixtures cover a live lock holder. They do not pin the invalid lock and timeout diagnostics.
+- **Hypothesis (untested):** Verify the refusal preserves the named lock and the existing skills, and explains how to retry.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, `acquire_helper_lock`
+- **Evidence:** Track 92A coverage audit read the two lock outcomes at `e576de6`.
+- **Context:** Filed by /review-and-prep for Track 92A start command (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=setup|tests/setup-hosts.test.ts] Test gap: interleave setup and uninstall before helper state exists
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The two concurrency scenarios start with an existing install. A fresh HOME reaches the branch where uninstall sees no helper state directory.
+- **Hypothesis (untested):** Start both operations in a fresh HOME and check that any surviving skill still has a usable preamble.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, native uninstall
+- **Evidence:** Both existing-install race schedules passed. The Track 92A coverage audit identified the separate fresh-HOME path.
+- **Context:** Filed by /review-and-prep for Track 92A start command (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=docs/review-run-state-calls.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: lock the Segments resume mapping
+
+- **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The documentation validator checks backticked Markdown headings. The new Segments label is bold prose.
+- **Hypothesis (untested):** Check the mapping still points to Segments and names `checkpoint resume` before `derive`.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `docs/review-run-state-calls.md`, Fixed points
+- **Evidence:** The Track 92A coverage audit compared the row with the existing heading validator.
+- **Context:** Filed by /review-and-prep for Track 92A start command (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=README.md|docs/installation.md|tests/update.test.ts] Test gap: catch drift in start-command installation guidance
+
+- **Test gap:** no demonstrated defect in the corrected guide. Filed under `test-gaps=record`.
+- **Description:** The two-host resolver fixtures do not check that the first-run guidance follows the supported host list.
+- **Hypothesis (untested):** Check the README and installation guide against the resolver and their shared root-only check.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `docs/installation.md`, Start command
+- **Evidence:** Track 92A coverage re-rating checked the corrected documentation by inspection.
+- **Context:** Filed by /review-and-prep for Track 92A start command (2026-11-21).
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=docs/workflow-handoffs.md|skills/review-and-prep.md] Follow-up: H-E's section version and the release disclosure after the completed=true change
 
 - **Follow-up:** owner questions from PR #284's review, not defects a check showed; filed on the developer's decision of 2026-11-20 as non-blocking work
