@@ -25,6 +25,7 @@ import { join, relative } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
+import { extractPreambleFence } from './helpers/extend-root.ts';
 import { assertSkillDescriptionWithinLimit } from './helpers/skill-description.ts';
 import { systemPath } from './helpers/system-path.ts';
 
@@ -947,7 +948,7 @@ describe('setup --host flags', () => {
     }
   });
 
-  test('a Claude install without pointers keeps the CLI links on a Codex uninstall', () => {
+  test('a Claude install without pointers keeps the CLI links and start command on a Codex uninstall', () => {
     const home = join(baseTmp, 'pointerless-claude-links');
     const bin = join(home, '.local', 'bin');
     mkdirSync(bin, { recursive: true });
@@ -959,6 +960,12 @@ describe('setup --host flags', () => {
     for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
       expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
     }
+    const start = spawnSync('bash', ['-c', '~/.gstack-extend/bin/preamble plan-track --root'], {
+      env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    expect(start.status, start.stderr).toBe(0);
+    expect(start.stdout).toContain(`EXTEND_ROOT: ${realpathSync(ROOT)}\n`);
   });
 
   test('a pointerless Claude link into another checkout does not keep the CLI links', () => {
@@ -3094,7 +3101,25 @@ describe('preamble start-command install (Track 92A)', () => {
     }
   });
 
-  test('uninstall keeps preamble while any host pointer remains and removes it with the last', () => {
+  test('an invalid helper parent reports the fix for the requested operation before changing skills', () => {
+    const home = join(baseTmp, 'preamble-invalid-helper-parent');
+    const binPath = join(home, '.gstack-extend', 'bin');
+    mkdirSync(join(home, '.gstack-extend'), { recursive: true });
+    writeFileSync(binPath, 'not a directory');
+    const install = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(install.exitCode).toBe(1);
+    expect(install.stderr).toContain(binPath);
+    expect(install.stderr).toMatch(/Fix: .* --host auto/);
+    expect(existsSync(hostDir(home, 'claude'))).toBe(false);
+
+    const uninstall = runSetup(['--host', 'claude', '--uninstall'], home);
+    expect(uninstall.exitCode).toBe(1);
+    expect(uninstall.stderr).toContain('Nothing was uninstalled.');
+    expect(uninstall.stderr).toMatch(/Fix: .* --host claude --uninstall/);
+    expect(readFileSync(binPath, 'utf8')).toBe('not a directory');
+  });
+
+  test('uninstall keeps preamble while a supported host pointer remains and removes it with the last', () => {
     const home = join(baseTmp, 'preamble-uninstall-rule');
     mkdirSync(home, { recursive: true });
     expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
@@ -3108,6 +3133,65 @@ describe('preamble start-command install (Track 92A)', () => {
     expect(last.stdout).toContain('Removed preamble');
     expect(existsSync(installed(home))).toBe(false);
   });
+
+  test('a retired host pointer keeps telemetry-call without keeping the preamble', () => {
+    const home = join(baseTmp, 'preamble-retired-pointer');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'cursor', '--quiet'], home).exitCode).toBe(0);
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    expect(existsSync(join(hostDir(home, 'cursor'), 'plan-track', '.extend-root'))).toBe(true);
+    expect(existsSync(join(home, '.gstack-extend', 'bin', 'telemetry-call'))).toBe(true);
+    expect(existsSync(installed(home))).toBe(false);
+  });
+
+  test('uninstall cannot remove the new preamble before setup publishes the first skill pointer', async () => {
+    const home = join(baseTmp, 'preamble-parallel-uninstall');
+    const shims = join(home, 'shims');
+    mkdirSync(shims, { recursive: true });
+    expect(runSetup(['--host', 'codex', '--quiet'], home).exitCode).toBe(0);
+    const shim = join(shims, 'ln');
+    writeFileSync(shim, `#!/usr/bin/env bash
+case "$3" in
+  "$HOME"/.claude/skills/*/SKILL.md)
+    : > "$HOME/publisher-ready"
+    until [ -f "$HOME/publish" ]; do sleep 0.02; done ;;
+esac
+exec "$TEST_LN" "$@"
+`);
+    chmodSync(shim, 0o755);
+    const path = process.env.PATH ?? '/usr/bin:/bin';
+    const installer = Bun.spawn([SETUP, '--host', 'claude', '--quiet'], {
+      env: { HOME: home, TMPDIR: home, PATH: `${shims}:${path}`, TEST_LN: Bun.which('ln') ?? '/bin/ln' },
+      stdout: 'ignore',
+      stderr: 'inherit',
+    });
+    let cleanup: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      const deadline = Date.now() + 6_000;
+      while (!existsSync(join(home, 'publisher-ready')) && installer.exitCode === null && Date.now() < deadline) {
+        await Bun.sleep(20);
+      }
+      expect(existsSync(join(home, 'publisher-ready'))).toBe(true);
+      expect(existsSync(join(hostDir(home, 'claude'), 'plan-track', '.extend-root'))).toBe(false);
+      expect(existsSync(join(home, '.gstack-extend', 'bin', '.setup.lock'))).toBe(true);
+      cleanup = Bun.spawn([SETUP, '--host', 'codex', '--uninstall', '--quiet'], {
+        env: { HOME: home, TMPDIR: home, PATH: path },
+        stdout: 'ignore',
+        stderr: 'inherit',
+      });
+      await Promise.race([cleanup.exited, Bun.sleep(400)]);
+    } finally {
+      writeFileSync(join(home, 'publish'), '');
+      await Promise.all([installer.exited, cleanup?.exited]);
+    }
+    expect(installer.exitCode).toBe(0);
+    expect(cleanup?.exitCode).toBe(0);
+    expect(existsSync(join(hostDir(home, 'codex'), 'plan-track', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(hostDir(home, 'claude'), 'plan-track', '.extend-root'))).toBe(true);
+    expect(existsSync(installed(home))).toBe(true);
+    expect(existsSync(join(home, '.gstack-extend', 'bin', '.setup.lock'))).toBe(false);
+  }, 15_000);
 
   test('cutover (E16): upgrading legacy HOME without preamble installs start command and resolves root', () => {
     const home = join(baseTmp, 'preamble-cutover-e16');
@@ -3123,12 +3207,17 @@ describe('preamble start-command install (Track 92A)', () => {
     expect(res.exitCode, res.stderr).toBe(0);
     expect(existsSync(installed(home))).toBe(true);
 
-    const run = spawnSync('bash', ['-c', '~/.gstack-extend/bin/preamble implement --root'], {
-      env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' },
-      encoding: 'utf8',
-    });
-    expect(run.status, run.stderr).toBe(0);
-    expect(run.stdout).toContain(`EXTEND_ROOT: ${ROOT}`);
-    expect(run.stdout).toContain(`_EXTEND_ROOT=${ROOT}`);
+    for (const skill of SKILLS) {
+      const body = readFileSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'), 'utf8');
+      const start = extractPreambleFence(body).trim();
+      const run = spawnSync('bash', ['-c', `${start} --root`], {
+        env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        encoding: 'utf8',
+      });
+      expect(run.status, run.stderr).toBe(0);
+      const [root, assignment] = run.stdout.split('\n');
+      expect(root).toBe(`EXTEND_ROOT: ${realpathSync(ROOT)}`);
+      expect(assignment).toStartWith('_EXTEND_ROOT=');
+    }
   });
 });

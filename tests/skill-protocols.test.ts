@@ -30,7 +30,7 @@ import {
   GUARD_COMMENT,
   GUARD_LINE,
   HANDOFF_PARAGRAPH,
-  INIT_ERROR_STOP,
+  REQUIRED_HELPER_ERROR_STOP,
   MARKER_LINE,
   NO_INSTALL_MESSAGE,
   PREAMBLE_GRANT,
@@ -1143,8 +1143,11 @@ describe('Track 16D / 92A extend-root resolver and start-command locks', () => {
       expect(content, skill).toContain(preambleFailureParagraph(skill));
     }
     expect(resolverSkillText('gstack-extend-upgrade')).toContain(UPGRADE_NO_ROOT);
-    expect(resolverSkillText('gstack-extend-init')).toContain(INIT_ERROR_STOP);
-    expect(resolverSkillText('docs-ship')).toContain(INIT_ERROR_STOP);
+    for (const skill of ['gstack-extend-init', 'docs-ship']) {
+      const content = resolverSkillText(skill);
+      expect(content, skill).toContain(REQUIRED_HELPER_ERROR_STOP);
+      expect(content.indexOf(REQUIRED_HELPER_ERROR_STOP), skill).toBeLessThan(content.indexOf(HANDOFF_PARAGRAPH));
+    }
     expect(resolverSkillText('roadmap')).toContain(RENAMES_ER_LINE);
   });
 

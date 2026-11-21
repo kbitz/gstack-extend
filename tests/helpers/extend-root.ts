@@ -172,8 +172,8 @@ export function preambleFailureParagraph(skill: string): string {
 export const UPGRADE_NO_ROOT =
   'If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.';
 
-export const INIT_ERROR_STOP =
-  'In this skill, an `ERROR:` line from the preamble replaces the no-install message above: relay that line verbatim and stop.';
+export const REQUIRED_HELPER_ERROR_STOP =
+  'If the start command exits 1 with an `ERROR:` line on stdout, relay that line verbatim and stop without Telemetry finish. This check comes before the other preamble handling below.';
 
 export const RENAMES_ER_LINE =
   'ER="$_EXTEND_ROOT" bun -e "const { computeRenames, formatRenamesTable } = await import(process.env.ER + \'/src/audit/lib/renames-diff.ts\');';

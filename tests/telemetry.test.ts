@@ -3430,6 +3430,28 @@ const openHandoffs = (fix: TelemetryFixture) => handoffs(fix).map(name => ({
   path: join(telemetryDir(fix), name),
   state: JSON.parse(readFileSync(join(telemetryDir(fix), name), 'utf8')) as Record<string, any>,
 }));
+
+test('a plan-track start without the installed command leaves another run\'s open handoff unchanged', () => {
+  const fix = makeTelemetryFixture('community', 'stub');
+  installCallHelper(fix.home);
+  const start = (thread: string) => spawnSync('bash', ['-c', '~/.gstack-extend/bin/preamble plan-track'], {
+    env: { ...fix.env, CODEX_THREAD_ID: thread },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  expect(start('plan-track-active').status).toBe(0);
+  const active = openHandoffs(fix);
+  expect(active).toHaveLength(1);
+  const open = active[0]!;
+  const before = readFileSync(open.path);
+
+  rmSync(join(fix.home, '.gstack-extend/bin/preamble'));
+  // The skill protocol requires the agent to skip the finish block on this exit.
+  expect(start('plan-track-missing-start').status).toBe(127);
+  expect(handoffs(fix)).toEqual([open.name]);
+  expect(readFileSync(open.path)).toEqual(before);
+  expect(fix.readJsonl()).toHaveLength(1);
+});
 const startRun = (fix: TelemetryFixture, skill = 'extend:roadmap', env: Record<string, string> = {}) => {
   const result = runHelper({ ...fix.env, ...env }, ['start', '--skill', skill]);
   expect(result.status).toBe(0);

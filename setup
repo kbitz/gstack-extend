@@ -52,6 +52,12 @@ report_skipped_hosts() {
   return 0
 }
 REWRITE_TMP=""
+HELPER_BIN_LOCK=""
+release_helper_bin_lock() {
+  [ -n "$HELPER_BIN_LOCK" ] || return 0
+  rmdir "$HELPER_BIN_LOCK" 2>/dev/null || true
+  HELPER_BIN_LOCK=""
+}
 # Install-status observations. The successful path and finish_setup publish in
 # the main shell so a signal during the rename can still run the EXIT trap and
 # drop only this invocation's lock. Early exits that never reach that call
@@ -87,6 +93,7 @@ on_exit() {
   # subshells today; the guard keeps a future shell from publishing twice.
   [ "${BASH_SUBSHELL:-0}" -eq 0 ] || return 0
   [ -z "$REWRITE_TMP" ] || rm -f "$REWRITE_TMP" 2>/dev/null || true
+  release_helper_bin_lock
   # Publication normally runs in the main shell so a signal during the rename
   # can still reach this trap and drop only this invocation's lock. Early exits
   # that never reached that call publish here. A second call is a no-op.
@@ -162,7 +169,7 @@ esac
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
   echo "Error: --skills-dir is no longer accepted for install." >&2
-  echo "  Skill preambles probe host skill dirs (~/.claude, ~/.codex, ~/.config/opencode, ~/.cursor)." >&2
+  echo "  The skill start command probes Claude Code and Codex skill dirs (~/.claude, ~/.codex)." >&2
   echo "  Symlinks at any other path will not be discovered." >&2
   echo "" >&2
   echo "  To clean up a v0.16.0-era custom install, use:" >&2
@@ -1419,10 +1426,47 @@ fi
 # Every native host executes this shared helper. Validate its destination before publishing
 # skills or removing any helper so a symlink cannot redirect executable ownership outside HOME.
 telemetry_call_dir="$HOME/.gstack-extend/bin"
+helper_setup_fix() {
+  if [ "$UNINSTALL" -eq 1 ]; then
+    printf 'Nothing was uninstalled.\nFix: %s, then rerun %q --host %s --uninstall\n' "$1" "$SCRIPT_DIR/setup" "$HOST" >&2
+  else
+    printf 'Nothing was installed. If your checkout is already updated, its skills need %s/preamble until setup succeeds.\nFix: %s, then rerun %q --host auto\n' \
+      "$telemetry_call_dir" "$1" "$SCRIPT_DIR/setup" >&2
+  fi
+}
+
+# Publish the helper and skill pointers under the same lock used for uninstall.
+# Otherwise uninstall can see no pointers between those two install steps.
+acquire_helper_bin_lock() {
+  local lock="$telemetry_call_dir/.setup.lock" start=$SECONDS
+  while ! (umask 077; mkdir "$lock") 2>/dev/null; do
+    if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -d "$lock" ]; }; then
+      echo "Error: $lock is not a regular lock directory" >&2
+      helper_setup_fix "remove or rename $lock"
+      return 1
+    fi
+    if [ ! -w "$telemetry_call_dir" ] || [ ! -x "$telemetry_call_dir" ]; then
+      echo "Error: cannot lock $telemetry_call_dir (directory is missing, not writable or not searchable)" >&2
+      helper_setup_fix "ensure $telemetry_call_dir is writable and searchable by you"
+      return 1
+    fi
+    if [ "$((SECONDS - start))" -ge 5 ]; then
+      echo "Error: timed out acquiring $lock" >&2
+      helper_setup_fix "wait for other setup runs to finish (if interrupted and none are running, remove the empty directory $lock)"
+      return 1
+    fi
+    sleep 0.1
+  done
+  HELPER_BIN_LOCK="$lock"
+}
+
 if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
-  is_safe_install_path "$HOME" || exit 1
-  is_safe_install_path "$HOME/.gstack-extend" || exit 1
-  is_safe_install_path "$telemetry_call_dir" || exit 1
+  for _path in "$HOME" "$HOME/.gstack-extend" "$telemetry_call_dir"; do
+    if ! is_safe_install_path "$_path"; then
+      helper_setup_fix "correct the path or permissions named above"
+      exit 1
+    fi
+  done
   # Check every component and symlink hop, not only the final physical path.
   # Ancestors may be owned by this user or root, but never world-writable.
   # Bun is required at setup entry, including for uninstall.
@@ -1431,11 +1475,7 @@ if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
     const home = fs.realpathSync(process.argv[1]), uid = Number(process.argv[2]);
     let at = path.parse(home).root, hops = 0;
     let parts = [...home.slice(at.length).split(path.sep), ".gstack-extend", "bin"];
-    const refuse = (where, why) => {
-      console.error(`Error: ${where} (${why}; refusing helper bin path). Nothing was installed; if your checkout is already updated, skill text needs ~/.gstack-extend/bin/preamble until setup succeeds.`);
-      console.error(`Fix: fix ownership or permissions on ${where}, then rerun ${process.argv[3]}/setup --host auto`);
-      process.exit(1);
-    };
+    const refuse = (where, why) => { console.error(`Error: ${where} (${why}; refusing helper bin path)`); process.exit(1); };
     while (parts.length) {
       const part = parts.shift();
       if (!part || part === ".") continue;
@@ -1458,14 +1498,18 @@ if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
       if (!aboveHome && (st.mode & 0o002)) refuse(next, "world-writable");
       at = next;
     }
-  ' "$HOME" "$(id -u)" "$SCRIPT_DIR" || exit 1
+  ' "$HOME" "$(id -u)" || {
+    helper_setup_fix "correct the path or permissions named above"
+    exit 1
+  }
   if [ -L "$telemetry_call_dir/telemetry-call" ] || { [ -e "$telemetry_call_dir/telemetry-call" ] && [ ! -f "$telemetry_call_dir/telemetry-call" ]; }; then
     echo "Error: $telemetry_call_dir/telemetry-call must be absent or a regular file, not a symlink or directory" >&2
+    helper_setup_fix "remove or rename $telemetry_call_dir/telemetry-call"
     exit 1
   fi
   if [ -L "$telemetry_call_dir/preamble" ] || { [ -e "$telemetry_call_dir/preamble" ] && [ ! -f "$telemetry_call_dir/preamble" ]; }; then
-    echo "Error: $telemetry_call_dir/preamble must be absent or a regular file, not a symlink or directory. Nothing was installed; if your checkout is already updated, skill text needs this file until setup succeeds." >&2
-    echo "Fix: remove or rename $telemetry_call_dir/preamble, then rerun $SCRIPT_DIR/setup --host auto" >&2
+    echo "Error: $telemetry_call_dir/preamble must be absent or a regular file, not a symlink or directory" >&2
+    helper_setup_fix "remove or rename $telemetry_call_dir/preamble"
     exit 1
   fi
 fi
@@ -1481,6 +1525,10 @@ if [ "$UNINSTALL" -eq 1 ]; then
   if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
     uninstall_from_dir "$SKILLS_DIR"
   else
+    # A missing bin directory has no shared helpers to clean up.
+    if [ -d "$telemetry_call_dir" ]; then
+      acquire_helper_bin_lock || exit 1
+    fi
     [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)" claude
     [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)" codex
     [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)" opencode
@@ -1513,30 +1561,50 @@ if [ "$UNINSTALL" -eq 1 ]; then
     done
     [ "$_kept_links" -eq 0 ] || log "  Kept for: $HOST_INSTALL_POINTER"
 
-    # The telemetry-call and preamble copies serve every installed pointer, whichever checkout wrote them.
-    if [ -f "$HOME/.gstack-extend/bin/telemetry-call" ] || [ -f "$HOME/.gstack-extend/bin/preamble" ]; then
+    if [ -n "$HELPER_BIN_LOCK" ] && { [ -f "$telemetry_call_dir/telemetry-call" ] || [ -f "$telemetry_call_dir/preamble" ]; }; then
+      # The first pointer suffices for telemetry-call. Supported hosts are
+      # visited first because only their pointers keep the preamble.
       _keep_call=0
+      _keep_preamble=0
       for _host in claude codex opencode cursor; do
         for _pointer in "$(host_skills_dir "$_host")"/*/.extend-root; do
           [ -e "$_pointer" ] || [ -L "$_pointer" ] || continue
           _keep_call=1
+          case "$_host" in claude|codex) _keep_preamble=1 ;; esac
           break 2
         done
       done
-      if [ "$_keep_call" -eq 1 ]; then
-        [ ! -f "$HOME/.gstack-extend/bin/telemetry-call" ] || log "Kept ~/.gstack-extend/bin/telemetry-call (a host install still has an .extend-root pointer)"
-        [ ! -f "$HOME/.gstack-extend/bin/preamble" ] || log "Kept ~/.gstack-extend/bin/preamble (a host install still has an .extend-root pointer)"
-      else
-        if [ -f "$HOME/.gstack-extend/bin/telemetry-call" ]; then
-          rm -f "$HOME/.gstack-extend/bin/telemetry-call"
+      if [ -f "$telemetry_call_dir/telemetry-call" ]; then
+        if [ "$_keep_call" -eq 1 ]; then
+          log "Kept ~/.gstack-extend/bin/telemetry-call (a host install still has an .extend-root pointer)"
+        else
+          rm -f "$telemetry_call_dir/telemetry-call"
           log "Removed telemetry-call (~/.gstack-extend/bin/telemetry-call)"
         fi
-        if [ -f "$HOME/.gstack-extend/bin/preamble" ]; then
-          rm -f "$HOME/.gstack-extend/bin/preamble"
+      fi
+      if [ -f "$telemetry_call_dir/preamble" ]; then
+        # A supported install can also resolve an older link without a pointer.
+        if [ "$_keep_preamble" -eq 0 ]; then
+          for _host in claude codex; do
+            _dir="$(host_skills_dir "$_host")"
+            for _skill in "${SKILLS[@]}"; do
+              _link="$_dir/$_skill/SKILL.md"
+              if [ -L "$_link" ] && [ -f "$_link" ] && extend_owned_link "$_link" "$_skill"; then
+                _keep_preamble=1
+                break 2
+              fi
+            done
+          done
+        fi
+        if [ "$_keep_preamble" -eq 1 ]; then
+          log "Kept ~/.gstack-extend/bin/preamble (a Claude Code or Codex skill install remains)"
+        else
+          rm -f "$telemetry_call_dir/preamble"
           log "Removed preamble (~/.gstack-extend/bin/preamble)"
         fi
-        rmdir "$HOME/.gstack-extend/bin" 2>/dev/null || true
       fi
+      release_helper_bin_lock
+      rmdir "$telemetry_call_dir" 2>/dev/null || true
     fi
   fi
 
@@ -1608,26 +1676,27 @@ fi
 install_preamble() {
   local src="$SCRIPT_DIR/bin/lib/preamble.sh" tmp dst="$telemetry_call_dir/preamble"
   if [ ! -f "$src" ]; then
-    echo "Error: cannot install $dst (missing source $src). Nothing was installed; if your checkout is already updated, skill text needs this file until setup succeeds." >&2
-    echo "Fix: git -C \"$SCRIPT_DIR\" checkout -- bin/lib/preamble.sh, then rerun $SCRIPT_DIR/setup --host auto" >&2
+    echo "Error: cannot install $dst (missing source $src)" >&2
+    helper_setup_fix "git -C \"$SCRIPT_DIR\" checkout -- bin/lib/preamble.sh"
     finish_setup 1
   fi
   if ! (umask 077; mkdir -p "$telemetry_call_dir") 2>/dev/null; then
-    echo "Error: cannot create $telemetry_call_dir for $dst (permission denied or invalid path). Nothing was installed; if your checkout is already updated, skill text needs this file until setup succeeds." >&2
-    echo "Fix: ensure $telemetry_call_dir is writable by you, then rerun $SCRIPT_DIR/setup --host auto" >&2
+    echo "Error: cannot create $telemetry_call_dir for $dst (permission denied or invalid path)" >&2
+    helper_setup_fix "ensure $telemetry_call_dir can be created and written by you"
     finish_setup 1
   fi
+  acquire_helper_bin_lock || finish_setup 1
   if ! tmp="$(mktemp "$telemetry_call_dir/.preamble.XXXXXX" 2>/dev/null)"; then
-    echo "Error: cannot stage $dst in $telemetry_call_dir (directory not writable). Nothing was installed; if your checkout is already updated, skill text needs this file until setup succeeds." >&2
-    echo "Fix: ensure $telemetry_call_dir is writable by you, then rerun $SCRIPT_DIR/setup --host auto" >&2
+    echo "Error: cannot stage $dst in $telemetry_call_dir (directory not writable)" >&2
+    helper_setup_fix "ensure $telemetry_call_dir is writable by you"
     finish_setup 1
   fi
   if cat "$src" > "$tmp" 2>/dev/null && chmod 755 "$tmp" 2>/dev/null && mv -f "$tmp" "$dst" 2>/dev/null; then
     log "Installed preamble → $dst"
   else
     rm -f "$tmp"
-    echo "Error: could not install $dst (copy or rename failed). Nothing was installed; if your checkout is already updated, skill text needs this file until setup succeeds." >&2
-    echo "Fix: check permissions on $telemetry_call_dir and $dst, then rerun $SCRIPT_DIR/setup --host auto" >&2
+    echo "Error: could not install $dst (copy or rename failed)" >&2
+    helper_setup_fix "check permissions on $telemetry_call_dir and $dst"
     finish_setup 1
   fi
 }
@@ -1693,6 +1762,7 @@ install_telemetry_call() {
   fi
 }
 install_telemetry_call
+release_helper_bin_lock
 
 if [ -d "$cli_bin_dir" ] && [ -e "$cli_bin_dir/gstack-extend" ]; then
   case ":$PATH:" in
