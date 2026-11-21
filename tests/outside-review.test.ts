@@ -726,6 +726,8 @@ describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
     test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)(`${title} (installed classifier)`, async () => body(await installedClassifier()));
   };
 
+  // Value: protects=approved exact marks and later-closing-line rule; fails_when=the MET closer guard or exact token spelling check is removed;
+  // why_new=the post-verdict case exercises a separate bound; seam=none; no_claim=installed classifier or producer behavior.
   test('E1 pure exactForms predicate table covers token and MET accept and reject cases', () => {
     const cases: Array<[string, string[], ('nothing-missing' | 'met' | null)[]]> = [
       ['first-line token before closing lines', ['NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], ['nothing-missing', null, null, null]],
@@ -749,12 +751,29 @@ describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
       ['MET block directly under nonblank line rejected', ['**Heading**', '1. MET', '2. MET', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null]],
       ['MET block directly above prose line rejected', ['', '1. MET', '2. MET', 'Prose note.', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null, null]],
       ['a later recommendation does not count a MET block after the last verdict', ['VERDICT: FINDINGS', '', '1. MET', '2. MET', 'Recommendation: hold because a test failed.'], [null, null, null, null, null]],
+      ['MET block with a blank below but no later closing line rejected', ['1. MET', '', 'Verification notes.'], [null, null, null]],
       ['MET block interrupted by indented sub-bullet rejected', ['', '1. MET', '  - sub-bullet', '2. MET', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null, null]],
       ['MET block after final VERDICT line rejected (E3)', ['NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN', '', '1. MET', '2. MET'], [null, null, null, null, null, null]],
       ['non-exact MET lines rejected', ['', '3. Met', '', '3. MET.', '', '3) MET', '', '**3. MET**', '', '03. MET', '', '1000. MET', '', '3. MET, by inspection', '', 'NO_FINDINGS: none', 'VERDICT: CLEAN'], new Array(17).fill(null)],
     ];
     for (const [label, lines, expected] of cases) {
       expect([label, exactForms(lines)]).toEqual([label, expected]);
+    }
+
+    const positions = (reply: string) => exactForms(reply.split('\n'))
+      .flatMap((form, index) => form === null ? [] : [index]);
+    for (const reply of rejectedTokenReplies) {
+      // Blanking a counted form cannot hide the separate context request.
+      const expected = reply === tokenAfterContextRequest ? [2] : [];
+      expect([reply, positions(reply)]).toEqual([reply, expected]);
+    }
+    for (const [index, reply] of creditedTokenReplies) {
+      expect([reply, positions(reply)]).toEqual([reply, [index]]);
+    }
+    expect(positions(tokenWithTrailingSpaces)).toEqual([2]);
+    expect(positions(REWRITTEN_2026_11_19)).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+    for (const reply of rejectedMetReplies) {
+      expect([reply, positions(reply)]).toEqual([reply, []]);
     }
   });
 
@@ -773,67 +792,71 @@ describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
     }
   });
 
+  const tokenAfterContextRequest = `NEEDS_CONTEXT: the callers of save()\n\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`;
+  const rejectedTokenReplies = [
+    `NEEDS_CONTEXT: none of the above depends on missing context.\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: none (the callers were supplied).\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: None\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT:none\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: none.\n${CLOSING_CLEAN}`,
+    `- NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `> NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `**NEEDS_CONTEXT: none**\n${CLOSING_CLEAN}`,
+    ` NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `\uFEFFNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: none\uFEFF\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT:\u00A0none\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: none\u00A0\n${CLOSING_CLEAN}`,
+    `\u00A0\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `\uFEFF\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `NO_FINDINGS: none\nNEEDS_CONTEXT: none\nRecommendation: approve because clean.\nVERDICT: CLEAN`,
+    `The callers of save() were not supplied.\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `Everything looks fine except\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: none\nAll callers were checked.\n${CLOSING_CLEAN}`,
+    `NEEDS_CONTEXT: none\n\nThe callers of save() were not supplied.\n${CLOSING_CLEAN}`,
+    `Analysis start.\n\nNEEDS_CONTEXT: none\n\nMore analysis.\n\n${CLOSING_CLEAN}`,
+    tokenAfterContextRequest,
+    // O7: bold Recommendation or leading-space NO_FINDINGS directly under token
+    `NEEDS_CONTEXT: none\n**Recommendation:** approve because clean.\nVERDICT: CLEAN`,
+    `NEEDS_CONTEXT: none\n NO_FINDINGS: none\nRecommendation: approve because clean.\nVERDICT: CLEAN`,
+    // O11 (E2): reply made only of the token
+    'NEEDS_CONTEXT: none',
+  ];
+
+  const creditedTokenReplies = [
+    // Token after NO_FINDINGS: none with a blank line between
+    [2, 'NO_FINDINGS: none\n\nNEEDS_CONTEXT: none\nRecommendation: approve because clean.\nVERDICT: CLEAN'],
+    // Neighbor line of only spaces or tabs counts as blank; token with trailing spaces/tabs counts
+    [2, 'Analysis.\n  \t \nNEEDS_CONTEXT: none \t\n' + CLOSING_CLEAN],
+    // Residual 1: gap named in a separate earlier paragraph
+    [2, 'The callers of save() were not supplied in the bundle.\n\nNEEDS_CONTEXT: none\n' + CLOSING_CLEAN],
+    // Residual 2: gap named in the closing Recommendation's because-clause directly under the token
+    [0, 'NEEDS_CONTEXT: none\nNO_FINDINGS: none\nRecommendation: hold because the callers of save() were not supplied.\nVERDICT: CLEAN'],
+  ] as const;
+
   // O2, O7, O11
   bothStrict('O2, O7, O11: fails closed on every token variant or neighbor violation and pins the accepted residuals', classifier => {
-    const failClosed = [
-      `NEEDS_CONTEXT: none of the above depends on missing context.\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: none (the callers were supplied).\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: None\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT:none\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: none.\n${CLOSING_CLEAN}`,
-      `- NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `> NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `**NEEDS_CONTEXT: none**\n${CLOSING_CLEAN}`,
-      ` NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `\uFEFFNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: none\uFEFF\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT:\u00A0none\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: none\u00A0\n${CLOSING_CLEAN}`,
-      `\u00A0\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `\uFEFF\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `NO_FINDINGS: none\nNEEDS_CONTEXT: none\nRecommendation: approve because clean.\nVERDICT: CLEAN`,
-      `The callers of save() were not supplied.\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `Everything looks fine except\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: none\nAll callers were checked.\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: none\n\nThe callers of save() were not supplied.\n${CLOSING_CLEAN}`,
-      `Analysis start.\n\nNEEDS_CONTEXT: none\n\nMore analysis.\n\n${CLOSING_CLEAN}`,
-      `NEEDS_CONTEXT: the callers of save()\n\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
-      // O7: bold Recommendation or leading-space NO_FINDINGS directly under token
-      `NEEDS_CONTEXT: none\n**Recommendation:** approve because clean.\nVERDICT: CLEAN`,
-      `NEEDS_CONTEXT: none\n NO_FINDINGS: none\nRecommendation: approve because clean.\nVERDICT: CLEAN`,
-      // O11 (E2): reply made only of the token
-      'NEEDS_CONTEXT: none',
-    ];
     for (const gate of gates) {
-      for (const reply of failClosed) {
+      for (const reply of rejectedTokenReplies) {
         const res = recover(reply, gate, 0, '', classifier);
         expect([gate, reply, res.credited, res.needs_context, res.classification.verdict]).toEqual([gate, reply, false, true, 'unverified']);
       }
     }
 
-    const pinnedCredited = [
-      // Token after NO_FINDINGS: none with a blank line between
-      'NO_FINDINGS: none\n\nNEEDS_CONTEXT: none\nRecommendation: approve because clean.\nVERDICT: CLEAN',
-      // Neighbor line of only spaces or tabs counts as blank; token with trailing spaces/tabs counts
-      'Analysis.\n  \t \nNEEDS_CONTEXT: none \t\n' + CLOSING_CLEAN,
-      // Residual 1: gap named in a separate earlier paragraph
-      'The callers of save() were not supplied in the bundle.\n\nNEEDS_CONTEXT: none\n' + CLOSING_CLEAN,
-      // Residual 2: gap named in the closing Recommendation's because-clause directly under the token
-      'NEEDS_CONTEXT: none\nNO_FINDINGS: none\nRecommendation: hold because the callers of save() were not supplied.\nVERDICT: CLEAN',
-    ];
     for (const gate of gates) {
-      for (const reply of pinnedCredited) {
+      for (const [, reply] of creditedTokenReplies) {
         const res = recover(reply, gate, 0, '', classifier);
         expect([gate, reply, res.credited, res.needs_context, res.classification.verdict]).toEqual([gate, reply, true, false, 'clean']);
       }
     }
   });
 
+  const tokenWithTrailingSpaces = 'Analysis.\n  \t \nNEEDS_CONTEXT: none \t\nNO_FINDINGS: none \t\nRecommendation: approve because clean. \t\nVERDICT: CLEAN \t';
+
   // O7 trailing spaces/tabs on closing lines (run through numberedItems and installedClassifier, since strict stub regex has no trailing whitespace on NO_FINDINGS)
   bothNumbered('O7: closing lines with trailing spaces or tabs count under the token', classifier => {
-    const reply = 'Analysis.\n  \t \nNEEDS_CONTEXT: none \t\nNO_FINDINGS: none \t\nRecommendation: approve because clean. \t\nVERDICT: CLEAN \t';
     for (const gate of gates) {
-      const res = recover(reply, gate, 0, '', classifier);
+      const res = recover(tokenWithTrailingSpaces, gate, 0, '', classifier);
       expect([gate, res.credited, res.needs_context, res.classification.verdict]).toEqual([gate, true, false, 'clean']);
     }
   });
@@ -875,27 +898,28 @@ describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
     ].join('\n'),
   );
 
+  const rejectedMetReplies = [
+    ORIGINAL_2026_11_19,
+    REWRITTEN_2026_11_19.replace('3. MET', '3. Missing guard on empty input in parser.'),
+    REWRITTEN_2026_11_19.replace('3. MET', '3. Met'),
+    REWRITTEN_2026_11_19.replace('3. MET', '3. MET.'),
+    REWRITTEN_2026_11_19.replace('3. MET', '3) MET'),
+    REWRITTEN_2026_11_19.replace('3. MET', '**3. MET**'),
+    REWRITTEN_2026_11_19.replace('3. MET', '03. MET'),
+    REWRITTEN_2026_11_19.replace('3. MET', '3. MET, by inspection'),
+    REWRITTEN_2026_11_19.replace('**Criteria assessment**\n\n1. MET', '**Criteria assessment**\n1. MET'),
+    REWRITTEN_2026_11_19.replace('8. MET\n\n**Verification notes**', '8. MET\nAll criteria verified.\n\n**Verification notes**'),
+    REWRITTEN_2026_11_19.replace('1. MET\n2. MET', '1. MET\n  - checked by inspection\n2. MET'),
+  ];
+
   bothNumbered('O3, O4: credits the rewritten 2026-11-19 MET block (including challenge structured fallback) and keeps non-exact numbered shapes fail-closed', classifier => {
     for (const gate of gates) {
       const ok = recover(REWRITTEN_2026_11_19, gate, 0, '', classifier);
       expect([gate, ok.credited, ok.needs_context, ok.parse, ok.classification.verdict]).toEqual([gate, true, false, 'valid', 'clean']);
     }
 
-    const uncredited = [
-      ORIGINAL_2026_11_19,
-      REWRITTEN_2026_11_19.replace('3. MET', '3. Missing guard on empty input in parser.'),
-      REWRITTEN_2026_11_19.replace('3. MET', '3. Met'),
-      REWRITTEN_2026_11_19.replace('3. MET', '3. MET.'),
-      REWRITTEN_2026_11_19.replace('3. MET', '3) MET'),
-      REWRITTEN_2026_11_19.replace('3. MET', '**3. MET**'),
-      REWRITTEN_2026_11_19.replace('3. MET', '03. MET'),
-      REWRITTEN_2026_11_19.replace('3. MET', '3. MET, by inspection'),
-      REWRITTEN_2026_11_19.replace('**Criteria assessment**\n\n1. MET', '**Criteria assessment**\n1. MET'),
-      REWRITTEN_2026_11_19.replace('8. MET\n\n**Verification notes**', '8. MET\nAll criteria verified.\n\n**Verification notes**'),
-      REWRITTEN_2026_11_19.replace('1. MET\n2. MET', '1. MET\n  - checked by inspection\n2. MET'),
-    ];
     for (const gate of gates) {
-      for (const reply of uncredited) {
+      for (const reply of rejectedMetReplies) {
         const res = recover(reply, gate, 0, '', classifier);
         expect([gate, reply, res.credited, res.classification.verdict, res.classification.reason]).toEqual([
           gate, reply, false, 'unverified', 'untagged_review',
