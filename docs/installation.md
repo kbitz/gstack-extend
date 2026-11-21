@@ -702,9 +702,10 @@ verified checkout, regardless of which host runs the skill.
 **Start-command install failure:** if `setup` refuses or fails to install `~/.gstack-extend/bin/preamble` (for example, the destination is a symlink or directory, `$HOME/.gstack-extend/bin` is unwritable or foreign-owned, or the copy fails), `setup` prints the path, cause, and a `Fix:` line and exits `1` without installing any skills. Fix the path or permissions as instructed and rerun `<checkout>/setup --host auto`; if the checkout is already updated, its skill text requires `~/.gstack-extend/bin/preamble` until `setup` succeeds.
 
 Setup and uninstall share a short lock while changing the helper and skill
-files. If a run times out waiting for it, wait for the other setup to finish
-and retry. If an interrupted setup left the lock behind, confirm no setup
-is running before removing the empty `~/.gstack-extend/.setup.lock` directory.
+files. Uninstall leaves the helper directory available for a waiting setup.
+If a run times out waiting for the lock, wait for the other setup to finish
+and retry. If an interrupted setup left the lock behind, confirm no setup is
+running before removing the empty `~/.gstack-extend/bin/.setup.lock` directory.
 
 ### Unsafe skills directory
 

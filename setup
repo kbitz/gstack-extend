@@ -1425,8 +1425,7 @@ fi
 
 # Every native host executes this shared helper. Validate its destination before publishing
 # skills or removing any helper so a symlink cannot redirect executable ownership outside HOME.
-helper_state_dir="$HOME/.gstack-extend"
-telemetry_call_dir="$helper_state_dir/bin"
+telemetry_call_dir="$HOME/.gstack-extend/bin"
 helper_setup_fix() {
   if [ "$UNINSTALL" -eq 1 ]; then
     printf 'Nothing was uninstalled.\nFix: %s, then rerun %q --host %s --uninstall\n' "$1" "$SCRIPT_DIR/setup" "$HOST" >&2
@@ -1438,17 +1437,18 @@ helper_setup_fix() {
 
 # Publish the helper and skill pointers under the same lock used for uninstall.
 # Otherwise uninstall can see no pointers between those two install steps.
+# Uninstall leaves bin in place for setup runs waiting on this lock.
 acquire_helper_lock() {
-  local lock="$helper_state_dir/.setup.lock" start=$SECONDS
+  local lock="$telemetry_call_dir/.setup.lock" start=$SECONDS
   while ! (umask 077; mkdir "$lock") 2>/dev/null; do
     if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -d "$lock" ]; }; then
       echo "Error: $lock is not a regular lock directory" >&2
       helper_setup_fix "remove or rename $lock"
       return 1
     fi
-    if [ ! -w "$helper_state_dir" ] || [ ! -x "$helper_state_dir" ]; then
-      echo "Error: cannot lock $helper_state_dir (directory is missing, not writable or not searchable)" >&2
-      helper_setup_fix "ensure $helper_state_dir is writable and searchable by you"
+    if [ ! -w "$telemetry_call_dir" ] || [ ! -x "$telemetry_call_dir" ]; then
+      echo "Error: cannot lock $telemetry_call_dir (directory is missing, not writable or not searchable)" >&2
+      helper_setup_fix "ensure $telemetry_call_dir is writable and searchable by you"
       return 1
     fi
     if [ "$((SECONDS - start))" -ge 5 ]; then
@@ -1462,7 +1462,7 @@ acquire_helper_lock() {
 }
 
 if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
-  for _path in "$HOME" "$helper_state_dir" "$telemetry_call_dir"; do
+  for _path in "$HOME" "$HOME/.gstack-extend" "$telemetry_call_dir"; do
     if ! is_safe_install_path "$_path"; then
       helper_setup_fix "correct the path or permissions named above"
       exit 1
@@ -1526,7 +1526,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
     uninstall_from_dir "$SKILLS_DIR"
   else
-    if [ -d "$helper_state_dir" ]; then
+    if [ -d "$telemetry_call_dir" ]; then
       acquire_helper_lock || exit 1
     fi
     [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)" claude
@@ -1603,9 +1603,6 @@ if [ "$UNINSTALL" -eq 1 ]; then
           log "Removed preamble (~/.gstack-extend/bin/preamble)"
         fi
       fi
-      # Keep the lock while removing bin so a queued install can recreate it
-      # only after uninstall finishes, without losing the lock's parent.
-      rmdir "$telemetry_call_dir" 2>/dev/null || true
     fi
   fi
 
@@ -1681,17 +1678,12 @@ install_preamble() {
     helper_setup_fix "git -C \"$SCRIPT_DIR\" checkout -- bin/lib/preamble.sh"
     finish_setup 1
   fi
-  if ! (umask 077; mkdir -p "$helper_state_dir") 2>/dev/null; then
-    echo "Error: cannot create $helper_state_dir for $dst (permission denied or invalid path)" >&2
-    helper_setup_fix "ensure $helper_state_dir can be created and written by you"
-    finish_setup 1
-  fi
-  acquire_helper_lock || finish_setup 1
   if ! (umask 077; mkdir -p "$telemetry_call_dir") 2>/dev/null; then
     echo "Error: cannot create $telemetry_call_dir for $dst (permission denied or invalid path)" >&2
     helper_setup_fix "ensure $telemetry_call_dir can be created and written by you"
     finish_setup 1
   fi
+  acquire_helper_lock || finish_setup 1
   if ! tmp="$(mktemp "$telemetry_call_dir/.preamble.XXXXXX" 2>/dev/null)"; then
     echo "Error: cannot stage $dst in $telemetry_call_dir (directory not writable)" >&2
     helper_setup_fix "ensure $telemetry_call_dir is writable by you"

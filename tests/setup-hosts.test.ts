@@ -3174,7 +3174,7 @@ exec "$TEST_LN" "$@"
       }
       expect(existsSync(join(home, 'publisher-ready'))).toBe(true);
       expect(existsSync(join(hostDir(home, 'claude'), 'plan-track', '.extend-root'))).toBe(false);
-      expect(existsSync(join(home, '.gstack-extend', '.setup.lock'))).toBe(true);
+      expect(existsSync(join(home, '.gstack-extend', 'bin', '.setup.lock'))).toBe(true);
       cleanup = Bun.spawn([SETUP, '--host', 'codex', '--uninstall', '--quiet'], {
         env: { HOME: home, TMPDIR: home, PATH: path },
         stdout: 'ignore',
@@ -3190,10 +3190,10 @@ exec "$TEST_LN" "$@"
     expect(existsSync(join(hostDir(home, 'codex'), 'plan-track', 'SKILL.md'))).toBe(false);
     expect(existsSync(join(hostDir(home, 'claude'), 'plan-track', '.extend-root'))).toBe(true);
     expect(existsSync(installed(home))).toBe(true);
-    expect(existsSync(join(home, '.gstack-extend', '.setup.lock'))).toBe(false);
+    expect(existsSync(join(home, '.gstack-extend', 'bin', '.setup.lock'))).toBe(false);
   }, 15_000);
 
-  // Value: protects=a Claude setup queued behind the last Codex uninstall recreates bin and installs a usable preamble;
+  // Value: protects=a Claude setup queued behind the last Codex uninstall installs a usable preamble;
   // fails_when=uninstall removes the directory the waiting installer needs to lock;
   // why_new=the preceding race starts the installer first; seam=none;
   // no_claim=other host combinations (two real setup processes with controlled shell timing).
@@ -3204,10 +3204,10 @@ exec "$TEST_LN" "$@"
     const path = isolatedPath();
     expect(runSetup(['--host', 'codex', '--quiet'], home, path, true).exitCode).toBe(0);
 
-    // Pause the uninstaller at its first attempt to remove bin or release the lock.
+    // Pause the uninstaller as it releases its lock, with the old helpers removed.
     writeFileSync(join(shims, 'rmdir'), `#!/bin/sh
 case "$SETUP_TEST_ROLE:$1" in
-  uninstall:"$HOME"/.gstack-extend/bin|uninstall:*/.setup.lock)
+  uninstall:*/.setup.lock)
     : > "$HOME/uninstaller-ready"
     until [ -f "$HOME/release-uninstaller" ]; do sleep 0.02; done ;;
 esac
@@ -3238,7 +3238,7 @@ exec /bin/mkdir "$@"
       expect(waitUntil(() => existsSync(join(home, 'installer-queued')), 6_000), 'Claude encountered the held lock').toBe(true);
       writeFileSync(join(home, 'release-uninstaller'), '');
       expect((await removal).code).toBe(0);
-      expect(existsSync(join(home, '.gstack-extend', 'bin'))).toBe(false);
+      expect(existsSync(installed(home))).toBe(false);
     } finally {
       writeFileSync(join(home, 'release-uninstaller'), '');
       writeFileSync(join(home, 'uninstall-done'), '');
