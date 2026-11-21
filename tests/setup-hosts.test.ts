@@ -3174,7 +3174,7 @@ exec "$TEST_LN" "$@"
       }
       expect(existsSync(join(home, 'publisher-ready'))).toBe(true);
       expect(existsSync(join(hostDir(home, 'claude'), 'plan-track', '.extend-root'))).toBe(false);
-      expect(existsSync(join(home, '.gstack-extend', 'bin', '.setup.lock'))).toBe(true);
+      expect(existsSync(join(home, '.gstack-extend', '.setup.lock'))).toBe(true);
       cleanup = Bun.spawn([SETUP, '--host', 'codex', '--uninstall', '--quiet'], {
         env: { HOME: home, TMPDIR: home, PATH: path },
         stdout: 'ignore',
@@ -3190,7 +3190,7 @@ exec "$TEST_LN" "$@"
     expect(existsSync(join(hostDir(home, 'codex'), 'plan-track', 'SKILL.md'))).toBe(false);
     expect(existsSync(join(hostDir(home, 'claude'), 'plan-track', '.extend-root'))).toBe(true);
     expect(existsSync(installed(home))).toBe(true);
-    expect(existsSync(join(home, '.gstack-extend', 'bin', '.setup.lock'))).toBe(false);
+    expect(existsSync(join(home, '.gstack-extend', '.setup.lock'))).toBe(false);
   }, 15_000);
 
   test('cutover (E16): upgrading legacy HOME without preamble installs start command and resolves root', () => {

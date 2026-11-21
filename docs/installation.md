@@ -673,7 +673,7 @@ verified checkout, regardless of which host runs the skill.
 Setup and uninstall share a short lock while changing the helper and skill
 files. If a run times out waiting for it, wait for the other setup to finish
 and retry. If an interrupted setup left the lock behind, confirm no setup
-is running before removing the empty `~/.gstack-extend/bin/.setup.lock` directory.
+is running before removing the empty `~/.gstack-extend/.setup.lock` directory.
 
 ### Unsafe skills directory
 

@@ -1954,6 +1954,8 @@ function warnedFixture(name: string, remoteBody = '1.0.0\n', version = '9.9.9') 
 
 const ORDINARY_CAPTURE = `_UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" || true`;
+const FORCE_CAPTURE = `_UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" --force 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true`;
 
 function runFrozen(repo: string, home: string, state: string, capture: string, remote: string) {
   const script = `set -euo pipefail\n_EXTEND_ROOT=${JSON.stringify(repo)}\n${capture}\n`;
@@ -2309,8 +2311,18 @@ exec /bin/mv "$@"
     expect(second.stdout).toContain('reason=preserved_regular');
   });
 
-  test('R6 the shipped preamble shows warnings after version results with and without --force', () => {
+  test('R6 the shipped and frozen preambles show warnings after version results', () => {
     const fx = warnedFixture('r6', '2.0.0\n');
+    const assertWarningOrder = (seen: {status: number | null; stdout: string | null; stderr: string | null}) => {
+      expect(seen.status).toBe(0);
+      const text = seen.stdout ?? '';
+      expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeGreaterThanOrEqual(0);
+      expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeLessThan(text.indexOf('reason=preserved_regular'));
+      expect(seen.stderr ?? '').not.toContain('INSTALL_WARN');
+    };
+    for (const capture of [ORDINARY_CAPTURE, FORCE_CAPTURE]) {
+      assertWarningOrder(runFrozen(fx.repo, fx.home, fx.state, capture, fx.remote));
+    }
     installPreamble(fx.home);
     for (const [skill, flags] of [['full-review', ''], ['gstack-extend-upgrade', ' --force']]) {
       writePointer(fx.home, 'codex', skill, fx.repo);
@@ -2323,11 +2335,7 @@ exec /bin/mv "$@"
           GSTACK_EXTEND_REMOTE_URL: fx.remote,
         },
       });
-      expect(seen.status).toBe(0);
-      const text = seen.stdout ?? '';
-      expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeGreaterThanOrEqual(0);
-      expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeLessThan(text.indexOf('reason=preserved_regular'));
-      expect(seen.stderr ?? '').not.toContain('INSTALL_WARN');
+      assertWarningOrder(seen);
     }
   });
 
