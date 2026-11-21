@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
-import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
 import { FALLBACK_REASONS, PART_KEYS, RECEIPT_KEYS, SETTLED_RULE } from '../src/review-delegate/delegate.ts';
@@ -671,8 +671,12 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     '`auto` turns on all three additions together',
     'later values may narrow them, so a caller matches the exact value, not the key',
     'Its one extra attempt takes precedence over the "never a third attempt" wording in the `documentation-audit=final` and `post-audit=classify` bullets.',
+    'Use `full-suite-absent` if the line lacks `full-suite=external` (including `full-suite=final`) and `post-audit-absent` otherwise. Name every missing companion in `<context>`',
   ]) {
     if (!policy.includes(required)) violations.push(`policy section missing: ${required}`);
+  }
+  if (!postAudit.includes('When **Under `doc-audit-gap=auto`** is active, this list also includes `undocumented-internal` and `base-merge`. When every post-audit change after the accepted audit\'s post-child snapshot is `owner=not-needed`, continue without asking the owner.')) {
+    violations.push('classify outcome must include both new no-owner classes when active');
   }
 
   // D10 invariant carve-out names only doc-audit-gap=auto, and both cross-references exist
@@ -706,7 +710,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'writes the exact `--docs` arguments it passes to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt` in the evidence directory',
     "every path in that audit's snapshot `docs` list is also protected, and a missing or unreadable roots file is `docs-roots-unreadable`",
     'the value changes classify in exactly three ways: the `undocumented-internal` class, qualifying base merges and one extra audit attempt',
-    '`git status --porcelain=v1 -z --untracked-files=all` (non-empty is `dirty-tree`)',
+    '`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` (non-empty is `dirty-tree`, including pending changes inside submodules)',
     'When `S` equals `HEAD` the walk is empty and classify runs as today, with nothing added.',
     'the walk reaches `S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD` (otherwise the result is `walk-missed-snapshot`)',
     'the post-audit changes are the commits on `git rev-list --first-parent S..HEAD`',
@@ -731,9 +735,11 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'a failed fetch means no extra audit (`Doc-audit extra: action=today; … reason=base-fetch-failed`)',
     'A path is a SPEC when its base name, ignoring case and with every extension removed, is `SPEC`, at any depth (`SPEC`, `SPEC.md`, `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the project instructions name as the product spec; because the list uses `--no-renames`, a deleted, added or renamed spec (old and new names) all count.',
     'Before launching the extra attempt, the parent appends the `Doc-audit extra: action=extra-audit` line to `doc-audit-extra.txt` first, so an interrupted launch counts as used on resume.',
-    'The launch runs `gstack-docs-candidate attempt` like any launch; an `ATTEMPT: not-counted` install refusal lets upstream\'s one relaunch run as the same extra attempt with no new `action=extra-audit` line, whereas if `gstack-docs-candidate attempt` refuses the relaunch (exit 3, STOP) because the install-refusal allowance was already used, the extra attempt is spent: record `result=refused` and take the owner stop.',
+    'The launch runs `gstack-docs-candidate attempt` like any launch; an `ATTEMPT: not-counted` install refusal lets upstream\'s one relaunch run as the same extra attempt with no new `action=extra-audit` line.',
+    'If `gstack-docs-candidate attempt` refuses either launch (exit 3, STOP), including when the install-refusal allowance was already used before the first extra launch, the extra attempt is spent: record `result=refused` and take the owner stop.',
     'When the attempt ends, the parent appends an `action=result` line with its outcome.',
-    'On resume, an `action=extra-audit` line with no later `action=result` line is an interrupted extra launch: the parent first runs blocked recovery step 1 (confirm the child stopped), then validates that child\'s saved output through upstream\'s Parent processing (collect, check output, check ownership, check freshness), records `result=accepted` only when it passes, and otherwise records `result=interrupted` and takes the owner stop.',
+    'On resume, reconcile any interrupted extra launch before deciding whether an attempt remains.',
+    'An `action=extra-audit` line with no later `action=result` line is an interrupted extra launch: the parent first runs blocked recovery step 1 (confirm the child stopped), then validates that child\'s saved output through upstream\'s Parent processing (collect, check output, check ownership, check freshness), records `result=accepted` only when it passes, and otherwise records `result=interrupted` and takes the owner stop.',
     "Its result stands on its own and is never a reuse; a `blocked` or invalid result takes blocked recovery's owner stop, with no further attempt.",
     'A later change after an accepted extra audit with no attempt left reaches the trigger again: classify, with these additions, runs against the extra audit as the last accepted audit; no second extra audit runs; the owner stop follows otherwise.',
     "A reuse writes no new `record audit`: the compact receipt's `- documentation:` line renders `not-run` for the final head",
@@ -741,6 +747,8 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     '`doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`',
     '`doc-audit-gap: not applied — <token> <context>; evidence=<evidence locator>`',
     'a reason carries no stderr text and no remote URL',
+    'using the latest trigger\'s reuse decision',
+    '`reuse=applied` only when classify continues on the carried audit',
     '`Doc-audit extra: action=<extra-audit|result|today>; audit=<carried audit_id> <section-sha256>|none; new-audit=<audit_id|none>; result=<accepted|blocked|invalid|refused|interrupted|none>; head=<full SHA>; reason=<one line>; evidence=<evidence locator>`',
     '`Auto-chosen (veto by replying on this PR): documentation audit gap (blocked recovery\'s owner question) → <continue on carried audit <audit_id>|extra audit <audit_id>>`',
     'the offered options: continue on the carried audit, run the extra audit, stop for repair, accept a named risk.',
@@ -769,7 +777,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   // D8 and E3 readiness sentences
   for (const required of [
     'Under `post-audit: active`, an accepted audit plus a `Post-audit change:` line with `owner=not-needed` for every commit after its post-child snapshot satisfies the documentation gate for the final content, with the audit\'s own status; an `owner=needed` line still needs the user\'s named-risk decision.',
-    'Under `doc-audit-gap=auto`, that readiness rule requires an `owner=not-needed` `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD` (`undocumented-internal` and `base-merge` lines are `owner=not-needed`, and base commits a qualifying merge brings in need no line of their own, because the merge\'s `class=base-merge` line covers them), while an extra audit\'s own accepted result satisfies the gate as any audit does; without the value the sentence is unchanged.',
+    'When **Under `doc-audit-gap=auto`** is active, that readiness rule requires an `owner=not-needed` `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD` (`undocumented-internal` and `base-merge` lines are `owner=not-needed`, and base commits a qualifying merge brings in need no line of their own, because the merge\'s `class=base-merge` line covers them), while an extra audit\'s own accepted result satisfies the gate as any audit does.',
     'a reuse never counts as, replaces or defers that attestation.',
   ]) {
     if (!readiness.includes(required)) violations.push(`Readiness missing: ${required}`);
@@ -1906,16 +1914,6 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
   describe('doc-audit-gap=auto merge commands fixture (E16)', () => {
     const tmp = makeBaseTmp('skill-protocols-doc-audit-gap-merge-');
     afterAll(() => rmSync(tmp, { recursive: true, force: true }));
-    const home = join(tmp, 'home');
-    mkdirSync(home, { recursive: true });
-    const env = scopedEnv(home, {
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_AUTHOR_NAME: 'Test',
-      GIT_AUTHOR_EMAIL: 'test@example.invalid',
-      GIT_COMMITTER_NAME: 'Test',
-      GIT_COMMITTER_EMAIL: 'test@example.invalid',
-    });
 
     function extractMergeCommands(skillText: string) {
       const underAt = skillText.indexOf('**Under `doc-audit-gap=auto`.**');
@@ -1927,6 +1925,7 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
         return m[1]!;
       };
       return {
+        status: pick(/`(git status --porcelain=v1 -z --untracked-files=all [^`]+)`/, 'status'),
         walkHead: pick(/`(git rev-list --first-parent HEAD)`/, 'walkHead'),
         walkRange: pick(/`(git rev-list --first-parent S\.\.HEAD)`/, 'walkRange'),
         parents: pick(/`(git rev-parse <merge>\^@)`/, 'parents'),
@@ -1940,7 +1939,7 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
     const git = (cwd: string, args: string[], allowFail = false) => {
       const r = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], {
         cwd,
-        env,
+        env: GIT_ENV,
         encoding: 'utf8',
         timeout: 15_000,
       });
@@ -1998,7 +1997,7 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
       const remergeRes = runCmd(cwd, cmds.remerge.replace('<merge>', opts.merge));
       expect(remergeRes.status).toBe(0);
       const remergePaths = splitNul(remergeRes.stdout);
-      if (remergePaths.length > 0) {
+      if (remergeRes.stdout !== '') {
         return { outcome: 'merge-unqualified' as const, detail: 'remerge-diff', remergePaths };
       }
 
@@ -2032,12 +2031,10 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
       return { outcome: 'base-merge' as const, basePaths, prPaths, remergePaths };
     }
 
-    let seq = 0;
     function initRepo() {
-      const cwd = join(tmp, `mrepo-${++seq}`);
+      const cwd = makeEmptyRepo(tmp);
       mkdirSync(join(cwd, 'src'), { recursive: true });
       mkdirSync(join(cwd, 'docs'), { recursive: true });
-      git(cwd, ['init', '--quiet', '--initial-branch=main']);
       git(cwd, ['config', 'diff.ignoreSubmodules', 'all']);
       writeFileSync(join(cwd, 'src', 'base.ts'), 'export const base = 1;\n');
       writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 1;\n');
@@ -2047,6 +2044,22 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
       git(cwd, ['commit', '--quiet', '-m', 'chore: initial']);
       return cwd;
     }
+
+    // Value: protects=the committed-only reuse check sees pending submodule content even with diff.ignoreSubmodules=all; fails_when=the status command hides the pending submodule; why_new=Track 91A review found the clean-tree command missed this configuration; seam=skills/review-and-prep.md
+    test('the skill clean-tree command sees pending submodule content', () => {
+      const cwd = makeEmptyRepo(tmp);
+      const child = makeEmptyRepo(tmp);
+      git(cwd, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', child, 'vendor/sub']);
+      git(cwd, ['commit', '--quiet', '-am', 'add fixture submodule']);
+      git(cwd, ['config', 'diff.ignoreSubmodules', 'all']);
+      git(cwd, ['config', 'submodule.vendor/sub.ignore', 'all']);
+      const { status } = extractMergeCommands(prep);
+      expect(runCmd(cwd, status).stdout).toBe('');
+      writeFileSync(join(cwd, 'vendor', 'sub', 'pending.txt'), 'pending fixture content\n');
+      const result = runCmd(cwd, status);
+      expect(result.status).toBe(0);
+      expect(splitNul(result.stdout)).toEqual([' M vendor/sub']);
+    });
 
     // Value: protects=the skill's exact merge commands handle clean merges, merge-made edits, conflicts, overlaps, forward/reverse doc mentions, history exclusions, non-ancestor parents, octopus merges, reversed parents and gitlinks under diff.ignoreSubmodules=all; fails_when=a command or flag in the skill text drifts or drops --ignore-submodules=none; why_new=Track 91A E16 executable merge fixture; seam=skills/review-and-prep.md
     test('runs all 11 E16 merge cases from the skill text commands and fails when --ignore-submodules=none is dropped', () => {

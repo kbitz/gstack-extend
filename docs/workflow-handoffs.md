@@ -1146,9 +1146,8 @@ documentation audit on the shipped head; a prepared receipt still emits
 
 Receipt parsers note: `Post-audit change:` `class=` gains `undocumented-internal`
 and `base-merge` only under `doc-audit-gap=auto` (with `full-suite=external` and
-`post-audit=classify`). Quickstart — the three capability checks, the complete
-policy line, and receipt examples for a reuse, an extra audit and a not-applied
-run:
+`post-audit=classify`). The quickstart gives the three capability checks, a
+policy line and excerpts from separate receipts.
 
 ```sh
 grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"
@@ -1157,12 +1156,21 @@ grep -F 'doc-audit-gap=auto' "<installed skill dir>/SKILL.md"
 ```
 
 ```text
+# Policy to send after all capability checks pass
 Review policy: review-and-prep-policy/v1; documentation-audit=final; full-suite=external; post-audit=classify; doc-audit-gap=auto
+
+# Carried audit
 doc-audit-gap: active; reuse=applied
 Post-audit change: 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432; paths=2; class=undocumented-internal; owner=not-needed; carried-audit=docs-1 2222222222222222222222222222222222222222222222222222222222222222; reason=internal helper refactor with no documented contract or user-visible surface; evidence=inv-1/post-audit-1.txt
+
+# Extra audit decision and result
 Doc-audit extra: action=extra-audit; audit=docs-1 2222222222222222222222222222222222222222222222222222222222222222; new-audit=docs-2; result=none; head=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432; reason=documented CLI flag changed after attempt limit with no SPEC edit; evidence=inv-1/doc-audit-extra.txt
 Doc-audit extra: action=result; audit=docs-1 2222222222222222222222222222222222222222222222222222222222222222; new-audit=docs-2; result=accepted; head=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432; reason=extra documentation audit completed as current; evidence=inv-1/doc-audit-extra.txt
+
+# Missing companion policy value
 doc-audit-gap: not applied — post-audit-absent post-audit=classify; evidence=inv-1/full-receipt-1.md
+
+# Reuse unavailable with older Git
 doc-audit-gap: active; reuse=not-applied git-too-old git version 2.35.1 (needs Git 2.36+); evidence=inv-1/remerge-diff.txt
 ```
 
@@ -1170,18 +1178,18 @@ doc-audit-gap: active; reuse=not-applied git-too-old git version 2.35.1 (needs G
 
 | Token | Status line form | Meaning | Caller fix |
 |---|---|---|---|
-| `full-suite-absent` | `doc-audit-gap: not applied — full-suite-absent <context>; evidence=<evidence locator>` | `full-suite=external` is absent from the `Review policy:` line | Add `full-suite=external` to the `Review policy:` line |
+| `full-suite-absent` | `doc-audit-gap: not applied — full-suite-absent <context>; evidence=<evidence locator>` | `full-suite=external` is absent from the `Review policy:` line, including when both companions are missing. Context lists every missing companion. | Add the named companions to the `Review policy:` line |
 | `post-audit-absent` | `doc-audit-gap: not applied — post-audit-absent <context>; evidence=<evidence locator>` | `post-audit=classify` is absent from the `Review policy:` line | Add `post-audit=classify` to the `Review policy:` line |
 | `no-trigger` | `doc-audit-gap: not applied — no-trigger no exhausted-audit freshness check reached; evidence=<evidence locator>` | No documentation freshness check with an exhausted audit budget was reached | None needed; the audit was not stale at its attempt limit |
 | `walk-missed-snapshot` | `doc-audit-gap: active; reuse=not-applied walk-missed-snapshot <context>; evidence=<evidence locator>` | The accepted audit's snapshot HEAD `S` does not appear as a whole line of `git rev-list --first-parent HEAD` | Keep `S` on the first-parent chain (merge the base into the feature branch) or let the extra audit or owner stop handle the gap |
 | `dirty-tree` | `doc-audit-gap: active; reuse=not-applied dirty-tree <context>; evidence=<evidence locator>` | `git status --porcelain=v1 -z --untracked-files=all` was not empty at the trigger | Commit or clean pending working-tree changes before the freshness check |
 | `base-fetch-failed` | `doc-audit-gap: active; reuse=not-applied base-fetch-failed <context>; evidence=<evidence locator>` | Fetching the verified base remote's tip failed at the trigger (also prevents the extra audit) | Restore remote access or repository fetch state and rerun |
 | `merge-unqualified` | `doc-audit-gap: active; reuse=not-applied merge-unqualified <context>; evidence=<evidence locator>` | A merge on `S..HEAD` is not a two-parent commit whose second parent is an ancestor of the fetched base tip with an empty `--remerge-diff` | Avoid edits inside merge commits, or let the extra audit or owner stop review the merge |
-| `merge-guard-failed` | `doc-audit-gap: active; reuse=not-applied merge-guard-failed <context>; evidence=<evidence locator>` | The merge's base side shares a changed path with the pull request, or a documentation file on either side names the other side's changed paths or contracts (up to three paths named) | Let the extra audit or owner stop verify the interacting documentation |
+| `merge-guard-failed` | `doc-audit-gap: active; reuse=not-applied merge-guard-failed <context>; evidence=<evidence locator>` | The sides share a changed path, a changed PR doc names a changed base-side path, or a changed base-side doc names a changed PR path or one of its contracts (up to three paths named) | Let the extra audit or owner stop verify the interacting documentation |
 | `git-too-old` | `doc-audit-gap: active; reuse=not-applied git-too-old <context>; evidence=<evidence locator>` | `git log --remerge-diff` failed because Git is older than 2.36 (context names `git --version` and `needs Git 2.36+`) | Upgrade Git on the worker machine to 2.36 or later |
 | `docs-roots-unreadable` | `doc-audit-gap: active; reuse=not-applied docs-roots-unreadable <context>; evidence=<evidence locator>` | `doc-roots-<audit_id>.txt` or the accepted audit's snapshot `docs` list is missing or unreadable | Let Prepare record the roots in a fresh audit or let the extra audit or owner stop handle the gap |
 | `command-failed` | `doc-audit-gap: active; reuse=not-applied command-failed <context>; evidence=<evidence locator>` | A git command or the NUL-split script failed unexpectedly (context names the command and exit status, with no stderr text or remote URL) | Inspect the referenced evidence file in the invocation's evidence directory and fix the command error |
-| `classify-not-applied` | `doc-audit-gap: active; reuse=not-applied classify-not-applied <context>; evidence=<evidence locator>` | One of `post-audit=classify`'s own not-applied conditions held (followed by classify's own reason) | Address the named classify precondition or let the extra audit or owner stop handle the gap |
+| `classify-not-applied` | `doc-audit-gap: active; reuse=not-applied classify-not-applied <context>; evidence=<evidence locator>` | Classify did not continue on a carried audit. Context gives its reason, such as a failed precondition or an `owner=needed` change. | Address the stated reason or let the extra audit or owner stop handle the gap |
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1684,7 +1692,7 @@ Release note: This fenced copy is not a disclosure.
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 | `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |
 | `post-audit:` status and `Post-audit change:` lines | receipt-present | published in the full receipt under `post-audit=classify`, one line per post-audit change naming why it did or did not need the owner; the documentation status they accompany stays the accepted audit's own and a blocked audit is never upgraded; the lines never authorize a stage or merge |
-| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present | published in the full receipt under `doc-audit-gap=auto` (with `full-suite=external` and `post-audit=classify`), naming whether reuse applied, any extra documentation audit decision and outcome, and the reused audit on `carried-audit=`; a reuse writes no new `record audit` and leaves the compact receipt's `- documentation:` line `not-run`; the lines never authorize a stage or merge |
+| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present | with `doc-audit-gap=auto`, the full receipt reports the latest reuse decision or why the value was inactive. The extra-audit lines and the two new classes require both companions. The change line names the reused audit on `carried-audit=`. A reuse writes no new `record audit` and leaves the compact receipt's `- documentation:` line `not-run`. The lines never authorize a stage or merge. |
 | `Review overlap:` line | receipt-present | published in the receipt under `first-cycle=overlap`; never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The

@@ -923,7 +923,7 @@ When the parsed policy carries both `in-cap=full` and
 `continuation=repair-only`, print on the next line:
 `Review policy warning: in-cap=full with continuation=repair-only — after a first cycle that reproduces a defect, repair-only stays available only if the full-scope second cycle completes and reruns each reproduced probe by its key.`
 When the parsed policy carries `doc-audit-gap=auto` without
-`full-suite=external` or `post-audit=classify`, print on the next line:
+`full-suite=external` or `post-audit=classify`, also print this phase-status line:
 `Review policy warning: doc-audit-gap=auto needs full-suite=external and post-audit=classify on the same line; it is inert on this run (missing: <keys>)`
 It is a phase-status line like the parsed policy: outside any copyable handoff,
 not a receipt line, and it changes no key, gate, outcome or continuation. A
@@ -993,12 +993,14 @@ continuation.
   key. Its one extra attempt takes precedence over the "never a third attempt"
   wording in the `documentation-audit=final` and `post-audit=classify` bullets.
   Without `full-suite=external` or `post-audit=classify` on the same line, print
-  the phase-status warning above, record
+  the phase-status warning above and include one line when assembling the full
+  receipt, even when classify never runs:
   `doc-audit-gap: not applied — <full-suite-absent|post-audit-absent> <context>; evidence=<evidence locator>`
-  in the full receipt (see
-  [`docs/workflow-handoffs.md#doc-audit-gap-reasons`](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#doc-audit-gap-reasons)),
-  and change nothing else. On an older installation without the value, every key
-  on the line is lost (standard defaults, reason recorded, so the gap is asked
+  Use `full-suite-absent` if the line lacks `full-suite=external` (including
+  `full-suite=final`) and `post-audit-absent` otherwise. Name every missing
+  companion in `<context>` and leave the workflow unchanged. On an older
+  installation without the value, every key on the line is lost (standard
+  defaults, reason recorded, so the gap is asked
   about as before), and an older H-E parser holds a returned policy carrying it
   as `policy-malformed`. It waives no other gate, never narrows or replaces the
   external full suite and never authorizes a continuation. Capability check:
@@ -3180,11 +3182,13 @@ line; a later commit gets its own line.
 - `documented-behavior`: everything else. Any doubt counts as
   `documented-behavior`.
 
-**Outcome.** When every post-audit change after the accepted audit's post-child
-snapshot is in a no-documented-behavior class (`rename`, `tests-only`,
-`test-tooling`, `todos-only`, `mechanical-correction` or `already-documented`,
-so `owner=not-needed`), continue without asking the owner: the documentation
-status stays the accepted audit's own status (`current` or `updated`), never
+**Outcome.** The no-owner classes are `rename`, `tests-only`, `test-tooling`,
+`todos-only`, `mechanical-correction` and `already-documented`. When
+**Under `doc-audit-gap=auto`** is active, this list also includes
+`undocumented-internal` and `base-merge`. When every post-audit change after the
+accepted audit's post-child snapshot is `owner=not-needed`, continue without
+asking the owner. The documentation status stays the accepted audit's own
+status (`current` or `updated`), never
 upgraded, and `.gstack/tmp/docs-audit.json` is untouched. `test-tooling` waives
 no test gate: the pregate and test lanes rerun on the changed content under
 their freshness rule, under `full-suite=external` the external full-suite gate
@@ -3214,11 +3218,7 @@ group only when the parsed review policy carries `doc-audit-gap=auto` together
 with `full-suite=external` and `post-audit=classify`; a run without the value
 reads none of it and its receipt, readiness and blocked recovery stay as they
 are, and a run with `post-audit=classify` alone keeps today's class list and
-outcomes. When the parsed policy carries `doc-audit-gap=auto` without
-`full-suite=external` or `post-audit=classify`, print the phase-status warning
-in **Read an optional review policy**, record
-`doc-audit-gap: not applied — <full-suite-absent|post-audit-absent> <context>; evidence=<evidence locator>`
-in the full receipt, and change nothing else. At every Prepare while the parsed
+outcomes. At every Prepare while the parsed
 policy carries `doc-audit-gap=auto` with `full-suite=external` and
 `post-audit=classify`, the parent writes the exact `--docs` arguments it passes
 to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt`
@@ -3237,7 +3237,8 @@ re-audit and its other not-applied conditions, is unchanged (when the
 invocation's last attempt was `blocked` with no accepted audit, reuse cannot
 apply and only the extra-audit check below runs before the owner stop). Commit
 pending work first, checked as an empty
-`git status --porcelain=v1 -z --untracked-files=all` (non-empty is `dirty-tree`).
+`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none`
+(non-empty is `dirty-tree`, including pending changes inside submodules).
 Let `S` be the accepted audit's post-child snapshot HEAD (which already records
 any documentation edits that audit made). When `S` equals `HEAD` the walk is
 empty and classify runs as today, with nothing added. Otherwise the walk reaches
@@ -3319,8 +3320,9 @@ there, and any unexpected command or script failure is `command-failed`.
      (3) **Reverse:** no documentation file among the base side's changed paths
      names one of the pull request's own changed paths or a contract the parent
      names for them.
-     A documentation file is a 1(a) protected path, and both searches are item
-     3's literal search under its history rule: changelogs, roadmaps, backlogs
+     A documentation file is a 1(a) protected path. Both searches use **Bound
+     the documentation audit** item 3's literal search under its history rule:
+     changelogs, roadmaps, backlogs
      and archived plans are never searched files by a mention alone, and
      `CHANGELOG.md` and `VERSION` are never search terms. The guard alone judges
      base-side paths; item 4's broad fallback, classify's not-applied checks and
@@ -3353,19 +3355,22 @@ there, and any unexpected command or script failure is `command-failed`.
      `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the
      project instructions name as the product spec; because the list uses
      `--no-renames`, a deleted, added or renamed spec (old and new names) all
-     count.
-   When the extra audit is authorized but step 2's condition does not hold, it
-   does not run and records `Doc-audit extra: action=today` with that reason and
-   `result=none`, then takes the owner stop. Before launching the extra attempt,
+     count. This predicate also matches source basenames such as `spec.ts` or
+     `spec.test.ts` for the extra-attempt decision only.
+   When an authorization condition or step 2's condition fails, record
+   `Doc-audit extra: action=today` with that reason and `result=none`, then take
+   the owner stop. Before launching the extra attempt,
    the parent appends the `Doc-audit extra: action=extra-audit` line to
    `doc-audit-extra.txt` first, so an interrupted launch counts as used on
    resume. The launch runs `gstack-docs-candidate attempt` like any launch; an
    `ATTEMPT: not-counted` install refusal lets upstream's one relaunch run as
-   the same extra attempt with no new `action=extra-audit` line, whereas if
-   `gstack-docs-candidate attempt` refuses the relaunch (exit 3, STOP) because
-   the install-refusal allowance was already used, the extra attempt is spent:
+   the same extra attempt with no new `action=extra-audit` line. If
+   `gstack-docs-candidate attempt` refuses either launch (exit 3, STOP),
+   including when the install-refusal allowance was already used before the
+   first extra launch, the extra attempt is spent:
    record `result=refused` and take the owner stop. When the attempt ends, the
-   parent appends an `action=result` line with its outcome. On resume, an
+   parent appends an `action=result` line with its outcome. On resume, reconcile
+   any interrupted extra launch before deciding whether an attempt remains. An
    `action=extra-audit` line with no later `action=result` line is an
    interrupted extra launch: the parent first runs blocked recovery step 1
    (confirm the child stopped), then validates that child's saved output through
@@ -3377,23 +3382,29 @@ there, and any unexpected command or script failure is `command-failed`.
    accepted extra audit with no attempt left reaches the trigger again:
    classify, with these additions, runs against the extra audit as the last
    accepted audit; no second extra audit runs; the owner stop follows otherwise.
-4. **Recording, status lines and veto line.** Under `doc-audit-gap=auto`,
-   `Post-audit change:` `class=` gains `undocumented-internal` and `base-merge`,
-   and `carried-audit=<audit_id> <section-sha256>` names the reused audit
-   (without the value the closed class list is unchanged). A reuse writes no new
+4. **Recording, status lines and veto line.** When this paragraph group applies,
+   use this extended template for the `Post-audit change:` line:
+
+   `Post-audit change: <full commit SHA>; paths=<n>; class=<rename|tests-only|test-tooling|todos-only|mechanical-correction|already-documented|undocumented-internal|base-merge|documented-behavior>; owner=<not-needed|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`
+
+   `carried-audit=<audit_id> <section-sha256>` names the reused audit. A reuse writes no new
    `record audit`: the compact receipt's `- documentation:` line renders
    `not-run` for the final head, exactly as a `post-audit=classify` accept does
    today, so `/ship-and-land` runs its documentation audit on the shipped head
    under its existing rule and never labels the earlier audit as the prepared
    tree's. Write one status line beside the documentation section (never inside
-   it):
+   it), using the latest trigger's reuse decision:
    - when a trigger is reached with both companions present:
      `doc-audit-gap: active; reuse=applied` or
      `doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`,
      with `<token>` one of `walk-missed-snapshot`, `dirty-tree`,
      `base-fetch-failed`, `merge-unqualified`, `merge-guard-failed`,
      `git-too-old`, `docs-roots-unreadable`, `command-failed`, or
-     `classify-not-applied` followed by classify's own reason;
+     `classify-not-applied` followed by classify's own reason. Use
+     `reuse=applied` only when classify continues on the carried audit. If
+     classify leaves `owner=needed`, has no accepted audit or has an empty
+     walk without a reuse decision, use `classify-not-applied` with that
+     reason. An extra audit gets its own `Doc-audit extra:` lines;
    - when the value did nothing:
      `doc-audit-gap: not applied — <token> <context>; evidence=<evidence locator>`,
      with `<token>` one of `full-suite-absent`, `post-audit-absent`, or
@@ -4808,13 +4819,12 @@ the relevant base/head refs. Require all of the following:
   line with `owner=not-needed` for every commit after its post-child snapshot
   satisfies the documentation gate for the final content, with the audit's own
   status; an `owner=needed` line still needs the user's named-risk decision.
-  Under `doc-audit-gap=auto`, that readiness rule requires an `owner=not-needed`
-  `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD`
+  When **Under `doc-audit-gap=auto`** is active, that readiness rule requires an
+  `owner=not-needed` `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD`
   (`undocumented-internal` and `base-merge` lines are `owner=not-needed`, and
   base commits a qualifying merge brings in need no line of their own, because
   the merge's `class=base-merge` line covers them), while an extra audit's own
-  accepted result satisfies the gate as any audit does; without the value the
-  sentence is unchanged.
+  accepted result satisfies the gate as any audit does.
   Under `full-suite=external`, the latest accepted result must be a pass whose
   `External gate attestation:` row carries a head and tree equal to the final
   head and tree; a reuse never counts as, replaces or defers that attestation. Keep older rows as history; they cannot satisfy this gate.
@@ -4901,7 +4911,8 @@ this receipt-line table (templates live in each row's producing section):
 | the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line | when `test-gaps=record` is on the policy line; recorded gaps are omitted from `Unresolved:` (**Record unproven test gaps**) | yes | yes | yes |
 | `blocking:`, `Finding blocking:`, `Finding not blocking:` | when `blocking=shown` is on the policy line, with the authorizing policy line; non-blocking findings are omitted from `Unresolved:` (**Block readiness only on shown findings**) | yes | yes | yes |
 | `settled:`, `Finding settled:` | when **Give review parts the settled decisions** built or checked settled context; settled findings are omitted from `Unresolved:` | yes | yes | yes |
-| `post-audit:`, `Post-audit change:`, `doc-audit-gap:`, `Doc-audit extra:` | when `post-audit=classify` or `doc-audit-gap=auto` is on the policy line, including the `undocumented-internal` and `base-merge` classes under `doc-audit-gap=auto` (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
+| `post-audit:`, `Post-audit change:` | when `post-audit=classify` is on the policy line, with `undocumented-internal` and `base-merge` classes only when **Under `doc-audit-gap=auto`** is active (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
+| `doc-audit-gap:`, `Doc-audit extra:` | when `doc-audit-gap=auto` is on the policy line. `Doc-audit extra:` requires both companions and an extra-audit decision (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
 | the `delegation:` status line and every `Delegated part:` line | when `delegate=<part>` is on the policy line and the receipt carries Step 2 review evidence; name the configuration's SHA-256 and labels, never its path (**Delegate named specialist parts**) | yes | yes | yes |
 | `Review arm:`, `Folded checklist:` | when `specialists=fold` is on the policy line (**Fold specialist checklists into cycle 1**) | yes | yes | yes |
 | `specialists-dispatched:` | only while the policy's `delegate=` or `specialists=fold` section is active (**Delegate named specialist parts**, **Fold specialist checklists into cycle 1**) | yes | yes | yes |

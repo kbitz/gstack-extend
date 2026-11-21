@@ -3599,18 +3599,20 @@ describe('(R) doc-audit-gap=auto', () => {
     }
 
     // X10: quickstart example policy line parses with parsePolicy and each example receipt line matches the skill's template
-    const quickstartMatch = [...DOC.matchAll(/^```text\n(Review policy: review-and-prep-policy\/v1[^\n]*doc-audit-gap=auto[\s\S]*?)\n```$/gm)];
+    const quickstartMatch = [...DOC.matchAll(/^```text\n# Policy to send after all capability checks pass\n(Review policy: review-and-prep-policy\/v1[^\n]*doc-audit-gap=auto[\s\S]*?)\n```$/gm)];
     expect(quickstartMatch).toHaveLength(1);
-    const qLines = quickstartMatch[0]![1]!.split('\n');
+    const qLines = quickstartMatch[0]![1]!.split('\n').filter((line) => line && !line.startsWith('# '));
     expect(qLines).toHaveLength(7);
     const parsedQuickstart = parsePolicy(qLines[0]!.replace('Review policy: ', ''));
     expect(parsedQuickstart?.get('full-suite')).toBe('external');
     expect(parsedQuickstart?.get('post-audit')).toBe('classify');
     expect(parsedQuickstart?.get('doc-audit-gap')).toBe('auto');
     expect(qLines[1]).toBe('doc-audit-gap: active; reuse=applied');
-    expect(qLines[2]).toMatch(
-      /^Post-audit change: [0-9a-f]{40}; paths=\d+; class=(?:undocumented-internal|base-merge); owner=not-needed; carried-audit=\S+ [0-9a-f]{64}; reason=.+; evidence=\S+\/\S+$/,
-    );
+    const exampleChange = /^Post-audit change: [0-9a-f]{40}; paths=\d+; class=([a-z-]+); owner=not-needed; carried-audit=\S+ [0-9a-f]{64}; reason=.+; evidence=\S+\/\S+$/.exec(qLines[2]!);
+    expect(exampleChange?.[1]).toBe('undocumented-internal');
+    const extendedTemplate = /`Post-audit change: <full commit SHA>; paths=<n>; class=<([^`>]*\bundocumented-internal\b[^`>]*)>; owner=<not-needed\|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`/.exec(prep);
+    expect(extendedTemplate?.[1]?.split('|')).toContain(exampleChange?.[1]);
+    expect(extendedTemplate?.[1]?.split('|')).toContain('base-merge');
     for (const [idx, wantAction, wantResult] of [
       [3, 'extra-audit', 'none'],
       [4, 'result', 'accepted'],
