@@ -26,34 +26,28 @@ import {
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  DOCS_SHIP_TAIL,
-  CANONICAL_SPAN,
   CMD_BIN_RE,
-  FOR_POINTER_LINE,
-  FOR_SKILL_LINE,
   GUARD_COMMENT,
   GUARD_LINE,
   HANDOFF_PARAGRAPH,
   INIT_ERROR_STOP,
-  INIT_TAIL,
   MARKER_LINE,
   NO_INSTALL_MESSAGE,
+  PREAMBLE_GRANT,
+  PREAMBLE_GRANT_OUTCOME,
   RENAMES_ER_LINE,
   ROOT_RESOLVER_SKILLS,
   SKILL_PATH_PREFIXES,
   SKILL_PATH_RE,
   UPGRADE_NO_ROOT,
-  UPGRADE_TAIL,
-  WORKFLOW_SKILLS,
-  WORKFLOW_TAIL,
   agentShells,
-  extractCanonicalSpan,
+  expectedPreambleLine,
   extractFences,
   extractPreambleFence,
   hostDir,
+  preambleFailureParagraph,
   runShell,
   scopedEnv,
-  skillPreamble,
   strictShells,
   writePointer,
   writeUpdateCheck,
@@ -330,21 +324,22 @@ describe('verbatim graft blocks (shared across all 5 skills)', () => {
 });
 
 describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill name)', () => {
-  test('upgrade activation precedes its actual upgrade work', () => {
+  test('upgrade preamble precedes its actual upgrade work', () => {
     const content = readFileSync(join(ROOT, 'skills/gstack-extend-upgrade.md'), 'utf8');
-    expect(content.indexOf('<!-- SHARED:telemetry-start -->')).toBeLessThan(content.indexOf('bin/update-check'));
+    expect(content.indexOf('## Preamble (run first)')).toBeGreaterThan(-1);
+    expect(content.indexOf('## Preamble (run first)')).toBeLessThan(content.indexOf('bin/update-run'));
   });
   test('telemetry covers exactly the installed cohort', () => {
     expect([...TELEMETRY_SKILLS].sort()).toEqual(parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8')).sort());
   });
-  test('canonical preamble block extracted from skills/full-review.md', () => {
-    expect(CANONICAL_TELEMETRY_PREAMBLE).not.toBe('');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('<!-- SHARED:telemetry-start -->');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('--skill "extend:full-review"');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('"$_GE_CALL" start --skill');
-    // The lookup ladder lives in the helper setup installs, not in the block.
-    expect(CANONICAL_TELEMETRY_PREAMBLE).not.toContain('.extend-root');
-    expect(TELEMETRY_CALL_HELPER).toContain('.extend-root');
+  test('no skill carries SHARED:telemetry-start (moved into ~/.gstack-extend/bin/preamble)', () => {
+    for (const skill of TELEMETRY_SKILLS) {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      expect(content, skill).not.toContain('<!-- SHARED:telemetry-start -->');
+      expect(content, skill).not.toContain('<!-- /SHARED:telemetry-start -->');
+    }
+    const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
+    expect(docs).not.toContain('<!-- SHARED:telemetry-start -->');
   });
   test('canonical epilogue block extracted from skills/full-review.md', () => {
     expect(CANONICAL_TELEMETRY_EPILOGUE).not.toBe('');
@@ -353,12 +348,14 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('"$_GE_CALL" finish --skill');
     expect(TELEMETRY_CALL_HELPER).toContain('bin/gstack-extend-telemetry');
   });
-  test('the shared blocks make a resume its own segment and a pause a blocked finish', () => {
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('each resume starts its own segment');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).not.toContain('skip another start');
+  test('the shared finish block makes a pause a blocked finish and resumable skills use --resume', () => {
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('`blocked`');
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('deliberately pauses');
     expect(CANONICAL_TELEMETRY_EPILOGUE).not.toContain('defers finish');
+    for (const skill of ['full-review', 'pair-review', 'review-and-prep']) {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      expect(content, skill).toContain(`~/.gstack-extend/bin/preamble ${skill} --resume`);
+    }
   });
   test('no skill keeps the old defer-finish or skip-start wording', () => {
     const stale = ['defers finish', 'defer `SHARED:telemetry-finish`', 'defer Telemetry finish', 'skip another start'];
@@ -371,26 +368,22 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     expect(hits).toEqual([]);
   });
   // Drift locks use content.includes(), which cannot see a duplicated block, a finish that precedes
-  // its start, or a skill whose frontmatter forbids the Bash tool the blocks need. Duplicated starts
-  // would emit an unpaired activation per invocation; a missing Bash grant silently disables telemetry.
-  test('every skill has exactly one start before exactly one finish, allows Bash, and docs/telemetry.md copies the canonical blocks', () => {
+  // its preamble, or a skill whose frontmatter forbids the Bash tool.
+  test('every skill has its preamble before exactly one finish, allows Bash, and docs/telemetry.md copies the canonical finish block', () => {
     const problems: string[] = [];
     for (const skill of TELEMETRY_SKILLS) {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
       const count = (needle: string) => content.split(needle).length - 1;
-      for (const kind of ['start', 'finish']) {
-        if (count(`<!-- SHARED:telemetry-${kind} -->`) !== 1) problems.push(`${skill}: expected exactly one opening telemetry-${kind} marker`);
-        if (count(`<!-- /SHARED:telemetry-${kind} -->`) !== 1) problems.push(`${skill}: expected exactly one closing telemetry-${kind} marker`);
-        if (count(`"$_GE_CALL" ${kind} --skill "extend:${skill}"`) !== 1) problems.push(`${skill}: expected exactly one ${kind} invocation`);
-      }
-      if (content.indexOf('<!-- SHARED:telemetry-start -->') > content.indexOf('<!-- SHARED:telemetry-finish -->')) {
-        problems.push(`${skill}: finish block precedes start block`);
+      if (count('<!-- SHARED:telemetry-finish -->') !== 1) problems.push(`${skill}: expected exactly one opening telemetry-finish marker`);
+      if (count('<!-- /SHARED:telemetry-finish -->') !== 1) problems.push(`${skill}: expected exactly one closing telemetry-finish marker`);
+      if (count(`"$_GE_CALL" finish --skill "extend:${skill}"`) !== 1) problems.push(`${skill}: expected exactly one finish invocation`);
+      if (content.indexOf('## Preamble (run first)') > content.indexOf('<!-- SHARED:telemetry-finish -->')) {
+        problems.push(`${skill}: finish block precedes preamble`);
       }
       const frontmatter = /^---\n([\s\S]*?)\n---/.exec(content)?.[1] ?? '';
       if (!/^\s+- Bash\s*$/m.test(frontmatter)) problems.push(`${skill}: allowed-tools must include Bash`);
     }
     const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
-    if (TELEMETRY_PREAMBLE_RE.exec(docs)?.[0] !== CANONICAL_TELEMETRY_PREAMBLE) problems.push('docs/telemetry.md start block differs from the canonical block');
     if (TELEMETRY_EPILOGUE_RE.exec(docs)?.[0] !== CANONICAL_TELEMETRY_EPILOGUE) problems.push('docs/telemetry.md finish block differs from the canonical block');
     expect(problems).toEqual([]);
   });
@@ -403,14 +396,6 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     } catch {
       continue;
     }
-    test(`${skill} embeds the canonical telemetry-start block (skill name: extend:${skill})`, () => {
-      const expected = telemetryPreambleFor(skill);
-      if (!content.includes(expected)) {
-        throw new Error(
-          `${skill} drift in SHARED:telemetry-start — propagate canonical text from skills/full-review.md`,
-        );
-      }
-    });
     test(`${skill} embeds the canonical telemetry-finish block (skill name: extend:${skill})`, () => {
       const expected = telemetryEpilogueFor(skill);
       if (!content.includes(expected)) {
@@ -438,11 +423,10 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
   ].join('\n');
 
   for (const skill of TELEMETRY_SKILLS) {
-    test(`${skill}: both fences are exactly the helper call, with no lookup of their own`, () => {
+    test(`${skill}: finish fence is exactly the helper call, and no start fence remains`, () => {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-      for (const kind of ['start', 'finish'] as const) {
-        expect(telemetryFence(content, kind)).toBe(expectedFence(kind, skill));
-      }
+      expect(telemetryFence(content, 'start')).toBe('');
+      expect(telemetryFence(content, 'finish')).toBe(expectedFence('finish', skill));
     });
   }
 
@@ -453,7 +437,7 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
       expect(content, skill).not.toContain('start-finish-v1');
     }
     for (const needle of ['_ge_ok()', 'telemetry-protocol: start-finish-v1', 'command -v gstack-extend-telemetry',
-      '.claude/skills/*/.extend-root', '.codex/skills/*/.extend-root', '.config/opencode/skills/*/.extend-root', '.cursor/skills/*/.extend-root']) {
+      '.claude/skills/*/.extend-root', '.codex/skills/*/.extend-root']) {
       expect(TELEMETRY_CALL_HELPER).toContain(needle);
     }
   });
@@ -474,28 +458,24 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
 });
 
 describe('Track 49A recorded block sizes', () => {
-  // The table records before-and-after bytes at base a74abf4. /plan-track came later with the same blocks and
-  // has no before figure, so it has no row; /autoplan-lean was retired after the measurement and keeps its row.
+  // Historical Track 49A measurement at base a74abf4 (kept unchanged per Track 92A E19; start fences moved into preamble).
   const MEASURED_SKILLS = TELEMETRY_SKILLS.filter(skill => skill !== 'plan-track');
   const RETIRED_MEASURED_SKILLS = ['autoplan-lean'] as const;
   const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
   const rows = [...docs.matchAll(/^\| `([a-z-]+)` \| (\d+) \| (\d+) \| (\d+) \|$/gm)]
     .map(m => ({ skill: m[1], before: Number(m[2]), after: Number(m[3]), saved: Number(m[4]) }));
 
-  test('the table has one row per telemetry skill', () => {
+  test('the historical table has one row per measured skill and no skill carries a start fence', () => {
     expect(rows.map(r => r.skill).sort()).toEqual([...MEASURED_SKILLS, ...RETIRED_MEASURED_SKILLS].sort());
     expect(rows).toHaveLength(11);
-  });
-  for (const skill of MEASURED_SKILLS) {
-    test(`${skill}: the recorded size matches the skill and saved is positive`, () => {
-      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-      const after = (['start', 'finish'] as const).reduce((sum, kind) => sum + Buffer.byteLength(telemetryFence(content, kind)), 0);
-      const row = rows.find(r => r.skill === skill)!;
-      expect(row.after, `${skill}: stale after-size in docs/telemetry.md; the fences now measure ${after} bytes`).toBe(after);
+    for (const row of rows) {
       expect(row.saved).toBe(row.before - row.after);
       expect(row.saved).toBeGreaterThan(0);
-    });
-  }
+    }
+    for (const skill of TELEMETRY_SKILLS) {
+      expect(telemetryFence(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8'), 'start')).toBe('');
+    }
+  });
 });
 
 // ─── Track 49A: one state-root rule for run and handoff paths ─────
@@ -1001,8 +981,6 @@ describe('utility/workflow skills carry only upgrade-flow and telemetry SHARED b
       expect(markers).toEqual([
         'SHARED:upgrade-flow',
         '/SHARED:upgrade-flow',
-        'SHARED:telemetry-start',
-        '/SHARED:telemetry-start',
         'SHARED:telemetry-finish',
         '/SHARED:telemetry-finish',
       ]);
@@ -1116,53 +1094,53 @@ describe('Track 76A Conductor removal and host-neutral prompt visibility', () =>
   });
 });
 
-describe('Track 16D extend-root resolver locks', () => {
-  const upgrade = resolverSkillText('gstack-extend-upgrade');
-  const span = extractCanonicalSpan(upgrade);
+describe('Track 16D / 92A extend-root resolver and start-command locks', () => {
+  const preambleScript = readFileSync(join(ROOT, 'bin', 'lib', 'preamble.sh'), 'utf8');
 
-  test('canonical span matches the locked text', () => {
-    expect(span).toBe(CANONICAL_SPAN);
-  });
-
-  test('L1: span is byte-identical exactly once, and each _ER_SKILL line is pinned', () => {
+  test('L1: every skill preamble is one fixed start line and carries the frontmatter grant per T1 outcome', () => {
     for (const skill of ROOT_RESOLVER_SKILLS) {
       const content = resolverSkillText(skill);
-      if (content.split(span).length - 1 !== 1) {
-        throw new Error(
-          `drift in extend-root resolver — propagate canonical span from skills/gstack-extend-upgrade.md (${skill})`,
-        );
+      expect(content, skill).toContain('## Preamble (run first)');
+      const line = extractPreambleFence(content);
+      expect(line, skill).toBe(expectedPreambleLine(skill));
+      expect(line.includes('\n'), skill).toBe(false);
+      expect(line.startsWith('~/'), skill).toBe(true);
+      expect(line, skill).not.toMatch(/[;&|><$"'`]/);
+
+      const frontmatter = /^---\n([\s\S]*?)\n---/.exec(content)?.[1] ?? '';
+      const grantMatches = frontmatter.split(`  - ${PREAMBLE_GRANT}`).length - 1;
+      if (PREAMBLE_GRANT_OUTCOME === 'frontmatter-grant') {
+        expect(grantMatches, `${skill} frontmatter grant`).toBe(1);
+        expect(frontmatter, skill).toContain(`  - Bash\n  - ${PREAMBLE_GRANT}\n`);
+      } else {
+        expect(grantMatches, `${skill} frontmatter grant`).toBe(0);
       }
-      expect(content.match(/^_ER_SKILL=\S+$/gm)).toEqual([`_ER_SKILL=${skill}`]);
     }
   });
 
-  test('L2: canonical span keeps the absolute-path, file, executable, and marker checks', () => {
-    expect(span).toContain('case "$_ER" in /*)');
-    expect(span).toContain('[ -f');
-    expect(span).toContain('[ -x');
-    expect(span).toContain(`grep -qx '${MARKER_LINE}'`);
-    expect(span).toContain(FOR_SKILL_LINE);
-    expect(span).toContain(FOR_POINTER_LINE);
+  test('L2: bin/lib/preamble.sh keeps absolute-path, file, executable, marker checks and two-host loops', () => {
+    expect(preambleScript).toContain('case "$_ER" in /*)');
+    expect(preambleScript).toContain('[ -f');
+    expect(preambleScript).toContain('[ -x');
+    expect(preambleScript).toContain(`grep -qx '${MARKER_LINE}'`);
+    expect(preambleScript).toContain('for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md; do');
+    expect(preambleScript).toContain('for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root; do');
+    expect(preambleScript).not.toContain('.cursor/skills');
+    expect(preambleScript).not.toContain('.config/opencode/skills');
   });
 
-  test('L3: workflow, upgrade, and init tails are verbatim', () => {
-    for (const skill of WORKFLOW_SKILLS) {
-      expect(extractPreambleFence(resolverSkillText(skill))).toBe(skillPreamble(skill, WORKFLOW_TAIL));
+  test('L3: every skill has no inline _ER_SKILL block', () => {
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      expect(resolverSkillText(skill), skill).not.toMatch(/^_ER_SKILL=/m);
     }
-    expect(extractPreambleFence(upgrade)).toBe(skillPreamble('gstack-extend-upgrade', UPGRADE_TAIL));
-    expect(extractPreambleFence(resolverSkillText('gstack-extend-init'))).toBe(
-      skillPreamble('gstack-extend-init', INIT_TAIL),
-    );
-    expect(extractPreambleFence(resolverSkillText('docs-ship'))).toBe(
-      skillPreamble('docs-ship', DOCS_SHIP_TAIL),
-    );
   });
 
-  test('L4: hand-off paragraph, upgrade no-root branch, and renames ER= line', () => {
+  test('L4: hand-off paragraph, coded failure messages, upgrade no-root branch, and renames ER= line', () => {
     for (const skill of ROOT_RESOLVER_SKILLS) {
       const content = resolverSkillText(skill);
-      expect(content).toContain(HANDOFF_PARAGRAPH);
-      expect(content).toContain(NO_INSTALL_MESSAGE);
+      expect(content, skill).toContain(HANDOFF_PARAGRAPH);
+      expect(content, skill).toContain(NO_INSTALL_MESSAGE);
+      expect(content, skill).toContain(preambleFailureParagraph(skill));
     }
     expect(resolverSkillText('gstack-extend-upgrade')).toContain(UPGRADE_NO_ROOT);
     expect(resolverSkillText('gstack-extend-init')).toContain(INIT_ERROR_STOP);
@@ -1269,6 +1247,11 @@ function plantHostileTree(cwd: string, skill: string): void {
 }
 
 function runPreamble(skill: string, home: string, cwd: string, extra: Record<string, string> = {}) {
+  const binDir = join(home, '.gstack-extend', 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const dst = join(binDir, 'preamble');
+  copyFileSync(join(ROOT, 'bin', 'lib', 'preamble.sh'), dst);
+  chmodSync(dst, 0o755);
   const script = extractPreambleFence(resolverSkillText(skill));
   return strictShells().map((sh) => {
     const extraForShell = { ...extra };
@@ -1284,63 +1267,8 @@ function runPreamble(skill: string, home: string, cwd: string, extra: Record<str
   });
 }
 
-// Helper-tail skills exit 1 without a verified root and run update-check only after printing it.
-const INIT_LIKE = new Set<string>(['gstack-extend-init', 'docs-ship']);
-
 describe('Track 16D preamble representatives', () => {
   const cohorts = ['pair-review', 'gstack-extend-upgrade', 'gstack-extend-init'] as const;
-
-  for (const skill of ROOT_RESOLVER_SKILLS) {
-    for (const install of ['pointer', 'symlink', 'unverified'] as const) {
-      test(`Cursor-only ${skill} preamble resolves ${install} installs safely`, () => {
-        const label = `cursor-${skill}-${install}`;
-        const home = join(extendRootTmp, `${label} home`);
-        const root = join(extendRootTmp, `${label} checkout`);
-        const cwd = join(extendRootTmp, `${label}-cwd`);
-        const sentinel = join(extendRootTmp, `${label}-sentinel`);
-        const hostileSentinel = join(extendRootTmp, `${label}-hostile`);
-        mkdirSync(cwd, { recursive: true });
-        writeUpdateCheck(root, { marker: install !== 'unverified', record: true });
-        if (INIT_LIKE.has(skill)) {
-          const bin = join(root, 'bin', skill === 'gstack-extend-init' ? 'gstack-extend' : skill);
-          writeFileSync(bin, '#!/bin/sh\nexit 0\n');
-          chmodSync(bin, 0o755);
-        }
-        const dir = hostDir(home, 'cursor', skill);
-        mkdirSync(dir, { recursive: true });
-        if (install === 'symlink') {
-          mkdirSync(join(root, 'skills'), { recursive: true });
-          writeFileSync(join(root, 'skills', `${skill}.md`), 'skill\n');
-          symlinkSync(join(root, 'skills', `${skill}.md`), join(dir, 'SKILL.md'));
-        } else {
-          writePointer(home, 'cursor', skill, root);
-          writeFileSync(join(dir, 'SKILL.md'), 'generated copy\n');
-        }
-        // A repository-local Cursor install must never override the HOME install.
-        const evil = join(cwd, 'evil');
-        writeUpdateCheck(evil);
-        writeFileSync(join(evil, 'bin', 'update-check'),
-          `#!/bin/sh\n${MARKER_LINE}\nprintf hostile > "$HOSTILE_SENTINEL"\n`);
-        writePointer(cwd, 'cursor', skill, evil);
-        for (const r of runPreamble(skill, home, cwd, {
-          SENTINEL: sentinel, HOSTILE_SENTINEL: hostileSentinel,
-        })) {
-          expect(r.stderr).toBe('');
-          expect(existsSync(hostileSentinel)).toBe(false);
-          if (install === 'unverified') {
-            expect(r.stdout).toContain("lacks the line '# extend-root-protocol: v1'");
-            expect(r.stdout).not.toContain('EXTEND_ROOT:');
-            expect(r.status).toBe(INIT_LIKE.has(skill) ? 1 : 0);
-            expect(existsSync(r.sentinel!)).toBe(false);
-          } else {
-            expect(r.status).toBe(0);
-            expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
-            expect(readFileSync(r.sentinel!, 'utf8').trim()).toBe(root);
-          }
-        }
-      });
-    }
-  }
 
   test('verified root prints EXTEND_ROOT and pins GSTACK_EXTEND_DIR', () => {
     for (const skill of cohorts) {
@@ -1415,12 +1343,13 @@ describe('Track 16D preamble representatives', () => {
       mkdirSync(home, { recursive: true });
       plantHostileTree(cwd, skill);
       for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel })) {
-        expect(r.stderr).toBe('');
         expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
         if (skill === 'gstack-extend-init') {
+          expect(r.stderr).toBe('');
           expect(r.status).toBe(1);
           expect(r.stdout).toContain('ERROR:');
         } else {
+          expect(r.stderr).toContain(`preamble: no gstack-extend install under ~/.claude/skills/${skill} or ~/.codex/skills/${skill}`);
           expect(r.status).toBe(0);
           expect(r.stdout).not.toContain('EXTEND_ROOT:');
         }

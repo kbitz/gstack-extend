@@ -60,6 +60,7 @@ const SETUP = join(ROOT, 'setup');
 const SEMVER_LIB = join(ROOT, 'bin', 'lib', 'semver.sh');
 const RUN_MIGRATIONS = join(ROOT, 'bin', 'lib', 'run-migrations.sh');
 const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
+const PREAMBLE_LIB = join(ROOT, 'bin', 'lib', 'preamble.sh');
 
 const baseTmp = makeBaseTmp('update-test-');
 afterAll(() => {
@@ -138,6 +139,8 @@ function createFixtureRepoWithRealSetup(
   writeFileSync(join(dir, 'setup'), opts.setupText ?? readFileSync(SETUP, 'utf8'));
   chmodSync(join(dir, 'setup'), 0o755);
   writeFileSync(join(dir, 'bin', 'lib', 'install-safety.sh'), readFileSync(INSTALL_SAFETY_LIB));
+  writeFileSync(join(dir, 'bin', 'lib', 'preamble.sh'), readFileSync(PREAMBLE_LIB));
+  chmodSync(join(dir, 'bin', 'lib', 'preamble.sh'), 0o755);
 
   // Real update-run.
   writeFileSync(join(dir, 'bin', 'update-run'), readFileSync(UPDATE_RUN));
@@ -1461,18 +1464,30 @@ describe('setup install-time safety: per-$target layer', () => {
 
 const RESOLVER_SKILL = 'gstack-extend-upgrade';
 
-function probeExtendRoot(home: string, cwd: string, skillText?: string) {
-  const text = skillText ?? readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
-  const script = resolverProbeScript(text);
+function probeExtendRoot(home: string, cwd: string, _skillText?: string) {
+  const binDir = join(home, '.gstack-extend', 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const dst = join(binDir, 'preamble');
+  writeFileSync(dst, readFileSync(PREAMBLE_LIB));
+  chmodSync(dst, 0o755);
+  const script = `~/.gstack-extend/bin/preamble ${RESOLVER_SKILL} --root`;
   return strictShells().map((sh) => {
     const r = runShell(sh.shell, sh.args, script, scopedEnv(home), cwd);
     const lines = (r.stdout ?? '').split('\n');
+    const rootLine = lines.find((l) => l.startsWith('EXTEND_ROOT: ')) ?? '';
+    const unvLine = lines.find((l) => l.startsWith('EXTEND_ROOT_UNVERIFIED: ')) ?? '';
+    const root = rootLine ? rootLine.slice('EXTEND_ROOT: '.length) : '';
+    const unverified = unvLine ? unvLine.slice('EXTEND_ROOT_UNVERIFIED: '.length) : '';
+    const rawStderr = r.stderr ?? '';
+    const stderr = !root && !unverified && rawStderr.trim() === `preamble: no gstack-extend install under ~/.claude/skills/${RESOLVER_SKILL} or ~/.codex/skills/${RESOLVER_SKILL}`
+      ? ''
+      : rawStderr;
     return {
       shell: sh.shell,
       status: r.status,
-      stderr: r.stderr ?? '',
-      root: lines[0] ?? '',
-      unverified: lines[1] ?? '',
+      stderr,
+      root,
+      unverified,
     };
   });
 }
@@ -1698,6 +1713,10 @@ describe('Track 16D update-check env pin', () => {
     chmodSync(join(hostile, 'bin', 'config'), 0o755);
     writePointer(home, 'claude', RESOLVER_SKILL, ROOT);
     writeFileSync(join(hostDir(home, 'claude', RESOLVER_SKILL), 'SKILL.md'), 'copy\n');
+    const binDir = join(home, '.gstack-extend', 'bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'preamble'), readFileSync(PREAMBLE_LIB));
+    chmodSync(join(binDir, 'preamble'), 0o755);
     const script = extractPreambleFence(readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8'));
     const r = runShell('bash', ['-euc'], script, scopedEnv(home, {
       GSTACK_EXTEND_DIR: hostile,
@@ -2285,10 +2304,9 @@ exec /bin/mv "$@"
   });
 
   test('R6 frozen preambles show warnings after version results', () => {
-    for (const skill of ['roadmap.md', 'pair-review.md', 'full-review.md']) {
-      expect(readFileSync(join(ROOT, 'skills', skill), 'utf8')).toContain(ORDINARY_CAPTURE.split('\n')[0]!);
-    }
-    expect(readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8')).toContain(FORCE_CAPTURE.split('\n')[0]!);
+    const preambleSrc = readFileSync(PREAMBLE_LIB, 'utf8');
+    expect(preambleSrc).toContain('GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null');
+    expect(preambleSrc).toContain('GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" --force 2>/dev/null');
     const fx = warnedFixture('r6', '2.0.0\n');
     for (const capture of [ORDINARY_CAPTURE, FORCE_CAPTURE]) {
       const seen = runFrozen(fx.repo, fx.home, fx.state, capture, fx.remote);

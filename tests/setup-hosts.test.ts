@@ -308,6 +308,7 @@ describe('setup --host flags', () => {
       mkdirSync(home, { recursive: true });
       copyFileSync(SETUP, join(fixture, 'setup'));
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(fixture, 'bin/lib/preamble.sh'));
       for (const skill of SKILLS) {
         writeFileSync(join(fixture, 'skills', `${skill}.md`),
           `---\nname: ${skill}\ndescription: Fixture\n---\n\`\`\`bash\nprintf '%s\\n' ~/.claude/skills/pair-review/SKILL.md\n\`\`\`\n`);
@@ -342,6 +343,7 @@ describe('setup --host flags', () => {
       mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
       copyFileSync(SETUP, join(fixture, 'setup'));
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(fixture, 'bin/lib/preamble.sh'));
       const source = (skill: string) => `---\nname: ${skill}\ndescription: Fixture\nallowed-tools:\n  - Bash\n---\nBODY\n`;
       for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), source(skill));
       const dir = join(hostDir(home, host), 'pair-review');
@@ -375,6 +377,7 @@ describe('setup --host flags', () => {
       mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
       copyFileSync(SETUP, join(fixture, 'setup'));
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(fixture, 'bin/lib/preamble.sh'));
       for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), `---\nname: ${skill}\ndescription: F\n---\nNEW\n`);
       const dir = join(hostDir(home, host), 'pair-review');
       mkdirSync(dir, { recursive: true });
@@ -1698,6 +1701,7 @@ exec /usr/bin/mktemp "$@"
     chmodSync(join(other, 'setup'), 0o755);
     mkdirSync(join(other, 'bin', 'lib'), { recursive: true });
     copyFileSync(join(ROOT, 'bin', 'lib', 'install-safety.sh'), join(other, 'bin', 'lib', 'install-safety.sh'));
+    copyFileSync(join(ROOT, 'bin', 'lib', 'preamble.sh'), join(other, 'bin', 'lib', 'preamble.sh'));
     copyFileSync(join(ROOT, 'bin', 'update-check'), join(other, 'bin', 'update-check'));
     chmodSync(join(other, 'bin', 'update-check'), 0o755);
     writeFileSync(skillPath(other, 'implement'), 'other source\n');
@@ -1895,6 +1899,7 @@ exec /usr/bin/mktemp "$@"
     copyFileSync(SETUP, join(other, 'setup'));
     chmodSync(join(other, 'setup'), 0o755);
     copyFileSync(join(ROOT, 'bin', 'lib', 'install-safety.sh'), join(other, 'bin', 'lib', 'install-safety.sh'));
+    copyFileSync(join(ROOT, 'bin', 'lib', 'preamble.sh'), join(other, 'bin', 'lib', 'preamble.sh'));
     writeFileSync(join(other, 'VERSION'), '1.0.0~dev\n');
     mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
     symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
@@ -2935,7 +2940,7 @@ describe('telemetry-call helper install', () => {
       expect(lstatSync(dst).isFile()).toBe(true);
       expect(statSync(dst).mode & 0o777).toBe(0o755);
       expect(readFileSync(dst).equals(readFileSync(source))).toBe(true);
-      expect(readdirSync(join(home, '.gstack-extend', 'bin'))).toEqual(['telemetry-call']);
+      expect(readdirSync(join(home, '.gstack-extend', 'bin')).sort()).toEqual(['preamble', 'telemetry-call']);
 
       expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
       expect(existsSync(dst)).toBe(false);
@@ -2972,7 +2977,7 @@ describe('telemetry-call helper install', () => {
     expect(result.stderr).toContain('Warning: could not install');
     expect(readFileSync(installed(home), 'utf8')).toBe(previous);
     expect(statSync(installed(home)).mode & 0o777).toBe(0o755);
-    expect(readdirSync(dir)).toEqual(['telemetry-call']);
+    expect(readdirSync(dir).sort()).toEqual(['preamble', 'telemetry-call']);
   });
 
   test('a pointer under any host keeps it until the last one is gone', () => {
@@ -2999,5 +3004,131 @@ describe('telemetry-call helper install', () => {
     writeFileSync(join(foreign, '.extend-root'), join(home, 'other-checkout') + '\n');
     expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
     expect(existsSync(installed(home))).toBe(true);
+  });
+});
+
+describe('preamble start-command install (Track 92A)', () => {
+  const source = join(ROOT, 'bin', 'lib', 'preamble.sh');
+  const installed = (home: string) => join(home, '.gstack-extend', 'bin', 'preamble');
+
+  test('setup installs executable byte-identical preamble copy and rerun refreshes stale copy', () => {
+    const home = join(baseTmp, 'preamble-install-refresh');
+    mkdirSync(home, { recursive: true });
+    const first = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(first.exitCode, first.stderr).toBe(0);
+    const dst = installed(home);
+    expect(lstatSync(dst).isFile()).toBe(true);
+    expect(statSync(dst).mode & 0o777).toBe(0o755);
+    expect(readFileSync(dst).equals(readFileSync(source))).toBe(true);
+
+    writeFileSync(dst, '#!/usr/bin/env bash\necho stale\n');
+    const second = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(second.exitCode, second.stderr).toBe(0);
+    expect(readFileSync(dst).equals(readFileSync(source))).toBe(true);
+  });
+
+  test('last-setup-wins: sequential setups from differing checkouts leave second bytes installed (E3)', () => {
+    const home = join(baseTmp, 'preamble-last-wins');
+    mkdirSync(home, { recursive: true });
+    // First setup from real checkout
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(installed(home)).equals(readFileSync(source))).toBe(true);
+
+    // Second setup from a minimal cloned checkout with modified preamble.sh
+    const altCheckout = join(baseTmp, 'alt-checkout-92a');
+    mkdirSync(join(altCheckout, 'bin', 'lib'), { recursive: true });
+    mkdirSync(join(altCheckout, 'skills'), { recursive: true });
+    for (const f of ['setup', 'VERSION']) {
+      writeFileSync(join(altCheckout, f), readFileSync(join(ROOT, f)));
+    }
+    chmodSync(join(altCheckout, 'setup'), 0o755);
+    for (const f of ['install-safety.sh', 'telemetry-call.sh']) {
+      writeFileSync(join(altCheckout, 'bin', 'lib', f), readFileSync(join(ROOT, 'bin', 'lib', f)));
+    }
+    const altPreamble = readFileSync(source, 'utf8') + '\n# alt-checkout-marker\n';
+    writeFileSync(join(altCheckout, 'bin', 'lib', 'preamble.sh'), altPreamble);
+    chmodSync(join(altCheckout, 'bin', 'lib', 'preamble.sh'), 0o755);
+    for (const entry of readdirSync(join(ROOT, 'skills'))) {
+      writeFileSync(join(altCheckout, 'skills', entry), readFileSync(join(ROOT, 'skills', entry)));
+    }
+    const r2 = spawnSync(join(altCheckout, 'setup'), ['--host', 'claude', '--quiet'], {
+      env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    expect(r2.status, r2.stderr).toBe(0);
+    expect(readFileSync(installed(home), 'utf8')).toBe(altPreamble);
+  });
+
+  for (const leafKind of ['directory', 'symlink'] as const) {
+    test(`refuses ${leafKind} at ~/.gstack-extend/bin/preamble with Fix line and nothing installed`, () => {
+      const home = join(baseTmp, `preamble-leaf-${leafKind}`);
+      mkdirSync(join(home, '.gstack-extend', 'bin'), { recursive: true });
+      if (leafKind === 'directory') {
+        mkdirSync(installed(home));
+      } else {
+        const target = join(home, 'some-file');
+        writeFileSync(target, 'keep');
+        symlinkSync(target, installed(home));
+      }
+      const res = runSetup(['--host', 'claude', '--quiet'], home);
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr).toContain('preamble');
+      expect(res.stderr).toContain('Fix:');
+      expect(existsSync(join(hostDir(home, 'claude'), 'implement'))).toBe(false);
+    });
+  }
+
+  test('failed preamble install (unwritable bin dir) exits 1 with Fix line and no skill installed', () => {
+    const home = join(baseTmp, 'preamble-unwritable-bin');
+    const dir = join(home, '.gstack-extend', 'bin');
+    mkdirSync(dir, { recursive: true });
+    chmodSync(dir, 0o555);
+    try {
+      const res = runSetup(['--host', 'codex', '--quiet'], home);
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr).toContain('Fix:');
+      expect(existsSync(installed(home))).toBe(false);
+      expect(existsSync(join(hostDir(home, 'codex'), 'implement'))).toBe(false);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
+
+  test('uninstall keeps preamble while any host pointer remains and removes it with the last', () => {
+    const home = join(baseTmp, 'preamble-uninstall-rule');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(runSetup(['--host', 'codex', '--quiet'], home).exitCode).toBe(0);
+    const first = runSetup(['--host', 'claude', '--uninstall'], home);
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain('Kept ~/.gstack-extend/bin/preamble');
+    expect(existsSync(installed(home))).toBe(true);
+    const last = runSetup(['--host', 'codex', '--uninstall'], home);
+    expect(last.exitCode).toBe(0);
+    expect(last.stdout).toContain('Removed preamble');
+    expect(existsSync(installed(home))).toBe(false);
+  });
+
+  test('cutover (E16): upgrading legacy HOME without preamble installs start command and resolves root', () => {
+    const home = join(baseTmp, 'preamble-cutover-e16');
+    mkdirSync(join(home, '.gstack-extend', 'bin'), { recursive: true });
+    // Legacy layout: telemetry-call present, no preamble, skill link present
+    writeFileSync(join(home, '.gstack-extend', 'bin', 'telemetry-call'), readFileSync(join(ROOT, 'bin', 'lib', 'telemetry-call.sh')));
+    chmodSync(join(home, '.gstack-extend', 'bin', 'telemetry-call'), 0o755);
+    const legacySkillDir = join(hostDir(home, 'claude'), 'implement');
+    mkdirSync(legacySkillDir, { recursive: true });
+    symlinkSync(skillPath(ROOT, 'implement'), join(legacySkillDir, 'SKILL.md'));
+
+    const res = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(res.exitCode, res.stderr).toBe(0);
+    expect(existsSync(installed(home))).toBe(true);
+
+    const run = spawnSync('bash', ['-c', '~/.gstack-extend/bin/preamble implement --root'], {
+      env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain(`EXTEND_ROOT: ${ROOT}`);
+    expect(run.stdout).toContain(`_EXTEND_ROOT=${ROOT}`);
   });
 });

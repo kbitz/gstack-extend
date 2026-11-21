@@ -182,6 +182,11 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/session-paths.sh',
     // Track 49A: the blocks call this resolver, and the lock reads the lookup ladder it holds.
     'bin/lib/telemetry-call.sh',
+    // Track 92A: the start command holds the extend-root resolver and telemetry start.
+    'bin/lib/preamble.sh',
+  ],
+  'tests/preamble.test.ts': [
+    'bin/lib/preamble.sh',
   ],
   // One suite per skill. Each lists every skill file it reads, and
   // tests/touchfiles.test.ts checks the list against the skill paths the suite
@@ -256,6 +261,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('full-review'),
     'setup',
     'bin/lib/install-safety.sh',
+    // Track 92A: update-run fixtures and resolver probes run the start command.
+    'bin/lib/preamble.sh',
     // Track 28A locks the rollback block's update-check pause.
     'docs/installation.md',
   ],
@@ -266,6 +273,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
     'scripts/init-templates/**',
@@ -277,6 +285,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
     'scripts/init-templates/**',
@@ -285,6 +294,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
     'scripts/init-templates/**',
@@ -296,6 +306,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/install-safety.sh',
     // Track 49A: setup copies this helper to the fixed path the blocks call.
     'bin/lib/telemetry-call.sh',
+    // Track 92A: setup copies the start command before publishing skills.
+    'bin/lib/preamble.sh',
     // Track 23C: the checker reads setup's snapshot, and the recovery
     // examples in the installation guide run as tests.
     'bin/update-check',
@@ -309,6 +321,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
     'scripts/init-templates/**',
@@ -340,6 +353,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'src/review-state/**',
     // Track 49A: the blocks call the helper `setup` installs; the suite copies it into each fixture home.
     'bin/lib/telemetry-call.sh',
+    // Track 92A: executeSkillBlock('start') invokes the installed start command with --resume.
+    'bin/lib/preamble.sh',
     'docs/stage-runs.schema.json',
     'setup',
     skill('full-review'),
@@ -353,6 +368,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     'bin/lib/install-safety.sh',
     'bin/lib/telemetry-call.sh',
+    'bin/lib/preamble.sh',
     'bin/gstack-extend',
     'bin/gstack-extend-telemetry',
     'bin/config',

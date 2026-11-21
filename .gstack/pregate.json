@@ -76,6 +76,18 @@
       "tests/telemetry.test.ts",
       "tests/update.test.ts"
     ],
+    "bin/lib/preamble.sh": [
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/preamble.test.ts",
+      "tests/setup-hosts.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/skill-content.test.ts",
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/update.test.ts"
+    ],
     "bin/lib/projects-registry.sh": [
       "tests/init-bin.test.ts",
       "tests/init-distribution.test.ts",

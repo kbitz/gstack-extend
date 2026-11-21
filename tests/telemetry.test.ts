@@ -248,6 +248,15 @@ describe('shipped blocks and installation lookup', () => {
   for (const helper of [false, true]) {
     test('unwired install is silent by default and diagnosable without exit 127, helper ' + (helper ? 'present with nothing resolvable' : 'absent'), () => {
       const fix = makeTelemetryFixture('community', 'absent');
+      if (!helper) {
+        // Without preamble installed, the start command fails visibly (exit 127 -> PREAMBLE_MISSING).
+        expect(executeBlock(fix.env, 'start', undefined, undefined, false).status).toBe(127);
+        // With preamble installed and telemetry-call absent, --resume stays silent by default and diagnosable in debug mode.
+        const binDir = join(fix.home, '.gstack-extend/bin');
+        mkdirSync(binDir, { recursive: true });
+        copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(binDir, 'preamble'));
+        chmodSync(join(binDir, 'preamble'), 0o755);
+      }
       for (const kind of ['start', 'finish'] as const) {
         const quiet = executeBlock(fix.env, kind, undefined, undefined, helper);
         expect(quiet.status).toBe(0);

@@ -188,6 +188,44 @@ dangles after `setup --uninstall` or a moved checkout. Skills that call helpers 
 checkout need one of the four managed installs, because their resolver probes only
 those four directories.
 
+### Start command
+
+Every gstack-extend skill starts with one fixed command:
+
+```bash
+~/.gstack-extend/bin/preamble <skill>
+```
+
+`setup` installs `bin/lib/preamble.sh` as a regular executable copy at `$HOME/.gstack-extend/bin/preamble` (mode `755`) beside `$HOME/.gstack-extend/bin/telemetry-call`, before publishing any skill link or copy. It resolves the verified checkout from `~/.claude/skills/<skill>` and `~/.codex/skills/<skill>` (links first, then `.extend-root` pointers), prints `EXTEND_ROOT:` and `_EXTEND_ROOT=`, runs `bin/update-check` (with `--force` for `/gstack-extend-upgrade`), and starts telemetry.
+
+**Modes and flags:**
+
+- `~/.gstack-extend/bin/preamble <skill>` — resolve root, run `bin/update-check`, start telemetry.
+- `--force` — pass `--force` to `bin/update-check`.
+- `--require <helper>` — require a verified root and executable `bin/<helper>`; print `ERROR:` and exit `1` otherwise.
+- `--root` — print only the root lines (runs neither `bin/update-check` nor telemetry); used to recover `_EXTEND_ROOT=` later in a session.
+- `--resume` — start a new telemetry segment after a deliberate pause.
+- `--help` / `-h` — print usage synopsis and flag descriptions to stdout and exit `0`.
+
+**First-run check:** after running `./setup --host auto`, verify the install without side effects:
+
+```bash
+~/.gstack-extend/bin/preamble plan-track --root
+```
+
+Expected output:
+
+```text
+EXTEND_ROOT: /path/to/gstack-extend
+_EXTEND_ROOT=/path/to/gstack-extend
+```
+
+**Permission grant:** every skill's frontmatter includes `Bash(~/.gstack-extend/bin/preamble:*)` right after `Bash` (Codex strips `allowed-tools` and needs no frontmatter grant). Checked with `bash` 5.3.20 tilde expansion against Claude Code `2.1.330` and `codex-cli` `0.171.0`; live Claude Code auto-mode verification is recorded in the owner-run worker check. Allowing `~/.gstack-extend/bin/preamble` also lets it run what it invokes: `bin/update-check` from the resolved checkout and `$HOME/.gstack-extend/bin/telemetry-call` (which looks up `gstack-extend-telemetry` on `PATH` first).
+
+**Shared-copy policy (last setup wins):** every `setup` run replaces `~/.gstack-extend/bin/preamble` atomically via a temporary file and rename. Because the command resolves the root per skill at runtime, one copy serves every checkout, though running `setup` from an older clone or worktree replaces the copy until `setup` runs again from your main checkout. A copy older than a skill's text rejects unknown arguments with exit `2` (`PREAMBLE_ARGS`); a missing or non-executable copy exits `127`/`126` (`PREAMBLE_MISSING`). In either case, rerun `./setup --host auto` from the checkout your skills link to, then start the skill again. Rolling back to an earlier release leaves the copy on disk and unused.
+
+**Developer escape hatches:** to test a checkout's start command without replacing `~/.gstack-extend/bin/preamble`, run `bash <checkout>/bin/lib/preamble.sh <skill> --root`. To debug a non-zero `bin/update-check` exit, run `<root>/bin/update-check` directly.
+
 ### Update checks
 
 Every installed skill runs `bin/update-check` at start and follows one shared upgrade
@@ -622,7 +660,9 @@ grep -x '# extend-root-protocol: v1' <root>/bin/update-check
 
 Running `setup` from a worktree repoints every host at that worktree. Re-run `setup --host auto` from the stable checkout before archiving the worktree.
 
-The resolver probes Claude, then Codex, then OpenCode, then Cursor, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
+The start command probes Claude, then Codex, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
+
+**Start-command install failure:** if `setup` refuses or fails to install `~/.gstack-extend/bin/preamble` (for example, the destination is a symlink or directory, `$HOME/.gstack-extend/bin` is unwritable or foreign-owned, or the copy fails), `setup` prints the path, cause, and a `Fix:` line and exits `1` without installing any skills. Fix the path or permissions as instructed and rerun `<checkout>/setup --host auto`; if the checkout is already updated, its skill text requires `~/.gstack-extend/bin/preamble` until `setup` succeeds.
 
 ### Unsafe skills directory
 

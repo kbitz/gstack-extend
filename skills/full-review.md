@@ -12,6 +12,7 @@ description: |
   Works for any project type.
 allowed-tools:
   - Bash
+  - Bash(~/.gstack-extend/bin/preamble:*)
   - Read
   - Write
   - Edit
@@ -23,53 +24,12 @@ allowed-tools:
 ## Preamble (run first)
 
 ```bash
-_ER_SKILL=full-review
-_er_ok() { case "$_ER" in /*) [ -f "$_ER/bin/update-check" ] && [ -x "$_ER/bin/update-check" ] && grep -qx '# extend-root-protocol: v1' "$_ER/bin/update-check" 2>/dev/null ;; *) false ;; esac; }
-_EXTEND_ROOT=""
-_ER_SEEN=""
-for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do
-  case "$_ER_SRC" in /*) ;; *) continue ;; esac
-  _ER=$(readlink "$_ER_SRC" 2>/dev/null || true)
-  [ -n "$_ER" ] || continue
-  case "$_ER" in /*) ;; *) _ER="$(dirname "$_ER_SRC")/$_ER" ;; esac
-  _ER=$(dirname "$(dirname "$_ER")")
-  if _er_ok; then _EXTEND_ROOT="$_ER"; break; fi
-  _ER_SEEN="${_ER_SEEN:-$_ER}"
-done
-if [ -z "$_EXTEND_ROOT" ]; then
-  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root "$HOME"/.cursor/skills/"$_ER_SKILL"/.extend-root; do
-    case "$_ER_SRC" in /*) ;; *) continue ;; esac
-    [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue
-    _ER=""
-    IFS= read -r _ER < "$_ER_SRC" || true
-    if _er_ok; then _EXTEND_ROOT="$_ER"; break; fi
-    _ER_SEEN="${_ER_SEEN:-${_ER:-empty:$_ER_SRC}}"
-  done
-fi
-_ER_UNVERIFIED=""
-if [ -z "$_EXTEND_ROOT" ] && [ -n "$_ER_SEEN" ]; then
-  _ER="$_ER_SEEN/bin/update-check"
-  case "$_ER_SEEN" in
-    empty:*) _ER_UNVERIFIED="${_ER_SEEN#empty:} is empty. Fix: run setup --host auto from your gstack-extend checkout" ;;
-    /*) if [ ! -e "$_ER" ]; then _ER_UNVERIFIED="$_ER_SEEN has no bin/update-check (checkout moved or deleted). Fix: re-clone gstack-extend (README: Installation), then run its setup --host auto"
-        elif [ ! -f "$_ER" ] || [ ! -x "$_ER" ] || [ ! -r "$_ER" ]; then _ER_UNVERIFIED="$_ER is not a readable executable file. Fix: git -C \"$_ER_SEEN\" checkout -- bin/update-check, then run \"$_ER_SEEN/setup\" --host auto"
-        else _ER_UNVERIFIED="$_ER lacks the line '# extend-root-protocol: v1' (checkout older than this skill, or not gstack-extend). Fix: git -C \"$_ER_SEEN\" pull --ff-only, then run \"$_ER_SEEN/setup\" --host auto"; fi ;;
-    *) _ER_UNVERIFIED="an install pointer names a non-absolute path ($_ER_SEEN). Fix: run setup --host auto from your gstack-extend checkout" ;;
-  esac
-fi
-unset _ER _ER_SRC _ER_SEEN
-if [ -n "$_EXTEND_ROOT" ]; then
-  echo "EXTEND_ROOT: $_EXTEND_ROOT"
-  printf '_EXTEND_ROOT=%q\n' "$_EXTEND_ROOT"
-  _UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
-  [ -n "$_UPD" ] && echo "$_UPD" || true
-elif [ -n "$_ER_UNVERIFIED" ]; then
-  echo "EXTEND_ROOT_UNVERIFIED: $_ER_UNVERIFIED"
-fi
-unset _ER_UNVERIFIED _ER_SKILL
+~/.gstack-extend/bin/preamble full-review
 ```
 
-Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review and full-review then stop, because their tool and session-state steps need the root.
+Run the start command above exactly as written, with no `cd`, expansion, absolute path or wrapper. If the harness refuses or holds it, do not run its steps by hand: tell the user to allow the command (`docs/installation.md#start-command`) and stop (plan-track notes it once in its final message, skips Telemetry finish for this run, and continues). Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run the same start command with ` --root` added at the end (it prints only the root lines and runs neither update-check nor telemetry). If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude or ~/.codex. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review and full-review then run Telemetry finish with `--outcome error` and stop, because their tool and session-state steps need the root. Relay any `INSTALL_WARN … reason=retired_host` line once with its Fix link in the run's final message before any fenced prompt, result, handoff, stage or pause line, and never inside a fence or a receipt field.
+
+If the shell cannot run `~/.gstack-extend/bin/preamble` (exit 127 or 126), tell the user: `PREAMBLE_MISSING: gstack-extend's start command ~/.gstack-extend/bin/preamble is missing or not executable: this install predates it, or setup has not run since the checkout was updated. Fix: in your gstack-extend checkout (README: Installation), run ./setup --host auto, then start this skill again. See docs/installation.md#start-command.` If the command exits 2 with stderr starting `preamble: PREAMBLE_USAGE:`, tell the user: `PREAMBLE_ARGS: gstack-extend's start command rejected this skill's arguments, most likely because the installed command is older than this skill text. Fix: first rerun the skill's start line exactly as written; if it is rejected again, in your gstack-extend checkout (README: Installation), run ./setup --host auto, then start this skill again. See docs/installation.md#start-command.` On any other non-zero exit (or exit 2 without that stderr prefix), relay stderr verbatim, then tell the user: `PREAMBLE_FAILED: gstack-extend's start command failed unexpectedly. Fix: in your gstack-extend checkout (README: Installation), run ./setup --host auto, then start this skill again; if it fails again, report the output of bash -x ~/.gstack-extend/bin/preamble full-review. See docs/installation.md#start-command.` On any of these three start-command failures, every skill except plan-track relays the applicable message and stops without Telemetry finish; plan-track relays the message once in its final message, skips Telemetry finish for this run, and continues.
 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
@@ -136,19 +96,6 @@ Note: `{new}` is the remote version from the `UPGRADE_AVAILABLE` output. Tell us
 ```
 Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
 <!-- /SHARED:upgrade-flow -->
-
-<!-- SHARED:telemetry-start -->
-### Telemetry start
-
-Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
-
-```bash
-_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
-if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:full-review" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
-true
-```
-<!-- /SHARED:telemetry-start -->
 
 ---
 
@@ -844,7 +791,7 @@ Add `STATUS: <status> | REPORT: <path>` when the phase is `complete`. Earlier ru
 
 If `/full-review status`, run Telemetry finish with `--outcome unknown` (a status
 check pairs its own start and reports no run outcome), then stop here. That start
-is the one Telemetry start runs when this skill begins; a status check whose start
+is the one the preamble ran when this skill begins; a status check whose start
 did not run skips this finish. Do not ask a branch question. `/full-review status`
 prints no stage line.
 
@@ -867,11 +814,12 @@ free-text (via "Other" or as a direct message), map natural language:
 
 PAUSE leaves untriaged clusters and `session.yaml` as they are and does not run
 Phase 5 or 6. Tell the user to continue with `/full-review resume`, then run
-Telemetry finish with `--outcome blocked`. That resume runs Telemetry start
-again. After a PAUSE, the first action in this conversation that continues the
-work (anything but STATUS) runs Telemetry start once, before it acts; a
+Telemetry finish with `--outcome blocked`. That resume runs
+`~/.gstack-extend/bin/preamble full-review --resume`. After a PAUSE, the first
+action in this conversation that continues the work (anything but STATUS) runs
+`~/.gstack-extend/bin/preamble full-review --resume` once, before it acts; a
 `/full-review` invocation that continues the work (anything but `status`) counts
-its own start as that one. End the PAUSE message with the stage line
+its own preamble start as that one. End the PAUSE message with the stage line
 (`next: full-review; status: paused`).
 
 ---

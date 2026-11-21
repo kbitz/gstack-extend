@@ -17,7 +17,7 @@ import { join, relative } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
-import { extractCanonicalSpan, GUARD_LINE, ROOT_RESOLVER_SKILLS } from './helpers/extend-root.ts';
+import { expectedPreambleLine, extractPreambleFence, GUARD_LINE, ROOT_RESOLVER_SKILLS } from './helpers/extend-root.ts';
 import { assertSkillDescriptionWithinLimit } from './helpers/skill-description.ts';
 import { systemPath } from './helpers/system-path.ts';
 import { REAL_GSTACK_ROOT, cleanupTelemetryFixtures, executeSkillBlock, makeTelemetryFixture } from './helpers/telemetry-env.ts';
@@ -151,8 +151,8 @@ describe('skill sources', () => {
       for (const skill of ROOT_RESOLVER_SKILLS) {
         const source = readFileSync(skillPath(skill), 'utf8');
         const copy = readFileSync(join(hostDir(home, host), skill, 'SKILL.md'), 'utf8');
-        expect(copy).toContain(`_ER_SKILL=${skill}`);
-        expect(extractCanonicalSpan(copy)).toBe(extractCanonicalSpan(source));
+        expect(copy).toContain(expectedPreambleLine(skill));
+        expect(extractPreambleFence(copy)).toBe(extractPreambleFence(source));
         expect(copy.split(GUARD_LINE).length - 1).toBe(source.split(GUARD_LINE).length - 1);
       }
     }

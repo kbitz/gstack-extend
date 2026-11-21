@@ -2788,27 +2788,22 @@ The line is a version-compatibility probe, not a trust check, and the same
 absolute-path rule protects the wrapper's lookup of gstack's own helpers. It does
 not protect other commands: a relative PATH entry still affects git, python3, and
 everything else an agent runs, so remove such entries from PATH.
-The helper replaces itself with the wrapper (`exec`), so the wrapper's parent is
-still the shell that ran the block, which the harness lookup walks from.
+The helper replaces itself with the wrapper (`exec`), and `bin/lib/telemetry.py`
+walks every ancestor process to the nearest harness, so running `telemetry-call`
+as a child of `~/.gstack-extend/bin/preamble` preserves harness detection.
+Skills no longer embed a `SHARED:telemetry-start` block: `~/.gstack-extend/bin/preamble <skill>`
+runs the start call before the inline upgrade flow (so a segment can straddle an
+in-place upgrade), and resume passages run `~/.gstack-extend/bin/preamble <skill> --resume`.
+Rerunning the plain start command instead of adding `--root` starts a duplicate
+segment, which `gstack-extend doctor telemetry`'s duplicate-start report surfaces;
+a run interrupted after its start leaves an open start that telemetry treats as
+an interrupted segment.
 `telemetry-call --resolve` prints the wrapper's path, or nothing; the
 workflow-span library lookup uses it. GSTACK_EXTEND_DIR is not required.
 CWD-relative pointers are ignored. Upgrade invokes setup again, which refreshes
 the helper; pulling a checkout by hand skips telemetry until `setup` runs, and
 `GSTACK_EXTEND_TELEMETRY_DEBUG=1` or the doctor says so. Uninstall removes the
 helper only when no host keeps an `.extend-root` pointer.
-
-<!-- SHARED:telemetry-start -->
-### Telemetry start
-
-Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
-
-```bash
-_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
-if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:full-review" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
-true
-```
-<!-- /SHARED:telemetry-start -->
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish

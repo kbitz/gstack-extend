@@ -11,7 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
-import { extractCanonicalSpan, HANDOFF_PARAGRAPH } from './helpers/extend-root.ts';
+import { expectedPreambleLine, HANDOFF_PARAGRAPH, PREAMBLE_GRANT, PREAMBLE_GRANT_OUTCOME, preambleFailureParagraph } from './helpers/extend-root.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -38,7 +38,10 @@ describe('plan-track works alone and hands off to /implement', () => {
   // Value: protects=the skill cannot spawn helpers, call another model or ask a question; fails_when=a tool beyond the five is granted or the working-alone rule is edited out; why_new=no other suite reads this skill; seam=none; no_claim=what an installed agent does
   test('allows exactly Bash, Read, Write, Glob and Grep and states the working-alone rule', () => {
     const tools = [...frontmatter(skill).matchAll(/^  - (\S+)$/gm)].map(m => m[1]);
-    expect(tools).toEqual(['Bash', 'Read', 'Write', 'Glob', 'Grep']);
+    const expectedTools = PREAMBLE_GRANT_OUTCOME === 'frontmatter-grant'
+      ? ['Bash', PREAMBLE_GRANT, 'Read', 'Write', 'Glob', 'Grep']
+      : ['Bash', 'Read', 'Write', 'Glob', 'Grep'];
+    expect(tools).toEqual(expectedTools);
     expect(frontmatter(skill)).toMatch(/^name: plan-track$/m);
     expect(skillN).toContain('Work alone: no subagents, outside voices or other model or agent CLI.');
     expect(skillN).toContain('Ask no questions.');
@@ -119,7 +122,9 @@ describe('plan-track inputs are documented fields and its text is generic', () =
 
   // Value: protects=the shipped text names no host or product; fails_when=a public host name enters the skill; why_new=the consumer-independence rule has no test for this skill; seam=none; no_claim=consumer names are absent (checked outside the committed tests)
   test('names no workspace host or agent product', () => {
-    const withoutResolver = skill.replace(extractCanonicalSpan(skill), '').replace(HANDOFF_PARAGRAPH, '');
+    const withoutResolver = skill
+      .replace(HANDOFF_PARAGRAPH, '')
+      .replace(preambleFailureParagraph('plan-track'), '');
     expect(withoutResolver).not.toMatch(/paseo|conductor|claude|codex|cursor|opencode|antigravity/i);
   });
 
@@ -215,11 +220,12 @@ describe('plan-track is registered everywhere a skill is', () => {
     expect(claude).toContain('→ invoke plan-track');
   });
 
-  // Value: protects=criterion 6, the telemetry cohort covers the skill with one start and one finish call; fails_when=a call is duplicated or names another skill; why_new=the cohort suites iterate the list, so this pins the skill's own name; seam=none; no_claim=a row is recorded
-  test('carries exactly one telemetry start and one finish call under its own name', () => {
-    for (const kind of ['start', 'finish']) {
-      expect(skill.split(`"$_GE_CALL" ${kind} --skill "extend:plan-track"`)).toHaveLength(2);
-    }
+  // Value: protects=criterion 6, the telemetry cohort covers the skill with start via preamble and one finish call; fails_when=preamble start or finish is duplicated/missing or E5 exception is dropped; why_new=the cohort suites iterate the list, so this pins the skill's own name; seam=none; no_claim=a row is recorded
+  test('carries preamble start, exactly one finish call under its own name, and E5 start-less finish skip', () => {
+    expect(skill).not.toContain('<!-- SHARED:telemetry-start -->');
+    expect(skill).toContain(expectedPreambleLine('plan-track'));
+    expect(skill.split(`"$_GE_CALL" finish --skill "extend:plan-track"`)).toHaveLength(2);
+    expect(skillN).toContain('skip Telemetry finish for this run (so a start-less finish cannot adopt another run\'s open handoff)');
   });
 });
 

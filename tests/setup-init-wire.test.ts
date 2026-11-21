@@ -294,6 +294,7 @@ function copyInstall(dest: string) {
     'bin/gstack-extend',
     'bin/gstack-extend-telemetry',
     'bin/lib/install-safety.sh',
+    'bin/lib/preamble.sh',
     'bin/lib/projects-registry.sh',
   ]) {
     copyFileSync(join(ROOT, rel), join(dest, rel));
