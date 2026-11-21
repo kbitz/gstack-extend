@@ -652,7 +652,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/, 'first-cycle': /^overlap$/,
   'documentation-audit': /^final$/, 'documentation-scope': /^contracts$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
-  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, blocking: /^shown$/, 'post-audit': /^classify$/, 'run-state': /^record$/, specialists: /^fold$/, 'red-team': /^ensure$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, blocking: /^shown$/, 'post-audit': /^classify$/, 'run-state': /^record$/, 'doc-audit-gap': /^auto$/, specialists: /^fold$/, 'red-team': /^ensure$/,
   // The six delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
   delegate: /^(?!.*\b(testing|maintainability|performance|simplification|adversarial|red-team)\b.*\b\1\b)(?:testing|maintainability|performance|simplification|adversarial|red-team)(?:,(?:testing|maintainability|performance|simplification|adversarial|red-team))*$/,
   'max-continuations': /^[0-9]$/,
@@ -1419,7 +1419,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; doc-audit-gap=auto; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -1527,19 +1527,79 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     }
   });
 
-  // Value: protects=the consumer model's eligible branches match the skill's stop-table eligible rows; fails_when=the stop table or the model adds or drops an eligible branch; why_new=Track 84A T2 producer-to-model tie; seam=none; no_claim=installed-agent execution
-  test('the skill stop table has the same three eligible rows as the model', () => {
+  // Value: protects=every producer stop-table row maps by meaning to its consumer model Cycle1 input(s) and outcome; fails_when=a stop-table row is added, renamed or retargeted, or rowFor disagrees with any row's eligible/unavailable outcome; why_new=Track 91A T3 (criterion 5) direct producer-to-consumer eligibility map; seam=skills/review-and-prep.md stop table; no_claim=installed-agent execution
+  test('each skill stop-table row maps directly to its model inputs and outcome', () => {
     const tableLines = stopSection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
     const tableCells = tableLines.map((l) => l.trim().slice(1, -1).split('|').map((c) => c.trim()));
-    const producerEligible = tableCells.filter((r) => r[2] === 'the row');
-    const modelEligible: Cycle1[] = [
-      { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
-      { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } },
-      { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: true } },
+    const stopTableMap: ReadonlyArray<{ key: string; inputs: ReadonlyArray<Cycle1 | null> }> = [
+      {
+        key: 'no record | any',
+        inputs: [null],
+      },
+      {
+        key: '`completed=false` (`anchor-changed`) | any',
+        inputs: [{ continuation: false, scope: 'full', anchor: false, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' }],
+      },
+      {
+        key: '`completed=false` (`reviewer-incomplete`) | any',
+        inputs: [
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'incomplete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unavailable', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'incomplete', snapshotTree: 'T', baseTree: 'T' },
+        ],
+      },
+      {
+        key: '`completed=true`, snapshot tree differs from T | not read',
+        inputs: [{ continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'U', baseTree: 'T' }],
+      },
+      {
+        key: '`completed=true`, snapshot tree equals T | not read',
+        inputs: [
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unverified', requiredProbes: 'pass', snapshotTree: 'T', baseTree: 'T' },
+        ],
+      },
+      {
+        key: '`completed=pending-fix-review`, snapshot tree differs from T | any',
+        inputs: [{ continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'U', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } }],
+      },
+      {
+        key: '`completed=pending-fix-review`, tree equals T | no readable record, one for another snapshot, or `fix-reviewed=false`',
+        inputs: [
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: null },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'other', scope: 'delta', fixReviewed: true } },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: false } },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true, reviewers: 'outside-unavailable' } },
+        ],
+      },
+      {
+        key: '`completed=pending-fix-review`, tree equals T | same snapshot, scope `delta from <S1>`, `fix-reviewed=true`',
+        inputs: [
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true } },
+          { continuation: false, scope: 'full', anchor: true, reviewers: 'outside-unverified', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'delta', fixReviewed: true, reviewers: 'outside-unverified' } },
+        ],
+      },
+      {
+        key: '`completed=pending-fix-review`, tree equals T | same snapshot, scope `full`, `fix-reviewed=true`',
+        inputs: [{ continuation: false, scope: 'full', anchor: true, reviewers: 'complete', requiredProbes: 'reproduced', snapshotTree: 'T', baseTree: 'T', fixReview: { snapshot: 'same', scope: 'full', fixReviewed: true } }],
+      },
     ];
-    expect(modelEligible.every((r) => rowFor(r, null).row === '')).toBe(true);
-    expect(producerEligible).toHaveLength(3);
-    expect(producerEligible).toHaveLength(modelEligible.length);
+    expect(tableCells.map((r) => `${r[0]} | ${r[1]}`)).toEqual(stopTableMap.map((m) => m.key));
+    for (let i = 0; i < tableCells.length; i++) {
+      const [c1, c2, outcomeCell] = tableCells[i]!;
+      const entry = stopTableMap[i]!;
+      expect(entry.inputs.length, entry.key).toBeGreaterThan(0);
+      for (const input of entry.inputs) {
+        const decided = rowFor(input, null);
+        if (outcomeCell === 'the row') {
+          expect(decided, `${c1} | ${c2}`).toEqual({ row: '' });
+        } else {
+          const wantReason = /^unavailable `([a-z-]+)`$/.exec(outcomeCell!)?.[1];
+          expect(wantReason, `${c1} | ${c2}`).toBeDefined();
+          expect(decided, `${c1} | ${c2}`).toEqual({ row: 'Full-review evidence: unavailable', reason: wantReason });
+        }
+      }
+    }
   });
 
   // Value: protects=ambiguous receipt evidence holds repair-only continuation; fails_when=duplicate fields collapse to a last-wins map; why_new=new receipt parser boundary; seam=none
@@ -2092,7 +2152,7 @@ describe('(G) test-gaps', () => {
       'It is independent of `repair-review` and `repair-cycles`, may be sent alone or with either, and is never set by the light review default.',
       'a reproduced defect keeps its regression test',
       'It waives no gate and never authorizes a continuation.',
-      '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`), `run-state` (`record`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
+      '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`), `run-state` (`record`), `doc-audit-gap` (`auto`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
     expect(POLICY_VALUES['test-gaps']!.source).toBe('^record$');
     expect('test-gaps=record').not.toMatch(/routine|standard|novel/);
     expect(has(prep, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
@@ -3243,7 +3303,7 @@ describe('(P) run-state=record', () => {
       expect(has(prep, phrase), `skill: ${phrase}`).toBe(true);
     }
     for (const phrase of [
-      '`post-audit` (`classify`), `run-state` (`record`) and `max-continuations`',
+      '`post-audit` (`classify`), `run-state` (`record`), `doc-audit-gap` (`auto`) and `max-continuations`',
       '`run-state=record` follows the same rollout order and the same check',
       'update the caller\'s own H-E parser first, since an older H-E parser holds a returned policy that carries it as `policy-malformed` (`HOLD`)',
       'an installation without it reads the whole line as `none supplied`',
@@ -3439,5 +3499,133 @@ describe('(Q) review-state render byte compatibility', () => {
       releaseNotes: [], upgradeRisks: [],
       userFacingChanges: ['`bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.', '`--help` lists the new `--format` option.'],
     });
+  });
+});
+
+// Track 91A: `doc-audit-gap=auto`.
+describe('(R) doc-audit-gap=auto', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+  const without = (...keys: string[]) => {
+    const copy = { ...POLICY_VALUES };
+    for (const k of keys) delete copy[k];
+    return copy;
+  };
+
+  // Value: protects=doc-audit-gap=auto parses alone and on the consumer's full line, refuses near misses and repeats, and an older map without the key voids the whole line; fails_when=the regex loosens, a repeat parses or an older install would not drop the line; why_new=Track 91A T2 (criterion 4); seam=none; no_claim=installed-agent execution
+  test('the parser accepts doc-audit-gap=auto, refuses near misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('doc-audit-gap=auto'))?.get('doc-audit-gap')).toBe('auto');
+    const consumerLine = parsePolicy(
+      line('documentation-audit=final; full-suite=external; post-audit=classify; doc-audit-gap=auto'),
+    );
+    expect(consumerLine?.get('doc-audit-gap')).toBe('auto');
+    expect(consumerLine?.get('full-suite')).toBe('external');
+    expect(consumerLine?.get('post-audit')).toBe('classify');
+    const all = parsePolicy(
+      line(
+        'in-cap=delta; documentation-audit=final; documentation-scope=contracts; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; doc-audit-gap=auto; full-suite=external',
+      ),
+    );
+    expect(all?.get('doc-audit-gap')).toBe('auto');
+    for (const bad of [
+      'doc-audit-gap=Auto',
+      'doc-audit-gap=yes',
+      'doc-audit-gap=',
+      'doc-audit-gap',
+      'doc_audit_gap=auto',
+      'doc-audit-gap=auto; doc-audit-gap=auto',
+    ]) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    expect(parsePolicy(line('in-cap=delta; doc-audit-gap=auto'), without('doc-audit-gap'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; post-audit=classify'), without('doc-audit-gap'))?.get('post-audit')).toBe('classify');
+  });
+
+  // Value: protects=an H-E prompt carrying doc-audit-gap=auto continues as FULL with no mismatches, while a bad value or repeat holds as policy-malformed; fails_when=doc-audit-gap=auto breaks H-E continuation; why_new=Track 91A T2; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries doc-audit-gap=auto continues and a bad value holds as policy-malformed', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of [
+      'doc-audit-gap=auto',
+      'full-suite=external; post-audit=classify; doc-audit-gap=auto',
+    ]) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['doc-audit-gap=Auto', 'doc-audit-gap=yes', 'doc-audit-gap=auto; doc-audit-gap=auto']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=grep -F capability check against the real skill, rollout and older-install disclosures, quickstart examples parsing against the skill templates, reason table and receipt-present row; fails_when=the check fails on the skill, an example line drifts from the skill template, or a rollout/disclosure phrase is dropped; why_new=Track 91A T2 (D7, D9, X10-X13, E8, E14, E15); seam=skills/review-and-prep.md; no_claim=installed-agent execution
+  test('grep -F finds doc-audit-gap=auto in the skill, and the doc publishes the rollout, three-check quickstart, reason table and receipt-present row', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'doc-audit-gap=auto', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'doc-audit-gap=yes', skillPath]).status).toBe(1);
+    const check = `grep -F 'doc-audit-gap=auto' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+
+    // E15: the three-check block lives in docs/workflow-handoffs.md only
+    const threeChecks = [
+      `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`,
+      `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"`,
+      `grep -F 'doc-audit-gap=auto' "<installed skill dir>/SKILL.md"`,
+    ].join('\n');
+    expect(DOC).toContain(`\`\`\`sh\n${threeChecks}\n\`\`\``);
+    expect(SKILLS['review-and-prep']).not.toContain(threeChecks);
+
+    for (const phrase of [
+      '`post-audit` (`classify`), `run-state` (`record`), `doc-audit-gap` (`auto`) and `max-continuations`',
+      '`doc-audit-gap=auto` (key `doc-audit-gap`, its only value `auto`) follows the same parser-first rollout order: update the caller\'s own H-E parser to accept `doc-audit-gap=auto` first (an older H-E parser holds a returned policy carrying it as `policy-malformed`)',
+      'an installation without the value reads the whole line as `none supplied`: every key is lost, standard defaults apply, the reason is recorded, so the gap is asked about as before',
+      'send `doc-audit-gap=auto` only when all three pass, keeping the other keys otherwise',
+      '`doc-audit-gap=<value>: its only value is auto`',
+      "while a repeated `doc-audit-gap` key keeps today's repeated-key reason",
+      'The value needs `full-suite=external` and `post-audit=classify` on the same line and is otherwise independent',
+      '`auto` turns on all three additions together',
+      'later values may narrow them, so a caller matches the exact value, not the key',
+      'The extra-audit allowance belongs to one invocation and its resumes (the counter file `doc-audit-extra.txt` in its evidence directory); a continuation (`/review-and-prep continue`) runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream\'s fresh budget and its own allowance.',
+      'A base merge qualifies only where Git supports `--remerge-diff` (2.36 or later), so with an older Git any base merge after the audit leaves classify not applied (`git-too-old`)',
+      "A reuse writes no new `record audit`, so the compact receipt's `- documentation:` line renders `not-run` for the final head",
+      '`Post-audit change:` `class=` gains `undocumented-internal` and `base-merge` only under `doc-audit-gap=auto`',
+      '| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present |',
+      '<a id="doc-audit-gap-reasons"></a>',
+    ]) {
+      expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
+    }
+
+    // X10: quickstart example policy line parses with parsePolicy and each example receipt line matches the skill's template
+    const quickstartMatch = [...DOC.matchAll(/^```text\n(Review policy: review-and-prep-policy\/v1[^\n]*doc-audit-gap=auto[\s\S]*?)\n```$/gm)];
+    expect(quickstartMatch).toHaveLength(1);
+    const qLines = quickstartMatch[0]![1]!.split('\n');
+    expect(qLines).toHaveLength(7);
+    const parsedQuickstart = parsePolicy(qLines[0]!.replace('Review policy: ', ''));
+    expect(parsedQuickstart?.get('full-suite')).toBe('external');
+    expect(parsedQuickstart?.get('post-audit')).toBe('classify');
+    expect(parsedQuickstart?.get('doc-audit-gap')).toBe('auto');
+    expect(qLines[1]).toBe('doc-audit-gap: active; reuse=applied');
+    expect(qLines[2]).toMatch(
+      /^Post-audit change: [0-9a-f]{40}; paths=\d+; class=(?:undocumented-internal|base-merge); owner=not-needed; carried-audit=\S+ [0-9a-f]{64}; reason=.+; evidence=\S+\/\S+$/,
+    );
+    for (const [idx, wantAction, wantResult] of [
+      [3, 'extra-audit', 'none'],
+      [4, 'result', 'accepted'],
+    ] as const) {
+      expect(qLines[idx]).toMatch(
+        new RegExp(
+          `^Doc-audit extra: action=${wantAction}; audit=(?:\\S+ [0-9a-f]{64}|none); new-audit=\\S+; result=${wantResult}; head=[0-9a-f]{40}; reason=.+; evidence=\\S+/\\S+$`,
+        ),
+      );
+    }
+    expect(qLines[5]).toMatch(
+      /^doc-audit-gap: not applied — (?:full-suite-absent|post-audit-absent|no-trigger) .+; evidence=\S+\/\S+$/,
+    );
+    expect(qLines[6]).toMatch(
+      /^doc-audit-gap: active; reuse=not-applied (?:walk-missed-snapshot|dirty-tree|base-fetch-failed|merge-unqualified|merge-guard-failed|git-too-old|docs-roots-unreadable|command-failed|classify-not-applied) .+; evidence=\S+\/\S+$/,
+    );
   });
 });
