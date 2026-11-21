@@ -32,8 +32,9 @@ Telemetry provider parity is done too: Muse detection (89B, v0.102.0) and the
 shared by-hand run-mode rule (90B, v0.104.0) have shipped. The orchestrator
 consumer's documentation-audit gap value (91A, v0.106.0) and exact-token reply
 credit (91B, v0.107.0), which re-carded Track 90A's reverted credit half, have
-shipped. The Cursor and OpenCode removal (Track 92A) comes next, because it
-changes every stage's preamble. Track 92D remeasures the recorded path's cost
+shipped. The fixed preamble and install-host removal (Track 92A) comes next,
+because it changes every stage's preamble; the quota and telemetry removal
+(93B) follows it beside the qualification. Track 92D remeasures the recorded path's cost
 once by-hand Codex or Muse reviews on the default exist, as 86A's record
 commits. The two-driver workflow qualification (Track 93A) stays behind every
 Track that changes the stages it qualifies, as the owner chose ("Wait for
@@ -50,9 +51,13 @@ Track 95A) as 1.0 work.
 support cursor anymore? we should have dropped it a long time ago", and "yes,
 drop opencode" in answer to whether OpenCode goes in the same change.
 [SPEC](SPEC.md) now names Claude Code and Codex as the supported install hosts.
-Track 92A removes the two hosts' setup, resolver, quota and telemetry code paths,
-as Track 76A did for Conductor, and gives an existing install on either host a
-clear unsupported message. Track 92C's Cursor by-hand readback is discharged
+Track 92A removes the two hosts' setup and resolver code paths, as Track 76A
+did for Conductor, and gives an existing install on either host a clear
+unsupported message; Track 93B removes their quota and telemetry code. On the
+developer's word (2026-11-21, "fold it in"), Track 92A also replaces each
+skill's inline preamble with one fixed command a single permission rule can
+allow, because Claude Code's auto-mode safety check intermittently stops
+workers on the long inline block. Track 92C's Cursor by-hand readback is discharged
 with the reason "Cursor support dropped 2026-11-21".
 
 **Review-gate credit (developer-approved practices, 2026-11-20).** A review
@@ -100,8 +105,8 @@ the reason is on 51A's shipped receipt).
 
 **Labels.** This regeneration (2026-11-21) recorded Tracks 91A and 91B and
 retired Group 91 by tombstone; no Track is declared in flight, so every
-remaining label recycled from 92 in packer order. The new Cursor and OpenCode
-removal is 92A; the developer-run records and the held remeasurement moved from
+remaining label recycled from 92 in packer order. The new removal work is 92A
+(fixed preamble and install hosts) and 93B (quota and telemetry); the developer-run records and the held remeasurement moved from
 91C, 91D and 91E to 92B, 92C and 92D, and the later Groups shifted by one
 (92A to 93A, 93A and 93B to 94A and 94B, 94A to 95A); the renames are in this
 regeneration's commit message. Shipped numbers through 91 are reserved by
@@ -123,25 +128,24 @@ No Track is declared in flight at this regeneration (2026-11-21). Tracks 91A and
 
 _tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91_
 
-### Group 92: Cursor and OpenCode removal ∥ developer-run records ∥ recorded-path remeasurement
+### Group 92: Fixed preamble and install-host removal ∥ developer-run records ∥ recorded-path remeasurement
 
 _Depends on: none_
 
-**This group delivers:** Install, root resolution and telemetry for the two supported hosts only, with a clear unsupported message for a leftover Cursor or OpenCode install; whenever the developer runs them, the install/upgrade/recovery qualification, the remaining real review records and the by-hand run-mode readbacks; and, once by-hand Codex or Muse reviews exist, the recorded path's cost measured again on the shipped default.
+**This group delivers:** One fixed preamble command at the start of every skill, and install and root resolution for the two supported hosts only, with clear messages for a leftover Cursor or OpenCode install or an install without the command; whenever the developer runs them, the install/upgrade/recovery qualification, the remaining real review records and the by-hand run-mode readbacks; and, once by-hand Codex or Muse reviews exist, the recorded path's cost measured again on the shipped default.
 
-##### Track 92A: Remove Cursor and OpenCode install support
-_4 tasks . ~290 LOC incl. tests, plus deletions and byte-copied resolver blocks . medium risk_
-**Outcome:** gstack-extend installs for, resolves its root from and records runs of only its supported hosts, Claude Code and Codex, and a developer whose machine still has a Cursor or OpenCode install gets a clear unsupported message saying what to do, never a silent break.
-**Supports:** [SPEC](SPEC.md) Audience and target (the supported install hosts are Claude Code and Codex; Cursor and OpenCode support were dropped on 2026-11-21 on the developer's word) and O1 (install, update and recover a working skill set). In the spirit of Track 76A, which removed Conductor's host-specific branches after that host was dropped.
-**Done when:** (1) `setup` no longer installs for Cursor or OpenCode: `--host cursor`, `--host opencode` and auto-detection of either are gone, and the installation text in `README.md` and `docs/installation.md` names only Claude Code and Codex. (2) An existing install on either dropped host sees a clear unsupported message, never a silent break: the plan decides what `setup` (including `--host cursor`, `--host opencode` and their `--uninstall`), `bin/update-check`'s host facts and a skill run from a leftover copy report, and how the developer removes the copies this checkout owns; the release notes disclose the incompatible change and that recovery under the 0.x policy. (3) Every skill's extend-root resolver block and its install-not-found message, and the pointer discovery in `bin/lib/telemetry-call.sh` and `bin/lib/telemetry-doctor.py`, probe only `~/.claude/skills` and `~/.codex/skills`; any other skill text naming Cursor or OpenCode as an install host is updated; the shared-block drift tests lock the new block. (4) The quota ledger's Cursor reader and cost modules (`bin/lib/quota/readers/cursor.py`, `bin/lib/quota/cursor_cost.py`) and their wiring are removed, Cursor records already in a store stay readable, and `docs/quota-ledger.md` says so. (5) Telemetry no longer classifies new runs as Cursor or OpenCode, and its gstack helper lookup no longer probes OpenCode's skills directory (`bin/lib/telemetry.py`, `bin/lib/telemetry_usage.py`, `bin/lib/workflow_metrics.py`, `bin/lib/telemetry-doctor.py`); rows already written with those values stay valid against `docs/stage-runs.schema.json` and `docs/workflow-metrics.schema.json` and readable in reports; `docs/telemetry.md` says so. (6) The compatibility catalog's Installation ownership row drops the two host paths, and its Cursor and OpenCode retired-surface entry names this Track's release.
-_touches: setup, bin/update-check, bin/lib/telemetry-call.sh, bin/lib/telemetry-doctor.py, bin/lib/telemetry.py, bin/lib/telemetry_usage.py, bin/lib/workflow_metrics.py, bin/lib/quota/, skills/, tests/setup-hosts.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/skill-content.test.ts, tests/setup-init-wire.test.ts, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/telemetry-doctor.test.ts, tests/workflow-metrics.test.ts, tests/quota.test.ts, tests/quota_cases.py, tests/fixtures/quota/, tests/helpers/extend-root.ts, README.md, docs/installation.md, docs/quota-ledger.md, docs/telemetry.md, docs/compatibility.md_
-**Scheduling:** No edges of its own; Track 93A waits for it because it changes every stage's preamble, and the stable-channel and gstack-alignment Tracks (94B, 95A) follow it through that edge and their shared `setup`, `bin/update-check`, `docs/installation.md` and test files. Session weight 6, this repository's configured cap: most of the change is deletion (the two quota modules, the two hosts' setup branches and their tests) and byte-copied resolver blocks, and the authored remainder is about 290 lines, so it stays one card. Deferred from this Track, for the plan to put to the developer rather than decide: `bin/upstream-check` and `docs/delegated-review.md` read upstream gstack's own Cursor sibling copy of its review skills, which qualifies gstack, not this project's install host, so the plan asks whether those readings stay. `skills/` stands for every skill file, each of which carries the resolver block. Historical records (CHANGELOG, shipped receipts, archived documents and the dated acceptance records) keep their text.
-_Source: the developer's decision (2026-11-21): "we don't support cursor anymore? we should have dropped it a long time ago" and "yes, drop opencode"; the file inventory was taken at `5e7bae3` with `git grep -i -E 'cursor|opencode'`, excluding historical records._
+##### Track 92A: Start every skill with one fixed preamble command and drop the Cursor and OpenCode install hosts
+_3 tasks . ~290 LOC incl. tests, plus deletions and byte-copied preamble lines . medium risk_
+**Outcome:** Every skill starts with one short, fixed command that a single permission rule can allow, gstack-extend installs for and resolves its root from only its supported hosts, Claude Code and Codex, and a developer whose machine still has a Cursor or OpenCode install, or an install that lacks the new command, gets a clear message saying what to do, never a silent break.
+**Supports:** [SPEC](SPEC.md) Audience and target (the supported install hosts are Claude Code and Codex; Cursor and OpenCode support were dropped on 2026-11-21 on the developer's word) and O1 (install, update and recover a working skill set), and O3 (stages run by hand and through an orchestrator without stalling). In the spirit of Track 76A, which removed Conductor's host-specific branches after that host was dropped. The fixed preamble was folded in on the developer's word (2026-11-21, "fold it in").
+**Done when:** (1) Each skill's inline extend-root resolver and update-check block is replaced by one short, fixed command (for example `~/.claude/skills/gstack-extend/bin/preamble <skill>`; the plan picks a path that works on both hosts, such as a `setup`-installed copy beside `$HOME/.gstack-extend/bin/telemetry-call`) that resolves the install, runs `update-check` and the telemetry start, and prints the same lines the inline block prints today (`EXTEND_ROOT:`, the `_EXTEND_ROOT=` assignment, `EXTEND_ROOT_UNVERIFIED:`, the update-check lines and the telemetry line), so the skills' later steps and the upgrade flow read them unchanged. (2) An install that lacks the new command fails with a clear message naming the fix (upgrade or rerun `setup`), never silently; the skill text says what the agent relays. (3) The shared-block drift tests stay meaningful: they lock the one command line in every skill, and the command's printed lines are locked against today's resolver outcomes (verified root, unverified pointer with its fix, no install). (4) `setup` no longer installs for Cursor or OpenCode: `--host cursor`, `--host opencode` and auto-detection of either are gone, the preamble command and the telemetry pointer discovery in `bin/lib/telemetry-call.sh` probe only `~/.claude/skills` and `~/.codex/skills`, any other skill text naming Cursor or OpenCode as an install host is updated, and the installation text in `README.md` and `docs/installation.md` names only Claude Code and Codex. (5) An existing install on either dropped host sees a clear unsupported message, never a silent break: the plan decides what `setup` (including `--host cursor`, `--host opencode` and their `--uninstall`), `bin/update-check`'s host facts and a skill run from a leftover copy report, and how the developer removes the copies this checkout owns. (6) The compatibility catalog's Installation ownership row names the preamble command and drops the two host paths, its Cursor and OpenCode retired-surface entry names this Track's release, and the release notes disclose both incompatible changes and their recovery under the 0.x policy.
+_touches: setup, bin/update-check, bin/preamble (new), bin/lib/telemetry-call.sh, skills/, tests/setup-hosts.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/skill-content.test.ts, tests/setup-init-wire.test.ts, tests/telemetry.test.ts, tests/preamble.test.ts (new), tests/helpers/extend-root.ts, tests/helpers/touchfiles.ts, .gstack/pregate.json, README.md, docs/installation.md, docs/telemetry.md, docs/compatibility.md_
+**Scheduling:** No edges of its own. Track 93A waits for it because it changes every stage's preamble; Track 93B follows it on the shared telemetry test and documentation files; the stable-channel and gstack-alignment Tracks (94B, 95A) follow it through those edges and their shared `setup`, `bin/update-check`, `docs/installation.md` and test files. The fixed preamble shares this Track because it rewrites the same block in the same files that the host removal edits; the quota and telemetry removal moved to Track 93B so each card stays within this repository's configured session-weight and file caps (session weight 5 here). `skills/` stands for every skill file, each of which carries the block; `bin/preamble (new)` and `tests/preamble.test.ts (new)` are placeholder names the plan may change. Deferred from this Track, for the plan to put to the developer rather than decide: `bin/upstream-check` and `docs/delegated-review.md` read upstream gstack's own Cursor sibling copy of its review skills, which qualifies gstack, not this project's install host, so the plan asks whether those readings stay. Historical records (CHANGELOG, shipped receipts, archived documents and the dated acceptance records) keep their text.
+_Source: the developer's decisions (2026-11-21): "we don't support cursor anymore? we should have dropped it a long time ago", "yes, drop opencode" and, for the fixed preamble, "fold it in"; the observation behind the fixed preamble (Claude Code's auto-mode safety check flagged the inline preamble, which is long, multi-line and runs a binary it locates at runtime, so it intermittently stops workers for a permission no single allow rule can match); the file inventory was taken at `5e7bae3` with `git grep -i -E 'cursor|opencode'`, excluding historical records._
 _read-first: docs/installation.md, docs/compatibility.md, Track 76A's shipped receipt_
-- **Drop the two hosts from setup and the update check, with an unsupported message** -- Remove `--host cursor`, `--host opencode` and their auto-detection, give a leftover install the message and removal path the plan settles, and update the README and installation guide, with setup and update tests. _~120 lines incl. tests, plus deleted host tests._ (M)
-- **Two-host resolver block and pointer discovery** -- Remove the two directories from every skill's resolver block, its not-found message and the telemetry pointer discovery, and lock the block in the drift tests. _~30 authored lines, plus byte-copied blocks._ (S)
-- **Remove the Cursor quota reader and cost modules** -- Delete `readers/cursor.py` and `cursor_cost.py`, rewire the ledger so stored Cursor records still read back, and update `docs/quota-ledger.md` and the quota cases. _~90 lines incl. tests, plus deletions._ (M)
-- **Stop classifying Cursor and OpenCode in telemetry** -- Remove the classification and the OpenCode helper lookup, keep old rows valid and readable, and update `docs/telemetry.md`. _~50 lines incl. tests._ (S)
+- **One fixed preamble command** -- Build the command, replace the inline block in every skill with one line, give a missing command a clear failure and lock the line and the printed output in the drift tests. _~150 lines incl. tests, plus byte-copied lines and deleted blocks._ (M)
+- **Drop the two hosts from setup and the update check, with an unsupported message** -- Remove `--host cursor`, `--host opencode` and their auto-detection, give a leftover install the message and removal path the plan settles, update the README, the installation guide and the catalog's Installation ownership row and retired-surface entry, and draft the release-note disclosure for both changes, with setup and update tests. _~120 lines incl. tests, plus deleted host tests._ (M)
+- **Two-host pointer discovery** -- Remove the two directories from the telemetry pointer discovery and its tests and documentation. _~20 lines._ (S)
 
 ##### Track 92B: Qualify install, upgrade and recovery on the owner's machines
 _2 tasks . ~160 LOC . medium risk_
@@ -180,11 +184,11 @@ _Source: `docs/acceptance/review-run-state.md` §4.1 (Track 86A, PR #276, 2026-1
 _read-first: docs/acceptance/review-run-state.md_
 - **Remeasure on the default** -- The after-default figures, guardrails and comparison, or insufficient evidence with its next measurement. _~60 lines._ (M)
 
-### Group 93: Two-driver workflow qualification
+### Group 93: Two-driver workflow qualification ∥ quota and telemetry removal
 
 _Depends on: Group 92_
 
-**This group delivers:** Real by-hand and orchestrated workflow evidence on the final stage behavior.
+**This group delivers:** Real by-hand and orchestrated workflow evidence on the final stage behavior, and a quota ledger and telemetry that no longer read or classify the dropped hosts while keeping their recorded rows readable.
 
 ##### Track 93A: Qualify the workflow with two real drivers
 _2 tasks . ~240 LOC . medium risk_
@@ -193,9 +197,22 @@ _2 tasks . ~240 LOC . medium risk_
 **Done when:** A dated record names host, harness and versions for real runs by both drivers (the owner by hand, and one real external orchestrator), each run read back in telemetry with the correct run mode, covering, between them, a complete plan-to-authorized-release workflow, interrupted resume, manual-testing pause/resume, `/full-review` finish/restart, an explicit negative hold, an external-consumer handoff consumed from artifacts, a cross-session handoff and stale/partial/held handoffs; it counts operator interventions and keeps pending approvals or failures as holds; it includes the installed `/docs-ship` acceptance below; no unexercised combination is claimed.
 _touches: docs/acceptance/workflow-drivers.md (new)_
 _blocked-by: Track 70A, Track 72C, Track 71E, Track 74A, Track 76A, Track 75A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 79A, Track 80B, Track 87A, Track 89A, Track 90A, Track 91A, Track 90B, Track 91B, Track 92A_
-**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changes them: the run-state Tracks through 89A, which made the recorded path `/review-and-prep`'s default (shipped, v0.103.0), the review fixes, the `blocking=shown` probe and the skill diet (Tracks 82A–84D, 85D, 86B and 87A), the secret-disposition requalification (80B), the outside-voice baseline (90A, shipped), run-mode parity (90B, shipped), whose run-mode results this record reads back, the documentation-audit gap value (91A, shipped, v0.106.0), exact-token reply credit (91B, shipped, v0.107.0), and the Cursor and OpenCode removal (92A), which changes every stage's extend-root resolver and the install hosts a driver can use; qualifying before it would spend the developer's by-hand runs on behavior about to change (owner, 2026-11-10: wait for the run-state Tracks). The edge on 92A is technical in that sense, not only priority. The Tracks that only record real runs of shipped code (92B, 92C) do not gate this one; a run here can supply their rows. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
+**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changes them: the run-state Tracks through 89A, which made the recorded path `/review-and-prep`'s default (shipped, v0.103.0), the review fixes, the `blocking=shown` probe and the skill diet (Tracks 82A–84D, 85D, 86B and 87A), the secret-disposition requalification (80B), the outside-voice baseline (90A, shipped), run-mode parity (90B, shipped), whose run-mode results this record reads back, the documentation-audit gap value (91A, shipped, v0.106.0), exact-token reply credit (91B, shipped, v0.107.0), and the fixed preamble and install-host removal (92A), which changes every stage's preamble and the install hosts a driver can use; qualifying before it would spend the developer's by-hand runs on behavior about to change (owner, 2026-11-10: wait for the run-state Tracks). The edge on 92A is technical in that sense, not only priority. The Tracks that only record real runs of shipped code (92B, 92C) do not gate this one; a run here can supply their rows. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
 - **Exercise both drivers** -- Use real host-managed workspaces and approved accounts with the harnesses the owner uses for each stage; retain the bound PR and workspace, test stale/partial/held handoffs, confirm next-stage consumption from artifacts across sessions, include the host-attribution check deferred from Track 26A, and count operator interventions. _~200 documentation lines._ (L)
 - **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging, and its interactive merge question; include one Sonnet-class run and one `/roadmap` handoff, and compare work/wait wall time with a recent docs PR shipped through the ordinary path. _~40 lines._ (S)
+
+##### Track 93B: Remove the Cursor quota reader and Cursor and OpenCode telemetry classification
+_2 tasks . ~140 LOC incl. tests, plus deletions . medium risk_
+**Outcome:** The quota ledger and telemetry stop reading and classifying the dropped hosts, while every row and store record already written with Cursor or OpenCode values stays readable.
+**Supports:** [SPEC](SPEC.md) Audience and target (Cursor and OpenCode support dropped on 2026-11-21 on the developer's word) and O6 (measured stage effort reads only supported harnesses); the quota and telemetry half of the removal, split from Track 92A to keep both cards within this repository's configured caps.
+**Done when:** (1) The quota ledger's Cursor reader and cost modules (`bin/lib/quota/readers/cursor.py`, `bin/lib/quota/cursor_cost.py`) and their wiring are removed, Cursor records already in a store stay readable, and `docs/quota-ledger.md` says so. (2) Telemetry no longer classifies new runs as Cursor or OpenCode, and its gstack helper lookup no longer probes OpenCode's skills directory (`bin/lib/telemetry.py`, `bin/lib/telemetry_usage.py`, `bin/lib/workflow_metrics.py`, `bin/lib/telemetry-doctor.py`); rows already written with those values stay valid against `docs/stage-runs.schema.json` and `docs/workflow-metrics.schema.json` and readable in reports, and `docs/telemetry.md` says so. (3) The release notes disclose the change under the 0.x policy.
+_touches: bin/lib/quota/cli.py, bin/lib/quota/common.py, bin/lib/quota/identity.py, bin/lib/quota/index.py, bin/lib/quota/intervals.py, bin/lib/quota/ledger.py, bin/lib/quota/samples.py, bin/lib/quota/cursor_cost.py, bin/lib/quota/readers/cursor.py, bin/lib/telemetry.py, bin/lib/telemetry_usage.py, bin/lib/workflow_metrics.py, bin/lib/telemetry-doctor.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/telemetry-doctor.test.ts, tests/workflow-metrics.test.ts, tests/quota.test.ts, tests/quota_cases.py, tests/fixtures/quota/, docs/quota-ledger.md, docs/telemetry.md_
+_blocked-by: Track 92A_
+**Scheduling:** Technical edge on Track 92A: both edit `tests/telemetry.test.ts` and `docs/telemetry.md`, and this Track's telemetry tests build on 92A's two-host pointer discovery. Track 93A does not wait for it: removing the dropped hosts' classification leaves Claude Code and Codex runs, which the qualification reads back, unchanged. Most of the change is deletion. Historical records keep their text.
+_Source: the developer's decision (2026-11-21): "we don't support cursor anymore? we should have dropped it a long time ago" and "yes, drop opencode"; split from the removal card when the fixed preamble was folded in ("fold it in", 2026-11-21); the file inventory was taken at `5e7bae3` with `git grep -i -E 'cursor|opencode'`._
+_read-first: docs/quota-ledger.md, docs/telemetry.md, Track 77A's shipped receipt_
+- **Remove the Cursor quota reader and cost modules** -- Delete `readers/cursor.py` and `cursor_cost.py`, rewire the ledger so stored Cursor records still read back, and update `docs/quota-ledger.md` and the quota cases. _~90 lines incl. tests, plus deletions._ (M)
+- **Stop classifying Cursor and OpenCode in telemetry** -- Remove the classification and the OpenCode helper lookup, keep old rows valid and readable, and update `docs/telemetry.md`. _~50 lines incl. tests._ (S)
 
 ### Group 94: Measured stage cost ∥ stable update channel
 
@@ -275,13 +292,14 @@ gate. The cards label priority choices separately from technical prerequisites.
 
 Track detail per group:
 ```
-Group 92: Cursor and OpenCode removal ∥ developer-run records ∥ remeasurement
-  +-- Track 92A ........... ~L . 4 tasks
+Group 92: Fixed preamble and install-host removal ∥ developer-run records ∥ remeasurement
+  +-- Track 92A ........... ~L . 3 tasks
   +-- Track 92B ........... ~M . 2 tasks   (developer's runs)
   +-- Track 92C ........... ~S . 3 tasks   (developer's runs)
   +-- Track 92D ........... ~S . 1 task    (held: by-hand Codex or Muse reviews)
-Group 93: Two-driver workflow qualification
+Group 93: Two-driver workflow qualification ∥ quota and telemetry removal
   +-- Track 93A ........... ~L . 2 tasks
+  +-- Track 93B ........... ~M . 2 tasks
 Group 94: Measured stage cost ∥ stable update channel
   +-- Track 94A ........... ~L . 4 tasks
   +-- Track 94B ........... ~M . 4 tasks
@@ -289,7 +307,7 @@ Group 95: Install and upgrade aligned with upstream gstack
   +-- Track 95A ........... ~M . 3 tasks
 ```
 
-**4 Groups / 8 Tracks remaining**, none in progress.
+**4 Groups / 9 Tracks remaining**, none in progress.
 
 Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
