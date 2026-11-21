@@ -3193,6 +3193,66 @@ exec "$TEST_LN" "$@"
     expect(existsSync(join(home, '.gstack-extend', '.setup.lock'))).toBe(false);
   }, 15_000);
 
+  // Value: protects=a Claude setup queued behind the last Codex uninstall recreates bin and installs a usable preamble;
+  // fails_when=uninstall removes the directory the waiting installer needs to lock;
+  // why_new=the preceding race starts the installer first; seam=none;
+  // no_claim=other host combinations (two real setup processes with controlled shell timing).
+  test('Claude setup queued behind the final Codex uninstall installs a resolvable preamble', async () => {
+    const home = join(baseTmp, 'preamble-parallel-install');
+    const shims = join(home, 'shims');
+    mkdirSync(shims, { recursive: true });
+    const path = isolatedPath();
+    expect(runSetup(['--host', 'codex', '--quiet'], home, path, true).exitCode).toBe(0);
+
+    // Pause the uninstaller at its first attempt to remove bin or release the lock.
+    writeFileSync(join(shims, 'rmdir'), `#!/bin/sh
+case "$SETUP_TEST_ROLE:$1" in
+  uninstall:"$HOME"/.gstack-extend/bin|uninstall:*/.setup.lock)
+    : > "$HOME/uninstaller-ready"
+    until [ -f "$HOME/release-uninstaller" ]; do sleep 0.02; done ;;
+esac
+exec /bin/rmdir "$@"
+`, { mode: 0o755 });
+    // Let the installer's first real mkdir fail on the held lock, then allow uninstall to finish before the retry.
+    writeFileSync(join(shims, 'mkdir'), `#!/bin/sh
+case "$SETUP_TEST_ROLE:$1" in
+  install:*/.setup.lock)
+    if /bin/mkdir "$@"; then exit 0; fi
+    : > "$HOME/installer-queued"
+    until [ -f "$HOME/uninstall-done" ]; do sleep 0.02; done
+    exit 1 ;;
+esac
+exec /bin/mkdir "$@"
+`, { mode: 0o755 });
+
+    const env = { HOME: home, TMPDIR: home, PATH: `${shims}:${path}` };
+    const startSetup = (role: 'uninstall' | 'install', args: string[]) => spawn(SETUP, args, {
+      env: { ...env, SETUP_TEST_ROLE: role },
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
+    const removal = waitChild(startSetup('uninstall', ['--host', 'codex', '--uninstall', '--quiet']), 10_000);
+    let installation: ReturnType<typeof waitChild> | undefined;
+    try {
+      expect(waitUntil(() => existsSync(join(home, 'uninstaller-ready')), 6_000), 'Codex reached helper cleanup').toBe(true);
+      installation = waitChild(startSetup('install', ['--host', 'claude', '--quiet']), 10_000);
+      expect(waitUntil(() => existsSync(join(home, 'installer-queued')), 6_000), 'Claude encountered the held lock').toBe(true);
+      writeFileSync(join(home, 'release-uninstaller'), '');
+      expect((await removal).code).toBe(0);
+      expect(existsSync(join(home, '.gstack-extend', 'bin'))).toBe(false);
+    } finally {
+      writeFileSync(join(home, 'release-uninstaller'), '');
+      writeFileSync(join(home, 'uninstall-done'), '');
+      await Promise.all([removal, installation]);
+    }
+
+    expect((await installation)?.code).toBe(0);
+    expect(existsSync(join(hostDir(home, 'codex'), 'plan-track', 'SKILL.md'))).toBe(false);
+    expect(lstatSync(join(hostDir(home, 'claude'), 'plan-track', 'SKILL.md')).isSymbolicLink()).toBe(true);
+    const preamble = spawnSync('bash', ['-c', '~/.gstack-extend/bin/preamble plan-track --root'], { env, encoding: 'utf8', timeout: 5_000 });
+    expect(preamble.status, preamble.stderr).toBe(0);
+    expect(preamble.stdout.split('\n')[0]).toBe(`EXTEND_ROOT: ${realpathSync(ROOT)}`);
+  }, 20_000);
+
   test('cutover (E16): upgrading legacy HOME without preamble installs start command and resolves root', () => {
     const home = join(baseTmp, 'preamble-cutover-e16');
     mkdirSync(join(home, '.gstack-extend', 'bin'), { recursive: true });

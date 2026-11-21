@@ -458,20 +458,28 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
 });
 
 describe('Track 49A recorded block sizes', () => {
-  // Historical Track 49A measurement at base a74abf4 (kept unchanged per Track 92A E19; start fences moved into preamble).
-  const MEASURED_SKILLS = TELEMETRY_SKILLS.filter(skill => skill !== 'plan-track');
-  const RETIRED_MEASURED_SKILLS = ['autoplan-lean'] as const;
   const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
-  const rows = [...docs.matchAll(/^\| `([a-z-]+)` \| (\d+) \| (\d+) \| (\d+) \|$/gm)]
-    .map(m => ({ skill: m[1], before: Number(m[2]), after: Number(m[3]), saved: Number(m[4]) }));
+  const rows = docs.match(/^\| `[a-z-]+` \| \d+ \| \d+ \| \d+ \|$/gm);
 
-  test('the historical table has one row per measured skill and no skill carries a start fence', () => {
-    expect(rows.map(r => r.skill).sort()).toEqual([...MEASURED_SKILLS, ...RETIRED_MEASURED_SKILLS].sort());
-    expect(rows).toHaveLength(11);
-    for (const row of rows) {
-      expect(row.saved).toBe(row.before - row.after);
-      expect(row.saved).toBeGreaterThan(0);
-    }
+  // Value: protects=the Track 49A historical table retains the published row values and skills retain the one-command start;
+  // fails_when=a historical row is changed or removed, or an inline telemetry start fence reappears;
+  // why_new=membership and arithmetic allow changes that preserve the difference; seam=none;
+  // no_claim=the historical numbers measure the current preamble implementation.
+  test('the historical table retains its published rows and no skill carries a start fence', () => {
+    // Track 49A measured against a74abf4. These rows are from the committed table at bf12c38.
+    expect(rows).toEqual([
+      '| `pair-review` | 2341 | 729 | 1612 |',
+      '| `roadmap` | 2333 | 721 | 1612 |',
+      '| `project-spec` | 2343 | 731 | 1612 |',
+      '| `full-review` | 2341 | 729 | 1612 |',
+      '| `gstack-extend-upgrade` | 2361 | 749 | 1612 |',
+      '| `gstack-extend-init` | 2355 | 743 | 1612 |',
+      '| `review-and-prep` | 2349 | 737 | 1612 |',
+      '| `implement` | 2337 | 725 | 1612 |',
+      '| `ship-and-land` | 2345 | 733 | 1612 |',
+      '| `autoplan-lean` | 2345 | 733 | 1612 |',
+      '| `docs-ship` | 2337 | 725 | 1612 |',
+    ]);
     for (const skill of TELEMETRY_SKILLS) {
       expect(telemetryFence(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8'), 'start')).toBe('');
     }

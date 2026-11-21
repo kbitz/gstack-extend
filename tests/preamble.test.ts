@@ -59,10 +59,14 @@ function writeHelper(root: string, name: string, executable = true): void {
   chmodSync(p, executable ? 0o755 : 0o644);
 }
 
-function writeUpdateCheckWithOutput(root: string, opts: { stdout?: string; exitCode?: number; echoArgs?: boolean } = {}): void {
+function writeUpdateCheckWithOutput(
+  root: string,
+  opts: { stdout?: string; exitCode?: number; echoArgs?: boolean; recordCall?: boolean } = {},
+): void {
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
   const lines = ['#!/bin/sh', MARKER_LINE];
+  if (opts.recordCall) lines.push('printf \'update-check\\n\' >> "$PREAMBLE_TEST_UPDATE_LOG"');
   if (opts.echoArgs) lines.push('printf "ARGS:%s\\n" "$*"');
   if (opts.stdout) lines.push(`printf '%s\\n' ${JSON.stringify(opts.stdout)}`);
   lines.push(`exit ${opts.exitCode ?? 0}`);
@@ -221,7 +225,11 @@ describe('bin/lib/preamble.sh — explicit resolver outcomes & mixed-host preced
     expect(r3.stderr).toContain('preamble: no gstack-extend install under ~/.claude/skills/roadmap or ~/.codex/skills/roadmap');
   });
 
-  test('E7 mixed-host: unverified Claude link + verified Codex pointer -> Codex pointer wins', () => {
+  // Value: protects=the resolver reports the first failed candidate when there is no verified install;
+  // fails_when=a later invalid pointer replaces the earlier invalid link in the diagnostic;
+  // why_new=the other mixed-host cases find a verified candidate; seam=none;
+  // no_claim=live host discovery (fixture links and pointers).
+  test('E7 mixed-host: a verified Codex pointer wins, or the first invalid candidate is reported', () => {
     const home = mkdtempSync(join(baseTmp, 'mixed-1-'));
     const badRoot = join(home, 'bad');
     mkdirSync(join(badRoot, 'skills'), { recursive: true });
@@ -237,6 +245,16 @@ describe('bin/lib/preamble.sh — explicit resolver outcomes & mixed-host preced
     const r = spawnSync(PREAMBLE_SRC, ['implement', '--root'], { env: scopedEnv(home), encoding: 'utf8' });
     expect(r.status).toBe(0);
     expect(r.stdout).toBe(`EXTEND_ROOT: ${goodRoot}\n_EXTEND_ROOT=${goodRoot}\n`);
+
+    const markerlessRoot = join(home, 'markerless');
+    writeUpdateCheck(markerlessRoot, { marker: false });
+    writePointer(home, 'codex', 'implement', markerlessRoot);
+    const unverified = spawnSync(PREAMBLE_SRC, ['implement', '--root'], { env: scopedEnv(home), encoding: 'utf8' });
+    expect(unverified.status).toBe(0);
+    expect(unverified.stdout).toBe(
+      `EXTEND_ROOT_UNVERIFIED: ${badRoot} has no bin/update-check (checkout moved or deleted). Fix: re-clone gstack-extend (README: Installation), then run its setup --host auto\n`,
+    );
+    expect(unverified.stderr).toBe('');
   });
 
   test('E7 mixed-host: empty Claude pointer + verified Codex pointer -> Codex wins with no unverified line', () => {
@@ -310,32 +328,38 @@ describe('bin/lib/preamble.sh — flags, usage errors, modes, and diagnostics', 
     }
   });
 
-  test('telemetry start counts: --root runs 0, default runs 1, --resume runs 1', () => {
+  // Value: protects=default runs update-check and starts telemetry once, --root runs neither, and --resume only starts telemetry;
+  // fails_when=a mode skips or repeats an allowed call or runs a disallowed call even if it emits no output;
+  // why_new=stdout and a combined telemetry count could miss silent side effects; seam=none;
+  // no_claim=live update-check or telemetry behavior (fixture commands log invocations).
+  test('each preamble mode produces the expected output and update-check and telemetry call counts', () => {
     const home = mkdtempSync(join(baseTmp, 'tel-counts-'));
     const root = join(home, 'checkout');
-    writeUpdateCheck(root);
+    const updateLog = join(home, 'update.log');
+    const telemetryLog = join(home, 'tel.log');
+    writeUpdateCheckWithOutput(root, { recordCall: true });
     writePointer(home, 'claude', 'pair-review', root);
-    const logFile = join(home, 'tel.log');
-    writeTelemetryStub(home, logFile);
-    const env = scopedEnv(home);
+    writeTelemetryStub(home, telemetryLog);
+    const env = scopedEnv(home, { PREAMBLE_TEST_UPDATE_LOG: updateLog });
+    const rootOutput = `EXTEND_ROOT: ${root}\n_EXTEND_ROOT=${root}\n`;
+    const telemetryOutput = 'GE_TELEMETRY: session=extend-test-stub start=123\n';
+    const telemetryCall = 'start --skill extend:pair-review\n';
+    const cases = [
+      { mode: '--root', flags: ['--root'], stdout: rootOutput, updateCalls: '', telemetryCalls: '' },
+      { mode: 'default', flags: [], stdout: rootOutput + telemetryOutput, updateCalls: 'update-check\n', telemetryCalls: telemetryCall },
+      { mode: '--resume', flags: ['--resume'], stdout: telemetryOutput, updateCalls: '', telemetryCalls: telemetryCall },
+    ];
 
-    const rRoot = spawnSync(PREAMBLE_SRC, ['pair-review', '--root'], { env, encoding: 'utf8' });
-    expect(rRoot.status).toBe(0);
-    expect(rRoot.stdout).not.toContain('GE_TELEMETRY:');
-
-    const rDef = spawnSync(PREAMBLE_SRC, ['pair-review'], { env, encoding: 'utf8' });
-    expect(rDef.status).toBe(0);
-    expect(rDef.stdout).toContain('GE_TELEMETRY: session=extend-test-stub');
-
-    const rRes = spawnSync(PREAMBLE_SRC, ['pair-review', '--resume'], { env, encoding: 'utf8' });
-    expect(rRes.status).toBe(0);
-    expect(rRes.stdout).toBe('GE_TELEMETRY: session=extend-test-stub start=123\n');
-
-    const calls = readFileSync(logFile, 'utf8').trim().split('\n');
-    expect(calls).toEqual([
-      'start --skill extend:pair-review',
-      'start --skill extend:pair-review',
-    ]);
+    for (const entry of cases) {
+      writeFileSync(updateLog, '');
+      writeFileSync(telemetryLog, '');
+      const result = spawnSync(PREAMBLE_SRC, ['pair-review', ...entry.flags], { env, encoding: 'utf8' });
+      expect(result.status, entry.mode).toBe(0);
+      expect(result.stdout, entry.mode).toBe(entry.stdout);
+      expect(result.stderr, entry.mode).toBe('');
+      expect(readFileSync(updateLog, 'utf8'), entry.mode).toBe(entry.updateCalls);
+      expect(readFileSync(telemetryLog, 'utf8'), entry.mode).toBe(entry.telemetryCalls);
+    }
   });
 
   test('non-zero update-check exit prints stderr diagnostic while keeping stdout and exit 0', () => {

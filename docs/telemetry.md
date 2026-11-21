@@ -2685,20 +2685,17 @@ run. See [Handoff adoption](#handoff-adoption), including the upgrade note for
 handoffs written before that rule.
 
 Two wrappers also emit optional step/pass metrics (`/review-and-prep` and
-`/ship-and-land`). That is a metrics-only instruction outside the SHARED
-blocks below, keyed to the start ID printed here; the blocks themselves and
-their no-copying rule for legacy calls are unchanged. Authors changing those
-wrappers update their phase mapping in the same change. See
+`/ship-and-land`) keyed to the session ID printed at start. The start and
+finish calls keep their own session values. Authors changing those wrappers
+update their phase mapping in the same change. See
 [Workflow metrics](#workflow-metrics).
 
-**Block size.** Each skill carries one start and one finish fence. The table counts the UTF-8
-bytes of both fences together, from the opening fence line to the closing one,
-before (the base `a74abf4`, where each fence held the whole lookup) and after
-(a call to the `telemetry-call` helper). `tests/skill-protocols.test.ts`
-recomputes the "after" column from each skill and fails on a stale row. The table
-covers the eleven skills measured at base `a74abf4`; `/plan-track`, added later with
-the same blocks, has no before figure and no row. `/autoplan-lean` was retired after
-the measurement, and its row stays as measured.
+**Historical block sizes.** Track 49A measured the UTF-8 bytes of both fences
+together before (base `a74abf4`, with the lookup inline) and after (a call to
+the `telemetry-call` helper). `tests/skill-protocols.test.ts` pins the recorded
+rows and checks that the current skills have moved their telemetry start into
+the preamble command. The table includes `/autoplan-lean` as measured and
+predates `/plan-track`.
 
 | Skill | Before (bytes) | After (bytes) | Saved (bytes) |
 |---|---:|---:|---:|

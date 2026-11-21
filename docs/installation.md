@@ -70,9 +70,9 @@ regular files in Claude's directory, including old generated copies; see
 **Shared-directory migration** below. A `--host` run whose host was skipped
 installs or uninstalls nothing and leaves the CLI links and registry alone.
 
-Generated copies preserve shell paths as written in the source; setup never
-substitutes a literal HOME into skill bodies. The runtime resolver probes the
-four host directories and uses their `.extend-root` pointers.
+Generated copies preserve the shell paths from the skill source. At runtime,
+the start command resolves Claude Code and Codex skill links and
+`.extend-root` pointers as described in [Start command](#start-command).
 
 If a skill directory is already a personal symlink (for example, linked from
 dotfiles), setup stops before installing anything on any selected host. It
