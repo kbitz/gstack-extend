@@ -58,8 +58,10 @@ Never put the request in the source checkout or retained telemetry.
 Supply acceptance criteria and the two installed review rubrics, not whole
 skills or session history. The **wrapper adds context**, selecting specific
 callers, contracts and tests before dispatch; it records why each is relevant.
-The voice has no tools. `NEEDS_CONTEXT` keeps coverage missing until the parent
-provides the named material in a justified extension. Recovery of marker syntax
+The voice has no tools. Any `NEEDS_CONTEXT` line other than a counted exact
+`NEEDS_CONTEXT: none` line (see [Exact reply forms](#exact-reply-forms)) keeps
+coverage missing, and the parent provides the named material only when the reply
+names specific missing context in a justified extension. Recovery of marker syntax
 never resends the prompt and never calls a model.
 
 The CLI returns `results` (private review output, provider usage and per-phase
@@ -137,6 +139,105 @@ attempt's temporary directory once its process is known to have ended.
 Telemetry is separate from the paid-call state. A failed optional `voices.jsonl`
 write never changes the result. A state write failure does prevent another call,
 because otherwise a paid attempt could be repeated without knowing its outcome.
+
+## Exact reply forms
+
+`recover()` (`src/outside-review/recovery.ts`) and `parseFindings`
+(`src/review-delegate/delegate.ts`) share one linear-time predicate,
+`exactForms(lines)`. In `recover()`, counted exact-form lines are blanked in
+place before classification (unless blanking them would leave only blank lines,
+in which case `recover()` skips blanking and reads the original reply as
+missing context), so a counted met-criterion line never reaches the installed
+classifier's untagged-item rule. There are two exact forms:
+
+- **No-missing-context token:** a line that is exactly `NEEDS_CONTEXT: none`
+  (starting in column 0, with that case and single space, optional trailing
+  spaces or tabs, and nothing else or formatting on the line).
+- **Met-criterion line (outside reviews only):** a line that is exactly
+  `<n>. MET`, where `<n>` is a criterion number from `1` to `999` without
+  leading zeros (starting in column 0, optional trailing spaces or tabs, and
+  nothing else or formatting on the line).
+
+Definitions and boundary rules:
+
+- **Blank line:** matches `/^[ \t]*$/` (spaces and tabs only; a line holding
+  only a non-breaking space or a byte-order mark is not blank).
+- **Closing line:** matches `NO_FINDINGS: none`, a line starting
+  `Recommendation:` in column 0, or `VERDICT: CLEAN` or `VERDICT: FINDINGS` in
+  column 0 (each with optional trailing spaces or tabs and nothing before it; a
+  bold `**Recommendation:**` line or a leading-space closing line is not a
+  closing line).
+- **Token rule (trailer anchor):** a `NEEDS_CONTEXT: none` line counts only when
+  the line above it is blank or it is the reply's first line, every line after
+  it to the end of the reply is blank or a closing line, and at least one later
+  line is a closing line. A gap named on the line directly above it, a sentence
+  running into it, a prose line directly below it, a bold or leading-space
+  closing line directly below it, a later paragraph, a second token, or a token
+  placed after the final `VERDICT:` line makes it not count, so the reply sets
+  `needs_context: true` and fails closed. Two residuals are accepted and pinned
+  because omitting the token credits the same text: a gap named in a separate
+  earlier paragraph, and a gap named in the closing `Recommendation`'s
+  because-clause.
+- **MET block rule:** a maximal run of consecutive `<n>. MET` lines counts only
+  when the line above the run is blank or the run starts the reply, the line
+  below the run is blank or a closing line, and at least one later line is a
+  closing line. Any other unlabeled numbered line (such as `3. Met`, `3. MET.`,
+  `3) MET`, `**3. MET**`, `03. MET`, or a MET block adjacent to a nonblank prose
+  or sub-bullet line or after the final `VERDICT:` line) is not marked and still
+  reaches the installed classifier's untagged-item rule, failing closed.
+- **Every other context line:** every other `NEEDS_CONTEXT` line outside a code
+  span sets `needs_context: true` and fails closed. Under the existing code-span
+  rule, an inline code span is read as a context marker only when it holds
+  exactly `NEEDS_CONTEXT` or `NEEDS_CONTEXT:`, and any other code span is
+  dropped as a quoted example.
+
+Example 1 — outside clean reply with the no-missing-context line:
+
+```text
+I checked every hunk of the diff against the acceptance criteria and the supplied callers.
+
+NEEDS_CONTEXT: none
+NO_FINDINGS: none
+Recommendation: approve because every criterion is met and no caller changes behavior.
+VERDICT: CLEAN
+```
+
+Example 2 — outside structured reply with a met-criterion block:
+
+```text
+**Criteria assessment**
+
+1. MET
+2. MET
+3. MET
+
+NO_FINDINGS: none
+Recommendation: approve because every acceptance criterion is met and no defect was found.
+VERDICT: CLEAN
+```
+
+Example 3 — delegated findings reply with the no-missing-context line:
+
+```text
+[P2] {"severity":"INFORMATIONAL","confidence":80,"path":"src/outside-review/recovery.ts","line":20,"category":"maintainability","summary":"keep the pre-pass pure","fix":"avoid mutating caller arrays"}
+
+NEEDS_CONTEXT: none
+Recommendation: merge, optionally applying the advisory note, because no blocking defect was found.
+VERDICT: FINDINGS
+```
+
+**Troubleshooting and upgrade reconciliation.** A `needs_context: true` result
+(or a delegated `needs-context` fallback) can be caused by a misplaced or
+malformed no-missing-context line rather than real missing material. To tell
+which, open the saved reply (outside:
+`<evidence-directory>/outside-calls/<call id>.json`; delegated:
+`<evidence root>/<branch>-delegate-calls/<call id>.json`) and compare it with
+the examples above. Because the prompt text is part of the shared prefix and
+call identity, this prompt change alters each outside and delegated call id: a
+review resumed across the upgrade makes those calls once more instead of
+replaying earlier saved results. Before upgrading, reconcile any outside or
+delegated call that has a `.claim` file and no saved `.json` result, so the
+upgraded version does not dispatch a new paid call past the old claim.
 
 ## Measurement baseline
 

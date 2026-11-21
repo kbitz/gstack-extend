@@ -1,3 +1,5 @@
+import { NOTHING_MISSING } from './prompt';
+
 export interface Classification {
   execution: { state: string };
   findings: { highest: string | null };
@@ -6,12 +8,57 @@ export interface Classification {
   [key: string]: unknown;
 }
 export type Classifier = (input: { text: string; gate: 'review' | 'structured'; exit: number; stderr: string }) => Classification;
+export type ExactForm = 'nothing-missing' | 'met' | null;
+
+const BLANK_LINE = /^[ \t]*$/;
+const CLOSING_LINE = /^(?:NO_FINDINGS: none[ \t]*|Recommendation:.*|VERDICT: (?:CLEAN|FINDINGS)[ \t]*)$/;
+const CRITERION_LINE = /^[1-9]\d{0,2}\. MET[ \t]*$/;
+const isToken = (line: string) => line.startsWith(NOTHING_MISSING) && BLANK_LINE.test(line.slice(NOTHING_MISSING.length));
+
+/** Mark counted exact-form lines in linear time (one backward pass, one forward pass). */
+export function exactForms(lines: readonly string[]): ExactForm[] {
+  const n = lines.length;
+  const laterAllBlankOrClosing = new Array<boolean>(n);
+  const closingLater = new Array<boolean>(n);
+  let allBlankOrClosing = true;
+  let seenClosing = false;
+  for (let i = n - 1; i >= 0; i--) {
+    laterAllBlankOrClosing[i] = allBlankOrClosing;
+    closingLater[i] = seenClosing;
+    const line = lines[i]!;
+    if (CLOSING_LINE.test(line)) seenClosing = true;
+    else if (!BLANK_LINE.test(line)) allBlankOrClosing = false;
+  }
+  const marks = new Array<ExactForm>(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const aboveBlankOrStart = i === 0 || BLANK_LINE.test(lines[i - 1]!);
+    if (isToken(lines[i]!)) {
+      if (aboveBlankOrStart && laterAllBlankOrClosing[i] && closingLater[i]) marks[i] = 'nothing-missing';
+      continue;
+    }
+    if (CRITERION_LINE.test(lines[i]!)) {
+      let end = i;
+      while (end + 1 < n && CRITERION_LINE.test(lines[end + 1]!)) end++;
+      const belowBlankOrClosing = end + 1 < n && (BLANK_LINE.test(lines[end + 1]!) || CLOSING_LINE.test(lines[end + 1]!));
+      if (aboveBlankOrStart && belowBlankOrClosing && closingLater[end]) {
+        for (let k = i; k <= end; k++) marks[k] = 'met';
+      }
+      i = end;
+    }
+  }
+  return marks;
+}
 
 // One severity plus a qualifier is formatting. Never quotes (`>`, code spans) or a second severity, token or word.
 const QUALIFIED_LABEL = /^(\s*(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|__)?\[P[0-3])(?:\s*[,;:/—–-]\s*|\s+)([a-z][a-z -]*)\]/i;
 
-/** Recover formatting only. The upstream validator still owns execution and severity. */
+/** Recover formatting only; recover() also blanks counted exact-form lines before classification, so a counted met-criterion line never reaches the installed untagged-item rule. The upstream validator still owns execution and severity. */
 export function recover(text: string, gate: 'review' | 'structured', exit: number, stderr: string, classify: Classifier) {
+  const normalizedLines = text.replace(/\r\n/g, '\n').split('\n');
+  const marks = exactForms(normalizedLines);
+  if (marks.some(Boolean) && normalizedLines.some((line, i) => !marks[i] && !BLANK_LINE.test(line))) {
+    text = text.split('\n').map((line, i) => marks[i] ? (line.endsWith('\r') ? '\r' : '') : line).join('\n');
+  }
   const original = classify({ text, gate, exit, stderr });
   const credited = (r: Classification) => r.verdict === 'clean' || r.verdict === 'findings';
   if (exit !== 0 || original.execution.state !== 'ran') return { classification: original, parse: 'not-applicable', credited: false, needs_context: false };

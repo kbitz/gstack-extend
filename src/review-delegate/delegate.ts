@@ -5,7 +5,7 @@
  */
 import { isAbsolute } from 'node:path';
 import { CLOSING_LINES, bytes, hash } from '../outside-review/prompt';
-import { recover, type Classification, type Classifier } from '../outside-review/recovery';
+import { exactForms, recover, type Classification, type Classifier } from '../outside-review/recovery';
 
 export const SPECIALIST_PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
 export const ATTACKER_PARTS = ['adversarial', 'red-team'] as const;
@@ -293,15 +293,25 @@ const LABEL_LINE = /^\s*(?:[-*+]\s+)?\[P([0-3])\][ \t]*(.*)$/;
 
 /**
  * Read the whole reply, never a subset of its findings. Only finding lines,
- * the explicit clean marker, a closing recommendation, an optional final
- * verdict line and blanks are allowed.
+ * an optional counted no-missing-context line, the explicit clean marker, a
+ * closing recommendation, an optional final verdict line and blanks are allowed.
  * The runner stamps `specialist`; keys outside the upstream schema are dropped.
  */
 export function parseFindings(reply: string, part: Part): { ok: true; findings: Finding[] } | { ok: false } {
   const findings: Finding[] = [];
-  let clean = false, recommendation = false, verdict = false;
+  const lines = reply.replace(/\r\n/g, '\n').split('\n');
+  const marks = exactForms(lines);
+  let nothingMissing = false, clean = false, recommendation = false, verdict = false;
   const nonempty = (text: unknown): text is string => typeof text === 'string' && !!text.trim();
-  for (const line of reply.replace(/\r\n/g, '\n').split('\n')) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const mark = marks[i];
+    if (mark === 'met') return { ok: false };
+    if (mark === 'nothing-missing') {
+      if (nothingMissing || clean || recommendation || verdict) return { ok: false };
+      nothingMissing = true;
+      continue;
+    }
     if (!line.trim()) continue;
     if (verdict) return { ok: false };
     if (recommendation) {
@@ -311,7 +321,7 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
     if (/^Recommendation: .+ because\b.+$/.test(line.trim())) { recommendation = true; continue; }
     if (line.trim() === 'NO_FINDINGS: none' && !clean && !findings.length) { clean = true; continue; }
     const label = LABEL_LINE.exec(line);
-    if (!label || clean) return { ok: false };
+    if (!label || clean || nothingMissing) return { ok: false };
     let value: unknown;
     try { value = JSON.parse(label[2]!); } catch { return { ok: false }; }
     if (!isObject(value)) return { ok: false };

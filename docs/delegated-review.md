@@ -191,6 +191,12 @@ The delegate returns, in this form:
 - `evidence` is text or the testing checklist's object with exactly `detects`,
   `non_test_callers`, `search_command` and `stronger_proof`. Their JSON values
   are preserved without imposing types the checklist does not specify;
+- an optional exact `NEEDS_CONTEXT: none` line on its own line in its single
+  allowed position — after any finding lines and a blank line (or as the reply's
+  first line when there are no findings) and directly or after blank lines
+  before `NO_FINDINGS: none` (when clean) and the `Recommendation` line; met-criterion
+  (`<n>. MET`) lines are not part of the delegated reply form (see
+  [Exact reply forms](outside-review.md#exact-reply-forms));
 - a clean reply has `NO_FINDINGS: none` immediately before its
   `Recommendation: <action> because <reason>` line;
 - an optional last line, `VERDICT: CLEAN` (no findings) or `VERDICT: FINDINGS`
@@ -233,13 +239,17 @@ parts actually run on the host. Otherwise, the first matching reason wins:
 | `timeout` | The delegate ran past its configured timeout. |
 | `failed` | Its temporary directory could not be created or cleaned up, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
 | `refused` | The installed classifier read the reply as a refusal. |
-| `needs-context` | The reply says `NEEDS_CONTEXT` (including when the delegate finds the closing `END_OF_REVIEW_MATERIAL` line missing because the prompt was cut off). |
+| `needs-context` | The reply says `NEEDS_CONTEXT` in any form that the [exact-form rules](outside-review.md#exact-reply-forms) do not count (including when the delegate finds the closing `END_OF_REVIEW_MATERIAL` line missing because the prompt was cut off). |
 | `uncredited` | The installed classifier did not credit the reply. |
-| `unparsed-finding` | Any reply content is outside the required form, a finding has malformed fields, or the classifier saw findings the runner could not parse. |
+| `unparsed-finding` | Any reply content is outside the required form (including a counted `NEEDS_CONTEXT: none` line out of its allowed position or any met-criterion line), a finding has malformed fields, or the classifier saw findings the runner could not parse. |
 | `worktree-changed` | The work tree or HEAD changed during the calls; applies to every part that call dispatched. |
 
 A fell-back part is never sent back to the delegate. Coverage is never lost
-silently: the receipt names the part and the reason.
+silently: the receipt names the part and the reason. A `needs-context` fallback
+can be a misplaced or malformed no-missing-context line rather than real missing
+material; open `<evidence root>/<branch>-delegate-calls/<call_id>.json` and
+compare the saved reply with the examples in
+[Exact reply forms](outside-review.md#exact-reply-forms).
 
 ## The command line
 

@@ -3,9 +3,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { prepare, snapshotDiff, CLOSING_LINES, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
-import { SETTLED_RULE } from '../src/review-delegate/delegate';
-import { recover, type Classifier } from '../src/outside-review/recovery';
+import { prepare, snapshotDiff, CLOSING_LINES, NOTHING_MISSING, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
+import { buildPrompt, DELEGATE_POLICY, POLICY_FORMAT, SETTLED_RULE } from '../src/review-delegate/delegate';
+import { exactForms, recover, type Classifier } from '../src/outside-review/recovery';
 import { run, measurement } from '../src/outside-review/run';
 import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
@@ -680,3 +680,340 @@ console.log(JSON.stringify({ result,
   expect(invoke('invalid').exitCode).toBe(1);
   expect(readFileSync(capture, 'utf8').trim().split('\n').length).toBe(count);
 }), 30000);
+
+// Faithful fixture mirroring installed gstack's lastLineVerdict plus NUMBERED_ITEM (`lib/outside-review-result.ts:277`).
+const NUMBERED_ITEM_RE = /^(?:\*\*|__)?\(?\d{1,3}[.)][\t ]+\S.*$/gm;
+const stripClosedFences = (text: string): string => {
+  const lines = text.split(/\r?\n/);
+  const markers = lines.map(l => /^[\t ]*(`{3,}|~{3,})/.exec(l)?.[1]);
+  let fence: string | undefined;
+  return lines.map((line, i) => {
+    const m = markers[i];
+    if (fence) { if (m && m[0] === fence[0] && m.length >= fence.length) fence = undefined; return ''; }
+    if (m) { fence = m; return ''; }
+    return line;
+  }).join('\n');
+};
+const numberedItems: Classifier = ({ text, gate, exit }) => {
+  const base = lastLineVerdict({ text, gate, exit, stderr: '' });
+  if (base.execution.state !== 'ran') return base;
+  const lines = text.trimEnd().split(/\r?\n/);
+  const last = (lines.at(-1) ?? '').replace(/^[\t ]*(?:#{1,6}[\t ]+|[-+*][\t ]+)?/, '').replace(/[*_`]/g, '').trim();
+  const token = /^VERDICT: (CLEAN|FINDINGS)$/.exec(last)?.[1] as 'CLEAN' | 'FINDINGS' | undefined;
+  const body = token ? lines.slice(0, -1).join('\n') : text;
+  const codeFree = stripClosedFences(body);
+  const hasVerdictLine = /^[\t ]*Verdict[\t ]*:/im.test(codeFree);
+  const unlabeled = (hasVerdictLine || token === 'CLEAN')
+    ? [...codeFree.matchAll(NUMBERED_ITEM_RE)].filter(m => !/\[P[0-3]\]/.test(m[0])).length : 0;
+  if (token === 'CLEAN' && unlabeled > 0) {
+    return { execution: { state: 'ran' }, findings: { highest: base.findings.highest, unlabeled }, verdict: 'unverified', reason: 'untagged_review' };
+  }
+  return unlabeled ? { ...base, findings: { ...base.findings, unlabeled } } : base;
+};
+
+describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
+  const gates = ['review', 'structured'] as const;
+  const CLOSING_CLEAN = 'NO_FINDINGS: none\nRecommendation: approve because every criterion is met and no caller changes behavior.\nVERDICT: CLEAN';
+  const CLOSING_FINDINGS = 'Recommendation: merge, optionally addressing the advisory note, because no blocking defect remains.\nVERDICT: FINDINGS';
+  const installedClassifier = async (): Promise<Classifier> =>
+    (await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'))).classifyOutsideReview;
+  const bothStrict = (title: string, body: (classifier: Classifier) => void) => {
+    test(`${title} (strict fixture)`, () => body(classify));
+    test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)(`${title} (installed classifier)`, async () => body(await installedClassifier()));
+  };
+  const bothNumbered = (title: string, body: (classifier: Classifier) => void) => {
+    test(`${title} (numberedItems fixture)`, () => body(numberedItems));
+    test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)(`${title} (installed classifier)`, async () => body(await installedClassifier()));
+  };
+
+  test('E1 pure exactForms predicate table covers token and MET accept and reject cases', () => {
+    const cases: Array<[string, string[], ('nothing-missing' | 'met' | null)[]]> = [
+      ['first-line token before closing lines', ['NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], ['nothing-missing', null, null, null]],
+      ['token after blank line and before closing lines', ['Analysis paragraph.', '', 'NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, 'nothing-missing', null, null, null]],
+      ['token with trailing spaces/tabs and space/tab neighbor above', ['Analysis.', ' \t ', 'NEEDS_CONTEXT: none \t', '', 'NO_FINDINGS: none\t ', 'Recommendation: merge because clean.', 'VERDICT: CLEAN \t'], [null, null, 'nothing-missing', null, null, null, null]],
+      ['token after NO_FINDINGS: none with blank line between', ['NO_FINDINGS: none', '', 'NEEDS_CONTEXT: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, 'nothing-missing', null, null]],
+      ['token directly under NO_FINDINGS: none rejected', ['NO_FINDINGS: none', 'NEEDS_CONTEXT: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null]],
+      ['token directly under prose line rejected', ['Caller context is missing.', 'NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null]],
+      ['token directly above prose line rejected', ['NEEDS_CONTEXT: none', 'All callers were checked.', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null]],
+      ['token followed by later paragraph after blank line rejected', ['NEEDS_CONTEXT: none', '', 'Wait, callers are missing.', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null]],
+      ['token with NBSP neighbor above rejected', ['\u00A0', 'NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null]],
+      ['token with BOM neighbor above rejected', ['\uFEFF', 'NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null]],
+      ['token under bold Recommendation rejected', ['NEEDS_CONTEXT: none', '**Recommendation:** merge because clean.', 'VERDICT: CLEAN'], [null, null, null]],
+      ['token under leading-space NO_FINDINGS rejected', ['NEEDS_CONTEXT: none', ' NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null]],
+      ['token after final VERDICT line rejected (E3)', ['NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN', '', 'NEEDS_CONTEXT: none'], [null, null, null, null, null]],
+      ['token alone with no closing line rejected (E3)', ['NEEDS_CONTEXT: none'], [null]],
+      ['token written twice rejected', ['NEEDS_CONTEXT: none', '', 'NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, 'nothing-missing', null, null, null]],
+      ['MET block between blank lines before closing lines', ['**Heading**', '', '1. MET', '2. MET', '999. MET \t', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, 'met', 'met', 'met', null, null, null, null]],
+      ['MET block at reply start directly before closing line', ['1. MET', '2. MET', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], ['met', 'met', null, null, null]],
+      ['MET block directly under nonblank line rejected', ['**Heading**', '1. MET', '2. MET', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null]],
+      ['MET block directly above prose line rejected', ['', '1. MET', '2. MET', 'Prose note.', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null, null]],
+      ['MET block interrupted by indented sub-bullet rejected', ['', '1. MET', '  - sub-bullet', '2. MET', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null, null]],
+      ['MET block after final VERDICT line rejected (E3)', ['NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN', '', '1. MET', '2. MET'], [null, null, null, null, null, null]],
+      ['non-exact MET lines rejected', ['', '3. Met', '', '3. MET.', '', '3) MET', '', '**3. MET**', '', '03. MET', '', '1000. MET', '', '3. MET, by inspection', '', 'NO_FINDINGS: none', 'VERDICT: CLEAN'], new Array(17).fill(null)],
+    ];
+    for (const [label, lines, expected] of cases) {
+      expect([label, exactForms(lines)]).toEqual([label, expected]);
+    }
+  });
+
+  // O1
+  bothStrict('O1: credits clean challenge and structured replies with a counted token, and fails closed when prose follows a first-line token', classifier => {
+    const cleanFirst = `NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`;
+    const cleanAfterProse = `I checked every hunk of the diff against the acceptance criteria and the supplied callers.\n\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`;
+    const tokenBeforeProse = `NEEDS_CONTEXT: none\n\nI checked every hunk of the diff against the acceptance criteria.\n${CLOSING_CLEAN}`;
+    for (const gate of gates) {
+      for (const reply of [cleanFirst, cleanAfterProse]) {
+        const res = recover(reply, gate, 0, '', classifier);
+        expect([gate, res.credited, res.needs_context, res.parse, res.classification.verdict]).toEqual([gate, true, false, 'valid', 'clean']);
+      }
+      const bad = recover(tokenBeforeProse, gate, 0, '', classifier);
+      expect([gate, bad.credited, bad.needs_context, bad.parse, bad.classification.verdict]).toEqual([gate, false, true, 'failed', 'unverified']);
+    }
+  });
+
+  // O2, O7, O11
+  bothStrict('O2, O7, O11: fails closed on every token variant or neighbor violation and pins the accepted residuals', classifier => {
+    const failClosed = [
+      `NEEDS_CONTEXT: none of the above depends on missing context.\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: none (the callers were supplied).\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: None\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT:none\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: none.\n${CLOSING_CLEAN}`,
+      `- NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `> NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `**NEEDS_CONTEXT: none**\n${CLOSING_CLEAN}`,
+      ` NEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `\uFEFFNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: none\uFEFF\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT:\u00A0none\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: none\u00A0\n${CLOSING_CLEAN}`,
+      `\u00A0\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `\uFEFF\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `NO_FINDINGS: none\nNEEDS_CONTEXT: none\nRecommendation: approve because clean.\nVERDICT: CLEAN`,
+      `The callers of save() were not supplied.\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `Everything looks fine except\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: none\nAll callers were checked.\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: none\n\nThe callers of save() were not supplied.\n${CLOSING_CLEAN}`,
+      `Analysis start.\n\nNEEDS_CONTEXT: none\n\nMore analysis.\n\n${CLOSING_CLEAN}`,
+      `NEEDS_CONTEXT: the callers of save()\n\nNEEDS_CONTEXT: none\n${CLOSING_CLEAN}`,
+      // O7: bold Recommendation or leading-space NO_FINDINGS directly under token
+      `NEEDS_CONTEXT: none\n**Recommendation:** approve because clean.\nVERDICT: CLEAN`,
+      `NEEDS_CONTEXT: none\n NO_FINDINGS: none\nRecommendation: approve because clean.\nVERDICT: CLEAN`,
+      // O11 (E2): reply made only of the token
+      'NEEDS_CONTEXT: none',
+    ];
+    for (const gate of gates) {
+      for (const reply of failClosed) {
+        const res = recover(reply, gate, 0, '', classifier);
+        expect([gate, reply, res.credited, res.needs_context, res.classification.verdict]).toEqual([gate, reply, false, true, 'unverified']);
+      }
+    }
+
+    const pinnedCredited = [
+      // Token after NO_FINDINGS: none with a blank line between
+      'NO_FINDINGS: none\n\nNEEDS_CONTEXT: none\nRecommendation: approve because clean.\nVERDICT: CLEAN',
+      // Neighbor line of only spaces or tabs counts as blank; token with trailing spaces/tabs counts
+      'Analysis.\n  \t \nNEEDS_CONTEXT: none \t\n' + CLOSING_CLEAN,
+      // Residual 1: gap named in a separate earlier paragraph
+      'The callers of save() were not supplied in the bundle.\n\nNEEDS_CONTEXT: none\n' + CLOSING_CLEAN,
+      // Residual 2: gap named in the closing Recommendation's because-clause directly under the token
+      'NEEDS_CONTEXT: none\nNO_FINDINGS: none\nRecommendation: hold because the callers of save() were not supplied.\nVERDICT: CLEAN',
+    ];
+    for (const gate of gates) {
+      for (const reply of pinnedCredited) {
+        const res = recover(reply, gate, 0, '', classifier);
+        expect([gate, reply, res.credited, res.needs_context, res.classification.verdict]).toEqual([gate, reply, true, false, 'clean']);
+      }
+    }
+  });
+
+  // O7 trailing spaces/tabs on closing lines (run through numberedItems and installedClassifier, since strict stub regex has no trailing whitespace on NO_FINDINGS)
+  bothNumbered('O7: closing lines with trailing spaces or tabs count under the token', classifier => {
+    const reply = 'Analysis.\n  \t \nNEEDS_CONTEXT: none \t\nNO_FINDINGS: none \t\nRecommendation: approve because clean. \t\nVERDICT: CLEAN \t';
+    for (const gate of gates) {
+      const res = recover(reply, gate, 0, '', classifier);
+      expect([gate, res.credited, res.needs_context, res.classification.verdict]).toEqual([gate, true, false, 'clean']);
+    }
+  });
+
+  // O3 and O4
+  const REWRITTEN_2026_11_19 = [
+    '**Structured Review**',
+    '**Criteria assessment**',
+    '',
+    '1. MET',
+    '2. MET',
+    '3. MET',
+    '4. MET',
+    '5. MET',
+    '6. MET',
+    '7. MET',
+    '8. MET',
+    '',
+    '**Verification notes**',
+    '- Checked all hunks against the contract.',
+    '- No regression risk identified.',
+    '',
+    'NO_FINDINGS: none',
+    'Recommendation: approve because all eight criteria are met and no defect was found.',
+    'VERDICT: CLEAN',
+  ].join('\n');
+
+  const ORIGINAL_2026_11_19 = REWRITTEN_2026_11_19.replace(
+    ['1. MET', '2. MET', '3. MET', '4. MET', '5. MET', '6. MET', '7. MET', '8. MET'].join('\n'),
+    [
+      '1. **Criterion one.** Met.',
+      '2. **Criterion two.** Met.',
+      '3. **Criterion three.** Met.',
+      '4. **Criterion four.** Met.',
+      '5. **Criterion five.** Met.',
+      '6. **Criterion six.** Met.',
+      '7. **Criterion seven.** Met.',
+      '8. **Criterion eight.** Met.',
+    ].join('\n'),
+  );
+
+  bothNumbered('O3, O4: credits the rewritten 2026-11-19 MET block (including challenge structured fallback) and keeps non-exact numbered shapes fail-closed', classifier => {
+    for (const gate of gates) {
+      const ok = recover(REWRITTEN_2026_11_19, gate, 0, '', classifier);
+      expect([gate, ok.credited, ok.needs_context, ok.parse, ok.classification.verdict]).toEqual([gate, true, false, 'valid', 'clean']);
+    }
+
+    const uncredited = [
+      ORIGINAL_2026_11_19,
+      REWRITTEN_2026_11_19.replace('3. MET', '3. Missing guard on empty input in parser.'),
+      REWRITTEN_2026_11_19.replace('3. MET', '3. Met'),
+      REWRITTEN_2026_11_19.replace('3. MET', '3. MET.'),
+      REWRITTEN_2026_11_19.replace('3. MET', '3) MET'),
+      REWRITTEN_2026_11_19.replace('3. MET', '**3. MET**'),
+      REWRITTEN_2026_11_19.replace('3. MET', '03. MET'),
+      REWRITTEN_2026_11_19.replace('3. MET', '3. MET, by inspection'),
+      REWRITTEN_2026_11_19.replace('**Criteria assessment**\n\n1. MET', '**Criteria assessment**\n1. MET'),
+      REWRITTEN_2026_11_19.replace('8. MET\n\n**Verification notes**', '8. MET\nAll criteria verified.\n\n**Verification notes**'),
+      REWRITTEN_2026_11_19.replace('1. MET\n2. MET', '1. MET\n  - checked by inspection\n2. MET'),
+    ];
+    for (const gate of gates) {
+      for (const reply of uncredited) {
+        const res = recover(reply, gate, 0, '', classifier);
+        expect([gate, reply, res.credited, res.classification.verdict, res.classification.reason]).toEqual([
+          gate, reply, false, 'unverified', 'untagged_review',
+        ]);
+      }
+    }
+
+    // O4: challenge reply (review gate) with counted MET lines and no Recommendation credits via structured fallback with parse: 'recovered'
+    const challengeNoRec = REWRITTEN_2026_11_19.replace(
+      '\nRecommendation: approve because all eight criteria are met and no defect was found.',
+      '',
+    );
+    const recovered = recover(challengeNoRec, 'review', 0, '', classifier);
+    expect([recovered.credited, recovered.needs_context, recovered.parse, recovered.classification.verdict]).toEqual([
+      true, false, 'recovered', 'clean',
+    ]);
+  });
+
+  // O5
+  test('O5: prompts ask for the exact forms with quoted interpolation, structural bounds, and no met-criterion line in delegated prompts', () => {
+    expect(NOTHING_MISSING).toBe('NEEDS_CONTEXT: none');
+    for (const promptText of [CLOSING_LINES, POLICY, POLICY_FORMAT, DELEGATE_POLICY,
+      buildPrompt('testing', 'a'.repeat(40), 'b'.repeat(40), 'diff', 'checklist', undefined, ['bun test *'])]) {
+      expect(promptText).toContain(`write no NEEDS_CONTEXT line, or write the exact line "${NOTHING_MISSING}" on its own line after a blank line, or as the reply's first line`);
+      expect(promptText).toContain(`if you would qualify it in any way, write NEEDS_CONTEXT: <what is missing> instead`);
+      expect(promptText).toContain(`no formatting (no bold, list marker, quote or code span) on "${NOTHING_MISSING}" or the closing lines`);
+      expect(promptText.indexOf('If essential context is missing, return NEEDS_CONTEXT: <specific callers, contracts or tests>.'))
+        .toBeLessThan(promptText.indexOf(`"${NOTHING_MISSING}"`));
+      expect(promptText.indexOf(`"${NOTHING_MISSING}"`))
+        .toBeLessThan(promptText.indexOf('Never declare a review complete when essential context is missing.'));
+    }
+    expect(POLICY).toContain('in the exact form "<number>. MET"');
+    expect(POLICY).toContain('blank line above and below');
+    expect(POLICY_FORMAT).not.toContain('"<number>. MET"');
+    expect(DELEGATE_POLICY).not.toContain('"<number>. MET"');
+  });
+
+  // O6
+  bothNumbered('O6: an exact-form line inside a fenced code block has the same classification as the reply without that line', classifier => {
+    const withFencedToken = `\`\`\`text\n\nNEEDS_CONTEXT: none\n\n\`\`\`\n[P2] advisory note\n${CLOSING_FINDINGS}`;
+    const withoutFencedToken = `\`\`\`text\n\n\n\`\`\`\n[P2] advisory note\n${CLOSING_FINDINGS}`;
+    const withFencedMet = `\`\`\`text\n\n1. MET\n2. MET\n\n\`\`\`\n${CLOSING_CLEAN}`;
+    const withoutFencedMet = `\`\`\`text\n\n\n\`\`\`\n${CLOSING_CLEAN}`;
+    for (const gate of gates) {
+      expect(recover(withFencedToken, gate, 0, '', classifier).classification)
+        .toEqual(recover(withoutFencedToken, gate, 0, '', classifier).classification);
+      expect(recover(withFencedMet, gate, 0, '', classifier).classification)
+        .toEqual(recover(withoutFencedMet, gate, 0, '', classifier).classification);
+    }
+  });
+
+  // O8
+  bothNumbered('O8: the three documented example replies in docs/outside-review.md are credited verbatim', classifier => {
+    const example1 = [
+      'I checked every hunk of the diff against the acceptance criteria and the supplied callers.',
+      '',
+      'NEEDS_CONTEXT: none',
+      'NO_FINDINGS: none',
+      'Recommendation: approve because every criterion is met and no caller changes behavior.',
+      'VERDICT: CLEAN',
+    ].join('\n');
+    const example2 = [
+      '**Criteria assessment**',
+      '',
+      '1. MET',
+      '2. MET',
+      '3. MET',
+      '',
+      'NO_FINDINGS: none',
+      'Recommendation: approve because every acceptance criterion is met and no defect was found.',
+      'VERDICT: CLEAN',
+    ].join('\n');
+    const example3 = [
+      '[P2] {"severity":"INFORMATIONAL","confidence":80,"path":"src/outside-review/recovery.ts","line":20,"category":"maintainability","summary":"keep the pre-pass pure","fix":"avoid mutating caller arrays"}',
+      '',
+      'NEEDS_CONTEXT: none',
+      'Recommendation: merge, optionally applying the advisory note, because no blocking defect was found.',
+      'VERDICT: FINDINGS',
+    ].join('\n');
+    for (const example of [example1, example2, example3]) {
+      for (const gate of gates) {
+        const res = recover(example, gate, 0, '', classifier);
+        expect([gate, res.credited, res.needs_context, res.parse]).toEqual([gate, true, false, 'valid']);
+      }
+    }
+  });
+
+  // O9 (E5)
+  bothStrict('O9: inline code spans holding NEEDS_CONTEXT: none or NEEDS_CONTEXT: <gap> keep HEAD quoted-example behavior', classifier => {
+    for (const spanLine of ['`NEEDS_CONTEXT: none`', '`NEEDS_CONTEXT: the callers of save()`']) {
+      const res = recover(`${spanLine}\n${CLOSING_CLEAN}`, 'review', 0, '', classifier);
+      expect([spanLine, res.credited, res.needs_context]).toEqual([spanLine, true, false]);
+    }
+    for (const bareSpan of ['`NEEDS_CONTEXT`: callers', '`NEEDS_CONTEXT:` callers']) {
+      const res = recover(`${bareSpan}\n${CLOSING_CLEAN}`, 'review', 0, '', classifier);
+      expect([bareSpan, res.credited, res.needs_context]).toEqual([bareSpan, false, true]);
+    }
+  });
+
+  // O10 (E3)
+  bothNumbered('O10: a token or MET block placed after the final VERDICT line is not counted and stays uncredited', classifier => {
+    const tokenAfterVerdict = `${CLOSING_CLEAN}\n\nNEEDS_CONTEXT: none`;
+    const metAfterVerdict = `${CLOSING_CLEAN}\n\n1. MET\n2. MET`;
+    for (const gate of gates) {
+      const tok = recover(tokenAfterVerdict, gate, 0, '', classifier);
+      expect([gate, tok.credited, tok.needs_context, tok.classification.verdict]).toEqual([gate, false, true, 'unverified']);
+      const met = recover(metAfterVerdict, gate, 0, '', classifier);
+      expect([gate, met.credited, met.needs_context, met.classification.verdict]).toEqual([gate, false, false, 'unverified']);
+    }
+  });
+
+  // O12 (E4)
+  bothStrict('O12: CRLF replies without a counted form keep HEAD parse="recovered", and CRLF replies with a counted token are credited', classifier => {
+    const crlfNoForm = CLOSING_CLEAN.replace(/\n/g, '\r\n');
+    const crlfWithToken = `NEEDS_CONTEXT: none\r\n${crlfNoForm}`;
+    for (const gate of gates) {
+      const plain = recover(crlfNoForm, gate, 0, '', classifier);
+      expect([gate, plain.credited, plain.needs_context, plain.parse]).toEqual([gate, true, false, 'recovered']);
+      const withToken = recover(crlfWithToken, gate, 0, '', classifier);
+      expect([gate, withToken.credited, withToken.needs_context, withToken.parse]).toEqual([gate, true, false, 'recovered']);
+    }
+  });
+});
