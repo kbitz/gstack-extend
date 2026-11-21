@@ -164,16 +164,20 @@ any host skill directory still holds an `.extend-root` pointer, whichever checko
 wrote it, and removed with the last one. Foreign links and regular files are left alone. Legacy
 `--skills-dir ... --uninstall` cleanup leaves the shared CLI links alone.
 
-The preamble copy is kept while Claude Code or Codex has an install pointer
-or a recognized older skill link into a live checkout.
+Uninstall from a named host or with `--host auto` keeps the shared preamble
+while Claude Code or Codex has an `.extend-root` pointer or a recognized
+older skill link into a live checkout. This applies across checkouts.
+Uninstall removes the shared copy when neither kind of install remains.
+Legacy `--skills-dir ... --uninstall` leaves it alone.
 
 Setup also removes retired gstack-extend skills owned by this checkout. Personal skills,
 foreign install pointers, and unrelated files are preserved.
 
 ### Hosts setup does not manage
 
-`setup` manages Claude, Codex, OpenCode and Cursor only (the table above). Another
-agent that reads `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
+`setup` manages Claude Code and Codex and still handles the legacy OpenCode and
+Cursor paths from the table above. Another agent that reads
+`<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
 `~/.gemini/config/skills/` is one such directory.
 
@@ -194,7 +198,8 @@ ln -s <checkout>/skills/plan-track.md <host-skills-dir>/plan-track/SKILL.md
 ```
 
 `/plan-track` can continue without a managed install. If the start command is
-missing, the skill reports the setup fix and skips telemetry for that run.
+missing, rejected, refused or fails, the skill reports the problem once and
+skips telemetry finish for that run.
 `setup` and its uninstall never see these links, so remove them by hand; a link
 dangles after `setup --uninstall` or a moved checkout. Skills that call checkout
 helpers need a Claude Code or Codex install. The start command resolves only
@@ -215,11 +220,14 @@ Every gstack-extend skill starts with one fixed command:
 **Modes and flags:**
 
 - `~/.gstack-extend/bin/preamble <skill>` — resolve root, run `bin/update-check`, start telemetry.
-- `--force` — pass `--force` to `bin/update-check`.
-- `--require <helper>` — require a verified root and executable `bin/<helper>`; print `ERROR:` and exit `1` otherwise.
+- `--force` — pass `--force` when `bin/update-check` runs.
+- `--require <helper>` — in default or `--root` mode, require a verified root and executable `bin/<helper>`. A failed check prints `ERROR:` to stdout and exits `1`.
 - `--root` — print only the root lines (runs neither `bin/update-check` nor telemetry); used to recover `_EXTEND_ROOT=` later in a session.
-- `--resume` — start a new telemetry segment after a deliberate pause.
-- `--help` / `-h` — print usage synopsis and flag descriptions to stdout and exit `0`.
+- `--resume` — start a new telemetry segment after a deliberate pause. This mode skips root lookup and update checks.
+- `--help` / `-h` — on its own, print usage synopsis and flag descriptions to stdout and exit `0`.
+
+`--root` and `--resume` are mutually exclusive. Invalid arguments print
+`preamble: PREAMBLE_USAGE:` on stderr and exit `2`.
 
 **First-run check:** after running `./setup --host auto`, verify the install without side effects:
 
@@ -234,16 +242,29 @@ EXTEND_ROOT: /path/to/gstack-extend
 _EXTEND_ROOT=/path/to/gstack-extend
 ```
 
-**Permission grant:** each Claude Code skill includes `Bash(~/.gstack-extend/bin/preamble:*)` after `Bash` in `allowed-tools`. Setup strips `allowed-tools` from Codex copies. The local probe confirmed tilde expansion in Bash 5.3.20. The owner's live worker check covers permission decisions in Claude Code auto mode and Codex. Allowing `~/.gstack-extend/bin/preamble` lets it run `bin/update-check` from the resolved checkout and `$HOME/.gstack-extend/bin/telemetry-call`, which looks up `gstack-extend-telemetry` on `PATH` first.
+**Permission grant:** each Claude Code skill includes `Bash(~/.gstack-extend/bin/preamble:*)` after `Bash` in `allowed-tools`. Setup strips `allowed-tools` from Codex copies. The local shell probe confirmed tilde expansion in Bash 5.3.20. Permission decisions in Claude Code auto mode and live worker adherence in Claude Code and Codex still need owner verification. Allowing `~/.gstack-extend/bin/preamble` lets it run `bin/update-check` from the resolved checkout and `$HOME/.gstack-extend/bin/telemetry-call`, which looks up `gstack-extend-telemetry` on `PATH` first.
 
-**Shared-copy policy (last setup wins):** every `setup` run replaces `~/.gstack-extend/bin/preamble` atomically via a temporary file and rename. Because the command resolves the root per skill at runtime, one copy serves every checkout, though running `setup` from an older clone or worktree replaces the copy until `setup` runs again from your main checkout. A copy older than a skill's text rejects unknown arguments with exit `2` (`PREAMBLE_ARGS`); a missing or non-executable copy exits `127`/`126` (`PREAMBLE_MISSING`). In either case, rerun `./setup --host auto` from the checkout your skills link to, then start the skill again. Rolling back to an earlier release leaves the copy on disk and unused.
+**Shared copy.** Setup uses a temporary file and an atomic rename to publish
+`~/.gstack-extend/bin/preamble`. The last setup to publish that file supplies
+the shared copy, even when it ran from an older clone or worktree. The command
+resolves the checkout per skill at runtime. Rolling back to a release before
+the start command was added leaves the copy on disk and unused.
+
+**Recovery.** Exit `127` or `126` means the shell could not find or execute the
+command (`PREAMBLE_MISSING`). Exit `2` with `preamble: PREAMBLE_USAGE:` means
+the command rejected an argument (`PREAMBLE_ARGS`), as an older copy does when
+given a flag it does not recognize. First retry the start line exactly as
+written for a rejected argument. If it still fails, or the skill reports
+`PREAMBLE_MISSING` or `PREAMBLE_FAILED`, run `./setup --host auto` from the
+checkout your skills link to, then start the skill again.
 
 **Developer escape hatches:** to test a checkout's start command without replacing `~/.gstack-extend/bin/preamble`, run `bash <checkout>/bin/lib/preamble.sh <skill> --root`. To debug a non-zero `bin/update-check` exit, run `<root>/bin/update-check` directly.
 
 ### Update checks
 
-Every installed skill runs `bin/update-check` at start and follows one shared upgrade
-flow when `UPGRADE_AVAILABLE <old> <new>` is printed.
+On a fresh start, the start command runs `bin/update-check` after it finds a
+verified checkout. A skill follows its upgrade flow when the check prints
+`UPGRADE_AVAILABLE <old> <new>`.
 
 In an interactive session (`GSTACK_SESSION_KIND` unset or any value other than
 `spawned` or `unattended`), the flow checks `auto_upgrade`. With `auto_upgrade=true`

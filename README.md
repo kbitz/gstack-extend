@@ -65,12 +65,13 @@ Check that the start command can find the installed checkout:
 ~/.gstack-extend/bin/preamble plan-track --root
 ```
 
-The output shows `EXTEND_ROOT:` and `_EXTEND_ROOT=` for the checkout.
+The output shows `EXTEND_ROOT:` and `_EXTEND_ROOT=` for the checkout. See
+[Start command](docs/installation.md#start-command) for recovery and permission details.
 
-Update with `/gstack-extend-upgrade`. Every skill checks for updates when it
-starts. A caller that launches skills without a person sets
-`GSTACK_SESSION_KIND=spawned` so a stage never asks or upgrades; see
-[Update checks](docs/installation.md#update-checks). Uninstall with:
+Update with `/gstack-extend-upgrade`. A fresh skill start checks for updates
+once it finds a verified checkout. A caller that launches skills without a
+person sets `GSTACK_SESSION_KIND=spawned` to suppress upgrade prompts and automatic
+upgrades. See [Update checks](docs/installation.md#update-checks). Uninstall with:
 
 ```bash
 ~/.claude/skills/gstack-extend/setup --host auto --uninstall
