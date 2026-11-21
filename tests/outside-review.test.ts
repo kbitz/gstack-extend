@@ -742,11 +742,13 @@ describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
       ['token under leading-space NO_FINDINGS rejected', ['NEEDS_CONTEXT: none', ' NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null]],
       ['token after final VERDICT line rejected (E3)', ['NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN', '', 'NEEDS_CONTEXT: none'], [null, null, null, null, null]],
       ['token alone with no closing line rejected (E3)', ['NEEDS_CONTEXT: none'], [null]],
+      ['a later recommendation does not count a token after the last verdict', ['VERDICT: CLEAN', '', 'NEEDS_CONTEXT: none', 'Recommendation: merge because clean.'], [null, null, null, null]],
       ['token written twice rejected', ['NEEDS_CONTEXT: none', '', 'NEEDS_CONTEXT: none', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, 'nothing-missing', null, null, null]],
       ['MET block between blank lines before closing lines', ['**Heading**', '', '1. MET', '2. MET', '999. MET \t', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, 'met', 'met', 'met', null, null, null, null]],
       ['MET block at reply start directly before closing line', ['1. MET', '2. MET', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], ['met', 'met', null, null, null]],
       ['MET block directly under nonblank line rejected', ['**Heading**', '1. MET', '2. MET', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null]],
       ['MET block directly above prose line rejected', ['', '1. MET', '2. MET', 'Prose note.', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null, null]],
+      ['a later recommendation does not count a MET block after the last verdict', ['VERDICT: FINDINGS', '', '1. MET', '2. MET', 'Recommendation: hold because a test failed.'], [null, null, null, null, null]],
       ['MET block interrupted by indented sub-bullet rejected', ['', '1. MET', '  - sub-bullet', '2. MET', '', 'NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN'], [null, null, null, null, null, null, null, null]],
       ['MET block after final VERDICT line rejected (E3)', ['NO_FINDINGS: none', 'Recommendation: merge because clean.', 'VERDICT: CLEAN', '', '1. MET', '2. MET'], [null, null, null, null, null, null]],
       ['non-exact MET lines rejected', ['', '3. Met', '', '3. MET.', '', '3) MET', '', '**3. MET**', '', '03. MET', '', '1000. MET', '', '3. MET, by inspection', '', 'NO_FINDINGS: none', 'VERDICT: CLEAN'], new Array(17).fill(null)],
@@ -997,9 +999,12 @@ describe('exact reply forms (NEEDS_CONTEXT: none and <n>. MET)', () => {
   bothNumbered('O10: a token or MET block placed after the final VERDICT line is not counted and stays uncredited', classifier => {
     const tokenAfterVerdict = `${CLOSING_CLEAN}\n\nNEEDS_CONTEXT: none`;
     const metAfterVerdict = `${CLOSING_CLEAN}\n\n1. MET\n2. MET`;
+    const tokenBeforeAnotherRecommendation = tokenAfterVerdict + '\nRecommendation: approve because clean.';
     for (const gate of gates) {
-      const tok = recover(tokenAfterVerdict, gate, 0, '', classifier);
-      expect([gate, tok.credited, tok.needs_context, tok.classification.verdict]).toEqual([gate, false, true, 'unverified']);
+      for (const reply of [tokenAfterVerdict, tokenBeforeAnotherRecommendation]) {
+        const tok = recover(reply, gate, 0, '', classifier);
+        expect([gate, tok.credited, tok.needs_context, tok.classification.verdict]).toEqual([gate, false, true, 'unverified']);
+      }
       const met = recover(metAfterVerdict, gate, 0, '', classifier);
       expect([gate, met.credited, met.needs_context, met.classification.verdict]).toEqual([gate, false, false, 'unverified']);
     }

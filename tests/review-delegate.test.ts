@@ -1298,14 +1298,13 @@ describe('reply parsing and the receipt contract', () => {
     const metHits: string[] = [];
     for (const file of srcFiles) {
       const rel = file.slice(REPO.length + 1).replace(/\\/g, '/');
-      const lines = readFileSync(file, 'utf8').split('\n');
-      lines.forEach((line, idx) => {
-        if (line.includes('NEEDS_CONTEXT: none')) tokenHits.push(`${rel}:${idx + 1}`);
-        if (/\bMET\b/.test(line)) metHits.push(`${rel}:${idx + 1}`);
-      });
+      for (const line of readFileSync(file, 'utf8').split('\n')) {
+        if (line.includes('NEEDS_CONTEXT: none')) tokenHits.push(rel);
+        if (/\bMET\b/.test(line)) metHits.push(rel);
+      }
     }
-    expect(tokenHits).toEqual(['src/outside-review/prompt.ts:16']);
-    expect(metHits).toEqual(['src/outside-review/prompt.ts:30', 'src/outside-review/recovery.ts:15']);
+    expect(tokenHits).toEqual(['src/outside-review/prompt.ts']);
+    expect(metHits.sort()).toEqual(['src/outside-review/prompt.ts', 'src/outside-review/recovery.ts']);
 
     // D3(c): each intended difference between outside recover() and delegated decide()
     for (const diffReply of unparsedCases) {

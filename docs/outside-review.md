@@ -58,11 +58,11 @@ Never put the request in the source checkout or retained telemetry.
 Supply acceptance criteria and the two installed review rubrics, not whole
 skills or session history. The **wrapper adds context**, selecting specific
 callers, contracts and tests before dispatch; it records why each is relevant.
-The voice has no tools. Any `NEEDS_CONTEXT` line other than a counted exact
-`NEEDS_CONTEXT: none` line (see [Exact reply forms](#exact-reply-forms)) keeps
-coverage missing, and the parent provides the named material only when the reply
-names specific missing context in a justified extension. Recovery of marker syntax
-never resends the prompt and never calls a model.
+The voice has no tools. When the helper recognizes a missing-context marker
+that the [exact-form rules](#exact-reply-forms) leave in the reply, it reports
+`needs_context: true` and coverage stays missing. The parent supplies specific
+missing material named in the reply only in a justified context extension.
+Recovery of marker syntax never resends the prompt and never calls a model.
 
 The CLI returns `results` (private review output, provider usage and per-phase
 classification) and content-free `measurements`. Exit codes: 0 credited with
@@ -145,10 +145,9 @@ because otherwise a paid attempt could be repeated without knowing its outcome.
 `recover()` (`src/outside-review/recovery.ts`) and `parseFindings`
 (`src/review-delegate/delegate.ts`) share one linear-time predicate,
 `exactForms(lines)`. In `recover()`, counted exact-form lines are blanked in
-place before classification (unless blanking them would leave only blank lines,
-in which case `recover()` skips blanking and reads the original reply as
-missing context), so a counted met-criterion line never reaches the installed
-classifier's untagged-item rule. There are two exact forms:
+place before classification, so a counted met-criterion line never reaches the
+installed classifier's untagged-item rule. A reply made only of the token has
+no closing line and still reads as missing context. There are two exact forms:
 
 - **No-missing-context token:** a line that is exactly `NEEDS_CONTEXT: none`
   (starting in column 0, with that case and single space, optional trailing
@@ -167,6 +166,9 @@ Definitions and boundary rules:
   column 0 (each with optional trailing spaces or tabs and nothing before it; a
   bold `**Recommendation:**` line or a leading-space closing line is not a
   closing line).
+- **Verdict boundary:** both forms must come before the last exact
+  `VERDICT: CLEAN` or `VERDICT: FINDINGS` line when one is present. A later
+  recommendation cannot make a form after that line count.
 - **Token rule (trailer anchor):** a `NEEDS_CONTEXT: none` line counts only when
   the line above it is blank or it is the reply's first line, every line after
   it to the end of the reply is blank or a closing line, and at least one later
@@ -183,13 +185,16 @@ Definitions and boundary rules:
   below the run is blank or a closing line, and at least one later line is a
   closing line. Any other unlabeled numbered line (such as `3. Met`, `3. MET.`,
   `3) MET`, `**3. MET**`, `03. MET`, or a MET block adjacent to a nonblank prose
-  or sub-bullet line or after the final `VERDICT:` line) is not marked and still
-  reaches the installed classifier's untagged-item rule, failing closed.
-- **Every other context line:** every other `NEEDS_CONTEXT` line outside a code
-  span sets `needs_context: true` and fails closed. Under the existing code-span
-  rule, an inline code span is read as a context marker only when it holds
-  exactly `NEEDS_CONTEXT` or `NEEDS_CONTEXT:`, and any other code span is
-  dropped as a quoted example.
+  or sub-bullet line or after the final `VERDICT:` line) reaches the installed
+  classifier unchanged. A `VERDICT: CLEAN` reply with an untagged numbered
+  item remains uncredited under the installed classifier's clean-verdict rule.
+- **Other context markers:** the existing marker reader sets
+  `needs_context: true` on a missing-context line it recognizes after
+  stripping common formatting and prefixes. It matches at the start of the
+  resulting line and ignores fenced examples. For an inline code span, it
+  checks for a bare `NEEDS_CONTEXT` or `NEEDS_CONTEXT:` case-insensitively
+  after trimming surrounding whitespace. It treats longer spans as quoted
+  examples and does not interpret free-form mentions in prose.
 
 Example 1 — outside clean reply with the no-missing-context line:
 

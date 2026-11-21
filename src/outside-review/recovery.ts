@@ -22,15 +22,19 @@ export function exactForms(lines: readonly string[]): ExactForm[] {
   const closingLater = new Array<boolean>(n);
   let allBlankOrClosing = true;
   let seenClosing = false;
+  let lastVerdict = n;
   for (let i = n - 1; i >= 0; i--) {
     laterAllBlankOrClosing[i] = allBlankOrClosing;
     closingLater[i] = seenClosing;
     const line = lines[i]!;
-    if (CLOSING_LINE.test(line)) seenClosing = true;
-    else if (!BLANK_LINE.test(line)) allBlankOrClosing = false;
+    if (CLOSING_LINE.test(line)) {
+      seenClosing = true;
+      if (lastVerdict === n && line.startsWith('VERDICT:')) lastVerdict = i;
+    } else if (!BLANK_LINE.test(line)) allBlankOrClosing = false;
   }
   const marks = new Array<ExactForm>(n).fill(null);
-  for (let i = 0; i < n; i++) {
+  // A later recommendation cannot make a form after the last verdict count.
+  for (let i = 0; i < lastVerdict; i++) {
     const aboveBlankOrStart = i === 0 || BLANK_LINE.test(lines[i - 1]!);
     if (isToken(lines[i]!)) {
       if (aboveBlankOrStart && laterAllBlankOrClosing[i] && closingLater[i]) marks[i] = 'nothing-missing';

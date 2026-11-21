@@ -239,9 +239,9 @@ parts actually run on the host. Otherwise, the first matching reason wins:
 | `timeout` | The delegate ran past its configured timeout. |
 | `failed` | Its temporary directory could not be created or cleaned up, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
 | `refused` | The installed classifier read the reply as a refusal. |
-| `needs-context` | The reply says `NEEDS_CONTEXT` in any form that the [exact-form rules](outside-review.md#exact-reply-forms) do not count (including when the delegate finds the closing `END_OF_REVIEW_MATERIAL` line missing because the prompt was cut off). |
-| `uncredited` | The installed classifier did not credit the reply. |
-| `unparsed-finding` | Any reply content is outside the required form (including a counted `NEEDS_CONTEXT: none` line out of its allowed position or any met-criterion line), a finding has malformed fields, or the classifier saw findings the runner could not parse. |
+| `needs-context` | Recovery reports `needs_context: true` after applying the [exact-form rules](outside-review.md#exact-reply-forms). This includes a recognized context request when the prompt lost its closing `END_OF_REVIEW_MATERIAL` line. |
+| `uncredited` | The installed classifier did not credit the reply. For example, it can reject an uncounted numbered item before the delegated parser sees it. |
+| `unparsed-finding` | A reply passed classification but contains content outside the delegated form (such as a counted no-missing-context line out of position or a met-criterion line), a finding has malformed fields, or the classifier saw findings the runner could not parse. |
 | `worktree-changed` | The work tree or HEAD changed during the calls; applies to every part that call dispatched. |
 
 A fell-back part is never sent back to the delegate. Coverage is never lost
