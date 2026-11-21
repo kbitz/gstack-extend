@@ -101,6 +101,11 @@ hand-launched reviews (one full cycle, then delta repair cycles), run
 `~/.claude/skills/gstack-extend/bin/config set review_default light`. See
 the linked skill instructions for setup and gates.
 
+An optional, owner-written `.gstack/review-rules.md`, read from the base
+branch, gives every review part repository rules alongside the approved plan's
+accepted decisions; see
+[settled decisions](docs/workflow-handoffs.md#settled-decisions-and-gstackreview-rulesmd).
+
 Greptile's `labels` filter selects PRs; `autoReview` controls automatic events.
 For a single explicitly requested review, use `"autoReview": []` while keeping
 existing filters. If an approved repair starts from `.greptile.json`, the
