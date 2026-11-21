@@ -118,7 +118,7 @@ workspace-owner signal and read back through
 | `pending` | `codex` (`codex-cli 0.170.0`) | Start a new Codex thread by hand in the terminal TUI and run one gstack-extend stage with no orchestration signal | `codex` | `user-directed` | `terminal-session` |
 | `pending` | `muse` (`Muse Code 1.4.24`) | Run one gstack-extend stage by hand in Muse from the Paseo host app with no orchestration signal | `muse` | `user-directed` | `host-app-session` |
 | `pending` | `grok` (`grok 1.0.89`) | Run one gstack-extend stage by hand in Grok from a terminal (`GROK_AGENT=1`) with no orchestration signal (unmarked Paseo ACP `terminal/create` still records `agent: null`, `no-harness`) | `grok` | `unknown` | `harness-unqualified` |
-| `pending` | `cursor` (`cursor-agent 2026.11.19-f005e9d`) | Run one gstack-extend stage by hand in Cursor from a terminal (`CURSOR_AGENT=1`) with no orchestration signal | `cursor` | `unknown` | `harness-unqualified` |
+| `discharged` (Cursor support dropped 2026-11-21) | `cursor` (`cursor-agent 2026.11.19-f005e9d`) | Run one gstack-extend stage by hand in Cursor from a terminal (`CURSOR_AGENT=1`) with no orchestration signal | `cursor` | `unknown` | `harness-unqualified` |
 
 ## Harnesses and entrypoints that read `unknown`
 
