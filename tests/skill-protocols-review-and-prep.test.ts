@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
-import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
 import { FALLBACK_REASONS, PART_KEYS, RECEIPT_KEYS, SETTLED_RULE } from '../src/review-delegate/delegate.ts';
@@ -65,7 +65,7 @@ const B_TREE_EXPR = '`git rev-parse "B^{tree}"`';
 const LIGHT_SKIP_TOKEN = '`skipped — light default repair cycle`';
 const BOUNDED_WAIT_SKIP_TOKEN = '`skipped — bounded-wait host, cycle 1 only`';
 const POLICY_GRAMMAR_LINE =
-  '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`';
+  '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; doc-audit-gap=auto; max-continuations=<0-9>`';
 
 function extractCompactReceiptFence(text: string): string {
   const step6Raw = skillSection(text, H_STEP_6);
@@ -228,8 +228,8 @@ function checkCapabilityGrepLinesLock(text: string): string[] {
   const violations: string[] = [];
   const lines = text.split('\n');
   const flat = text.replace(/\s+/g, ' ');
-  if (CAPABILITY_EXEMPTIONS.length !== 16) {
-    violations.push(`expected 16 capability exemptions, got ${CAPABILITY_EXEMPTIONS.length}`);
+  if (CAPABILITY_EXEMPTIONS.length !== 17) {
+    violations.push(`expected 17 capability exemptions, got ${CAPABILITY_EXEMPTIONS.length}`);
   }
   for (const entry of CAPABILITY_EXEMPTIONS) {
     const matches = lines.filter((l) => l.includes(entry.includes));
@@ -632,6 +632,165 @@ function checkPostAuditChangeTemplateLock(text: string): string[] {
   return violations;
 }
 
+const DOC_AUDIT_GAP_OPENING =
+  "Under `doc-audit-gap=auto`, apply this paragraph group only when the parsed review policy carries `doc-audit-gap=auto` together with `full-suite=external` and `post-audit=classify`; a run without the value reads none of it and its receipt, readiness and blocked recovery stay as they are, and a run with `post-audit=classify` alone keeps today's class list and outcomes.";
+
+const DOC_AUDIT_GAP_INACTIVE_TOKENS = ['full-suite-absent', 'post-audit-absent', 'no-trigger'] as const;
+const DOC_AUDIT_GAP_TRIGGER_TOKENS = [
+  'walk-missed-snapshot',
+  'dirty-tree',
+  'base-fetch-failed',
+  'merge-unqualified',
+  'merge-guard-failed',
+  'git-too-old',
+  'docs-roots-unreadable',
+  'command-failed',
+  'classify-not-applied',
+] as const;
+
+function checkDocAuditGapAutoLock(text: string): string[] {
+  const violations: string[] = [];
+  const policy = skillSection(text, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const postAuditRaw = skillSection(text, H_POST_AUDIT_CLASSIFY);
+  const postAudit = postAuditRaw.replace(/\s+/g, ' ');
+  const bound = skillSection(text, H_BOUND_DOC_AUDIT).replace(/\s+/g, ' ');
+  const readiness = skillSection(text, '### Readiness').replace(/\s+/g, ' ');
+  const underAt = postAuditRaw.indexOf('**Under `doc-audit-gap=auto`.**');
+  if (underAt < 0) return ['missing **Under `doc-audit-gap=auto`.** paragraph group'];
+  const underRaw = postAuditRaw.slice(underAt);
+  const under = underRaw.replace(/\s+/g, ' ');
+
+  if (!under.startsWith(`**Under \`doc-audit-gap=auto\`.** ${DOC_AUDIT_GAP_OPENING}`)) {
+    violations.push('missing or displaced D1 opening activation sentence');
+  }
+  for (const required of [
+    // X2 warning, X3/E14 near-miss hint and repeat rule, X13 meaning of auto, E7 precedence
+    '`Review policy warning: doc-audit-gap=auto needs full-suite=external and post-audit=classify on the same line; it is inert on this run (missing: <keys>)`',
+    '`doc-audit-gap=<value>: its only value is auto`',
+    "a repeated `doc-audit-gap` key keeps today's repeated-key reason and pairs with other keys keep today's reason",
+    '`auto` turns on all three additions together',
+    'The light review default never sets it. `auto` turns on all three additions together',
+    'later values may narrow them, so a caller matches the exact value, not the key',
+    'Its one extra attempt takes precedence over the "never a third attempt" wording in the `documentation-audit=final` and `post-audit=classify` bullets.',
+    'Use `full-suite-absent` if the line lacks `full-suite=external` (including `full-suite=final`) and `post-audit-absent` otherwise. Name every missing companion in `<context>`',
+  ]) {
+    if (!policy.includes(required)) violations.push(`policy section missing: ${required}`);
+  }
+  if (!postAudit.includes('**Outcome.** When **Under `doc-audit-gap=auto`** is active, add `undocumented-internal` and `base-merge` to the following no-owner class list.')) {
+    violations.push('classify outcome must include both new no-owner classes when active');
+  }
+  if (!postAudit.includes('When **Under `doc-audit-gap=auto`** is active, also enter it if this invocation\'s last audit attempt returned `blocked` and upstream\'s attempt budget is exhausted, even if no freshness check found the audit stale. Run it before the audit\'s blocked recovery.')) {
+    violations.push('the classify entry gate must reach the extra-audit check after an exhausted blocked attempt');
+  }
+
+  // D10 invariant carve-out names only doc-audit-gap=auto, and both cross-references exist
+  const carveOutMatch = /A policy never waives a gate or changes its bound, with one exception — ([^:]+):/.exec(policy);
+  if (!carveOutMatch) {
+    violations.push('missing D10 invariant carve-out');
+  } else {
+    const clause = carveOutMatch[1]!;
+    const backticked = [...clause.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    if (!backticked.every((t) => t === 'doc-audit-gap=auto')) {
+      violations.push(`carve-out names unexpected token: ${backticked.join(',')}`);
+    }
+  }
+  if (
+    !postAudit.includes(
+      "never a third except for `doc-audit-gap=auto`'s single extra documentation audit attempt per review under **Under `doc-audit-gap=auto`** below",
+    )
+  ) {
+    violations.push('missing D10 cross-reference in classify section');
+  }
+  if (
+    !bound.includes(
+      "and there is never a third (except under `doc-audit-gap=auto`'s single extra documentation audit attempt per review in **Classify changes after the documentation audit's last attempt**)",
+    )
+  ) {
+    violations.push('missing D10 cross-reference in Bound the documentation audit item 7');
+  }
+
+  // D2, E2, E6, E9, D3, D4, E12, D5, E4, E5, D6, X1, X4, X5, X6, X7, X8, X9, E1, E8, E10, E11, E13
+  for (const required of [
+    'writes the exact `--docs` arguments it passes to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt` in the evidence directory',
+    "every path in that audit's snapshot `docs` list is also protected, and a missing or unreadable roots file is `docs-roots-unreadable`",
+    'the value changes classify in exactly three ways: the `undocumented-internal` class, qualifying base merges and one extra audit attempt',
+    'invocation\'s last attempt was `blocked`, reuse cannot apply even if an earlier audit was accepted',
+    '`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` (non-empty is `dirty-tree`, including pending changes inside submodules)',
+    'When `S` equals `HEAD` the walk is empty and classify runs as today, with nothing added.',
+    'the walk reaches `S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD` (otherwise the result is `walk-missed-snapshot`)',
+    'the post-audit changes are the commits on `git rev-list --first-parent S..HEAD`',
+    'write stdout, stderr and the exit status to files in the evidence directory; `evidence=` locators point there, and any unexpected command or script failure is `command-failed`',
+    'When an existing no-owner class (for example `tests-only` or `rename`) fits a change, classify uses it; `undocumented-internal` applies only otherwise',
+    'under `docs/`; any `.md`, `.mdx`, `.markdown`, `.rst` or `.adoc` file anywhere; a file whose base name, ignoring case, is `README`, `AGENTS`, `CLAUDE`, `CHANGELOG` or `SPEC` with no extension or with `.txt`',
+    'selects no inventoried doc. A parent that cannot name a changed non-test path\'s contracts, or a search that fails, is doubt',
+    'decides whether it changes user-visible text (messages, prompts, skill or help text), a flag, a help line, a config key or its default, an environment variable or a command a person runs',
+    "The parent never reads a model's reply text to decide. Any yes, any doubt, or a diff the parent cannot read in full fails the class and makes the change `documented-behavior`",
+    '(`user-visible <path>`, `doubt <path>` or `protected-path <path>`)',
+    '`<merge>` has exactly two parents (`git rev-parse <merge>^@` prints two lines, `<merge>^1` and `<merge>^2`; an octopus or non-merge commit is `merge-unqualified`), and `git merge-base --is-ancestor <merge>^2 <fetched base tip>` exits 0',
+    'Only after the two-parent check passes (because on a non-merge commit it prints the ordinary diff), `git log -1 --remerge-diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --no-show-signature --format= --name-only -z <merge>` exits 0 and prints nothing',
+    'any listed path is `merge-unqualified`, so `class=base-merge` is the only merge outcome',
+    '(1) **Overlap:** the base side\'s changed paths share none with the pull request\'s own changed paths;',
+    '(2) **Forward:** no documentation file among the pull request\'s own changed paths names a base-side changed path;',
+    '(3) **Reverse:** no documentation file among the base side\'s changed paths names one of the pull request\'s own changed paths or a contract the parent names for them.',
+    'changelogs, roadmaps, backlogs and archived plans are never searched files by a mention alone, and `CHANGELOG.md` and `VERSION` are never search terms',
+    "The guard alone judges base-side paths; item 4's broad fallback, classify's not-applied checks and 1(a)–1(c) apply only to the first-parent changes' own contributions.",
+    'this invocation is not a continuation (`/review-and-prep continue`), and the counter file `doc-audit-extra.txt` in this invocation\'s evidence directory, which a resume reuses, holds no `Doc-audit extra: action=extra-audit` line',
+    'an absent file means none). A file that cannot be read or any line that fails the `Doc-audit extra:` template below counts as one already used. Among well-formed lines, only `action=extra-audit` lines count.',
+    "The extra-audit allowance belongs to one invocation and its resumes; a continuation runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream's fresh budget and its own allowance.",
+    'a failed fetch means no extra audit (`Doc-audit extra: action=today; … reason=base-fetch-failed`)',
+    'A path is a SPEC when its base name, ignoring case and with every extension removed, is `SPEC`, at any depth (`SPEC`, `SPEC.md`, `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the project instructions name as the product spec; because the list uses `--no-renames`, a deleted, added or renamed spec (old and new names) all count.',
+    'Before launching the extra attempt, the parent appends the `Doc-audit extra: action=extra-audit` line to `doc-audit-extra.txt` first, so an interrupted launch counts as used on resume.',
+    'The launch runs `gstack-docs-candidate attempt` like any launch; an `ATTEMPT: not-counted` install refusal lets upstream\'s one relaunch run as the same extra attempt with no new `action=extra-audit` line.',
+    'If `gstack-docs-candidate attempt` refuses either launch (exit 3, STOP), including when the install-refusal allowance was already used before the first extra launch, the extra attempt is spent: record `result=refused` and take the owner stop.',
+    'When the attempt ends, the parent appends an `action=result` line with its outcome.',
+    'On resume, reconcile any interrupted extra launch before deciding whether an attempt remains.',
+    'An `action=extra-audit` line with no later `action=result` line is an interrupted extra launch: the parent first runs blocked recovery step 1 (confirm the child stopped), then validates that child\'s saved output through upstream\'s Parent processing (collect, check output, check ownership, check freshness), records `result=accepted` only when it passes, and otherwise records `result=interrupted` and takes the owner stop.',
+    "Its result stands on its own and is never a reuse; a `blocked` or invalid result takes blocked recovery's owner stop, with no further attempt.",
+    'A later change after an accepted extra audit with no attempt left reaches the trigger again: classify, with these additions, runs against the extra audit as the last accepted audit; no second extra audit runs; the owner stop follows otherwise.',
+    "A reuse writes no new `record audit`: the compact receipt's `- documentation:` line renders `not-run` for the final head",
+    '`doc-audit-gap: active; reuse=applied`',
+    '`doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`',
+    '`doc-audit-gap: not applied — <token> <context>; evidence=<evidence locator>`',
+    'a reason carries no stderr text and no remote URL',
+    'using the latest trigger\'s reuse decision',
+    '`reuse=applied` only when classify continues on the carried audit',
+    '`Doc-audit extra: action=<extra-audit|result|today>; audit=<carried audit_id> <section-sha256>|none; new-audit=<audit_id|none>; result=<accepted|blocked|invalid|refused|interrupted|none>; head=<full SHA>; reason=<one line>; evidence=<evidence locator>`',
+    '`Auto-chosen (veto by replying on this PR): documentation audit gap (blocked recovery\'s owner question) → <continue on carried audit <audit_id>|extra audit <audit_id>>`',
+    'The offered options are continue on the carried audit, run the extra audit, stop for repair, accept a named risk.',
+  ]) {
+    if (!under.includes(required)) violations.push(`Under doc-audit-gap=auto missing: ${required}`);
+  }
+
+  // E6: every git diff and git log command guards against filtering and formatting from config.
+  const gitDiffLogCmds = [...under.matchAll(/`git (?:diff|log)\b[^`]+`/g)].map((m) => m[0]!);
+  if (gitDiffLogCmds.length < 6) {
+    violations.push(`expected at least 6 git diff/log commands in paragraph group, got ${gitDiffLogCmds.length}`);
+  }
+  for (const cmd of gitDiffLogCmds) {
+    for (const flag of ['--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--no-relative']) {
+      if (!cmd.includes(flag)) violations.push(`command ${cmd} missing ${flag}`);
+    }
+  }
+
+  // X6 template key order
+  const extraTpl = under.match(/`Doc-audit extra: (action=<extra-audit\|result\|today>;[^`]+)`/)?.[1] ?? '';
+  const extraKeys = extraTpl.split('; ').map((pair) => pair.split('=')[0]);
+  if (JSON.stringify(extraKeys) !== JSON.stringify(['action', 'audit', 'new-audit', 'result', 'head', 'reason', 'evidence'])) {
+    violations.push(`Doc-audit extra keys mismatch: ${extraKeys.join(',')}`);
+  }
+
+  // D8 and E3 readiness sentences
+  for (const required of [
+    'Under `post-audit: active`, an accepted audit plus a `Post-audit change:` line with `owner=not-needed` for every commit after its post-child snapshot satisfies the documentation gate for the final content, with the audit\'s own status; an `owner=needed` line still needs the user\'s named-risk decision.',
+    'When **Under `doc-audit-gap=auto`** is active, that readiness rule requires an `owner=not-needed` `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD` (`undocumented-internal` and `base-merge` lines are `owner=not-needed`, and base commits a qualifying merge brings in need no line of their own, because the merge\'s `class=base-merge` line covers them), while an extra audit\'s own accepted result satisfies the gate as any audit does.',
+    'a reuse never counts as, replaces or defers that attestation.',
+  ]) {
+    if (!readiness.includes(required)) violations.push(`Readiness missing: ${required}`);
+  }
+
+  return violations;
+}
+
 function checkAutoChosenTemplateLock(text: string): string[] {
   const auto = skillSection(text, H_AUTO_FIX_SCOPE).replace(/\s+/g, ' ');
   const step7 = skillSection(text, H_STEP_7);
@@ -780,7 +939,7 @@ describe('review-and-prep repeated-review cuts', () => {
     expect(checkPolicyGrammarLock(prep)).toEqual([]);
   });
 
-  // Value: protects=all 16 EXEMPTIONS capability lines exist once in the skill; fails_when=a capability grep -F line is dropped, duplicated or wrapped; why_new=Track 86B T3 static capability lock; seam=src/upstream-check/cli.ts EXEMPTIONS
+  // Value: protects=all 17 EXEMPTIONS capability lines exist once in the skill; fails_when=a capability grep -F line is dropped, duplicated or wrapped; why_new=Track 86B T3 static capability lock; seam=src/upstream-check/cli.ts EXEMPTIONS
   test('each EXEMPTIONS capability entry matches exactly one grep -F skill line', () => {
     expect(checkCapabilityGrepLinesLock(prep)).toEqual([]);
   });
@@ -1714,12 +1873,505 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
       '- `todos-only`:',
       '- `mechanical-correction`:',
       '- `already-documented`:',
+      '- `undocumented-internal` (available only under `doc-audit-gap=auto` with `full-suite=external` and `post-audit=classify`; absent without it):',
+      '- `base-merge` (available only under `doc-audit-gap=auto` with `full-suite=external` and `post-audit=classify`; absent without it):',
       '- `documented-behavior`:',
     ]) {
       expect(postAudit, cls).toContain(cls);
     }
     expect(postAuditRaw).not.toContain('byte for byte');
     expect(postAuditRaw).not.toContain('grep -F');
+  });
+
+  // Value: protects=doc-audit-gap=auto rules, closed token alignment with docs/workflow-handoffs.md, and configuration-independent git commands; fails_when=a rule, token, template or git flag drifts; why_new=Track 91A T1; seam=docs/workflow-handoffs.md#doc-audit-gap-reasons
+  test('locks doc-audit-gap=auto rules, templates, readiness and closed not-applied reason tokens against the handoff contract', () => {
+    expect(checkDocAuditGapAutoLock(prep)).toEqual([]);
+    const handoffDoc = readFileSync(join(ROOT, 'docs', 'workflow-handoffs.md'), 'utf8');
+    const anchorAt = handoffDoc.indexOf('<a id="doc-audit-gap-reasons"></a>');
+    expect(anchorAt).toBeGreaterThan(-1);
+    const afterAnchor = handoffDoc.slice(anchorAt);
+    const tableStart = afterAnchor.indexOf('\n|');
+    expect(tableStart).toBeGreaterThan(-1);
+    const tableEnd = afterAnchor.indexOf('\n\n', tableStart + 1);
+    const tableBlock = afterAnchor
+      .slice(tableStart + 1, tableEnd > -1 ? tableEnd : undefined)
+      .split('\n')
+      .filter((l) => l.startsWith('|'))
+      .slice(2);
+    const docRows = tableBlock.map((l) =>
+      l
+        .trim()
+        .slice(1, -1)
+        .split('|')
+        .map((c) => c.trim()),
+    );
+    const docInactive = docRows
+      .filter((r) => r[1]?.includes('doc-audit-gap: not applied —'))
+      .map((r) => r[0]!.replace(/^`|`$/g, ''));
+    const docTrigger = docRows
+      .filter((r) => r[1]?.includes('doc-audit-gap: active; reuse=not-applied'))
+      .map((r) => r[0]!.replace(/^`|`$/g, ''));
+    expect(docInactive).toEqual([...DOC_AUDIT_GAP_INACTIVE_TOKENS]);
+    expect(docTrigger).toEqual([...DOC_AUDIT_GAP_TRIGGER_TOKENS]);
+    expect(docRows).toHaveLength(DOC_AUDIT_GAP_INACTIVE_TOKENS.length + DOC_AUDIT_GAP_TRIGGER_TOKENS.length);
+  });
+
+  describe('doc-audit-gap=auto merge commands fixture (E16)', () => {
+    const tmp = makeBaseTmp('skill-protocols-doc-audit-gap-merge-');
+    afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+    function extractMergeCommands(skillText: string) {
+      const underAt = skillText.indexOf('**Under `doc-audit-gap=auto`.**');
+      if (underAt < 0) throw new Error('missing Under doc-audit-gap=auto section');
+      const under = skillText.slice(underAt, skillText.indexOf('\n### ', underAt + 1)).replace(/\s+/g, ' ');
+      const pick = (re: RegExp, label: string): string => {
+        const m = re.exec(under);
+        if (!m) throw new Error(`missing ${label} command in skill text`);
+        return m[1]!;
+      };
+      return {
+        status: pick(/`(git status --porcelain=v1 -z --untracked-files=all [^`]+)`/, 'status'),
+        walkHead: pick(/`(git rev-list --first-parent HEAD)`/, 'walkHead'),
+        walkRange: pick(/`(git rev-list --first-parent S\.\.HEAD)`/, 'walkRange'),
+        parents: pick(/`(git rev-parse <merge>\^@)`/, 'parents'),
+        ancestor: pick(/`(git merge-base --is-ancestor <merge>\^2 <fetched base tip>)`/, 'ancestor'),
+        remerge: pick(/`(git log -1 --remerge-diff [^`]+ <merge>)`/, 'remerge'),
+        baseDiff: pick(/`(git diff [^`]+ <merge>\^1\.\.\.<merge>\^2)`/, 'baseDiff'),
+        prDiff: pick(/`(git diff [^`]+ <fetched base tip>\.\.\.HEAD)`/, 'prDiff'),
+      };
+    }
+
+    const git = (cwd: string, args: string[], allowFail = false) => {
+      const r = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], {
+        cwd,
+        env: GIT_ENV,
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+      if (!allowFail && r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+      return r;
+    };
+
+    const runCmd = (cwd: string, cmdLine: string) => {
+      const args = cmdLine.replace(/^git\s+/, '').split(/\s+/);
+      return git(cwd, args, true);
+    };
+
+    const splitNul = (out: string): string[] => out.split('\0').filter(Boolean);
+
+    const isProtectedDoc = (p: string): boolean => {
+      if (p.startsWith('docs/')) return true;
+      if (/\.(?:md|mdx|markdown|rst|adoc)$/i.test(p)) return true;
+      const base = p.split('/').at(-1)!;
+      return /^(?:README|AGENTS|CLAUDE|CHANGELOG|SPEC)(?:\.txt)?$/i.test(base);
+    };
+
+    const isHistoryDoc = (p: string): boolean =>
+      /(?:^|\/)(?:CHANGELOG|ROADMAP|TODOS)(?:\.[^/]*)?$/i.test(p) || p.startsWith('docs/archive/');
+
+    const isExcludedTerm = (p: string): boolean => p === 'CHANGELOG.md' || p === 'VERSION';
+
+    function evalMerge(
+      cwd: string,
+      cmds: ReturnType<typeof extractMergeCommands>,
+      opts: { s: string; merge: string; baseTip: string; contracts?: string[] },
+    ) {
+      const walkHead = runCmd(cwd, cmds.walkHead);
+      expect(walkHead.status).toBe(0);
+      const firstParentLines = walkHead.stdout.trim().split('\n').filter(Boolean);
+      if (!firstParentLines.includes(opts.s)) {
+        return { outcome: 'walk-missed-snapshot' as const };
+      }
+      const walkRange = runCmd(cwd, cmds.walkRange.replace('S', opts.s));
+      expect(walkRange.status).toBe(0);
+
+      const parentsRes = runCmd(cwd, cmds.parents.replace('<merge>', opts.merge));
+      const parentLines = parentsRes.status === 0 ? parentsRes.stdout.trim().split('\n').filter(Boolean) : [];
+      if (parentLines.length !== 2) {
+        return { outcome: 'merge-unqualified' as const, detail: 'parents', parentCount: parentLines.length };
+      }
+
+      const ancRes = runCmd(
+        cwd,
+        cmds.ancestor.replace('<merge>', opts.merge).replace('<fetched base tip>', opts.baseTip),
+      );
+      if (ancRes.status !== 0) {
+        return { outcome: 'merge-unqualified' as const, detail: 'non-ancestor' };
+      }
+
+      const remergeRes = runCmd(cwd, cmds.remerge.replace('<merge>', opts.merge));
+      expect(remergeRes.status).toBe(0);
+      const remergePaths = splitNul(remergeRes.stdout);
+      if (remergeRes.stdout !== '') {
+        return { outcome: 'merge-unqualified' as const, detail: 'remerge-diff', remergePaths };
+      }
+
+      const basePaths = splitNul(runCmd(cwd, cmds.baseDiff.replaceAll('<merge>', opts.merge)).stdout);
+      const prPaths = splitNul(runCmd(cwd, cmds.prDiff.replace('<fetched base tip>', opts.baseTip)).stdout);
+      const overlap = basePaths.filter((p) => prPaths.includes(p));
+
+      const forwardDocs = prPaths.filter((p) => isProtectedDoc(p) && !isHistoryDoc(p));
+      const forwardTerms = basePaths.filter((p) => !isExcludedTerm(p));
+      const reverseDocs = basePaths.filter((p) => isProtectedDoc(p) && !isHistoryDoc(p));
+      const reverseTerms = [...prPaths.filter((p) => !isExcludedTerm(p)), ...(opts.contracts ?? [])];
+
+      const searchDocs = (docs: string[], terms: string[]): string[] =>
+        docs.filter((doc) => {
+          const text = readFileSync(join(cwd, doc), 'utf8');
+          return terms.some((term) => text.includes(term));
+        });
+
+      const forwardHits = searchDocs(forwardDocs, forwardTerms);
+      const reverseHits = searchDocs(reverseDocs, reverseTerms);
+      if (overlap.length > 0 || forwardHits.length > 0 || reverseHits.length > 0) {
+        return {
+          outcome: 'merge-guard-failed' as const,
+          overlap,
+          forwardHits,
+          reverseHits,
+          basePaths,
+          prPaths,
+        };
+      }
+      return { outcome: 'base-merge' as const, basePaths, prPaths, remergePaths };
+    }
+
+    function initRepo() {
+      const cwd = makeEmptyRepo(tmp);
+      mkdirSync(join(cwd, 'src'), { recursive: true });
+      mkdirSync(join(cwd, 'docs'), { recursive: true });
+      git(cwd, ['config', 'diff.ignoreSubmodules', 'all']);
+      writeFileSync(join(cwd, 'src', 'base.ts'), 'export const base = 1;\n');
+      writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 1;\n');
+      writeFileSync(join(cwd, 'src', 'shared.ts'), 'line1\nline2\nline3\nline4\nline5\n');
+      writeFileSync(join(cwd, 'docs', 'guide.md'), '# Guide\n');
+      git(cwd, ['add', '.']);
+      git(cwd, ['commit', '--quiet', '-m', 'chore: initial']);
+      return cwd;
+    }
+
+    // Value: protects=the committed-only reuse check sees pending submodule content even with diff.ignoreSubmodules=all; fails_when=the status command hides the pending submodule; why_new=Track 91A review found the clean-tree command missed this configuration; seam=skills/review-and-prep.md
+    test('the skill clean-tree command sees pending submodule content', () => {
+      const cwd = makeEmptyRepo(tmp);
+      const child = makeEmptyRepo(tmp);
+      git(cwd, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '--quiet', child, 'vendor/sub']);
+      git(cwd, ['commit', '--quiet', '-am', 'add fixture submodule']);
+      git(cwd, ['config', 'diff.ignoreSubmodules', 'all']);
+      git(cwd, ['config', 'submodule.vendor/sub.ignore', 'all']);
+      const { status } = extractMergeCommands(prep);
+      expect(runCmd(cwd, status).stdout).toBe('');
+      writeFileSync(join(cwd, 'vendor', 'sub', 'pending.txt'), 'pending fixture content\n');
+      const result = runCmd(cwd, status);
+      expect(result.status).toBe(0);
+      expect(splitNul(result.stdout)).toEqual([' M vendor/sub']);
+    });
+
+    // Value: protects=the skill's exact merge commands handle clean merges, merge-made edits, conflicts, overlaps, forward/reverse doc mentions, history exclusions, non-ancestor parents, octopus merges, reversed parents and gitlinks under diff.ignoreSubmodules=all; fails_when=a command or flag in the skill text drifts or drops --ignore-submodules=none; why_new=Track 91A E16 executable merge fixture; seam=skills/review-and-prep.md
+    test('runs all 11 E16 merge cases from the skill text commands and fails when --ignore-submodules=none is dropped', () => {
+      const cmds = extractMergeCommands(prep);
+
+      // 1. Qualifying clean merge
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr change']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'base.ts'), 'export const base = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: base change']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge main', 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toEqual({
+          outcome: 'base-merge',
+          basePaths: ['src/base.ts'],
+          prPaths: ['src/pr.ts'],
+          remergePaths: [],
+        });
+        git(cwd, ['config', 'diff.relative', 'true']);
+        const nested = join(cwd, 'docs');
+        const baseDiff = runCmd(nested, cmds.baseDiff.replaceAll('<merge>', merge));
+        const prDiff = runCmd(nested, cmds.prDiff.replace('<fetched base tip>', baseTip));
+        expect(baseDiff.status).toBe(0);
+        expect(prDiff.status).toBe(0);
+        expect(splitNul(baseDiff.stdout)).toEqual(['src/base.ts']);
+        expect(splitNul(prDiff.stdout)).toEqual(['src/pr.ts']);
+      }
+
+      // 2. Edit made inside the merge
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'base.ts'), 'export const base = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: base']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '--no-commit', 'main']);
+        writeFileSync(join(cwd, 'src', 'sneaky.ts'), 'export const sneaky = true;\n');
+        git(cwd, ['add', 'src/sneaky.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'Merge main with extra edit']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toEqual({
+          outcome: 'merge-unqualified',
+          detail: 'remerge-diff',
+          remergePaths: ['src/sneaky.ts'],
+        });
+      }
+
+      // 3. Conflicted merge (remerge-diff lists it and overlap also fails)
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'shared.ts'), 'pr-line1\nline2\nline3\nline4\nline5\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr shared']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'shared.ts'), 'base-line1\nline2\nline3\nline4\nline5\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: base shared']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        const m = git(cwd, ['merge', '--no-ff', 'main'], true);
+        expect(m.status).not.toBe(0);
+        writeFileSync(join(cwd, 'src', 'shared.ts'), 'resolved-line1\nline2\nline3\nline4\nline5\n');
+        git(cwd, ['add', 'src/shared.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'Merge main resolving conflict']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res.outcome).toBe('merge-unqualified');
+        const basePaths = splitNul(runCmd(cwd, cmds.baseDiff.replaceAll('<merge>', merge)).stdout);
+        const prPaths = splitNul(runCmd(cwd, cmds.prDiff.replace('<fetched base tip>', baseTip)).stdout);
+        expect(basePaths.filter((p) => prPaths.includes(p))).toEqual(['src/shared.ts']);
+      }
+
+      // 4. Clean auto-merge where base and PR changed different lines of the same path (overlap fails)
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'shared.ts'), 'pr-line1\nline2\nline3\nline4\nline5\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr top line']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'shared.ts'), 'line1\nline2\nline3\nline4\nbase-line5\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: base bottom line']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Clean merge same file', 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toMatchObject({
+          outcome: 'merge-guard-failed',
+          overlap: ['src/shared.ts'],
+        });
+      }
+
+      // 5. Base-side doc naming a pull-request path (reverse fails)
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'docs', 'cache.md'), 'Documents `src/pr.ts` behavior.\n');
+        git(cwd, ['add', 'docs/cache.md']);
+        git(cwd, ['commit', '--quiet', '-m', 'docs: add cache doc']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge main', 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toMatchObject({
+          outcome: 'merge-guard-failed',
+          overlap: [],
+          forwardHits: [],
+          reverseHits: ['docs/cache.md'],
+        });
+      }
+
+      // 6. Pull-request doc naming a base-side path (forward fails)
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'docs', 'guide.md'), '# Guide\nRefers to `src/base.ts`.\n');
+        git(cwd, ['commit', '--quiet', '-am', 'docs: pr guide']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'base.ts'), 'export const base = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: base']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge main', 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toMatchObject({
+          outcome: 'merge-guard-failed',
+          overlap: [],
+          forwardHits: ['docs/guide.md'],
+          reverseHits: [],
+        });
+      }
+
+      // 7. Base-side CHANGELOG.md or roadmap mention and VERSION change do not fail (history rule)
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        writeFileSync(join(cwd, 'docs', 'guide.md'), '# Guide\nBumps `VERSION` and `CHANGELOG.md`.\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr and guide']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'CHANGELOG.md'), '## 0.1.0\n- touched `src/pr.ts`\n');
+        writeFileSync(join(cwd, 'docs', 'ROADMAP.md'), '# Roadmap\nTrack touches `src/pr.ts`.\n');
+        writeFileSync(join(cwd, 'VERSION'), '0.1.0\n');
+        git(cwd, ['add', 'CHANGELOG.md', 'docs/ROADMAP.md', 'VERSION']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: release and roadmap on base']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge main', 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toEqual({
+          outcome: 'base-merge',
+          basePaths: ['CHANGELOG.md', 'VERSION', 'docs/ROADMAP.md'],
+          prPaths: ['docs/guide.md', 'src/pr.ts'],
+          remergePaths: [],
+        });
+      }
+
+      // 8. Second parent is not an ancestor of the fetched base tip
+      {
+        const cwd = initRepo();
+        const baseTip = git(cwd, ['rev-parse', 'main']).stdout.trim();
+        git(cwd, ['checkout', '--quiet', '-b', 'side']);
+        writeFileSync(join(cwd, 'src', 'side.ts'), 'export const side = 1;\n');
+        git(cwd, ['add', 'src/side.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: side']);
+
+        git(cwd, ['checkout', '--quiet', '-b', 'feature', 'main']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge side', 'side']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toEqual({ outcome: 'merge-unqualified', detail: 'non-ancestor' });
+      }
+
+      // 9. Octopus merge
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'b1', 'main']);
+        writeFileSync(join(cwd, 'src', 'b1.ts'), 'export const b1 = 1;\n');
+        git(cwd, ['add', 'src/b1.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: b1']);
+
+        git(cwd, ['checkout', '--quiet', '-b', 'b2', 'main']);
+        writeFileSync(join(cwd, 'src', 'b2.ts'), 'export const b2 = 1;\n');
+        git(cwd, ['add', 'src/b2.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: b2']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Main merges b1 and b2', 'b1', 'b2']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', '-b', 'feature', 'main~1']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Octopus merge', 'b1', 'b2']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toEqual({ outcome: 'merge-unqualified', detail: 'parents', parentCount: 3 });
+      }
+
+      // 10. Reversed parents, where the first-parent walk misses S
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'base.ts'), 'export const base = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: base']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        // Merge feature into main (so main is first parent and S is second parent), then point feature at it
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Reversed merge', 'feature']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+        git(cwd, ['checkout', '--quiet', '-B', 'feature', merge]);
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res).toEqual({ outcome: 'walk-missed-snapshot' });
+      }
+
+      // 11. Base-side gitlink change still listed under diff.ignoreSubmodules=all, and mutation without --ignore-submodules=none fails
+      {
+        const cwd = initRepo();
+        const subSha = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'pr.ts'), 'export const pr = 2;\n');
+        git(cwd, ['commit', '--quiet', '-am', 'feat: pr']);
+        const s = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        git(cwd, ['update-index', '--add', '--cacheinfo', `160000,${subSha},vendor/sub`]);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: add gitlink on base']);
+        const baseTip = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge main with gitlink', 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
+
+        const res = evalMerge(cwd, cmds, { s, merge, baseTip });
+        expect(res.outcome).toBe('base-merge');
+        if (res.outcome === 'base-merge') {
+          expect(res.basePaths).toContain('vendor/sub');
+        }
+
+        const mutatedSkill = prep.replaceAll('--ignore-submodules=none ', '');
+        const mutatedCmds = extractMergeCommands(mutatedSkill);
+        const mutatedRes = evalMerge(cwd, mutatedCmds, { s, merge, baseTip });
+        expect(mutatedRes.outcome).toBe('base-merge');
+        if (mutatedRes.outcome === 'base-merge') {
+          expect(mutatedRes.basePaths).not.toContain('vendor/sub');
+        }
+      }
+    });
   });
 });
 
@@ -2063,7 +2715,37 @@ describe('kept contract locks fail on mutation', () => {
     {
       name: 'policy grammar line: drop run-state=record from grammar',
       lock: checkPolicyGrammarLock,
-      mutate: (t) => t.replace('post-audit=classify; run-state=record; max-continuations=<0-9>', 'post-audit=classify; max-continuations=<0-9>'),
+      mutate: (t) => t.replace('post-audit=classify; run-state=record; doc-audit-gap=auto; max-continuations=<0-9>', 'post-audit=classify; doc-audit-gap=auto; max-continuations=<0-9>'),
+    },
+    {
+      name: 'doc-audit-gap=auto: drop D1 opening activation sentence',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('Under `doc-audit-gap=auto`, apply this paragraph\ngroup only when the parsed review policy carries `doc-audit-gap=auto`', 'Apply this paragraph group to every post-audit check'),
+    },
+    {
+      name: 'doc-audit-gap=auto: drop literal-search condition (b) from undocumented-internal',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('selects no inventoried doc.', 'selects any doc.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: drop not a continuation from extra-audit conditions',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('this invocation is not a\n     continuation (`/review-and-prep continue`), and ', ''),
+    },
+    {
+      name: 'doc-audit-gap=auto: drop never counts as, replaces or defers that attestation',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('; a reuse never counts as, replaces or defers that attestation.', '.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: name a second policy value in the D10 invariant carve-out',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace("`doc-audit-gap=auto`'s single extra documentation audit attempt", "`doc-audit-gap=auto` and `post-audit=classify`'s single extra documentation audit attempt"),
+    },
+    {
+      name: 'doc-audit-gap=auto: drop --ignore-submodules=none from a paragraph-group git command',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <commit>^ <commit>', 'git diff --no-renames --no-ext-diff --no-textconv --no-relative --name-only -z <commit>^ <commit>'),
     },
     {
       name: 'capability grep -F lines: drop blocking=shown capability line',

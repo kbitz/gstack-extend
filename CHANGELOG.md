@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.106.0] - 2026-11-20
+
+### Added
+
+- Callers of `/review-and-prep` can opt into documentation audit reuse and one bounded retry with `doc-audit-gap=auto` alongside `full-suite=external` and `post-audit=classify`.
+
+### Changed
+
+- Callers of `/review-and-prep` can add `doc-audit-gap=auto` to a review policy line that also carries `full-suite=external` and `post-audit=classify`, so a review whose documentation audit went stale reuses that audit when the later changes touch nothing any document describes (base merges that cannot interact with the change included), or runs the review's first extra audit when the change edits no product spec, instead of stopping to ask.
+
+### Upgrade notes
+
+- An older `/review-and-prep` install reads a policy line carrying `doc-audit-gap=auto` as none supplied and drops every key on that line, so a caller checks the installed skill for the value first and leaves it out when the check fails.
+
 ## [0.105.0] - 2026-11-20
 
 ### Changed

@@ -907,19 +907,28 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; red-team=ensure; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; blocking=shown; post-audit=classify; run-state=record; doc-audit-gap=auto; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
+When the pair that voids the line has the key `doc-audit-gap` with a wrong
+value, that reason reads `doc-audit-gap=<value>: its only value is auto`
+(diagnostic values redacted under the existing rule), while a repeated
+`doc-audit-gap` key keeps today's repeated-key reason and pairs with other keys
+keep today's reason.
 Redact diagnostic values and keep this phase-status line outside the eventual
 copyable handoff; the handoff and receipt retain their own exact policy label.
 
 When the parsed policy carries both `in-cap=full` and
 `continuation=repair-only`, print on the next line:
 `Review policy warning: in-cap=full with continuation=repair-only — after a first cycle that reproduces a defect, repair-only stays available only if the full-scope second cycle completes and reruns each reproduced probe by its key.`
-It is a phase-status line like the parsed policy: outside any copyable handoff,
-not a receipt line, and it changes no key, gate, outcome or continuation. A
-line read as `none supplied` prints no warning.
+When the parsed policy carries `doc-audit-gap=auto` without
+`full-suite=external` or `post-audit=classify`, print this warning after the
+`in-cap=full` warning when both apply:
+`Review policy warning: doc-audit-gap=auto needs full-suite=external and post-audit=classify on the same line; it is inert on this run (missing: <keys>)`
+Both warnings are phase-status lines beside the parsed policy and outside any
+copyable handoff or receipt. They change no key, gate, outcome or continuation.
+A line read as `none supplied` prints no warning.
 
 An installation without the value reads the whole line as `none supplied`,
 so a caller first runs the bullet's capability check (exit 0 means supported)
@@ -974,6 +983,30 @@ continuation.
   attempt before the owner is asked, keeping upstream's attempt bound (never a
   third audit attempt) and never upgrading a blocked audit. Capability check:
   `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"`.
+- `doc-audit-gap=auto` (its only value) is opt-in and runs **Under
+  `doc-audit-gap=auto`** inside **Classify changes after the documentation
+  audit's last attempt** when the same line also carries `full-suite=external`
+  and `post-audit=classify`, and is otherwise independent. The light review
+  default never sets it. `auto` turns on all
+  three additions together (the `undocumented-internal` class, qualifying base
+  merges where Git 2.36 or later supports `--remerge-diff`, and one extra
+  documentation audit attempt per review when the pull request edits no SPEC),
+  and later values may narrow them, so a caller matches the exact value, not the
+  key. Its one extra attempt takes precedence over the "never a third attempt"
+  wording in the `documentation-audit=final` and `post-audit=classify` bullets.
+  Without `full-suite=external` or `post-audit=classify` on the same line, print
+  the phase-status warning above and include one line when assembling the full
+  receipt, even when classify never runs:
+  `doc-audit-gap: not applied — <full-suite-absent|post-audit-absent> <context>; evidence=<evidence locator>`
+  Use `full-suite-absent` if the line lacks `full-suite=external` (including
+  `full-suite=final`) and `post-audit-absent` otherwise. Name every missing
+  companion in `<context>` and leave the workflow unchanged. On an older
+  installation without the value, every key on the line is lost (standard
+  defaults, reason recorded, so the gap is asked
+  about as before), and an older H-E parser holds a returned policy carrying it
+  as `policy-malformed`. It waives no other gate, never narrows or replaces the
+  external full suite and never authorizes a continuation. Capability check:
+  `grep -F 'doc-audit-gap=auto' "<installed skill dir>/SKILL.md"`.
 - `parent-io=lean` (its only value) makes the parent wait in blocking calls,
   each up to the host's cap, with no status or log reads of its own while a
   local command or subagent this invocation started is live (a test lane, the
@@ -1103,9 +1136,13 @@ continuation.
   request file. It changes no finding, gate, readiness or handoff line (the full
   receipt gains only the run-state lines that document names). Capability check:
   `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"`.
-- A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
+- A policy never waives a gate or changes its bound, with one exception —
+  `doc-audit-gap=auto`'s single extra documentation audit attempt per review
+  (**Classify changes after the documentation audit's last attempt**, **Under
+  `doc-audit-gap=auto`**): Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
-  all stand. Without a policy every default in this skill is unchanged, unless
+  (including upstream's documentation-audit validation, ownership and
+  blocked-recovery rules) all stand. Without a policy every default in this skill is unchanged, unless
   the light review default below applies. Those are this skill's gates; upstream
   `/review`'s `specialists-dispatched` contract item, checked by upstream's
   opt-in contract hook, is set aside only by `delegate=` and `specialists=fold`,
@@ -3060,10 +3097,15 @@ relative to it. Never record a gate as passed from memory or a partial run. A na
 **When it applies.** Apply this section only when the review policy carries
 `post-audit=classify`, wherever a documentation freshness check finds this
 invocation's documentation audit stale with no attempt left (upstream's budget:
-an initial audit plus one re-audit in the invocation record, never a third;
+an initial audit plus one re-audit in the invocation record, never a third
+except for `doc-audit-gap=auto`'s single extra documentation audit attempt per
+review under **Under `doc-audit-gap=auto`** below;
 installed `ship/sections/documentation.md`): the later-change rule after the
 gates list, a final-gate repair, the external gate's freeze re-entry and
-readiness. Run it before the audit's blocked recovery. It is not applied, and
+readiness. When **Under `doc-audit-gap=auto`** is active, also enter it if this
+invocation's last audit attempt returned `blocked` and upstream's attempt
+budget is exhausted, even if no freshness check found the audit stale. Run it
+before the audit's blocked recovery. It is not applied, and
 blocked recovery runs as today, recording `post-audit: not applied — <reason>`,
 when:
 
@@ -3132,12 +3174,24 @@ line; a later commit gets its own line.
   or the link resolving) and changing no other claim;
 - `already-documented`: a fix whose behavior a doc line read here already
   states, cited as `path:line`, with no doc line made false;
+- `undocumented-internal` (available only under `doc-audit-gap=auto` with
+  `full-suite=external` and `post-audit=classify`; absent without it): a
+  first-parent change that fits no no-owner class above and meets the
+  protected-path, literal-search and user-visible-surface checks in **Under
+  `doc-audit-gap=auto`** below (`owner=not-needed`);
+- `base-merge` (available only under `doc-audit-gap=auto` with
+  `full-suite=external` and `post-audit=classify`; absent without it): a clean
+  two-parent merge of the fetched base that meets the ancestry, empty
+  remerge-diff and two-way guard checks in **Under `doc-audit-gap=auto`** below
+  (`owner=not-needed`);
 - `documented-behavior`: everything else. Any doubt counts as
   `documented-behavior`.
 
-**Outcome.** When every post-audit change after the accepted audit's post-child
-snapshot is in a no-documented-behavior class (`rename`, `tests-only`,
-`test-tooling`, `todos-only`, `mechanical-correction` or `already-documented`,
+**Outcome.** When **Under `doc-audit-gap=auto`** is active, add
+`undocumented-internal` and `base-merge` to the following no-owner class list.
+When every post-audit change after the accepted audit's post-child snapshot is
+in a no-documented-behavior class (`rename`, `tests-only`, `test-tooling`,
+`todos-only`, `mechanical-correction` or `already-documented`,
 so `owner=not-needed`), continue without asking the owner: the documentation
 status stays the accepted audit's own status (`current` or `updated`), never
 upgraded, and `.gstack/tmp/docs-audit.json` is untouched. `test-tooling` waives
@@ -3163,6 +3217,223 @@ reached, record `post-audit: not applied — no exhausted-audit freshness check 
 Write these lines in the receipt and beside the documentation section, never
 inside it: the section stays the child's unchanged text, so its SHA-256 still
 matches.
+
+**Under `doc-audit-gap=auto`.** Under `doc-audit-gap=auto`, apply this paragraph
+group only when the parsed review policy carries `doc-audit-gap=auto` together
+with `full-suite=external` and `post-audit=classify`; a run without the value
+reads none of it and its receipt, readiness and blocked recovery stay as they
+are, and a run with `post-audit=classify` alone keeps today's class list and
+outcomes. At every Prepare while the parsed
+policy carries `doc-audit-gap=auto` with `full-suite=external` and
+`post-audit=classify`, the parent writes the exact `--docs` arguments it passes
+to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt`
+in the evidence directory; D3(a) below reads that file for the accepted audit,
+every path in that audit's snapshot `docs` list is also protected, and a missing
+or unreadable roots file is `docs-roots-unreadable`.
+
+At classify's own trigger points (a documentation freshness check that finds
+this invocation's audit stale, or its last attempt `blocked`, with no attempt
+left under upstream's budget: the later-change rule after the gates list, a
+final-gate repair, the external gate's freeze re-entry and readiness) and before
+blocked recovery, the value changes classify in exactly three ways: the
+`undocumented-internal` class, qualifying base merges and one extra audit
+attempt. Everything else in classify, including its other classes, its bounded
+re-audit and its other not-applied conditions, is unchanged (when the
+invocation's last attempt was `blocked`, reuse cannot apply even if an earlier
+audit was accepted. Only the extra-audit check below runs before the owner stop).
+Commit
+pending work first, checked as an empty
+`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none`
+(non-empty is `dirty-tree`, including pending changes inside submodules).
+Let `S` be the accepted audit's post-child snapshot HEAD (which already records
+any documentation edits that audit made). When `S` equals `HEAD` the walk is
+empty and classify runs as today, with nothing added. Otherwise the walk reaches
+`S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD`
+(otherwise the result is `walk-missed-snapshot`), and the post-audit changes are
+the commits on `git rev-list --first-parent S..HEAD`. Every `git diff` and
+`git log` command in this paragraph group passes
+`--no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative`
+to keep paths repository-relative and prevent local Git configuration from
+hiding a change. A gitlink or symlink path is listed and
+then fails `undocumented-internal` as doubt. Each git command and the NUL-split
+script (**Bound the documentation audit** item 3) write stdout, stderr and the
+exit status to files in the evidence directory; `evidence=` locators point
+there, and any unexpected command or script failure is `command-failed`.
+
+1. **`undocumented-internal` class (`owner=not-needed`).** When an existing
+   no-owner class (for example `tests-only` or `rename`) fits a change, classify
+   uses it; `undocumented-internal` applies only otherwise, and reuse reads no
+   documentation so `documentation-scope=contracts` does not change it. A
+   non-merge commit `<commit>` on `git rev-list --first-parent S..HEAD` is
+   `undocumented-internal` when all three hold:
+   - (a) None of its changed paths
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <commit>^ <commit>`)
+     is protected: under `docs/`; any `.md`, `.mdx`, `.markdown`, `.rst` or
+     `.adoc` file anywhere; a file whose base name, ignoring case, is `README`,
+     `AGENTS`, `CLAUDE`, `CHANGELOG` or `SPEC` with no extension or with `.txt`
+     (exact names, so source files such as `spec.ts` or `spec.test.ts` do not
+     match); the file the project instructions name as the product spec; a path
+     under a documentation root recorded in `doc-roots-<audit_id>.txt` for the
+     accepted audit; or a path in that audit's snapshot `docs` list (missing or
+     unreadable roots are `docs-roots-unreadable`).
+   - (b) Classify's bounded re-audit selection for that change — **Bound the
+     documentation audit** item 3's literal search over its changed paths (old
+     and new names) and the contracts the parent names as defined or changed by
+     them, plus their linked authorities — selects no inventoried doc. A parent
+     that cannot name a changed non-test path's contracts, or a search that
+     fails, is doubt; when (b) selects a doc, classify's own classes (such as
+     `already-documented`) decide as today.
+   - (c) For each path of the change, the parent (the agent running
+     `/review-and-prep`, not a subagent) reads its full diff
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative <commit>^ <commit>`)
+     and decides whether it changes user-visible text (messages, prompts, skill
+     or help text), a flag, a help line, a config key or its default, an
+     environment variable or a command a person runs (the last three read the
+     criterion so that it only adds asks). The parent never reads a model's
+     reply text to decide. Any yes, any doubt, or a diff the parent cannot read
+     in full fails the class and makes the change `documented-behavior`; the
+     `Post-audit change:` line's `reason=` then names the path and why
+     (`user-visible <path>`, `doubt <path>` or `protected-path <path>`).
+2. **Qualifying base merges (`class=base-merge`, `owner=not-needed`).** Under
+   the value, classify's not-applied condition "the base changed since the
+   accepted audit" does not count a qualifying base merge on the first-parent
+   walk. The fetched base tip is the verified base remote's tip fetched in this
+   invocation at the trigger (the fetch the later-change and readiness rules
+   use); a failed fetch is `base-fetch-failed`. A merge commit `<merge>` on
+   `git rev-list --first-parent S..HEAD` qualifies only when all of these hold
+   in order:
+   - `<merge>` has exactly two parents (`git rev-parse <merge>^@` prints two
+     lines, `<merge>^1` and `<merge>^2`; an octopus or non-merge commit is
+     `merge-unqualified`), and
+     `git merge-base --is-ancestor <merge>^2 <fetched base tip>` exits 0
+     (otherwise `merge-unqualified`).
+   - Only after the two-parent check passes (because on a non-merge commit it
+     prints the ordinary diff),
+     `git log -1 --remerge-diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --no-show-signature --format= --name-only -z <merge>`
+     exits 0 and prints nothing, which means no hand-resolved conflict, no edit
+     made inside the merge and a merge Git's default strategy reproduces. An
+     error from `--remerge-diff` on Git older than 2.36 is `git-too-old` (naming
+     the `git --version` output and `needs Git 2.36+`); any listed path is
+     `merge-unqualified`, so `class=base-merge` is the only merge outcome.
+   - Its two-way merge guard holds across the base side's changed paths
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <merge>^1...<merge>^2`)
+     and the pull request's own changed paths
+     (`git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <fetched base tip>...HEAD`);
+     any failure is `merge-guard-failed`:
+     (1) **Overlap:** the base side's changed paths share none with the pull
+     request's own changed paths;
+     (2) **Forward:** no documentation file among the pull request's own changed
+     paths names a base-side changed path;
+     (3) **Reverse:** no documentation file among the base side's changed paths
+     names one of the pull request's own changed paths or a contract the parent
+     names for them.
+     A documentation file is a 1(a) protected path. Both searches use **Bound
+     the documentation audit** item 3's literal search under its history rule:
+     changelogs, roadmaps, backlogs
+     and archived plans are never searched files by a mention alone, and
+     `CHANGELOG.md` and `VERSION` are never search terms. The guard alone judges
+     base-side paths; item 4's broad fallback, classify's not-applied checks and
+     1(a)–1(c) apply only to the first-parent changes' own contributions.
+3. **One extra audit attempt.** When classify, with these additions, left any
+   change `owner=needed` or reuse was not applied, blocked recovery treats one
+   more attempt as remaining and uses it exactly as its step 2 uses a remaining
+   attempt (only when the audited inputs changed or a concrete correction or
+   reviewed repair is available; Prepare with current inputs and a fresh id and
+   snapshot; validate through Parent processing; under
+   `documentation-scope=contracts`, scoped as the remaining re-audit would be).
+   It is authorized only when all three hold:
+   - It would be the review's first extra audit: this invocation is not a
+     continuation (`/review-and-prep continue`), and the counter file
+     `doc-audit-extra.txt` in this invocation's evidence directory, which a
+     resume reuses, holds no `Doc-audit extra: action=extra-audit` line (an
+     absent file means none). A file that cannot be read or any line that fails
+     the `Doc-audit extra:` template below counts as one already used. Among
+     well-formed lines, only `action=extra-audit` lines count. The extra-audit
+     allowance belongs to one invocation and its resumes; a continuation runs
+     none; an ordinary new `/review-and-prep` run on the same pull request, such
+     as one after a `/ship-and-land` hand-back, is a new review round with
+     upstream's fresh budget and its own allowance.
+   - The base fetch at the trigger succeeded; a failed fetch means no extra
+     audit (`Doc-audit extra: action=today; … reason=base-fetch-failed`).
+   - The pull request changes no SPEC: no path in
+     `git diff --no-renames --no-ext-diff --no-textconv --ignore-submodules=none --no-relative --name-only -z <fetched base tip>...HEAD`
+     is a SPEC. A path is a SPEC when its base name, ignoring case and with
+     every extension removed, is `SPEC`, at any depth (`SPEC`, `SPEC.md`,
+     `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the
+     project instructions name as the product spec; because the list uses
+     `--no-renames`, a deleted, added or renamed spec (old and new names) all
+     count. This predicate also matches source basenames such as `spec.ts` or
+     `spec.test.ts` for the extra-attempt decision only.
+   When an authorization condition or step 2's condition fails, record
+   `Doc-audit extra: action=today` with that reason and `result=none`, then take
+   the owner stop. Before launching the extra attempt,
+   the parent appends the `Doc-audit extra: action=extra-audit` line to
+   `doc-audit-extra.txt` first, so an interrupted launch counts as used on
+   resume. The launch runs `gstack-docs-candidate attempt` like any launch; an
+   `ATTEMPT: not-counted` install refusal lets upstream's one relaunch run as
+   the same extra attempt with no new `action=extra-audit` line. If
+   `gstack-docs-candidate attempt` refuses either launch (exit 3, STOP),
+   including when the install-refusal allowance was already used before the
+   first extra launch, the extra attempt is spent:
+   record `result=refused` and take the owner stop. When the attempt ends, the
+   parent appends an `action=result` line with its outcome. On resume, reconcile
+   any interrupted extra launch before deciding whether an attempt remains. An
+   `action=extra-audit` line with no later `action=result` line is an
+   interrupted extra launch: the parent first runs blocked recovery step 1
+   (confirm the child stopped), then validates that child's saved output through
+   upstream's Parent processing (collect, check output, check ownership, check
+   freshness), records `result=accepted` only when it passes, and otherwise
+   records `result=interrupted` and takes the owner stop. Its result stands on
+   its own and is never a reuse; a `blocked` or invalid result takes blocked
+   recovery's owner stop, with no further attempt. A later change after an
+   accepted extra audit with no attempt left reaches the trigger again:
+   classify, with these additions, runs against the extra audit as the last
+   accepted audit; no second extra audit runs; the owner stop follows otherwise.
+4. **Recording, status lines and veto line.** When this paragraph group applies,
+   use this extended template for the `Post-audit change:` line:
+
+   `Post-audit change: <full commit SHA>; paths=<n>; class=<rename|tests-only|test-tooling|todos-only|mechanical-correction|already-documented|undocumented-internal|base-merge|documented-behavior>; owner=<not-needed|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`
+
+   `carried-audit=<audit_id> <section-sha256>` names the reused audit. A reuse writes no new
+   `record audit`: the compact receipt's `- documentation:` line renders
+   `not-run` for the final head, exactly as a `post-audit=classify` accept does
+   today, so `/ship-and-land` runs its documentation audit on the shipped head
+   under its existing rule and never labels the earlier audit as the prepared
+   tree's. Write one status line beside the documentation section (never inside
+   it), using the latest trigger's reuse decision:
+   - when a trigger is reached with both companions present:
+     `doc-audit-gap: active; reuse=applied` or
+     `doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`,
+     with `<token>` one of `walk-missed-snapshot`, `dirty-tree`,
+     `base-fetch-failed`, `merge-unqualified`, `merge-guard-failed`,
+     `git-too-old`, `docs-roots-unreadable`, `command-failed`, or
+     `classify-not-applied` followed by classify's own reason. Use
+     `reuse=applied` only when classify continues on the carried audit, which
+     can include an empty walk with a valid audit. If classify leaves
+     `owner=needed`, has no accepted audit or declines reuse for another
+     classify condition, use `classify-not-applied` with that reason. An extra
+     audit gets its own `Doc-audit extra:` lines;
+   - when the value did nothing:
+     `doc-audit-gap: not applied — <token> <context>; evidence=<evidence locator>`,
+     with `<token>` one of `full-suite-absent`, `post-audit-absent`, or
+     `no-trigger` (`no exhausted-audit freshness check reached`).
+   See [`docs/workflow-handoffs.md#doc-audit-gap-reasons`](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md#doc-audit-gap-reasons)
+   for each token's meaning and caller fix. Context: `git-too-old` names the
+   `git --version` output and `needs Git 2.36+`; `command-failed` names the
+   command name and its exit status; a path-bearing token names at most its
+   first three paths. Redaction: a reason carries no stderr text and no remote
+   URL. Per extra-audit decision, write in the full receipt (beside the
+   documentation section) and append to `doc-audit-extra.txt`:
+   `Doc-audit extra: action=<extra-audit|result|today>; audit=<carried audit_id> <section-sha256>|none; new-audit=<audit_id|none>; result=<accepted|blocked|invalid|refused|interrupted|none>; head=<full SHA>; reason=<one line>; evidence=<evidence locator>`
+   (`audit=none` when this invocation has no accepted audit). When the value
+   continues past a gap (any `undocumented-internal` or `base-merge` line, or an
+   accepted extra audit), the receipt and the PR body carry one veto line under
+   **Take recommended fix-scope options without asking**:
+   `Auto-chosen (veto by replying on this PR): documentation audit gap (blocked recovery's owner question) → <continue on carried audit <audit_id>|extra audit <audit_id>>`
+   Append the classes used, any qualifying merge and the offered options as
+   plain-text details after the chosen option on the same line. The offered
+   options are continue on the carried audit, run the extra audit, stop for
+   repair, accept a named risk.
 
 ### Bound the documentation audit
 
@@ -3289,7 +3560,9 @@ matches.
    - or the delta cannot be established.
 7. **Bound and truth.** The attempt budget is upstream's, unchanged: choosing a
    scope never adds or refunds an attempt, a recovery that widens to broad uses
-   the remaining attempt, and there is never a third. `status` keeps upstream's
+   the remaining attempt, and there is never a third (except under
+   `doc-audit-gap=auto`'s single extra documentation audit attempt per review in
+   **Classify changes after the documentation audit's last attempt**). `status` keeps upstream's
    meaning (`updated`, `current`, `blocked`), and a bounded `current` covers
    only the docs read. `inventoried` and `read-list` count those docs,
    `reviewed` counts the inventoried docs in the child's validated
@@ -4555,9 +4828,15 @@ the relevant base/head refs. Require all of the following:
   line with `owner=not-needed` for every commit after its post-child snapshot
   satisfies the documentation gate for the final content, with the audit's own
   status; an `owner=needed` line still needs the user's named-risk decision.
+  When **Under `doc-audit-gap=auto`** is active, that readiness rule requires an
+  `owner=not-needed` `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD`
+  (`undocumented-internal` and `base-merge` lines are `owner=not-needed`, and
+  base commits a qualifying merge brings in need no line of their own, because
+  the merge's `class=base-merge` line covers them), while an extra audit's own
+  accepted result satisfies the gate as any audit does.
   Under `full-suite=external`, the latest accepted result must be a pass whose
   `External gate attestation:` row carries a head and tree equal to the final
-  head and tree. Keep older rows as history; they cannot satisfy this gate.
+  head and tree; a reuse never counts as, replaces or defers that attestation. Keep older rows as history; they cannot satisfy this gate.
   A recorded `pregate-narrowing: active` also needs its `attestation-row` to be
   that latest accepted pass, a `Pregate lane not run:` line for each selected
   lane, and a `pregate-preflight` record for the final head and tree.
@@ -4641,7 +4920,7 @@ this receipt-line table (templates live in each row's producing section):
 | the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line | when `test-gaps=record` is on the policy line; recorded gaps are omitted from `Unresolved:` (**Record unproven test gaps**) | yes | yes | yes |
 | `blocking:`, `Finding blocking:`, `Finding not blocking:` | when `blocking=shown` is on the policy line, with the authorizing policy line; non-blocking findings are omitted from `Unresolved:` (**Block readiness only on shown findings**) | yes | yes | yes |
 | `settled:`, `Finding settled:` | when **Give review parts the settled decisions** built or checked settled context; settled findings are omitted from `Unresolved:` | yes | yes | yes |
-| `post-audit:`, `Post-audit change:` | when `post-audit=classify` is on the policy line (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
+| `post-audit:`, `Post-audit change:`, `doc-audit-gap:`, `Doc-audit extra:` | The `post-audit:` and `Post-audit change:` lines require `post-audit=classify`. The `doc-audit-gap:` line requires `doc-audit-gap=auto`. The two new classes and any `Doc-audit extra:` decision require both companions (**Classify changes after the documentation audit's last attempt**). | yes | yes | yes |
 | the `delegation:` status line and every `Delegated part:` line | when `delegate=<part>` is on the policy line and the receipt carries Step 2 review evidence; name the configuration's SHA-256 and labels, never its path (**Delegate named specialist parts**) | yes | yes | yes |
 | `Review arm:`, `Folded checklist:` | when `specialists=fold` is on the policy line (**Fold specialist checklists into cycle 1**) | yes | yes | yes |
 | `specialists-dispatched:` | only while the policy's `delegate=` or `specialists=fold` section is active (**Delegate named specialist parts**, **Fold specialist checklists into cycle 1**) | yes | yes | yes |
