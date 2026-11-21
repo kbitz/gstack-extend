@@ -29,9 +29,9 @@ const RECOMMENDATION = 'Recommendation: merge because only advisory findings rem
  * `recover`, so credit is the adapter's credit.
  */
 export const GOLDEN_CASES: readonly GoldenCase[] = [
-  { id: 'review-advisory', gate: 'review', text: `${ADVISORY}\n${RECOMMENDATION}`, verdict: 'clean', credited: true },
+  { id: 'review-advisory', gate: 'review', text: `${ADVISORY}\n${RECOMMENDATION}\nVERDICT: FINDINGS`, verdict: 'clean', credited: true },
   { id: 'review-not-ready', gate: 'review', text: `${ADVISORY}\n${RECOMMENDATION}\nVerdict: not ready`, verdict: 'findings', credited: true },
-  { id: 'structured-advisory', gate: 'structured', text: ADVISORY, verdict: 'clean', credited: true },
+  { id: 'structured-advisory', gate: 'structured', text: `${ADVISORY}\nVERDICT: FINDINGS`, verdict: 'clean', credited: true },
   { id: 'structured-not-ready', gate: 'structured', text: `${ADVISORY}\nVerdict: not ready`, verdict: 'findings', credited: true },
 ];
 

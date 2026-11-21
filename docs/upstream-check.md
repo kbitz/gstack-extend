@@ -319,8 +319,9 @@ The inventory comes from this extension's own source, never a second copy:
   imported from the root and the export must be a function. Importing runs the
   module's top-level code, as the adapter does.
 - **Classifier cases.** Four golden cases run through the adapter's `recover`
-  against the installed classifier: advisory-only findings are `clean` and
-  credited, and the same text with a last `Verdict: not ready` line is `findings`
+  against the installed classifier: advisory-only findings ending with the
+  closing `VERDICT: FINDINGS` line are `clean` and credited, and the same
+  advisory text ending with a `Verdict: not ready` line instead is `findings`
   and credited, for both the `review` and `structured` gates. The `review` cases
   include a recommendation; the `structured` cases omit it.
   The table is qualified at upstream `db87940e` (1.91.198.0) or later.

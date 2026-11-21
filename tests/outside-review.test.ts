@@ -248,7 +248,7 @@ describe('qualified severity labels', () => {
   // `recover` does not return its normalized text, so record what the classifier is given: call 0 is the
   // original, call 1 the normalized copy. The review gate gets a one-line recommendation so no line is joined.
   const read = (classifier: Classifier, text: string, gate: Gate) => {
-    const input = gate === 'review' ? `${text}\n${REC}` : text;
+    const input = gate === 'review' ? `${text}\n${REC}\nVERDICT: FINDINGS` : `${text}\nVERDICT: FINDINGS`;
     const seen: string[] = [];
     const result = recover(input, gate, 0, '', args => { seen.push(args.text); return classifier(args); });
     return { input, normalized: seen[1]!, result };
@@ -543,6 +543,10 @@ describe('advisory findings and a not-ready verdict', () => {
   test('the table pairs each gate with an advisory case and a not-ready case', () => {
     expect(GOLDEN_CASES.map(g => `${g.gate}:${g.verdict}`).sort()).toEqual(
       ['review:clean', 'review:findings', 'structured:clean', 'structured:findings']);
+    for (const golden of GOLDEN_CASES) {
+      if (golden.id.endsWith('-advisory')) expect(golden.text.endsWith('\nVERDICT: FINDINGS')).toBe(true);
+      else expect(golden.text.endsWith('\nVerdict: not ready')).toBe(true);
+    }
   });
   test('the adapter loads exactly the helpers the launch check inventories', () => {
     expect(UPSTREAM_HELPERS.map(h => h.name)).toEqual(['runClaudeCode', 'resolveClaudeCommand', 'classifyOutsideReview']);
@@ -610,7 +614,7 @@ test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('installed upstream transport
     expect(recover(`${label} crash\n[P2] advisory\nRecommendation: fix because bug.`, 'review', 0, '', classifyOutsideReview).classification.verdict).toBe('findings');
   }
   for (const example of ['[P3] Prefer args[p1]', '[P3] Prefer `args[p1]`', '[P3] Explain `NEEDS_CONTEXT:`']) {
-    const checked = recover(example + '\nRecommendation: fix because advisory.', 'review', 0, '', classifyOutsideReview);
+    const checked = recover(example + '\nRecommendation: fix because advisory.\nVERDICT: FINDINGS', 'review', 0, '', classifyOutsideReview);
     expect(checked.classification.findings.highest).toBe('P3');
     expect(checked.credited).toBe(true);
     expect(checked.parse).toBe('valid');
@@ -635,7 +639,7 @@ const task = await Bun.stdin.text();
 if (process.env.FAKE_MODE === 'provider-error') process.exit(1);
 const prefix = readFileSync(args[args.indexOf('--system-prompt-file') + 1], 'utf8');
 appendFileSync(process.env.FAKE_CAPTURE!, JSON.stringify({ args, task, prefix, cwd: process.cwd() }) + '\\n');
-const result = process.env.FAKE_MODE === 'clean' ? 'NO_FINDINGS' : process.env.FAKE_MODE === 'ambiguous' ? 'Looks fine' : task.includes('adversarial') ? '[P1] failure path' : '[P2] duplicate said entry';
+const result = process.env.FAKE_MODE === 'clean' ? 'NO_FINDINGS: none\\nRecommendation: approve because clean.\\nVERDICT: CLEAN' : process.env.FAKE_MODE === 'ambiguous' ? 'Looks fine' : task.includes('adversarial') ? '[P1] failure path' : '[P2] duplicate said entry\\nVERDICT: FINDINGS';
 console.log(JSON.stringify({ result,
   session_id: 'fixture-session', usage: { cache_read_input_tokens: 17 }, modelUsage: { 'fixture-model': { inputTokens: 5 } } }));
 `);
