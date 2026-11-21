@@ -3182,13 +3182,13 @@ line; a later commit gets its own line.
 - `documented-behavior`: everything else. Any doubt counts as
   `documented-behavior`.
 
-**Outcome.** The no-owner classes are `rename`, `tests-only`, `test-tooling`,
-`todos-only`, `mechanical-correction` and `already-documented`. When
-**Under `doc-audit-gap=auto`** is active, this list also includes
-`undocumented-internal` and `base-merge`. When every post-audit change after the
-accepted audit's post-child snapshot is `owner=not-needed`, continue without
-asking the owner. The documentation status stays the accepted audit's own
-status (`current` or `updated`), never
+**Outcome.** When **Under `doc-audit-gap=auto`** is active, add
+`undocumented-internal` and `base-merge` to the following no-owner class list.
+When every post-audit change after the accepted audit's post-child snapshot is
+in a no-documented-behavior class (`rename`, `tests-only`, `test-tooling`,
+`todos-only`, `mechanical-correction` or `already-documented`,
+so `owner=not-needed`), continue without asking the owner: the documentation
+status stays the accepted audit's own status (`current` or `updated`), never
 upgraded, and `.gstack/tmp/docs-audit.json` is untouched. `test-tooling` waives
 no test gate: the pregate and test lanes rerun on the changed content under
 their freshness rule, under `full-suite=external` the external full-suite gate
@@ -4911,8 +4911,7 @@ this receipt-line table (templates live in each row's producing section):
 | the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line | when `test-gaps=record` is on the policy line; recorded gaps are omitted from `Unresolved:` (**Record unproven test gaps**) | yes | yes | yes |
 | `blocking:`, `Finding blocking:`, `Finding not blocking:` | when `blocking=shown` is on the policy line, with the authorizing policy line; non-blocking findings are omitted from `Unresolved:` (**Block readiness only on shown findings**) | yes | yes | yes |
 | `settled:`, `Finding settled:` | when **Give review parts the settled decisions** built or checked settled context; settled findings are omitted from `Unresolved:` | yes | yes | yes |
-| `post-audit:`, `Post-audit change:` | when `post-audit=classify` is on the policy line, with `undocumented-internal` and `base-merge` classes only when **Under `doc-audit-gap=auto`** is active (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
-| `doc-audit-gap:`, `Doc-audit extra:` | when `doc-audit-gap=auto` is on the policy line. `Doc-audit extra:` requires both companions and an extra-audit decision (**Classify changes after the documentation audit's last attempt**) | yes | yes | yes |
+| `post-audit:`, `Post-audit change:`, `doc-audit-gap:`, `Doc-audit extra:` | The `post-audit:` and `Post-audit change:` lines require `post-audit=classify`. The `doc-audit-gap:` line requires `doc-audit-gap=auto`. The two new classes and any `Doc-audit extra:` decision require both companions (**Classify changes after the documentation audit's last attempt**). | yes | yes | yes |
 | the `delegation:` status line and every `Delegated part:` line | when `delegate=<part>` is on the policy line and the receipt carries Step 2 review evidence; name the configuration's SHA-256 and labels, never its path (**Delegate named specialist parts**) | yes | yes | yes |
 | `Review arm:`, `Folded checklist:` | when `specialists=fold` is on the policy line (**Fold specialist checklists into cycle 1**) | yes | yes | yes |
 | `specialists-dispatched:` | only while the policy's `delegate=` or `specialists=fold` section is active (**Delegate named specialist parts**, **Fold specialist checklists into cycle 1**) | yes | yes | yes |

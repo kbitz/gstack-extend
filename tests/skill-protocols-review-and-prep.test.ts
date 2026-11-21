@@ -675,7 +675,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   ]) {
     if (!policy.includes(required)) violations.push(`policy section missing: ${required}`);
   }
-  if (!postAudit.includes('When **Under `doc-audit-gap=auto`** is active, this list also includes `undocumented-internal` and `base-merge`. When every post-audit change after the accepted audit\'s post-child snapshot is `owner=not-needed`, continue without asking the owner.')) {
+  if (!postAudit.includes('**Outcome.** When **Under `doc-audit-gap=auto`** is active, add `undocumented-internal` and `base-merge` to the following no-owner class list.')) {
     violations.push('classify outcome must include both new no-owner classes when active');
   }
 
