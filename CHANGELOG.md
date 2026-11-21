@@ -6,14 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- A capped review whose only gap is an unverified outside voice now keeps its first-cycle baseline, recording that voice as missing coverage, for a `repair-only` continuation that reruns that voice at full scope.
 - A capped review whose only gap is an outside voice whose completed reply stayed unverified now keeps its first-cycle baseline, recording that voice as missing coverage, and a `repair-only` continuation reruns that voice at full scope.
-- A stopped receipt's `Full-review evidence:` row with `completed=true` can now cover a first cycle whose outside voice stayed unverified, so read outside coverage from the per-stage results in the dedicated evidence comment, and continue a stop written by this release with this release or a later one.
 
 ### Upgrade notes
 
 - A stopped receipt's `Full-review evidence:` row with `completed=true` can now cover a first cycle whose outside voice stayed unverified, so a consumer that read that row as proof of outside coverage should read the per-stage results in the dedicated evidence comment instead.
-- A stopped receipt's `Full-review evidence:` row with `completed=true` can now cover a first cycle whose outside voice stayed unverified, so a consumer that read that row as proof of outside coverage should read the per-stage results in the dedicated evidence comment instead; continue a stop written by this release with this release or a later one, because an older install skips the full-scope rerun of that voice.
+- Continue a stop written by this release with this release or a later one, because an older install skips the full-scope rerun of that voice.
 
 ## [0.104.0] - 2026-11-19
 
