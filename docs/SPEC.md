@@ -42,10 +42,12 @@ no particular workspace host or orchestrator is required.
 - Acceptance conditions: Git repositories, GitHub PRs through authenticated
   `gh`, supported Bun, installed gstack and existing authorized agent accounts.
   Acceptance evidence names the operating system, workspace host, harness and
-  upstream versions it ran on, and no other combination is claimed. This
-  revision does not remove existing installation support for Claude Code,
-  Codex, Cursor or OpenCode; full workflow acceptance is not inferred from
-  setup fixtures.
+  upstream versions it ran on, and no other combination is claimed. The
+  supported install hosts are Claude Code and Codex. Cursor and OpenCode
+  support were dropped on 2026-11-21 on the developer's word and need no
+  acceptance evidence; their setup, resolver, quota and telemetry code is
+  legacy until the Tracks that remove it land. Full workflow acceptance is not
+  inferred from setup fixtures.
 - Human testing, account setup, exceptional decisions and explicit merge/deploy
   authorization remain allowed parts of the workflow. No new spend is authorized
   by this spec. See PROGRESS.md `## Acceptance` for achieved evidence.
