@@ -5,7 +5,7 @@ import { join, relative } from 'node:path';
 import { spawnSync } from './helpers/child-stdio.ts';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
-import { ANCHORS_QUALIFIED, ATTACKER_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, attackerInventory, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
+import { ANCHORS_QUALIFIED, ATTACKER_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, attackerInventory, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory, type Anchor } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
@@ -56,7 +56,16 @@ const MODULES = {
   'claude-bin': 'export function resolveClaudeCommand() { return null; }\n',
   'outside-review-result': CLASSIFIER(true),
 };
-const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${DELEGATE.dispatchItem.join('\n')}\n${FOLD.review.join('\n')}\n${OVERLAP.review.join('\n')}\n${ATTACKER['adversarial-item'].join('\n')}\n`;
+type DispatchWording = 'claude' | 'codex';
+const anchorForms = (a: Anchor): readonly string[] => (typeof a === 'string' ? [a] : a);
+const pickForm = (a: Anchor, wording: DispatchWording): string => (typeof a === 'string' ? a : a[wording === 'claude' ? 0 : 1]!);
+const sameAnchor = (a: Anchor, b: Anchor) => {
+  const af = anchorForms(a);
+  const bf = anchorForms(b);
+  return af.length === bf.length && af.every((v, i) => v === bf[i]);
+};
+const reviewText = (wording: DispatchWording = 'claude') =>
+  `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${DELEGATE.dispatchItem.join('\n')}\n${FOLD.review.join('\n')}\n${OVERLAP.review.map((a) => pickForm(a, wording)).join('\n')}\n${ATTACKER['adversarial-item'].map((a) => pickForm(a, wording)).join('\n')}\n`;
 const adversarialText = () => `# adversarial\n\n${OVERLAP.adversarial.join('\n')}\n${ATTACKER.adversarial.join('\n')}\n`;
 const redTeamText = () => `# red-team\n\n${ATTACKER['red-team'].join('\n')}\n`;
 const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n${TEST_GAP.checklist.join('\n')}\n`;
@@ -73,7 +82,7 @@ const pregateSecretsText = () => `// secrets\n\n${UPSTREAM_FINDING_ANCHORS.join(
 
 interface Fixture { root: string; skills: string; files: Record<string, string> }
 /** A minimal installed upstream that satisfies every check, in either layout. */
-function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
+function upstream(layout: 'nested' | 'sibling', label = layout, wording: DispatchWording = layout === 'nested' ? 'claude' : 'codex'): Fixture {
   const skills = fresh(label);
   const root = join(skills, 'gstack');
   const files: Record<string, string> = {};
@@ -107,14 +116,14 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
     files.review = join(root, 'review', 'SKILL.md');
     files.adversarial = join(root, 'review', 'sections', 'adversarial.md');
     files.coverage = join(root, 'ship', 'sections', 'test-coverage.md');
-    put(files.review, reviewText());
+    put(files.review, reviewText(wording));
     put(files.adversarial, adversarialText());
     put(files.coverage, coverageText());
   } else {
     files.review = join(skills, 'gstack-review', 'SKILL.md');
     files.adversarial = files.review;
     files.coverage = join(skills, 'gstack-ship', 'sections', 'test-coverage.md');
-    put(files.review, reviewText() + adversarialText());
+    put(files.review, reviewText(wording) + adversarialText());
     put(files.coverage, coverageText());
   }
   return { root, skills, files };
@@ -984,14 +993,19 @@ describe('drift', () => {
     expect(ids.indexOf('anchor review-and-prep.fold.design.1')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
   }, 30000);
 
-  // Value: protects=the overlap activation paragraph lists five review anchors and three adversarial anchors with no backticks; fails_when=a list is dropped, merged or gains a backtick; why_new=seventh activation paragraph; seam=none
+  const ADVERSARIAL_DISPATCH_FORMS = [
+    'an Agent dispatch for the adversarial pass, its prompt including',
+    'a `spawn_agent` (`task_name: adversarial`), its prompt including',
+  ];
+
+  // Value: protects=the overlap activation paragraph lists five review anchors (with slot 5 accepting both Claude and Codex wordings) and three adversarial anchors; fails_when=a list is dropped, merged or a host wording changes; why_new=seventh activation paragraph with dual-host dispatch wording; seam=none
   test('the overlap inventory parses two lists of 5 review anchors and 3 adversarial anchors', () => {
     expect(OVERLAP.review).toEqual([
       'All readers examine the same candidate.',
       'Do not edit reviewed source until Step 5.',
       'Before edits, every dispatched reader/writer must have returned or be confirmed',
       'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
-      'an Agent dispatch for the adversarial pass, its prompt including',
+      ADVERSARIAL_DISPATCH_FORMS,
     ]);
     expect(OVERLAP.adversarial).toEqual([
       'Read the diff for this branch. First list changed files:',
@@ -999,7 +1013,10 @@ describe('drift', () => {
       'After all passes complete, synthesize findings across all sources:',
     ]);
     expect(OVERLAP.review.length + OVERLAP.adversarial.length).toBe(OVERLAP_ANCHORS);
-    for (const anchor of [...OVERLAP.review, ...OVERLAP.adversarial]) expect(anchor).not.toContain('`');
+    for (const anchor of [...OVERLAP.review, ...OVERLAP.adversarial]) {
+      if (typeof anchor === 'string') expect(anchor).not.toContain('`');
+      else for (const form of anchor) expect(form).not.toContain('``');
+    }
     expect(overlapInventory(join(scratch, 'no-such-extension')).ok).toBe(false);
   });
 
@@ -1014,15 +1031,17 @@ describe('drift', () => {
     const f = upstream(layout);
     const path = overlapFile(f, list);
     const anchor = OVERLAP[list][at]!;
-    writeFileSync(path, readFileSync(path, 'utf8').split(anchor).join(`${anchor.slice(0, -2)}!!`));
+    let next = readFileSync(path, 'utf8');
+    for (const form of anchorForms(anchor)) next = next.split(form).join(`${form.slice(0, -2)}!!`);
+    writeFileSync(path, next);
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.code).toBe(4);
-    const delegated = list === 'review' ? DELEGATE.review.indexOf(anchor) : -1;
+    const delegated = list === 'review' ? DELEGATE.review.findIndex((a) => sameAnchor(a, anchor)) : -1;
     const delegateId = delegated < 0 ? [] : [`review-and-prep.delegate.review.${delegated + 1}`];
-    const folded = list === 'review' ? FOLD.review.indexOf(anchor) : -1;
+    const folded = list === 'review' ? FOLD.review.findIndex((a) => sameAnchor(a, anchor)) : -1;
     const foldId = folded < 0 ? [] : [`review-and-prep.fold.review.${folded + 1}`];
-    const attacker = list === 'review' ? ATTACKER['adversarial-item'].indexOf(anchor) : -1;
+    const attacker = list === 'review' ? ATTACKER['adversarial-item'].findIndex((a) => sameAnchor(a, anchor)) : -1;
     const attackerId = attacker < 0 ? [] : [`review-and-prep.attacker.adversarial-item.${attacker + 1}`];
     const overlapId = `review-and-prep.overlap.${list}.${at + 1}`;
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + delegateId.length + foldId.length + attackerId.length}`);
@@ -1044,7 +1063,7 @@ describe('drift', () => {
   test.each(['nested', 'sibling'] as const)('missing adversarial instructions in the %s layout drift only the overlap and attacker adversarial anchors', async (layout) => {
     const f = upstream(layout);
     if (layout === 'nested') rmSync(f.files.adversarial!);
-    else writeFileSync(f.files.review!, reviewText());
+    else writeFileSync(f.files.review!, reviewText('codex'));
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${OVERLAP.adversarial.length + ATTACKER.adversarial.length}`);
@@ -1086,7 +1105,7 @@ describe('drift', () => {
     expect(ids.indexOf('anchor review-and-prep.attacker.adversarial-item.2')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
   }, 30000);
 
-  // Value: protects=the attacker-parts activation paragraph lists the three red-team anchors, four adversarial anchors and two all-or-none item anchors with no backticks; fails_when=a list is dropped, merged or gains a backtick; why_new=eighth activation paragraph (Track 72B); seam=none
+  // Value: protects=the attacker-parts activation paragraph lists the three red-team anchors, four adversarial anchors and two all-or-none item anchors (with slot 2 accepting both Claude and Codex wordings); fails_when=a list is dropped, merged or a host wording changes; why_new=eighth activation paragraph (Track 72B, Track 93C); seam=none
   test('the attacker inventory parses three lists of 3 red-team, 4 adversarial and 2 adversarial-item anchors', () => {
     expect(ATTACKER['red-team']).toEqual([
       '# Red Team Review',
@@ -1101,10 +1120,13 @@ describe('drift', () => {
     ]);
     expect(ATTACKER['adversarial-item']).toEqual([
       'adversarial-pass',
-      'an Agent dispatch for the adversarial pass, its prompt including',
+      ADVERSARIAL_DISPATCH_FORMS,
     ]);
     expect(ATTACKER['red-team'].length + ATTACKER.adversarial.length + ATTACKER['adversarial-item'].length).toBe(ATTACKER_ANCHORS);
-    for (const anchor of [...ATTACKER['red-team'], ...ATTACKER.adversarial, ...ATTACKER['adversarial-item']]) expect(anchor).not.toContain('`');
+    for (const anchor of [...ATTACKER['red-team'], ...ATTACKER.adversarial, ...ATTACKER['adversarial-item']]) {
+      if (typeof anchor === 'string') expect(anchor).not.toContain('`');
+      else for (const form of anchor) expect(form).not.toContain('``');
+    }
     expect(attackerInventory(join(scratch, 'no-such-extension')).ok).toBe(false);
     const copy = fresh('missing-attacker-paragraph');
     cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
@@ -1126,11 +1148,13 @@ describe('drift', () => {
     const f = upstream(layout);
     const path = attackerFile(f, list);
     const anchor = ATTACKER[list][at]!;
-    writeFileSync(path, readFileSync(path, 'utf8').split(anchor).join(`${anchor.slice(0, -2)}!!`));
+    let next = readFileSync(path, 'utf8');
+    for (const form of anchorForms(anchor)) next = next.split(form).join(`${form.slice(0, -2)}!!`);
+    writeFileSync(path, next);
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.code).toBe(4);
-    const overlapped = list === 'adversarial-item' ? OVERLAP.review.indexOf(anchor) : -1;
+    const overlapped = list === 'adversarial-item' ? OVERLAP.review.findIndex((a) => sameAnchor(a, anchor)) : -1;
     const overlapId = overlapped < 0 ? [] : [`review-and-prep.overlap.review.${overlapped + 1}`];
     const attackerId = `review-and-prep.attacker.${list}.${at + 1}`;
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + overlapId.length}`);
@@ -1152,7 +1176,9 @@ describe('drift', () => {
   test.each(['nested', 'sibling'] as const)('all-or-none adversarial-item anchors in the %s layout report OK + INFO not-declared when absent, and drift when partial', async (layout) => {
     const withoutItem = upstream(layout);
     let body = readFileSync(withoutItem.files.review!, 'utf8');
-    for (const line of ATTACKER['adversarial-item']) body = body.split(line).join('');
+    for (const slot of ATTACKER['adversarial-item']) {
+      for (const form of anchorForms(slot)) body = body.split(form).join('');
+    }
     writeFileSync(withoutItem.files.review!, body);
     const r = await check(rootArgs(withoutItem));
     expectAgreement(r);
@@ -1165,6 +1191,89 @@ describe('drift', () => {
     expect(r.lines).toContain(`INFO inspected attacker ${ATTACKER_QUALIFIED.revision} ${ATTACKER_QUALIFIED.version}`);
     expect(r.lines).toContain(`INFO file red-team ${realpathSync(withoutItem.files['red-team']!)}`);
   }, 30000);
+
+  // Value: protects=both Claude and Codex adversarial-pass dispatch wordings pass cleanly across layouts; fails_when=either host wording drifts in its layout or sibling <=1.102.1.0 breaks; why_new=Track 93C dual-host dispatch compatibility; seam=none
+  test.each([
+    ['nested', 'claude'],
+    ['sibling', 'codex'],
+    ['sibling', 'claude'],
+  ] as const)('healthy %s layout with %s dispatch wording passes all checks with 0 drift', async (layout, wording) => {
+    const f = upstream(layout, `dual-${layout}-${wording}`, wording);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(0);
+    expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
+  }, 30000);
+
+  // Value: protects=an unrecognized adversarial-pass dispatch wording matching neither Claude nor Codex drifts both overlap.review.5 and attacker.adversarial-item.2 and names both expected wordings; fails_when=an unknown wording passes or omits the expected forms; why_new=Track 93C criterion 3 negative lock; seam=none
+  test.each(['nested', 'sibling'] as const)('an unrecognized adversarial-pass dispatch wording in the %s layout drifts overlap.review.5 and attacker.adversarial-item.2', async (layout) => {
+    const f = upstream(layout, `unknown-dispatch-${layout}`);
+    let body = readFileSync(f.files.review!, 'utf8');
+    for (const form of ADVERSARIAL_DISPATCH_FORMS) body = body.split(form).join('a future_agent dispatch for the adversarial pass, its prompt including');
+    writeFileSync(f.files.review!, body);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=2`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([
+      'review-and-prep.overlap.review.5',
+      'review-and-prep.attacker.adversarial-item.2',
+    ]);
+    for (const [id, effect] of [
+      ['review-and-prep.overlap.review.5', OVERLAP_EFFECT],
+      ['review-and-prep.attacker.adversarial-item.2', ATTACKER_EFFECT],
+    ] as const) {
+      const idx = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
+      expect(idx).toBeGreaterThan(-1);
+      expect(r.lines[idx]).toContain(`"${ADVERSARIAL_DISPATCH_FORMS[0]}" or "${ADVERSARIAL_DISPATCH_FORMS[1]}"`);
+      expect(r.lines[idx + 1]).toBe(effect);
+    }
+  }, 30000);
+
+  // Value: protects=removing adversarial-pass while either Claude or Codex dispatch wording remains drifts attacker.adversarial-item.1 without INFO not-declared; fails_when=either host wording bypasses the all-or-none rule; why_new=Track 93C all-or-none negative lock across both host wordings; seam=none
+  test.each([
+    ['nested', 'claude'],
+    ['sibling', 'codex'],
+    ['sibling', 'claude'],
+  ] as const)('removing adversarial-pass while %s/%s dispatch wording remains drifts attacker.adversarial-item.1 without not-declared', async (layout, wording) => {
+    const f = upstream(layout, `partial-item-${layout}-${wording}`, wording);
+    const body = readFileSync(f.files.review!, 'utf8').split('adversarial-pass').join('');
+    writeFileSync(f.files.review!, body);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(['review-and-prep.attacker.adversarial-item.1']);
+    expect(r.out).not.toContain('INFO not-declared review-and-prep.attacker.adversarial-item');
+  }, 30000);
+
+  // Value: protects=double-backtick and alternative-slot parser rejects unclosed double backticks, newlines in double backticks, and dangling or newline-split `or`; fails_when=malformed anchor syntax silently drops or splits alternatives; why_new=Track 93C parser negative lock; seam=none
+  test('attacker and overlap inventories reject malformed double-backtick spans and malformed or alternatives', () => {
+    const withCopy = (label: string, mutate: (text: string) => string) => {
+      const copy = fresh(label);
+      cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
+      const skillPath = join(copy, 'skills', 'review-and-prep.md');
+      writeFileSync(skillPath, mutate(readFileSync(skillPath, 'utf8')));
+      return copy;
+    };
+    const codexSpan = '``a `spawn_agent` (`task_name: adversarial`), its prompt including``';
+    const pair = '`an Agent dispatch for the adversarial pass, its prompt including` or ' + codexSpan;
+
+    const unclosed = withCopy('unclosed-double-tick', (t) => t.replace(codexSpan, codexSpan.slice(0, -2)));
+    expect(attackerInventory(unclosed)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has an unbalanced backtick' });
+
+    const withNewline = withCopy('newline-double-tick', (t) => t.replace(codexSpan, '``a `spawn_agent`\n(`task_name: adversarial`), its prompt including``'));
+    expect(attackerInventory(withNewline)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has an empty span or a span containing a newline' });
+
+    const newlineOr = withCopy('newline-or', (t) => t.replace(pair, '`an Agent dispatch for the adversarial pass, its prompt including`\nor ' + codexSpan));
+    expect(attackerInventory(newlineOr)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has a malformed or alternative' });
+
+    const danglingOr = withCopy('dangling-or', (t) => t.replace(pair, pair + ' or'));
+    expect(attackerInventory(danglingOr)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has a malformed or alternative' });
+
+    const overlapNewlineOr = withCopy('overlap-newline-or', (t) => t.replace(`\n${pair}`, `\n\`an Agent dispatch for the adversarial pass, its prompt including\`\nor ${codexSpan}`));
+    expect(overlapInventory(overlapNewlineOr)).toMatchObject({ ok: false, reason: 'review anchor list has a malformed or alternative' });
+  });
 
   const NARROW_EFFECT = '  effect: /review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so';
   const narrowFile = (f: Fixture, file: 'bin' | 'index' | 'lanes') => f.files[`pregate${file[0]!.toUpperCase()}${file.slice(1)}`]!;
