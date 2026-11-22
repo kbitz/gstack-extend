@@ -134,7 +134,7 @@ def _project(store, row, observed, at):
                 why=sorted(why))
 
 
-def _retain_unlinked(store, row, native, observed, facts, excluded, at):
+def _retain_unlinked(store, row, native, observed, facts, excluded, current_events, at):
     linked = {link['event_id'] for _, link, _ in observed}
     sources = {event_id: source for source in row['sources'] if source.get('source') == 'cursor-api2'
                for event_id in source['event_ids']}
@@ -147,13 +147,18 @@ def _retain_unlinked(store, row, native, observed, facts, excluded, at):
         fact = facts.get(event_id)
         if not fact:
             return None  # The saved row remains readable even if its raw facts are missing.
-        if fact['ambiguous'] or (row['session_id'], fact['conversation_hash']) in excluded:
+        source = sources.get(event_id, {})
+        conversation = fact['conversation_hash']
+        saved_conversation = source.get('harness_session')
+        # Current ownership or a corrected conversation supersedes an unmatched snapshot link.
+        if (event_id in current_events or fact['ambiguous'] or (row['session_id'], conversation) in excluded
+                or (saved_conversation and saved_conversation != conversation)):
             continue
         if fact['revision'] > event.get('revision', fact['revision']):
             start, end, _ = boundaries(store, fact)
             if start is not None and end is not None and (end <= window['started_at'] or start >= (window.get('ended_at') or at)):
                 continue
-        retained.append((fact, event, sources.get(event_id, {}).get('kind', 'own')))
+        retained.append((fact, event, source.get('kind', 'own')))
     return retained
 
 
@@ -181,6 +186,7 @@ def project_runs(store, rows, native_rows):
     at = now()
     facts = store.all('cursor_event')
     links, excluded = _relationships(store, facts, store.all('source'), at) if facts else ({}, set())
+    current_events = {link['event_id'] for observations in links.values() for _, link, _ in observations}
     by_id = {fact['id']: fact for fact in facts}
     cursor_rows = {(row['session_id'], row['pool']): row for row in rows if row['pool_kind'] == 'cursor'}
     templates = {}
@@ -197,7 +203,7 @@ def project_runs(store, rows, native_rows):
         previous = cursor_rows.get(key)
         native = native_rows.get(key)
         if previous:
-            observed = _retain_unlinked(store, previous, native, observed, by_id, excluded, at)
+            observed = _retain_unlinked(store, previous, native, observed, by_id, excluded, current_events, at)
             if observed is None or _keep_snapshot(previous, native, observed):
                 continue
         if pool == 'pending' and not previous:

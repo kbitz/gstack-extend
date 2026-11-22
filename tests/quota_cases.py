@@ -766,6 +766,46 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(group['attributable_cents'],0)
         self.assertEqual(self.store.get('run',key),settled)
 
+    def test_historical_cursor_charge_uses_only_its_current_owner(self):
+        from quota.cli import get_runs
+
+        start=now()
+        end=start+60
+        pool=self.store.pool('cursor','corrected-owner')
+        first=self.store.digest('first-conversation','session')
+        other=self.store.digest('corrected-conversation','session')
+        meta=dict(agent='cursor',auth='subscription',context=self.context,stage='implement',model='composer-fixture')
+        state=dict(session_id='first-run',started_at=start,ended_at=end,lease_at=end,metadata=meta,
+                   attachments=[dict(agent='cursor',session=first,attached_at=start)],identities={'cursor':{'pool':pool}},fixture=True)
+        event=dict(id='same-provider-charge',pool=pool,conversation_hash=first,event_ts=start+20,
+                   turn_start=start+10,turn_end=start+30,evidence='provider',model='composer-fixture',charged_cents=11,
+                   ambiguous=False,stable_reads=2,complete=True,revision=1,last_read_at=end+310,
+                   tokens=dict(input=8,cache_read=0,cache_write=0,output=3,reasoning=0))
+        self.advance(380)
+        with self.store.transaction():
+            self.store.put('state','first-run',state)
+            self.store.put('cursor_event',event['id'],event)
+        args=parser().parse_args(['runs'])
+        settled,=get_runs(self.store,args,self.context)['runs']
+        self.assertEqual(settled['attributable_cents'],11)
+        key=json.dumps(['first-run','cursor',pool])
+        with self.store.transaction():
+            self.store.put('run',key,settled)
+            self.store.put('state','corrected-run',dict(state,session_id='corrected-run',started_at=start+5,
+                           metadata=dict(meta,stage='review-and-prep'),
+                           attachments=[dict(agent='cursor',session=other,attached_at=start+5)]))
+            self.store.put('cursor_event',event['id'],dict(event,conversation_hash=other,revision=2,charged_cents=13))
+        result=self.command('runs')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        rows={row['session_id']:row for row in json.loads(result.stdout)['runs']}
+        self.assertIsNone(rows['first-run']['attributable_cents'])
+        self.assertEqual(rows['corrected-run']['attributable_cents'],13)
+        summary=self.command('summary','--by','stage')
+        self.assertEqual(summary.returncode,0,summary.stdout+summary.stderr)
+        groups={group['config']['stage']:group['attributable_cents'] for group in json.loads(summary.stdout)['groups']}
+        self.assertEqual(groups,{'implement':0,'review-and-prep':13})
+        self.assertEqual(self.store.get('run',key),settled)
+
     def test_historical_cursor_raw_events_remain_visible_in_run_and_summary(self):
         from quota.cli import get_runs
 
@@ -1182,6 +1222,9 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(telemetry.route_for('cursor'),('unknown',None))
         os.environ['CURSOR_INVOKED_AS']='cursor-agent'
         self.assertEqual(telemetry.route_for('cursor'),('unknown',None))
+        os.environ['CURSOR_AGENT']='1'
+        self.assertEqual(telemetry.route_for('claude'),('unknown',None))
+        self.assertEqual(telemetry.route_for('codex'),('unknown',None))
         for name in ('CLAUDECODE','CURSOR_AGENT','CURSOR_INVOKED_AS','GROK_AGENT','CONDUCTOR_SESSION_ID','CODEX_THREAD_ID'):
             os.environ.pop(name,None)
         self.assertEqual(telemetry.route_for('codex')[0],'unknown')

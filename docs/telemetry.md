@@ -959,8 +959,8 @@ projection.
   `capture: "missing"` and `no-usage-record`. Broken references or multiple
   usage records make capture partial with the corresponding reason.
 - **Limits.** Grok records `status: "unavailable"` with `unverified-source`;
-  its projection has partial capture and null token totals. New runs under
-  Cursor markers are no longer classified as `cursor` and record
+  its projection has partial capture and null token totals. New runs with only
+  Cursor markers record
   `harness: "unknown"` with `harness-session-unknown`, while historical `v:2`
   usage records with `harness: "cursor"` remain valid against
   `docs/workflow-metrics.schema.json` and readable in `metrics read --usage`.
