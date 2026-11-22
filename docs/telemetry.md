@@ -101,6 +101,10 @@ that name the same directory are listed once:
 5. `$CODEX_HOME/skills/gstack/bin`, only when `CODEX_HOME` is set and absolute. gstack's own setup installs there when `CODEX_HOME` is set.
 6. `~/.codex/skills/gstack/bin`, always. A relative or empty `CODEX_HOME` drops only its own candidate.
 
+The former default lookup under `~/.cursor/skills/gstack/bin` and
+`~/.config/opencode/skills/gstack/bin` is retired. Use an absolute `GSTACK_DIR`
+for a custom layout.
+
 Every candidate is home-anchored or an absolute `GSTACK_DIR`, `CLAUDE_CONFIG_DIR`,
 or `CODEX_HOME`. Nothing cwd-relative or repository-local is probed. gstack's
 Factory and Kiro roots are excluded, as are repository-local `.agents` and
@@ -2176,15 +2180,14 @@ until finish flags or requested variables supply them:
   read, never a sibling session's log or a `<session>/subagent/<child>/session.jsonl`
   log, and a missing or unreadable log leaves model null. In the observed Paseo
   launch, `MUSE_SESSION_ID` reached commands in Muse's own shell.
-- **Cursor (retired):** Telemetry no longer classifies new runs as Cursor
-  (`CURSOR_CONVERSATION_ID`, `CURSOR_AGENT`, `CURSOR_INVOKED_AS`,
-  `CURSOR_SDK_REASONS`, and `--agent cursor` are removed). `SCHEMA_VERSION`
-  stays `4`, and `cursor` stays accepted in `docs/stage-runs.schema.json` and
-  `docs/workflow-metrics.schema.json` (and mirrored parser enums) so old rows
-  still validate and parse, with nothing further added for them; see
-  [Cursor and quota](#cursor-and-quota). An inherited `CURSOR_AGENT` also
-  ceases to imply `route: "cli"` for a nested Claude or Codex run. Those runs
-  use the remaining supported route signals.
+- **Cursor telemetry classification is retired.** Finish ignores `--agent cursor`
+  as an invalid override. The `CURSOR_CONVERSATION_ID`,
+  `CURSOR_AGENT` and `CURSOR_INVOKED_AS` markers and the `CURSOR_SDK_REASONS`
+  diagnostics are retired. Route classification for nested Claude and Codex
+  runs ignores inherited `CURSOR_AGENT` markers.
+  New stage-run rows use schema version `4`. Historical rows carrying `cursor` still
+  validate and parse under the stage-runs and workflow-metrics schemas.
+  [Cursor and quota](#cursor-and-quota)
 
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows
@@ -2934,11 +2937,13 @@ marker/crash detection subsystem.
 
 Cursor telemetry classification and Cursor quota reading/settlement are retired
 ([SPEC Audience and target](SPEC.md#audience-and-target) dropped Cursor support
-on 2026-11-21). Telemetry no longer detects Cursor or accepts `--agent cursor`,
-and `SCHEMA_VERSION` stays `4` with `cursor` kept in
-`docs/stage-runs.schema.json` and `docs/workflow-metrics.schema.json` (and
-mirrored parser enums) so historical rows still validate and parse. Historical
-model and effort values taken from the Conductor SDK store are requested
+on 2026-11-21). The writer ignores `--agent cursor` as an invalid override and
+emits stage-runs schema version `4`. The schemas and the corresponding readers
+accept historical rows carrying `cursor`.
+[Stage-runs schema](stage-runs.schema.json),
+[workflow-metrics schema](workflow-metrics.schema.json).
+
+Historical model and effort values taken from the Conductor SDK store are requested
 configuration for one stage window; they are not served or billed proof, and
 they do not authorize quota routing or independence certification. Billed model
 and consumption stay in the [quota ledger](quota-ledger.md). Telemetry start and

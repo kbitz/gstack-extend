@@ -94,10 +94,11 @@ tier and outcome joins. See the [provenance contract](telemetry.md#execution-pro
 All commands support `--json` and help with an example. Filters accept a pool kind
 or full pool ID in `--pool`; `--since` accepts ISO-8601 or durations such as `7d`
 and `12h`; `--days N` is an alias. Runs and summary also accept stage, agent,
-model, effort and route filters. `--route` accepts `cli`, `sdk` and `unknown`;
-`conductor` was removed and is rejected as invalid usage (exit 2), while runs
-recorded with it are still returned by unfiltered `runs` and grouped by
-`summary --by route`. Summary grouping supports these fields and pool.
+model, effort and route filters. `--route` accepts `cli`, `sdk` and `unknown`.
+Passing `--route conductor` returns a usage error (exit 2). Unfiltered `runs`
+can still show rows with the historical `conductor` route. Supported quota
+rows with that route can appear in `summary --by route`. Summary grouping
+supports these fields and pool.
 For lifecycle sampling, `--pool` restricts capacity reads while consumption still
 covers all locally observed pools. Doctor applies pool
 and time filters to its sample coverage. Probe requires its pool filter to match
@@ -109,14 +110,19 @@ Cursor quota support is retired (`gstack-extend quota settle`,
 `gstack-extend quota probe cursor` exit 2 with `usage` when quota is enabled).
 Disabled quota still exits 0 before parsing arguments. Existing stores that
 already contain legacy Cursor records still load without error. Unfiltered
-`gstack-extend quota runs` lists stored Cursor `'run'` rows verbatim as stored
-without recomputation, reconciliation, re-attribution, or settlement, while
-`status`, `doctor`, `intervals`, and `summary` omit stored Cursor records.
-An API row for a supported run can replace a retired projection of the same
-run and pool in the query output. The stored row stays intact.
-`runs --active` omits open states marked as Cursor in metadata or by
-Cursor-only attachments. Lifecycle commands return `conflict` for those
-sessions. Use a new session ID for supported harnesses.
+`gstack-extend quota runs` lists stored Cursor run rows as saved, with the usual
+JSON timestamp formatting. When a supported API row shares the same run and
+pool, `runs` shows that row and preserves the retired projection in the store.
+`status`, `doctor`, `intervals`, and `summary` omit Cursor records from quota
+calculations. `runs --active` skips open states labeled `cursor` in metadata,
+as well as states with an unset or `unknown` agent and only attachments labeled
+`cursor`. Lifecycle commands return `conflict` for these sessions. Use a new
+session ID for supported harnesses.
+
+The v1 cost fields for retired accounting are placeholders. `summary` returns
+an empty `shared_events` list, zero `shared_cents`, and zero `attributable_cents`
+and `attributable_event_count` per group. Intervals return `null` for
+`charged_cents` and `observed_charged_cents`.
 
 ### Samples
 
@@ -237,11 +243,12 @@ Adapters fail independently. Disabled capacity readers still permit local usage.
 
 `bin/config set quota off` disables every quota command: exit 0,
 `{"v":1,"disabled":true}`, no store, source, credential or network reads after
-the configuration check. A missing quota key enables explicit commands; unreadable
-configuration disables them. `quota_pools` is a comma list (default both
-readable kinds: `claude,codex`); `quota_min_interval` is seconds (default 60). Turning quota off
-leaves existing data in place. Telemetry has no quota hook and starts no sampler.
-There is no upgrade migration or consent command.
+the configuration check. A missing quota key enables explicit commands. Unreadable
+configuration disables them. `quota_pools` is a comma list and defaults to
+`claude,codex`. A legacy `cursor` entry enables no adapter. Set the list to the
+supported pools you want to sample. `quota_min_interval` is seconds (default 60).
+Turning quota off leaves existing data in place. Telemetry has no quota hook and
+starts no sampler. There is no upgrade migration or consent command.
 
 | Variable | Scope |
 |---|---|
