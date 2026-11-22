@@ -46,18 +46,20 @@ def meter_change(before,after,left,right):
 
 
 def _cursor_inventory(store):
+    saved_agents={'cursor','cursor-sdk'}
     earliest_checkpoint={}
     for row in store.all('file'):
-        if row.get('agent')=='cursor':
-            root=row['root']
+        if row.get('agent') in saved_agents and row.get('root'):
+            key=row['agent'],row['root']
             checked_at=row.get('checked_at',-1) if row.get('complete') else -1
-            earliest_checkpoint[root]=min(earliest_checkpoint.get(root,checked_at),checked_at)
+            earliest_checkpoint[key]=min(earliest_checkpoint.get(key,checked_at),checked_at)
     inventories=[]
     for row in store.all('inventory'):
-        if row.get('agent')=='cursor':
+        if row.get('agent') in saved_agents and row.get('root'):
+            agent=row['agent']
             root,as_of=row['root'],row.get('as_of',0)
-            complete=row.get('complete',False) and earliest_checkpoint.get(root,as_of)>=as_of
-            inventories.append((root,as_of,complete))
+            complete=row.get('complete',False) and earliest_checkpoint.get((agent,root),as_of)>=as_of
+            inventories.append((agent,root,as_of,complete))
     return inventories
 
 
@@ -106,10 +108,13 @@ def interval(store,before,after,coverage,cursor_reads=None,cursor_inventory=None
         # Retired transcript roots are no longer scanned. Only a saved complete
         # inventory covering the interval can substantiate a zero observation.
         cursor_roots=[]
-        for root,as_of,indexed in inventory:
+        for agent,root,as_of,indexed in inventory:
+            # The older SDK inventory stops applying after its last scan era.
+            if agent=='cursor-sdk' and as_of<left:
+                continue
             covered=indexed and as_of>=right
-            cursor_roots.append(dict(root=root,agent='cursor',complete=covered,why=[] if covered else ['incomplete']))
-        complete=complete and bool(cursor_roots) and all(row['complete'] for row in cursor_roots)
+            cursor_roots.append(dict(root=root,agent=agent,complete=covered,why=[] if covered else ['incomplete']))
+        complete=complete and any(row['agent']=='cursor' for row in cursor_roots) and all(row['complete'] for row in cursor_roots)
         roots=roots+cursor_roots
         uncovered_roots=sorted(set(uncovered_roots)|{row['root'] for row in cursor_roots if not row['complete']})
         reads=store.all('cursor_coverage') if cursor_reads is None else cursor_reads

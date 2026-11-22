@@ -660,6 +660,70 @@ class QuotaTests(unittest.TestCase):
         self.assertFalse(row['complete'])
         self.assertIsNone(row['event_count'])
 
+        # Some older stores tagged the native SDK inventory and files separately.
+        sdk_root=str(self.home/'Library/Application Support/com.conductor.app/cursor-sdk-store')
+        with self.store.transaction():
+            self.store.put('file','cursor-file',dict(agent='cursor',root=root,complete=True,checked_at=now()))
+            self.store.put('inventory','sdk-root',dict(agent='cursor-sdk',root=sdk_root,complete=True,as_of=now(),queue=[]))
+            self.store.put('file','sdk-file',dict(agent='cursor-sdk',root=sdk_root,complete=False,checked_at=now()))
+        result=self.command('intervals')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        row,=json.loads(result.stdout)['intervals']
+        self.assertFalse(row['complete'])
+        self.assertFalse(row['calibration_eligible'])
+        self.assertIn(sdk_root,row['uncovered_roots'])
+
+        with self.store.transaction():
+            self.store.put('inventory','sdk-root',dict(agent='cursor-sdk',root=sdk_root,complete=True,as_of=start-1,queue=[]))
+        result=self.command('intervals')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        row,=json.loads(result.stdout)['intervals']
+        self.assertTrue(row['calibration_eligible'])
+
+    def test_historical_cursor_snapshots_follow_revised_boundary_evidence(self):
+        from quota.cli import get_runs
+
+        start=now()
+        end=start+60
+        pool=self.store.pool('cursor','boundary-owner')
+        conversation=self.store.digest('boundary-conversation','session')
+        metadata=dict(agent='claude',auth='subscription',context=self.context,stage='implement',model=None,route='cli')
+        lifecycle=dict(session_id='historical-run',started_at=start,ended_at=end,lease_at=end,metadata=metadata,
+                       attachments=[dict(agent='cursor',session=conversation,attached_at=start)],
+                       identities={'claude':{'pool':'pending'}},fixture=True)
+        tokens=dict(input=10,cache_read=0,cache_write=0,output=2,reasoning=0)
+        event=dict(id='saved-charge',pool=pool,conversation_hash=conversation,event_ts=start+20,
+                   turn_start=None,turn_end=None,evidence=None,model='composer-fixture',charged_cents=12,
+                   ambiguous=False,stable_reads=2,complete=True,revision=1,last_read_at=end+310,tokens=tokens)
+        turn=dict(id='turn-one',agent='cursor',session=conversation,source_keys=[],pool=pool,ts=start+20,
+                  start=start+10,end=start+30,turn_evidence='cursor-sdk',model='composer-fixture',tokens=tokens)
+        self.advance(380)
+        with self.store.transaction():
+            self.store.put('state','historical-run',lifecycle)
+            self.store.put('cursor_event',event['id'],event)
+            self.store.put('usage',turn['id'],turn)
+        args=parser().parse_args(['runs'])
+        settled=next(row for row in get_runs(self.store,args,self.context)['runs'] if row['pool_kind']=='cursor')
+        self.assertEqual(settled['attributable_cents'],12)
+        with self.subTest(change='unrelated pending Claude template'):
+            self.assertFalse(settled.get('resolves_pending',False))
+        key=json.dumps(['historical-run','cursor',pool])
+        with self.store.transaction():
+            self.store.put('run',key,settled)
+            self.store.put('usage','turn-two',dict(turn,id='turn-two',start=start+15,end=start+35))
+
+        for change in ('a second SDK turn overlaps','a later provider revision is ambiguous and moves'):
+            with self.subTest(change=change):
+                if change.startswith('a later'):
+                    with self.store.transaction():
+                        self.store.put('cursor_event',event['id'],dict(event,revision=2,ambiguous=True,evidence='provider',
+                                       event_ts=end+10,turn_start=end+5,turn_end=end+15))
+                result=self.command('summary','--by','agent')
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                groups=json.loads(result.stdout)['groups']
+                self.assertEqual(sum(group['attributable_cents'] for group in groups),0)
+                self.assertEqual(self.store.get('run',key),settled)
+
     def test_historical_cursor_raw_events_remain_visible_in_run_and_summary(self):
         from quota.cli import get_runs
 

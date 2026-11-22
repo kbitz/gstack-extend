@@ -132,10 +132,12 @@ def _keep_snapshot(store, row, native, observed, facts, at):
     linked = {link['event_id']: link for _, link, _ in observed}
     for event_id in saved.keys() - linked.keys():
         # An unmatched row may still be the only record of its attribution.
-        # Supersede it only when a later saved revision proves non-overlap.
+        # A later ambiguous or moved fact supersedes the previous allocation.
         fact = facts.get(event_id)
-        if not fact or fact['ambiguous'] or fact['revision'] <= saved[event_id].get('revision', fact['revision']):
+        if not fact or fact['revision'] <= saved[event_id].get('revision', fact['revision']):
             return True
+        if fact['ambiguous']:
+            continue
         start, end, _ = boundaries(store, fact)
         if start is None or end is None or (end > row['started_at'] and start < (row.get('ended_at') or at)):
             return True
@@ -146,9 +148,7 @@ def _keep_snapshot(store, row, native, observed, facts, at):
     for fact, link, _ in observed:
         event_id = link['event_id']
         earlier = saved[event_id]
-        if (link['revision'] > earlier.get('revision', link['revision'])
-                or link['shared_turn'] != earlier.get('shared_turn', link['shared_turn'])
-                or link['other_session_ids'] != earlier.get('other_session_ids', link['other_session_ids'])
+        if (any(earlier[field] != link[field] for field in earlier.keys() & link.keys())
                 or (fact['complete'] and not fact['ambiguous']) != completeness.get(event_id)):
             return False
     billed = {fact['conversation_hash'] for fact, _, _ in observed}
@@ -181,7 +181,8 @@ def project_runs(store, rows, native_rows):
             continue
         template = templates[sid]
         base = native or previous or dict(
-            template, pool_kind='cursor', pool=pool, sources=[], why=[], resolves_pending=template['pool'] == 'pending')
+            template, pool_kind='cursor', pool=pool, sources=[], why=[],
+            resolves_pending=template['pool_kind'] == 'cursor' and template['pool'] == 'pending')
         row = _project(store, base, observed, at)
         if previous and previous['settlement'] == row['settlement'] == 'final':
             revisions = {event['event_id']: event.get('revision') for event in previous.get('events', [])}
