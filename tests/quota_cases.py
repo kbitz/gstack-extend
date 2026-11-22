@@ -1183,6 +1183,26 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(json.loads(self.command('runs').stdout)['runs'],public([row]))
         self.assertEqual(json.loads(self.command('summary').stdout)['groups'],[])
 
+    def test_late_supported_api_usage_replaces_retired_projection(self):
+        self.args.auth='api'
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.advance(30)
+        self.args.phase='finish'
+        ledger.lifecycle(self.store,self.args,self.context)
+        with self.store.transaction():
+            row=dict(self.store.all('run')[0],pool='api',
+                     sources=[dict(agent='cursor',source='retired')])
+            key=json.dumps(['run-a','api','api'])
+            self.store.put('run',key,row)
+        self.write_claude(output=17)
+
+        result=self.command('runs','--agent','claude','--pool','api')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        rows=json.loads(result.stdout)['runs']
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['consumption'][0]['output'],17)
+        self.assertEqual(self.store.get('run',key),row)
+
     def test_native_cursor_history_with_unknown_attachment_still_loads(self):
         from quota.cli import public
         sid='native-cursor'
@@ -1218,19 +1238,19 @@ class QuotaTests(unittest.TestCase):
         with self.subTest('archived SDK files'):
             self.assertEqual(json.loads(self.command('doctor').stdout)['malformed_records'],0)
 
-    def test_retired_inventory_is_not_opened_from_a_reused_root(self):
+    def test_reused_root_indexes_supported_file_without_rewriting_legacy_inventory(self):
         root=self.home/'.claude/projects'
+        transcript=self.write_claude()
         saved=[]
-        for suffix, agent in (('.txt','cursor'),('.jsonl','cursor'),('.ndjson','cursor-sdk')):
-            path=root/f'legacy{suffix}'
-            path.write_text('not a Claude transcript\n')
+        for path, agent in ((root/'legacy.txt','cursor'),(transcript,'cursor'),(root/'legacy.ndjson','cursor-sdk')):
+            if path!=transcript:
+                path.write_text('not a Claude transcript\n')
             key=self.store.digest(str(path),'file')
             saved.append(dict(key=key,path=str(path),root=str(root),agent=agent,complete=False,
                               malformed=1,reason='malformed_record'))
         with self.store.transaction():
             for retired in saved:
                 self.store.put('file',retired['key'],retired)
-        self.write_claude()
         coverage=scan(self.store,self.context)
         self.assertEqual([self.store.get('file',retired['key']) for retired in saved],saved)
         self.assertTrue(coverage['complete'])

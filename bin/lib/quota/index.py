@@ -53,7 +53,9 @@ def discover(store,context):
                             filekey=store.digest(entry.path,'file')
                             previous=store.get('file',filekey,{})
                             if previous.get('agent') in ('cursor','cursor-sdk'):
-                                continue
+                                # A supported root can reuse a path from retired inventory.
+                                filekey=store.digest([agent,entry.path],'file')
+                                previous=store.get('file',filekey,{})
                             previous.update(key=filekey,path=entry.path,root=root,agent=agent,discovered_at=previous.get('discovered_at',now()))
                             store.put('file',filekey,previous)
             except OSError:

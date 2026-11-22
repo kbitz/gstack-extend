@@ -106,14 +106,17 @@ sandbox and rate-limit backoff settings.
 
 Cursor quota support is retired (`gstack-extend quota settle`,
 `--cursor-projects-dir`, `--agent cursor`, `--pool cursor` and `cursor:*`, and
-`gstack-extend quota probe cursor` exit 2 with `usage`). Existing stores that
-already contain legacy Cursor records still load without error: unfiltered
+`gstack-extend quota probe cursor` exit 2 with `usage` when quota is enabled).
+Disabled quota still exits 0 before parsing arguments. Existing stores that
+already contain legacy Cursor records still load without error. Unfiltered
 `gstack-extend quota runs` lists stored Cursor `'run'` rows verbatim as stored
 without recomputation, reconciliation, re-attribution, or settlement, while
 `status`, `doctor`, `intervals`, and `summary` omit stored Cursor records.
-`runs --active` omits open legacy Cursor states. Lifecycle commands return
-`conflict` for an existing session that belongs to Cursor, leaving its
-stored records intact. Use a new session ID for supported harnesses.
+An API row for a supported run can replace a retired projection of the same
+run and pool in the query output. The stored row stays intact.
+`runs --active` omits open states marked as Cursor in metadata or by
+Cursor-only attachments. Lifecycle commands return `conflict` for those
+sessions. Use a new session ID for supported harnesses.
 
 ### Samples
 

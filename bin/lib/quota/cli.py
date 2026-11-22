@@ -168,7 +168,7 @@ def get_runs(store,args,context,include_legacy=True):
             for row in current:
                 previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==(row['session_id'],row['pool_kind'],row['pool'])),{})
                 if legacy_run(previous):
-                    continue
+                    previous={}
                 row['local_persisted_at']=previous.get('local_persisted_at') or (store.get('receipt',state['session_id']+':finish') or store.get('receipt',state['session_id']+':abandon') or {}).get('local_persisted_at')
                 row['lifecycle']='interrupted' if state.get('outcome')=='interrupted' else 'recorded'
                 rows.append(row)
