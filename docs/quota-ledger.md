@@ -192,9 +192,18 @@ already in a store stay readable via unfiltered `quota runs`, `quota summary`,
 Runs and summaries can still join saved billing events to saved lifecycle and
 source records when a run was never settled. Historical intervals need saved
 local inventory and file checkpoints through the interval end as well as
-billing-event coverage. Older SDK checkpoints also apply when the interval
-starts at or before the last saved SDK inventory observation. Incomplete
-coverage precludes calibration while the observed events remain visible.
+billing-event coverage. Each retired root, including saved SDK roots, applies
+when its last inventory observation reaches the interval start. At least one
+saved Cursor transcript root must cover the interval. Incomplete coverage
+precludes calibration while the observed events remain visible.
+
+Historical billing events report `shared_turn` when a turn overlaps stages or
+crosses a stage boundary. `boundary_unknown` leaves attribution uncertain.
+`pending_settlement` indicates a provisional charge. A run with unsettled events
+expires after 48 hours. Final settlement requires a qualifying read at least
+five minutes after the stage ends and stable reads or a qualifying revision.
+`assumed_stable` marks a repeatedly observed event whose settlement is still
+provisional or expired.
 
 ## Troubleshooting
 

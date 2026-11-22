@@ -109,8 +109,8 @@ def interval(store,before,after,coverage,cursor_reads=None,cursor_inventory=None
         # inventory covering the interval can substantiate a zero observation.
         cursor_roots=[]
         for agent,root,as_of,indexed in inventory:
-            # The older SDK inventory stops applying after its last scan era.
-            if agent=='cursor-sdk' and as_of<left:
+            # Older roots stop applying after their last saved discovery.
+            if as_of<left:
                 continue
             covered=indexed and as_of>=right
             cursor_roots.append(dict(root=root,agent=agent,complete=covered,why=[] if covered else ['incomplete']))

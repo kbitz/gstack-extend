@@ -675,6 +675,8 @@ class QuotaTests(unittest.TestCase):
 
         with self.store.transaction():
             self.store.put('inventory','sdk-root',dict(agent='cursor-sdk',root=sdk_root,complete=True,as_of=start-1,queue=[]))
+            retired_root=str(self.home/'old-cursor-projects')
+            self.store.put('inventory','old-cursor-root',dict(agent='cursor',root=retired_root,complete=False,as_of=start-1,queue=[retired_root]))
         result=self.command('intervals')
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         row,=json.loads(result.stdout)['intervals']
@@ -723,6 +725,46 @@ class QuotaTests(unittest.TestCase):
                 groups=json.loads(result.stdout)['groups']
                 self.assertEqual(sum(group['attributable_cents'] for group in groups),0)
                 self.assertEqual(self.store.get('run',key),settled)
+
+    def test_historical_cursor_snapshot_rejects_ambiguous_native_ownership(self):
+        from quota.cli import get_runs
+
+        start=now()
+        end=start+60
+        sid='legacy-native-run'
+        pool=self.store.pool('cursor','sdk-owner')
+        conversation=self.store.digest('native-conversation','session')
+        meta=dict(agent='cursor',auth='subscription',context=self.context,stage='implement',model='composer-fixture')
+        state=dict(session_id=sid,started_at=start,ended_at=end,lease_at=end,metadata=meta,attachments=[],
+                   identities={'cursor':{'pool':pool}},fixture=True)
+        source=dict(key='native-one',agent='cursor',session=conversation,parent=None,native_sdk=True,
+                    cwd=self.context['cwd'],first=start+5,last=start+35,complete=True,reason=None)
+        usage_fact=dict(id='usage-one',agent='cursor',session=conversation,source_keys=['native-one'],pool=pool,
+                        ts=start+20,start=start+10,end=start+30,model='composer-fixture',complete=True,
+                        turn_evidence='cursor-sdk',tokens=dict(input=8,cache_read=0,cache_write=0,output=3,reasoning=0))
+        self.advance(380)
+        with self.store.transaction():
+            self.store.put('state',sid,state)
+            self.store.put('source',source['key'],source)
+            self.store.put('usage',usage_fact['id'],usage_fact)
+            self.store.put('cursor_event','bill-one',dict(
+                id='bill-one',pool=pool,conversation_hash=conversation,event_ts=start+20,turn_start=start+10,
+                turn_end=start+30,evidence='provider',model='composer-fixture',charged_cents=11,ambiguous=False,
+                stable_reads=2,complete=True,revision=1,last_read_at=end+310,
+                tokens=dict(input=8,cache_read=0,cache_write=0,output=3,reasoning=0)))
+        args=parser().parse_args(['runs'])
+        settled,=get_runs(self.store,args,self.context)['runs']
+        self.assertEqual(settled['attributable_cents'],11)
+        key=json.dumps([sid,'cursor',pool])
+        with self.store.transaction():
+            self.store.put('run',key,settled)
+            self.store.put('source','native-two',dict(source,key='native-two',session='other-native-session'))
+            self.store.put('usage','usage-two',dict(usage_fact,id='usage-two',session='other-native-session',source_keys=['native-two']))
+        result=self.command('summary','--by','agent')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        group,=json.loads(result.stdout)['groups']
+        self.assertEqual(group['attributable_cents'],0)
+        self.assertEqual(self.store.get('run',key),settled)
 
     def test_historical_cursor_raw_events_remain_visible_in_run_and_summary(self):
         from quota.cli import get_runs

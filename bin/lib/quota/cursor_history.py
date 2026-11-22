@@ -28,11 +28,16 @@ def _relationships(store, facts, sources, at):
     parents = source_parents(sources)
     cursor_sources = [source for source in sources if source.get('agent') == 'cursor']
     owners = defaultdict(list)
+    excluded = set()
     for state in states:
+        sid = state['session_id']
         attached = {a['session'] for a in state['attachments']}
+        cursor_attached = {a['session'] for a in state['attachments'] if a['agent'] == 'cursor'}
         known = set()
-        if state['metadata'].get('auth') != 'api':
-            known = {a['session'] for a in state['attachments'] if a['agent'] == 'cursor'}
+        if state['metadata'].get('auth') == 'api':
+            excluded.update((sid, session) for session in cursor_attached)
+        else:
+            known = cursor_attached
             for session in known:
                 owners[session].append((state, 'own'))
         for source in cursor_sources:
@@ -40,10 +45,14 @@ def _relationships(store, facts, sources, at):
             if not session or session in known:
                 continue
             relationship = source_relationship(source, state, states, sources)
-            if relationship and relationship[1] != 'unknown' and not uses_api_auth(source, state, sources, parents):
-                kind = 'own' if session in attached else 'subagent' if source.get('parent') in attached else 'child'
-                owners[session].append((state, kind))
-                known.add(session)
+            if not relationship:
+                continue
+            if relationship[1] == 'unknown' or uses_api_auth(source, state, sources, parents):
+                excluded.add((sid, session))
+                continue
+            kind = 'own' if session in attached else 'subagent' if source.get('parent') in attached else 'child'
+            owners[session].append((state, kind))
+            known.add(session)
 
     final_sessions = {row['session_id'] for row in store.all('run') if row.get('settlement') == 'final'}
     links = defaultdict(list)
@@ -84,7 +93,7 @@ def _relationships(store, facts, sources, at):
                         turn_start=start, turn_end=end, evidence=evidence, revision=fact['revision'],
                         settlement=settlement, assumed_stable=not final and stable)
             links[sid, fact['pool']].append((fact, link, kind))
-    return links
+    return links, excluded
 
 
 def _project(store, row, observed, at):
@@ -125,23 +134,35 @@ def _project(store, row, observed, at):
                 why=sorted(why))
 
 
-def _keep_snapshot(store, row, native, observed, facts, at):
+def _retain_unlinked(store, row, native, observed, facts, excluded, at):
+    linked = {link['event_id'] for _, link, _ in observed}
+    sources = {event_id: source for source in row['sources'] if source.get('source') == 'cursor-api2'
+               for event_id in source['event_ids']}
+    retained = list(observed)
+    window = native or row
+    for event in row.get('events', []):
+        event_id = event['event_id']
+        if event_id in linked:
+            continue
+        fact = facts.get(event_id)
+        if not fact:
+            return None  # The saved row remains readable even if its raw facts are missing.
+        if fact['ambiguous'] or (row['session_id'], fact['conversation_hash']) in excluded:
+            continue
+        if fact['revision'] > event.get('revision', fact['revision']):
+            start, end, _ = boundaries(store, fact)
+            if start is not None and end is not None and (end <= window['started_at'] or start >= (window.get('ended_at') or at)):
+                continue
+        retained.append((fact, event, sources.get(event_id, {}).get('kind', 'own')))
+    return retained
+
+
+def _keep_snapshot(row, native, observed):
     saved = {event['event_id']: event for event in row.get('events', [])}
     if not saved:
         return not observed
-    linked = {link['event_id']: link for _, link, _ in observed}
-    for event_id in saved.keys() - linked.keys():
-        # An unmatched row may still be the only record of its attribution.
-        # A later ambiguous or moved fact supersedes the previous allocation.
-        fact = facts.get(event_id)
-        if not fact or fact['revision'] <= saved[event_id].get('revision', fact['revision']):
-            return True
-        if fact['ambiguous']:
-            continue
-        start, end, _ = boundaries(store, fact)
-        if start is None or end is None or (end > row['started_at'] and start < (row.get('ended_at') or at)):
-            return True
-    if row['settlement'] != 'final' or saved.keys() != linked.keys():
+    linked = {link['event_id'] for _, link, _ in observed}
+    if row['settlement'] != 'final' or saved.keys() != linked:
         return False
     completeness = {event_id: source.get('complete') for source in row['sources'] if source.get('source') == 'cursor-api2'
                     for event_id in source['event_ids']}
@@ -159,7 +180,7 @@ def _keep_snapshot(store, row, native, observed, facts, at):
 def project_runs(store, rows, native_rows):
     at = now()
     facts = store.all('cursor_event')
-    links = _relationships(store, facts, store.all('source'), at) if facts else {}
+    links, excluded = _relationships(store, facts, store.all('source'), at) if facts else ({}, set())
     by_id = {fact['id']: fact for fact in facts}
     cursor_rows = {(row['session_id'], row['pool']): row for row in rows if row['pool_kind'] == 'cursor'}
     templates = {}
@@ -175,8 +196,10 @@ def project_runs(store, rows, native_rows):
         observed = links.get(key, ())
         previous = cursor_rows.get(key)
         native = native_rows.get(key)
-        if previous and _keep_snapshot(store, previous, native, observed, by_id, at):
-            continue
+        if previous:
+            observed = _retain_unlinked(store, previous, native, observed, by_id, excluded, at)
+            if observed is None or _keep_snapshot(previous, native, observed):
+                continue
         if pool == 'pending' and not previous:
             continue
         template = templates[sid]

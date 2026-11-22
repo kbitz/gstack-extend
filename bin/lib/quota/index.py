@@ -217,11 +217,11 @@ def _scan(store,context):
     indexed=[f for f in store.all('file') if (f['agent'],f['root']) in active_roots]
     if stopped_early:
         for report in reports:
-            if any(f['root']==report['root'] and f['key'] not in visited for f in files):
+            if any((f['agent'],f['root'])==(report['agent'],report['root']) and f['key'] not in visited for f in files):
                 report['complete']=False
                 report['why']=sorted(set(report['why']+['scan_budget']))
     for report in reports:
-        bad=[f for f in indexed if f['root']==report['root'] and not f.get('complete')]
+        bad=[f for f in indexed if (f['agent'],f['root'])==(report['agent'],report['root']) and not f.get('complete')]
         if bad:
             report['complete']=False
             report['why']=sorted(set(report['why']+[f.get('reason') or 'scan_budget' for f in bad]))
