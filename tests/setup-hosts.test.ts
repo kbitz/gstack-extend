@@ -3128,6 +3128,10 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       mkdirSync(unknownSkill, { recursive: true });
       writeFileSync(join(unknownSkill, 'SKILL.md'), 'unknown skill\n');
       writeFileSync(join(unknownSkill, '.extend-root'), `${realpathSync(ROOT)}\n`);
+      // Value: protects=retired cleanup keeps links outside known skill names;
+      // fails_when=package-root cleanup runs in retired mode; why_new=the unknown-name case is a regular copy; seam=none.
+      const packageRootLink = join(root, 'gstack-extend');
+      symlinkSync(realpathSync(ROOT), packageRootLink);
 
       // User-owned regular file without .extend-root -> untouched
       const userOwned = join(root, 'project-spec');
@@ -3163,6 +3167,7 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       }
       expect(readFileSync(join(unknownSkill, 'SKILL.md'), 'utf8')).toBe('unknown skill\n');
       expect(r.stderr).toContain('unknown skill name');
+      expect(readlinkSync(packageRootLink)).toBe(realpathSync(ROOT));
       expect(readFileSync(join(userOwned, 'SKILL.md'), 'utf8')).toBe('USER OWNED\n');
       expect(readFileSync(join(markerLink, 'SKILL.md'), 'utf8')).toBe('CUSTOM COPY\n');
       expect(readlinkSync(join(markerLink, '.extend-root'))).toBe(userMarker);

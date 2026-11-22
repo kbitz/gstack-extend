@@ -532,7 +532,9 @@ uninstall_from_dir() {
       fi
     fi
   done
-  refuse_package_root_link "$skills_dir/gstack-extend"
+  if [ "$mode" != retired ]; then
+    refuse_package_root_link "$skills_dir/gstack-extend"
+  fi
 }
 
 preflight_dir() {
