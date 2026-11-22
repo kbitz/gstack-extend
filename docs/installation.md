@@ -188,10 +188,10 @@ leftover copies.
 Cursor (`~/.cursor/skills/`) and OpenCode (`~/.config/opencode/skills/`) install support was dropped on 2026-11-21. Supported install hosts are Claude Code (`claude`) and Codex (`codex`).
 
 - **Install refusal:** `setup --host cursor` and `setup --host opencode` exit `1` without touching any directory, link, helper, registry or `install-status` file, and print an unsupported message with the removal command. `--host auto` and `--host auto --uninstall` ignore both directories (aside from the install-run notice below).
-- Run `<checkout>/setup --host cursor --uninstall` or `<checkout>/setup --host opencode --uninstall` to remove leftover copies. The command handles known skill names only. It removes a `SKILL.md` link into that checkout's `skills/` or a regular `SKILL.md` beside a regular, readable `.extend-root` naming that checkout. It also removes orphaned regular copies whose absolute pointer names a missing checkout. It preserves personal files, shared CLI links, `telemetry-call`, `preamble`, the registry and `install-status`. It skips a directory with a warning if it belongs to Claude Code or Codex, resolves outside your home, is foreign-owned, or is world-writable. Successful removal and safe skips exit `0`.
+- Run `<checkout>/setup --host cursor --uninstall` or `<checkout>/setup --host opencode --uninstall` to remove leftover copies. The command handles known skill names only. It removes a `SKILL.md` link to the matching source in that checkout's `skills/` or a regular `SKILL.md` beside a regular, readable `.extend-root` naming that checkout. It also removes orphaned regular copies when the pointer gives a normalized absolute path and the checkout is confirmed missing. It preserves unrelated personal files, shared CLI links, `telemetry-call`, `preamble`, the registry and `install-status`. It skips a directory with a warning if it belongs to Claude Code or Codex, resolves outside your home, is foreign-owned, or is world-writable. Successful removal and safe skips exit `0`.
 - For remaining copies, inspect `~/.cursor/skills/<name>/.extend-root` or `~/.config/opencode/skills/<name>/.extend-root`. Empty, relative, or otherwise unverified pointers and copies under unknown skill names stay in place. The command also reports copies owned by another checkout and prints that checkout's removal command. Inspect the named checkout before running it.
-- Setup checks for regular leftover copies before installing, including under `--quiet`. For each safe, unshared retired skills directory it finds, it reports counts by owner on stderr and gives the removal command or manual recovery guidance.
-- When update checks are enabled, `bin/update-check` reports regular leftover copies in safe, unshared retired directories. It emits one `INSTALL_WARN host=<cursor|opencode> skill=- path=<dir> reason=retired_host cause=host_dropped detection=not_applicable checkout=<root> freshness=unverified Fix: <checkout>/docs/installation.md#retired-install-hosts` per distinct first-line pointer value, bounded to 4096 bytes and four owner lines per directory. An overflow line uses `more_owners=<count>` in place of the checkout and detection fields. Warnings appear after any version line and also appear when the version check is cached, snoozed or offline. Remove the old copies to clear their warnings. `update_check=false` silences all update checks.
+- Setup checks for regular leftover copies beside regular, readable `.extend-root` files before installing, including under `--quiet`. For each safe, unshared retired skills directory with matching copies, it reports counts by owner on stderr and gives the removal command or manual recovery guidance.
+- When update checks are enabled, `bin/update-check` reports regular leftover copies in safe, unshared retired directories. The scan reads up to 4096 bytes from each regular `.extend-root` pointer and groups copies by the first line. It emits up to four `INSTALL_WARN host=<cursor|opencode> skill=- path=<dir> reason=retired_host cause=host_dropped detection=not_applicable checkout=<root> freshness=unverified Fix: <checkout>/docs/installation.md#retired-install-hosts` lines per directory. An overflow line substitutes `more_owners=<count>` for `checkout=<root>`. Warnings appear after any version line and also appear when the version check is cached, snoozed or offline. Remove the old copies to clear their warnings. `update_check=false` silences all update checks.
 - **Legacy `install-status` facts:** existing `cursor` and `opencode` facts in `install-status` (including `cursor_unserved` and `cursor_home`) remain readable so existing frames never turn `malformed`. `bin/update-check` suppresses them (the live `retired_host` scan supersedes them), and `setup` drops them on its next reconciling install run.
 - **Transitional status:** the refusal, removal path, install notice, `retired_host` scan and legacy-fact acceptance are transitional and will be removed once the owner's machines hold no Cursor or OpenCode copies, or in the first release after 1.0, whichever comes first.
 
@@ -349,7 +349,7 @@ qualified: `this_checkout` (the checkout that recorded the fact),
 `verified_checkout` (another existing gstack-extend checkout) or
 `prior_qualified` (one that has since moved or been deleted). A host line shows
 `detection=` instead: how setup selected that host (`binary`,
-`existing_skill`, `cursor_home`, `explicit_host`, or `not_applicable` for the
+`existing_skill`, `explicit_host`, or `not_applicable` for the
 Claude fallback). Recover with a verified checkout, normally the one in the Fix link,
 whatever `checkout=` shows. A status line (`reason=status_*`) names the state
 path and its cause instead. Paths are shell-quoted when needed. Treat the
@@ -381,8 +381,8 @@ automatically on the next reconciling install run (see [Retired install hosts](#
 
 A pointer that names a moved or deleted checkout does not by itself refresh
 or delete the copy. A second verified checkout can clear a fact only for the
-exact host path it re-checks and finds repaired. Another HOME's facts stay
-in the file and are not printed for this HOME. Codex with its own skills
+exact host path it re-checks and finds repaired. Another HOME's managed-host
+facts stay in the file and are not printed for this HOME. Codex with its own skills
 directory is refreshed with `setup --host codex`.
 
 On-disk repair does not replace text this session already loaded. After the
