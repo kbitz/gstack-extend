@@ -309,6 +309,9 @@ _uc_scan_retired_hosts() {
   local home_norm claude_dir codex_dir host dir entry ptr q_dir q_checkout q_docs line
   local -a owners
   local seen i extra
+  [ -r "$EXTEND_DIR/bin/lib/install-safety.sh" ] || return 0
+  # shellcheck source=bin/lib/install-safety.sh
+  . "$EXTEND_DIR/bin/lib/install-safety.sh"
   _uc_norm_path "$HOME"
   home_norm=$_UC_NORM
   [ "$home_norm" != "/" ] || home_norm=""
@@ -323,14 +326,17 @@ _uc_scan_retired_hosts() {
     [ -d "$dir" ] || continue
     if [ -d "$claude_dir" ] && [ "$dir" -ef "$claude_dir" ]; then continue; fi
     if [ -d "$codex_dir" ] && [ "$dir" -ef "$codex_dir" ]; then continue; fi
+    is_safe_install_path "$dir" 2>/dev/null || continue
     owners=()
     for entry in "$dir"/*; do
       [ -d "$entry" ] && [ ! -L "$entry" ] || continue
       [ -f "$entry/SKILL.md" ] && [ ! -L "$entry/SKILL.md" ] || continue
       [ -f "$entry/.extend-root" ] && [ ! -L "$entry/.extend-root" ] && [ -r "$entry/.extend-root" ] || continue
+      [ -O "$entry" ] && ! _is_world_writable "$entry" || continue
       ptr=""
-      IFS= read -r -n 4096 ptr < "$entry/.extend-root" || [ -n "$ptr" ] || true
-      ptr=${ptr%$'\r'}
+      # C locale and a NUL delimiter bound bytes even in a malformed marker.
+      IFS= read -r -d '' -n 4096 ptr < "$entry/.extend-root" || true
+      ptr=${ptr%%$'\n'*}
       seen=0
       i=0
       while [ "$i" -lt "${#owners[@]}" ]; do

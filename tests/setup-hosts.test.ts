@@ -3035,7 +3035,7 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
           out.push(`D:${nextRel}`);
           walk(full, nextRel);
         } else {
-          out.push(`F:${nextRel}:${st.size}`);
+          out.push(`F:${nextRel}:${st.mode}:${sha256(full)}`);
         }
       }
     };
@@ -3065,11 +3065,18 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       mkdirSync(bin, { recursive: true });
       expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
 
-      // Owned regular copy
+      const state = join(home, '.gstack-extend');
+      writeFileSync(join(state, 'install-status'), 'KEEP STATUS\n');
+      writeFileSync(join(state, 'projects.json'), 'KEEP REGISTRY\n');
+      const stateBefore = snapshotTree(state);
+
+      // A valid checkout alias is still this checkout.
+      const checkoutAlias = join(baseTmp, `owned-checkout-alias-${host}`);
+      symlinkSync(realpathSync(ROOT), checkoutAlias);
       const owned = join(root, 'implement');
       mkdirSync(owned, { recursive: true });
       writeFileSync(join(owned, 'SKILL.md'), 'owned copy\n');
-      writeFileSync(join(owned, '.extend-root'), `${realpathSync(ROOT)}\n`);
+      writeFileSync(join(owned, '.extend-root'), `${checkoutAlias}\n`);
       writeFileSync(join(owned, 'notes.md'), 'KEEP NOTE\n');
 
       // Owned symlink copy
@@ -3115,6 +3122,14 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       mkdirSync(userOwned, { recursive: true });
       writeFileSync(join(userOwned, 'SKILL.md'), 'USER OWNED\n');
 
+      // Only a regular .extend-root file can establish regular-copy ownership.
+      const markerLink = join(root, 'review-and-prep');
+      mkdirSync(markerLink);
+      const userMarker = join(home, 'user-pointer');
+      writeFileSync(userMarker, `${realpathSync(ROOT)}\n`);
+      writeFileSync(join(markerLink, 'SKILL.md'), 'CUSTOM COPY\n');
+      symlinkSync(userMarker, join(markerLink, '.extend-root'));
+
       const r = runSetup(['--host', host, '--uninstall'], home);
       expect(r.exitCode).toBe(0);
       expect(r.stderr).toContain(`Note: ${label} is no longer a supported gstack-extend install host`);
@@ -3128,14 +3143,15 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       expect(r.stderr).toContain(`${realpathSync(otherCheckout)}/setup`);
       expect(readFileSync(join(emptyPtr, 'SKILL.md'), 'utf8')).toBe('empty ptr\n');
       expect(readFileSync(join(relPtr, 'SKILL.md'), 'utf8')).toBe('rel ptr\n');
-      expect(r.stderr).toContain('unknown owner: empty or relative .extend-root pointer');
+      expect(r.stderr).toContain('unknown owner: invalid .extend-root pointer');
       expect(readFileSync(join(unknownSkill, 'SKILL.md'), 'utf8')).toBe('unknown skill\n');
       expect(r.stderr).toContain('unknown skill name');
       expect(readFileSync(join(userOwned, 'SKILL.md'), 'utf8')).toBe('USER OWNED\n');
-      // CLI links, telemetry-call, and preamble untouched
+      expect(readFileSync(join(markerLink, 'SKILL.md'), 'utf8')).toBe('CUSTOM COPY\n');
+      expect(readlinkSync(join(markerLink, '.extend-root'))).toBe(userMarker);
+      // The shared CLI, helpers, and state are untouched by retired cleanup.
       expect(readlinkSync(join(bin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
-      expect(existsSync(join(home, '.gstack-extend', 'bin', 'telemetry-call'))).toBe(true);
-      expect(existsSync(join(home, '.gstack-extend', 'bin', 'preamble'))).toBe(true);
+      expect(snapshotTree(state)).toEqual(stateBefore);
 
       // Shared directory refusal
       const sharedHome = join(baseTmp, `retired-shared-${host}`);
@@ -3147,6 +3163,26 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       expect(sharedRes.exitCode).toBe(0);
       expect(sharedRes.stderr).toContain(`is the claude skills directory; skipping ${host} uninstall`);
       expect(lstatSync(join(hostDir(sharedHome, 'claude'), 'implement', 'SKILL.md')).isSymbolicLink()).toBe(true);
+    });
+
+    test(`--host ${host} --uninstall skips a retired skills directory resolving outside HOME`, () => {
+      const home = join(baseTmp, `retired-unsafe-${host}`);
+      const root = hostDir(home, host);
+      const outside = join(baseTmp, `retired-outside-${host}`);
+      const skill = join(outside, 'plan-track');
+      mkdirSync(dirnameOf(root), { recursive: true });
+      mkdirSync(skill, { recursive: true });
+      writeFileSync(join(skill, 'SKILL.md'), 'leftover copy\n');
+      writeFileSync(join(skill, '.extend-root'), `${realpathSync(ROOT)}\n`);
+      symlinkSync(outside, root);
+
+      const before = snapshotTree(outside);
+      const result = runSetup(['--host', host, '--uninstall', '--quiet'], home);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain('outside resolved $HOME');
+      expect(result.stderr).toContain(`skipping ${host} uninstall`);
+      expect(snapshotTree(outside)).toEqual(before);
     });
   }
 

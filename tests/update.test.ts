@@ -2860,6 +2860,37 @@ describe('retired hosts in bin/update-check (Track 92A)', () => {
     }
   });
 
+  test('retired_host warnings quote paths, use distinct first lines, and follow the version line', () => {
+    const home = join(baseTmp, 'retired home');
+    const state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, 'just-upgraded-from'), '0.107.0\n');
+    const root = join(home, '.cursor', 'skills');
+    const longPointer = '/' + 'a'.repeat(4095);
+    for (const [name, pointer] of [
+      ['a', '/some checkout\nsecond line\n'],
+      ['b', '/some checkout\nanother second line\n'],
+      ['c', longPointer + '-beyond-limit\n'],
+    ]) {
+      const dir = join(root, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), 'legacy copy\n');
+      writeFileSync(join(dir, '.extend-root'), pointer);
+    }
+
+    const result = runBin(UPDATE_CHECK, [], {
+      home, gstackExtendDir: ROOT, gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version' },
+    });
+    expect(result.exitCode).toBe(0);
+    const [version, short, long, ...extra] = result.stdout.trimEnd().split('\n');
+    expect(version).toStartWith('JUST_UPGRADED 0.107.0 ');
+    expect(short).toContain('retired\\ home/.cursor/skills');
+    expect(short).toContain('checkout=/some\\ checkout freshness=unverified');
+    expect(long).toContain(`checkout=${longPointer} freshness=unverified`);
+    expect(extra).toEqual([]);
+  });
+
   test('CEO-9: frozen inline block with a leftover Cursor pointer resolves the new checkout and prints retired_host', () => {
     const home = join(baseTmp, 'uc-ceo9-leftover');
     const state = join(home, '.gstack-extend');

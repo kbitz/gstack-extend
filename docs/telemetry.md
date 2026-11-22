@@ -2866,6 +2866,9 @@ gstack logger without --no-sweep; both mean completions or starts are being
 skipped rather than misfiled. JSON `call_helper` is the path of the `telemetry-call`
 helper the skill blocks run, or null when `setup` has not installed it; text mode
 then prints one line saying every skill's telemetry call is skipped.
+JSON `start_command` is the path to the runnable `~/.gstack-extend/bin/preamble`
+or null. When it is unavailable, text mode explains that skill preambles
+produce zero starts and points to rerunning setup.
 
 Every installed skill appears, including zero-row skills. Activity counts include
 legacy rows, but ratios exclude them. Completions the pre-rollout wrapper wrote
