@@ -1446,11 +1446,6 @@ describe('Conductor Cursor ledger recipe', () => {
       user_wait_s: null,
       resumes: null,
     }).ok).toBe(true);
-
-    // Historical workflow-metrics v:2 usage record with harness: "cursor" remains valid against docs/workflow-metrics.schema.json.
-    const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
-    expect(metricsSchema.definitions.usage_harness.enum).toContain('cursor');
-    expect(metricsSchema.definitions.usage_source.properties.agent.$ref).toBe('#/definitions/usage_harness');
   });
 });
 
@@ -2429,6 +2424,14 @@ describe('Track 67A usage capture and workflow-metrics v2 schema contract', () =
       },
     };
     expect(validate(v2Usage)).toBe(true);
+    expect(validate({
+      ...v2Usage,
+      request: {
+        ...v2Usage.request,
+        harness: 'cursor',
+        sources: v2Usage.request.sources.map(source => ({ ...source, agent: 'cursor' })),
+      },
+    })).toBe(true);
 
     // v:1 + usage is invalid; v:2 + begin is invalid; extra key in usage_request is invalid.
     expect(validate({ ...v2Usage, v: 1 })).toBe(false);

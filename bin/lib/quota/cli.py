@@ -11,6 +11,7 @@ import time
 
 from .common import (CLASSES, KINDS, QuotaError, budget, check_fixture, config_enabled, config_value, context_from,
                      explanation, fixture_dir, iso, now, state_root, timestamp)
+from .cursor_history import project_runs
 from .identity import identity
 from .index import scan
 from .intervals import interval, intervals
@@ -176,6 +177,7 @@ def get_runs(store,args,context):
             for field in ('stage','agent','model','effort','route'):
                 if row.get(field) is None:
                     row[field]=provenance.get(row['session_id'],{}).get(field)
+    rows=project_runs(store,rows)
     resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending'}
     rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved]
     return dict(v=1,runs=[r for r in rows if matches(r,args)],as_of=now(),coverage=coverage)

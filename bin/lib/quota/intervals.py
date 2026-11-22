@@ -1,5 +1,6 @@
 import heapq
 from .common import now
+from .cursor_history import boundaries as cursor_boundaries
 from .usage import aggregate
 
 
@@ -44,17 +45,13 @@ def meter_change(before,after,left,right):
                 below_resolution=below,why=why,resolution=after.get('resolution'))
 
 
-def _cursor_boundaries(store,fact):
-    if fact.get('evidence'):
-        return fact['turn_start'],fact['turn_end'],fact['evidence']
-    candidates=[e for e in store.usage_for_session(fact['conversation_hash']) if e.get('agent')=='cursor' and
-                e.get('turn_evidence') and e.get('start') is not None and e.get('end') is not None and e['start']<=fact['event_ts']<=e['end']]
-    if len(candidates)==1:
-        return candidates[0]['start'],candidates[0]['end'],candidates[0]['turn_evidence']
-    return None,None,None
+def _cursor_inventory(store):
+    incomplete={row['root'] for row in store.all('file') if row.get('agent')=='cursor' and not row.get('complete')}
+    return [(row['root'],row.get('as_of',0),row.get('complete',False) and row['root'] not in incomplete)
+            for row in store.all('inventory') if row.get('agent')=='cursor']
 
 
-def interval(store,before,after,coverage,cursor_reads=None):
+def interval(store,before,after,coverage,cursor_reads=None,cursor_inventory=None):
     left,right=before['observed_at'],after['observed_at'] if after else now()
     pool=before['pool']
     all_events=store.usage_between(left,right)
@@ -76,6 +73,8 @@ def interval(store,before,after,coverage,cursor_reads=None):
     facts=[e for e in all_events if e.get('pool')==pool and e['id'] not in api_ids]
     unresolved=[e for e in all_events if e.get('pool') in ('unresolved','pending') and e['agent']==before['pool_kind'] and e['id'] not in api_ids]
     complete=coverage['complete'] and not unresolved and pool!='pending'
+    roots=coverage['roots']
+    uncovered_roots=coverage['uncovered_roots']
     previous={m['meter']:m for m in before['meters']}
     changes=[]
     if after:
@@ -93,13 +92,23 @@ def interval(store,before,after,coverage,cursor_reads=None):
     pending_cursor=[]
     contained=[]
     if before['pool_kind']=='cursor':
+        inventory=_cursor_inventory(store) if cursor_inventory is None else cursor_inventory
+        # Retired transcript roots are no longer scanned. Only a saved complete
+        # inventory covering the interval can substantiate a zero observation.
+        cursor_roots=[]
+        for root,as_of,indexed in inventory:
+            covered=indexed and as_of>=right
+            cursor_roots.append(dict(root=root,agent='cursor',complete=covered,why=[] if covered else ['incomplete']))
+        complete=complete and bool(cursor_roots) and all(row['complete'] for row in cursor_roots)
+        roots=roots+cursor_roots
+        uncovered_roots=sorted(set(uncovered_roots)|{row['root'] for row in cursor_roots if not row['complete']})
         reads=store.all('cursor_coverage') if cursor_reads is None else cursor_reads
         candidates=[entry for entry in reads if entry.get('pool')==pool and
                     entry.get('start',right)<=left and entry.get('end',left)>=right and entry.get('observed_at',left)>=right]
         feed=max(candidates,key=lambda entry:(entry['observed_at'],not entry['complete']),default={})
         feed_complete=feed.get('complete',False)
         for event in local_cursor:
-            start,end,_=_cursor_boundaries(store,event)
+            start,end,_=cursor_boundaries(store,event)
             if event['ambiguous'] or start is None or end is None or start<left or end>right:
                 cursor_unknown.append(event)
             else:
@@ -130,7 +139,7 @@ def interval(store,before,after,coverage,cursor_reads=None):
                 charged_cents=sum(e['charged_cents'] for e in contained) if contained else None,
                 observed_charged_cents=sum(e['charged_cents'] for e in local_cursor) if local_cursor and not any(e['ambiguous'] for e in local_cursor) else None,
                 calibration_eligible=complete and not boundary and not pending_cursor and not any(m.get('reset_crossed') or m.get('window_rolled') for m in changes),
-                complete=complete,why=why,as_of=now(),roots=coverage['roots'],uncovered_roots=coverage['uncovered_roots'],
+                complete=complete,why=why,as_of=now(),roots=roots,uncovered_roots=uncovered_roots,
                 unresolved_events=len(unresolved),boundary_events=boundary,
                 remote_unobservable=before['pool_kind'] in ('claude','codex'),concurrent=len(activity_groups(store,{e.get('session') for e in facts}))>1 or len(cursor_facts)>len(local_cursor))
 
@@ -145,6 +154,7 @@ def intervals(store,coverage):
     for entries in cursor_reads.values():
         entries.sort(key=lambda entry:entry['start'])
     cursors={}
+    cursor_inventory=None
     for row in sorted(store.all('sample'),key=lambda r:r['observed_at']):
         if row['status']!='ok' or row['pool']=='pending':
             continue
@@ -162,6 +172,8 @@ def intervals(store,coverage):
                 heapq.heappop(active)
             cursors[row['pool']]=(position,active)
             matching=[active[0][3]] if active else []
-            result.append(interval(store,before,row,coverage,matching))
+            if cursor_inventory is None and row['pool_kind']=='cursor':
+                cursor_inventory=_cursor_inventory(store)
+            result.append(interval(store,before,row,coverage,matching,cursor_inventory))
         previous[row['pool']]=row
     return result

@@ -170,14 +170,12 @@ to the fingerprint without requiring `GROK_AGENT=1`, the Muse change added valid
 `MUSE_SESSION_ID`, and Cursor retirement removed `CURSOR_CONVERSATION_ID` from
 the fingerprint. A non-resumable Muse stage started with only the Muse marker
 before the upgrade has a null fingerprint and can still pair within the 24-hour
-bound (`ADOPTION_BOUND_S`). If another harness marker was already part of the
-start fingerprint, adding a marker across the upgrade changes that fingerprint;
-likewise, an open non-resumable stage started before upgrade with
-`CURSOR_CONVERSATION_ID` will have a different fingerprint after upgrade.
-An implicit finish for a non-resumable stage then refuses the handoff as belonging
-to another session. Finish open stages before upgrading or pass the stage's
-original telemetry session ID to `--session-id` at finish. Existing rows retain
-their original values.
+bound (`ADOPTION_BOUND_S`). An implicit finish refuses a non-resumable handoff
+when both fingerprints are known and differ. Removing a Cursor-only marker
+leaves a null finish fingerprint, so bounded pairing can still pick the oldest
+eligible handoff. Finish open stages before upgrading or pass the stage's
+original telemetry session ID to `--session-id` at finish to identify the exact
+invocation. Existing rows retain their original values.
 
 A valid explicit `--session-id` keeps its previous behavior and is never
 age-bounded. An explicit `--start` alone does not bypass adoption. With a valid
@@ -1872,7 +1870,7 @@ Finish evaluates signals in this exact 10-rule precedence:
 6. A malformed non-empty `GSTACK_SESSION_KIND`, a rejected saved or finish-environment `GSTACK_EXTEND_WORK_ITEM`, or a relative non-empty `GSTACK_HOME` → `unknown` / `malformed-signal`.
 7. Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, including whitespace-only or malformed values → `unknown` / `host-managed-workspace`. A host-managed checkout without an orchestration signal is not proof of hand use, even when its attribution label is rejected.
 8. No detected harness → `unknown` / `no-harness`.
-9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (`grok`) → `unknown` / `harness-unqualified`. (Cursor markers are no longer detected and classify as `unknown` / `no-harness`.)
+9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (`grok`) → `unknown` / `harness-unqualified`. Cursor-only markers supply no harness signal. Any supported harness markers are evaluated as usual.
 10. Detected and final harness match and have a launch-surface reader (`claude`, `codex`, `muse`): the reader returns no class (evidence missing, unclean, unreadable, past the 64 KiB `LOG_HEAD_BYTES` head-read bound, reached through a link inside the harness's configured home or under a relative one, from a non-regular file, or the reader raised) → `unknown` / `entrypoint-unavailable`; the reader returns `other` (a headless, SDK, exec, subagent, or unlisted client surface) → `unknown` / `entrypoint-unqualified`; the reader returns `terminal` → `user-directed` / `terminal-session` (`cli` for Claude); the reader returns `host-app` → `user-directed` / `host-app-session` (`paseo-entrypoint` for Claude).
 
 `PASEO_AGENT_ID` is never read: Paseo sets it for every agent it launches, so it

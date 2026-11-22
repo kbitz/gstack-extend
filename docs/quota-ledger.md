@@ -189,6 +189,9 @@ do not read `CURSOR_API_KEY`, call Cursor endpoints, or scan
 records, native SDK sources indexed earlier, and `pool_kind: "cursor"` samples
 already in a store stay readable via unfiltered `quota runs`, `quota summary`,
 `quota intervals`, and `doctor quota` without losing previously settled fields.
+Runs and summaries can still join saved billing events to saved lifecycle and
+source records when a run was never settled. Historical intervals need saved
+local scan coverage through the interval end as well as billing-event coverage.
 
 ## Troubleshooting
 

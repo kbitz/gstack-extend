@@ -600,12 +600,14 @@ class QuotaTests(unittest.TestCase):
     def test_historical_intervals_load_cursor_coverage_once(self):
         pool=self.store.pool('cursor','fixture-owner')
         start=now()
+        root=str(self.home/'.cursor/projects')
         with self.store.transaction():
             for i in range(25):
                 row=dict(sample_id=str(i),pool=pool,pool_kind='cursor',status='ok',observed_at=start+i,meters=[])
                 self.store.put('sample',str(i),row)
         self.advance(30)
         with self.store.transaction():
+            self.store.put('inventory','cursor-root',dict(agent='cursor',root=root,complete=True,as_of=now(),queue=[]))
             self.store.put('cursor_coverage','cov-1',dict(pool=pool,start=start,end=now(),observed_at=now(),complete=True,reason=None))
         with mock.patch.object(self.store,'all',wraps=self.store.all) as reads:
             rows=intervals.intervals(self.store,dict(complete=True,roots=[],uncovered_roots=[]))
@@ -623,6 +625,75 @@ class QuotaTests(unittest.TestCase):
         samples=sorted(self.store.all('sample'),key=lambda row:row['observed_at'])
         individually=[intervals.interval(self.store,left,right,coverage) for left,right in zip(samples,samples[1:])]
         self.assertEqual(batched,individually)
+
+    def test_historical_cursor_interval_requires_saved_local_coverage(self):
+        start=now()
+        end=start+60
+        pool=self.store.pool('cursor','partial-owner')
+        root=str(self.home/'.cursor/projects')
+        self.advance(90)
+        with self.store.transaction():
+            for key,stamp in [('before',start),('after',end)]:
+                self.store.put('sample',key,dict(sample_id=key,pool=pool,pool_kind='cursor',status='ok',observed_at=stamp,meters=[]))
+            self.store.put('cursor_coverage','account',dict(pool=pool,start=start,end=end,observed_at=now(),complete=True))
+
+        for inventory in (None,dict(agent='cursor',root=root,complete=False,as_of=now(),queue=[root]),
+                          dict(agent='cursor',root=root,complete=True,as_of=start,queue=[])):
+            if inventory is not None:
+                with self.store.transaction():
+                    self.store.put('inventory','cursor-root',inventory)
+            result=self.command('intervals')
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            row,=json.loads(result.stdout)['intervals']
+            self.assertFalse(row['complete'])
+            self.assertFalse(row['calibration_eligible'])
+            self.assertIsNone(row['event_count'])
+            self.assertIsNone(row['consumption'])
+
+    def test_historical_cursor_raw_events_remain_visible_in_run_and_summary(self):
+        start=now()
+        end=start+60
+        pool=self.store.pool('cursor','stored-owner')
+        conversation=self.store.digest('stored-conversation','session')
+        metadata=dict(agent='cursor',auth='subscription',context=self.context,stage='implement',model='composer-fixture',route='cli')
+        lifecycle=dict(session_id='historical-run',started_at=start,ended_at=end,lease_at=end,metadata=metadata,
+                       attachments=[dict(agent='cursor',session=conversation,attached_at=start)],
+                       identities={'cursor':{'pool':pool}},fixture=True)
+        self.advance(380)
+        with self.store.transaction():
+            self.store.put('state','historical-run',lifecycle)
+            row,=ledger.run_rows(self.store,lifecycle,dict(roots=[],complete=True))
+            key=json.dumps(['historical-run','cursor',pool])
+            self.store.put('run',key,row)
+            self.store.put('cursor_event','history-charge',dict(
+                id='history-charge',pool=pool,conversation_hash=conversation,event_ts=start+20,turn_start=start+10,
+                turn_end=start+30,evidence='provider',model='composer-fixture',charged_cents=15,ambiguous=False,
+                stable_reads=2,complete=True,revision=1,last_read_at=end+310,
+                tokens=dict(input=100,cache_read=20,cache_write=0,output=40,reasoning=5)))
+
+        result=self.command('runs')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        projected,=json.loads(result.stdout)['runs']
+        self.assertEqual(projected.get('attributable_cents'),15)
+        self.assertEqual(projected['settlement'],'final')
+        self.assertEqual(projected['events'][0]['event_id'],'history-charge')
+        self.assertEqual(projected['sources'][0]['source'],'cursor-api2')
+        summary=self.command('summary','--by','agent')
+        self.assertEqual(summary.returncode,0,summary.stdout+summary.stderr)
+        group,=json.loads(summary.stdout)['groups']
+        self.assertEqual(group['attributable_cents'],15)
+        self.assertEqual(group['consumption']['input']['median'],100)
+        self.assertEqual(self.store.get('run',key),row)
+
+        with self.store.transaction():
+            self.store.put('run',key,projected)
+            fact=self.store.get('cursor_event','history-charge')
+            self.store.put('cursor_event','later-charge',dict(fact,id='later-charge',charged_cents=3))
+        summary=self.command('summary','--by','agent')
+        self.assertEqual(summary.returncode,0,summary.stdout+summary.stderr)
+        group,=json.loads(summary.stdout)['groups']
+        self.assertEqual(group['attributable_cents'],18)
+        self.assertEqual(self.store.get('run',key),projected)
 
     def test_transport_reason_mapping_and_schema_failures(self):
         from quota.readers.transport import response
