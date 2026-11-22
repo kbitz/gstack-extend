@@ -35,11 +35,11 @@ export const DELEGATE_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed
 /** Upstream revision at which the anchors behind `specialists=fold` were qualified in the nested checkout and the Cursor and Codex sibling copies generated from it; the sibling copies' own revision is unknown. */
 export const FOLD_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
 
-/** Upstream revision at which the anchors behind `first-cycle=overlap` were qualified; the sibling layout's revision is unknown. */
-export const OVERLAP_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
+/** Upstream revision at which the anchors behind `first-cycle=overlap` were qualified in the Claude nested and Codex sibling copies. */
+export const OVERLAP_QUALIFIED = { revision: 'b3323f47b8cb6ec074bc755d3b108983a816007a', version: '1.102.2.0' } as const;
 
-/** Upstream revision at which the attacker-part anchors behind `red-team=ensure` and `delegate=adversarial|red-team` were qualified in the nested checkout and the Cursor and Codex sibling copies generated from it. */
-export const ATTACKER_QUALIFIED = { revision: '297f50c7e1d46aab1404f5f2e8a9584af76ad6b2', version: '1.97.0.0' } as const;
+/** Upstream revision at which the attacker-part anchors behind `red-team=ensure` and `delegate=adversarial|red-team` were qualified in the Claude nested and Codex sibling copies. */
+export const ATTACKER_QUALIFIED = { revision: 'b3323f47b8cb6ec074bc755d3b108983a816007a', version: '1.102.2.0' } as const;
 
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
@@ -182,22 +182,80 @@ const versionOf = (root: string, onRead?: (real: string) => void) => {
   return VERSION_PATTERN.test(value) ? value : 'unknown';
 };
 
+export type Anchor = string | readonly string[];
 export type Inventory = { ok: true; file: string; anchors: string[] } | { ok: false; file: string; reason: string };
 export type FixFirstInventory = { ok: true; file: string; review: string[]; checklist: string[] } | { ok: false; file: string; reason: string };
 export type TestGapInventory = { ok: true; file: string; review: string[]; testing: string[]; checklist: string[]; coverage: string[] } | { ok: false; file: string; reason: string };
 export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; index: string[]; lanes: string[] } | { ok: false; file: string; reason: string };
 export type DelegateInventory = { ok: true; file: string; review: string[]; dispatchItem: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
 export type FoldInventory = { ok: true; file: string; review: string[]; dispatchItem: string[]; checklists: Record<FoldName, string[]> } | { ok: false; file: string; reason: string };
-export type OverlapInventory = { ok: true; file: string; review: string[]; adversarial: string[] } | { ok: false; file: string; reason: string };
-export type AttackerInventory = { ok: true; file: string; 'red-team': string[]; adversarial: string[]; 'adversarial-item': string[] } | { ok: false; file: string; reason: string };
+export type OverlapInventory = { ok: true; file: string; review: Anchor[]; adversarial: string[] } | { ok: false; file: string; reason: string };
+export type AttackerInventory = { ok: true; file: string; 'red-team': string[]; adversarial: string[]; 'adversarial-item': Anchor[] } | { ok: false; file: string; reason: string };
 
-/** The backtick spans of one anchor list, or why the list is malformed. */
-function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
-  const spans = [...region.matchAll(/`([^`]*)`/g)].map((m) => m[1]!);
+/** Scan 1- and 2-backtick code spans in one anchor list, preserving the gaps between them. */
+function codeSpansIn(region: string, list: string): { ok: true; spans: string[]; gaps: string[] } | { ok: false; reason: string } {
+  const spans: string[] = [];
+  const gaps: string[] = [];
+  const unbalanced = { ok: false, reason: `${list} has an unbalanced backtick` } as const;
+  let gapStart = 0;
+  let opening: { offset: number; width: number } | undefined;
+  for (const run of region.matchAll(/`+/g)) {
+    const offset = run.index!;
+    const width = run[0].length;
+    if (width > 2) return unbalanced;
+    if (!opening) {
+      opening = { offset, width };
+      continue;
+    }
+    // A double-backtick span can quote literal single backticks.
+    if (opening.width === 2 && width === 1) continue;
+    if (opening.width !== width) return unbalanced;
+    gaps.push(region.slice(gapStart, opening.offset));
+    spans.push(region.slice(opening.offset + opening.width, offset));
+    gapStart = offset + width;
+    opening = undefined;
+  }
+  if (opening) return unbalanced;
   if (!spans.length) return { ok: false, reason: `${list} has no backtick spans` };
-  if (region.replace(/`[^`]*`/g, '').includes('`')) return { ok: false, reason: `${list} has an unbalanced backtick` };
   if (spans.some((s) => !s.length || /[\r\n]/.test(s))) return { ok: false, reason: `${list} has an empty span or a span containing a newline` };
-  return { ok: true, spans };
+  gaps.push(region.slice(gapStart));
+  return { ok: true, spans, gaps };
+}
+
+/** The backtick spans of one single-form anchor list, or why the list is malformed. */
+function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
+  const parsed = codeSpansIn(region, list);
+  if (!parsed.ok) return parsed;
+  if (parsed.gaps.slice(1, -1).some((gap) => /^\s+or\s+$/.test(gap))) {
+    return { ok: false, reason: `${list} has a malformed or alternative` };
+  }
+  return { ok: true, spans: parsed.spans };
+}
+
+/** The anchor slots of one list that may carry inline same-line `or` alternatives. */
+function slotsIn(region: string, list: string, slotCount: number): { ok: true; slots: Anchor[] } | { ok: false; reason: string } {
+  const parsed = codeSpansIn(region, list);
+  if (!parsed.ok) return parsed;
+  if (/\bor\b/.test(parsed.gaps[0]!) || /\bor\b/.test(parsed.gaps[parsed.spans.length]!)) {
+    return { ok: false, reason: `${list} has a malformed or alternative` };
+  }
+  const groups: string[][] = [[parsed.spans[0]!]];
+  for (let k = 1; k < parsed.spans.length; k++) {
+    const gap = parsed.gaps[k]!;
+    if (/^[ \t]+or[ \t]+$/.test(gap)) {
+      groups[groups.length - 1]!.push(parsed.spans[k]!);
+    } else {
+      if (/\bor\b/.test(gap)) return { ok: false, reason: `${list} has a malformed or alternative` };
+      groups.push([parsed.spans[k]!]);
+    }
+  }
+  if (groups.some((g) => new Set(g).size !== g.length)) {
+    return { ok: false, reason: `${list} has a malformed or alternative` };
+  }
+  if (groups.length !== slotCount || groups.slice(0, -1).some((group) => group.length > 1)) {
+    return { ok: false, reason: `${list} must have ${slotCount} slots with alternatives only in the last slot` };
+  }
+  return { ok: true, slots: groups.map((g) => (g.length === 1 ? g[0]! : g)) };
 }
 
 /**
@@ -248,12 +306,12 @@ export function fixFirstInventory(extendRootPath: string): FixFirstInventory {
 }
 
 /**
- * The anchor lists of one activation paragraph. List `i` opens at the first
+ * The raw regions of one activation paragraph. Region `i` opens at the first
  * "byte for byte," after the previous mark and ends at `marks[i]`; the last mark
- * closes the final list. Each list is the backtick spans between those points.
+ * closes the final region.
  */
-function activationLists(extendRootPath: string, heading: string, marks: readonly string[], names: readonly string[]):
-  { ok: true; file: string; lists: string[][] } | { ok: false; file: string; reason: string } {
+function activationRegions(extendRootPath: string, heading: string, marks: readonly string[]):
+  { ok: true; file: string; regions: string[] } | { ok: false; file: string; reason: string } {
   const file = join(extendRootPath, 'skills', 'review-and-prep.md');
   const read = readTrusted(file, 'inventory source');
   if (!read.ok) return { ok: false, file, reason: read.reason };
@@ -262,23 +320,33 @@ function activationLists(extendRootPath: string, heading: string, marks: readonl
   if (start < 0) return { ok: false, file, reason: 'activation paragraph not found' };
   const blank = text.indexOf('\n\n', start);
   const paragraph = text.slice(start, blank < 0 ? undefined : blank);
-  const opens: number[] = [];
-  const ends: number[] = [];
+  const regions: string[] = [];
   let at = -1;
   for (const mark of marks) {
     const open = paragraph.indexOf(ANCHOR_LIST_FROM, at + 1);
     at = open < 0 ? -1 : paragraph.indexOf(mark, open);
     if (at < 0) return { ok: false, file, reason: 'anchor list delimiters not found in the activation paragraph' };
-    opens.push(open + ANCHOR_LIST_FROM.length);
-    ends.push(at);
+    regions.push(paragraph.slice(open + ANCHOR_LIST_FROM.length, at));
   }
+  return { ok: true, file: read.real, regions };
+}
+
+/**
+ * The anchor lists of one activation paragraph. List `i` opens at the first
+ * "byte for byte," after the previous mark and ends at `marks[i]`; the last mark
+ * closes the final list. Each list is the backtick spans between those points.
+ */
+function activationLists(extendRootPath: string, heading: string, marks: readonly string[], names: readonly string[]):
+  { ok: true; file: string; lists: string[][] } | { ok: false; file: string; reason: string } {
+  const found = activationRegions(extendRootPath, heading, marks);
+  if (!found.ok) return found;
   const lists: string[][] = [];
   for (const [i, name] of names.entries()) {
-    const list = spansIn(paragraph.slice(opens[i]!, ends[i]), `${name} anchor list`);
-    if (!list.ok) return { ok: false, file, reason: list.reason };
+    const list = spansIn(found.regions[i]!, `${name} anchor list`);
+    if (!list.ok) return { ok: false, file: found.file, reason: list.reason };
     lists.push(list.spans);
   }
-  return { ok: true, file: read.real, lists };
+  return { ok: true, file: found.file, lists };
 }
 
 /**
@@ -343,11 +411,13 @@ export function foldInventory(extendRootPath: string): FoldInventory {
  * each opened by "byte for byte,".
  */
 export function overlapInventory(extendRootPath: string): OverlapInventory {
-  const found = activationLists(extendRootPath, OVERLAP_HEADING,
-    [OVERLAP_ADVERSARIAL_MARK, ANCHOR_LIST_TO], ['review', 'adversarial']);
+  const found = activationRegions(extendRootPath, OVERLAP_HEADING, [OVERLAP_ADVERSARIAL_MARK, ANCHOR_LIST_TO]);
   if (!found.ok) return found;
-  const [review, adversarial] = found.lists as [string[], string[]];
-  return { ok: true, file: found.file, review, adversarial };
+  const review = slotsIn(found.regions[0]!, 'review anchor list', 5);
+  if (!review.ok) return { ok: false, file: found.file, reason: review.reason };
+  const adversarial = spansIn(found.regions[1]!, 'adversarial anchor list');
+  if (!adversarial.ok) return { ok: false, file: found.file, reason: adversarial.reason };
+  return { ok: true, file: found.file, review: review.slots, adversarial: adversarial.spans };
 }
 
 /**
@@ -357,11 +427,15 @@ export function overlapInventory(extendRootPath: string): OverlapInventory {
  * all-or-none `adversarial-pass` item list), each opened by "byte for byte,".
  */
 export function attackerInventory(extendRootPath: string): AttackerInventory {
-  const found = activationLists(extendRootPath, ATTACKER_HEADING,
-    [ATTACKER_ADVERSARIAL_MARK, DISPATCH_ITEM_MARK, ANCHOR_LIST_TO], ['red-team', 'adversarial', 'adversarial-item']);
+  const found = activationRegions(extendRootPath, ATTACKER_HEADING, [ATTACKER_ADVERSARIAL_MARK, DISPATCH_ITEM_MARK, ANCHOR_LIST_TO]);
   if (!found.ok) return found;
-  const [redTeam, adversarial, adversarialItem] = found.lists as [string[], string[], string[]];
-  return { ok: true, file: found.file, 'red-team': redTeam, adversarial, 'adversarial-item': adversarialItem };
+  const redTeam = spansIn(found.regions[0]!, 'red-team anchor list');
+  if (!redTeam.ok) return { ok: false, file: found.file, reason: redTeam.reason };
+  const adversarial = spansIn(found.regions[1]!, 'adversarial anchor list');
+  if (!adversarial.ok) return { ok: false, file: found.file, reason: adversarial.reason };
+  const adversarialItem = slotsIn(found.regions[2]!, 'adversarial-item anchor list', 2);
+  if (!adversarialItem.ok) return { ok: false, file: found.file, reason: adversarialItem.reason };
+  return { ok: true, file: found.file, 'red-team': redTeam.spans, adversarial: adversarial.spans, 'adversarial-item': adversarialItem.slots };
 }
 
 /** The repair-review activation paragraph also requires the in-cap paragraph's "first two anchors". */
@@ -698,14 +772,17 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const sibling = (path: string) => layout.name === 'sibling' ? `${path} (nested ${join(options.root, 'review', 'SKILL.md')} absent)` : path;
 
   // Anchors.
-  const checkAnchor = (id: string, read: Read | undefined, anchor: string, reason: (cause: string) => string = (cause) => cause, extra: Partial<Check> = {}) => {
+  const anchorForms = (anchor: Anchor): readonly string[] => typeof anchor === 'string' ? [anchor] : anchor;
+  const hasAnchor = (bytes: Buffer, anchor: Anchor): boolean => anchorForms(anchor).some((form) => bytes.includes(Buffer.from(form, 'utf8')));
+  const formatAnchor = (anchor: Anchor): string => anchorForms(anchor).map((form) => `"${oneLine(form, 70)}"`).join(' or ');
+  const checkAnchor = (id: string, read: Read | undefined, anchor: Anchor, reason: (cause: string) => string = (cause) => cause, extra: Partial<Check> = {}) => {
     if (!read) drift('anchor', id, notRun!, extra);
     else if (!read.ok) drift('anchor', id, reason(read.reason), extra);
-    else if (read.bytes.includes(Buffer.from(anchor, 'utf8'))) ok('anchor', id);
-    else drift('anchor', id, `anchor not found byte for byte in ${read.real}: "${oneLine(anchor, 70)}"`, extra);
+    else if (hasAnchor(read.bytes, anchor)) ok('anchor', id);
+    else drift('anchor', id, `anchor not found byte for byte in ${read.real}: ${formatAnchor(anchor)}`, extra);
   };
-  const checkDispatchItem = (prefix: string, read: Read | undefined, anchors: readonly string[], reason: (cause: string) => string, extra: Partial<Check>) => {
-    if (read?.ok && anchors.every((anchor) => !read.bytes.includes(Buffer.from(anchor, 'utf8')))) {
+  const checkDispatchItem = (prefix: string, read: Read | undefined, anchors: readonly Anchor[], reason: (cause: string) => string, extra: Partial<Check>) => {
+    if (read?.ok && anchors.every((anchor) => !hasAnchor(read.bytes, anchor))) {
       info('not-declared', `${prefix} ${read.real}`);
       anchors.forEach((_, i) => ok('anchor', `${prefix}.${i + 1}`));
       return;

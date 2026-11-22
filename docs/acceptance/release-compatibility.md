@@ -199,6 +199,25 @@ fixture helper's GIT_* fix, and the 22nd, a test-selection check in
 No cap was weakened. The group collision ordering was aligned with accepted
 28A-before-27A scheduling; whichever lands second rebases shared files.
 
+## Upstream gstack 1.102.2.0 dual-host anchor qualification (2026-11-22)
+
+- **Date:** 2026-11-22
+- **Runtime:** Linux 7.2.15-1-omarchy x86_64, Bun 1.4.3, Git 2.56.0
+- **Source revision:** `bbcdd0a4a6a932db52c102ebc85a096c1ccdcd20` plus Track 93C working-tree changes
+- **Installed upstream:** gstack `1.102.2.0`, checkout revision `b3323f47b8cb6ec074bc755d3b108983a816007a` (Codex `spawn_agent` dispatch wording introduced in upstream `de9a7b4adcb3ed32626cd54c5697b2804d8083b2` / `v1.102.2.0` `79eea6d5fca540cf4b3483781e025b89d751bf25`)
+- **Commands (isolated, read-only, no network, no model dispatch, no writes to `HOME` or the repo):**
+  - `bin/upstream-check --gstack-root ~/.claude/skills/gstack`
+  - `bin/upstream-check --gstack-root ~/.codex/skills/gstack`
+
+| Host & layout | Observed dispatch wording & `specialists-dispatched` | Target anchor groups | Overall result |
+|---|---|---|---|
+| Claude Code (`nested`, `~/.claude/skills/gstack`) | `review/SKILL.md:39` Agent wording (`an Agent dispatch for the adversarial pass, its prompt including`); `specialists-dispatched` lines 27 and 38 present | `attacker` 9/9 `OK`, `overlap` 8/8 `OK`, `delegate` 21/21 `OK`, `fold` 18/18 `OK` | Exit `4`, `RESULT drift checks=108 drift=1` (sole drift: `review-and-prep.pregate-narrowing.index.1`) |
+| Codex (`sibling`, `~/.codex/skills/gstack` with `~/.codex/skills/gstack-review/SKILL.md`) | `gstack-review/SKILL.md:17` `spawn_agent` wording (``a `spawn_agent` (`task_name: adversarial`), its prompt including``); `specialists-dispatched` `INFO not-declared` for `delegate.dispatch-item` and `fold.dispatch-item` (3/3 `OK` each) | `attacker` 9/9 `OK`, `overlap` 8/8 `OK`, `delegate` 21/21 `OK`, `fold` 18/18 `OK` | Exit `4`, `RESULT drift checks=108 drift=1` (sole drift: `review-and-prep.pregate-narrowing.index.1`) |
+
+**Remaining unrelated drift disclosure:** On both hosts, `bin/upstream-check` exits `4` (`checks=108 drift=1`) solely because `review-and-prep.pregate-narrowing.index.1` drifts against upstream `1.102.2.0`'s `lib/pregate/index.ts:39`, which added `policyFloorCheck` to `CHECKS`. That shared pregate change is out of scope for Track 93C and requires separate pregate-narrowing re-qualification.
+
+**Scope limit (`docs/SPEC.md`):** This record establishes isolated CLI and byte-anchor qualification against installed gstack `1.102.2.0` on Claude Code and Codex only. It is not installed-agent workflow acceptance (O3) and makes no claim for other hosts or upstream versions.
+
 ## Remaining acceptance and release obligations
 
 The full O5.1 stable-surface catalog, a real legacy install upgraded from the

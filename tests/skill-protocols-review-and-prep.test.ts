@@ -381,6 +381,9 @@ function checkDelegateAnchorsLock(text: string): string[] {
   return violations;
 }
 
+const ADVERSARIAL_DISPATCH_TOKEN =
+  '`an Agent dispatch for the adversarial pass, its prompt including` or ``a `spawn_agent` (`task_name: adversarial`), its prompt including``';
+
 function checkAttackerPartsAnchorsLock(text: string): string[] {
   const sectionRaw = skillSection(text, H_DELEGATE_PARTS);
   const attackerAt = sectionRaw.indexOf('**Activation (attacker parts).**');
@@ -391,8 +394,28 @@ function checkAttackerPartsAnchorsLock(text: string): string[] {
   if ((attackerParagraph.match(/byte for byte,/g) ?? []).length !== 3) {
     violations.push('attacker parts byte-for-byte count != 3');
   }
+  if ((attackerParagraph.match(/`/g) ?? []).length % 2 !== 0) {
+    violations.push('attacker parts unbalanced backticks');
+  }
+  if (!attackerParagraph.includes(ADVERSARIAL_DISPATCH_TOKEN)) {
+    violations.push('attacker parts missing two-wording adversarial-pass dispatch anchor');
+  }
   if (!attackerParagraph.trimEnd().endsWith('Check each with `grep -F`.')) {
     violations.push('attacker parts missing grep -F delimiter');
+  }
+  const stepOne = rest.split('\n\n').find((paragraph) => paragraph.startsWith('**Step 1.**'))?.replace(/\s+/g, ' ') ?? '';
+  const itemRule = [
+    'list (c) in **Activation (attacker parts)** matches under the same all-or-none rule for `adversarial-pass`: its second item',
+    "matches when `/review` contains either host's dispatch wording (single-quote patterns containing backticks when checking so",
+    'a shell does not expand them), so list (c) matches when `/review` contains `adversarial-pass` plus either dispatch wording,',
+    'or neither `adversarial-pass` nor either dispatch wording (`not declared`); matching `adversarial-pass` with neither',
+    'dispatch wording, or either dispatch wording without `adversarial-pass`, falls back to host review with',
+  ].join(' ');
+  if (!stepOne.includes(itemRule)) {
+    violations.push('attacker parts missing Step 1 all-or-none rule for list (c)');
+  }
+  if (!stepOne.includes('`delegation: inactive — <reason>` naming the changed anchor')) {
+    violations.push('attacker parts missing anchor-changed fallback clause');
   }
   if (rest.includes('byte for byte') || rest.includes('grep -F')) {
     violations.push('delegate section repeats activation delimiters after attacker paragraph');
@@ -464,7 +487,6 @@ function checkOverlapAnchorsLock(text: string): string[] {
     'Do not edit reviewed source until Step 5.',
     'Before edits, every dispatched reader/writer must have returned or be confirmed',
     'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
-    'an Agent dispatch for the adversarial pass, its prompt including',
   ];
   const adversarialAnchors = [
     'Read the diff for this branch. First list changed files:',
@@ -475,6 +497,7 @@ function checkOverlapAnchorsLock(text: string): string[] {
     'and its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain, byte for byte,';
   const ordered = [
     ...reviewAnchors.map((s) => `\`${s}\``),
+    ADVERSARIAL_DISPATCH_TOKEN,
     mark,
     ...adversarialAnchors.map((s) => `\`${s}\``),
     'Check each with `grep -F`.',
@@ -2883,6 +2906,53 @@ describe('kept contract locks fail on mutation', () => {
       name: 'executable fences: drop <kind> placeholder from the full-review-record call line',
       lock: checkExecutableFenceContractsLock,
       mutate: (t) => t.replace('"<action>" "<kind>"', '"<action>"'),
+    },
+    {
+      name: 'attacker parts: mutate Claude wording in list (c)',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('and `an Agent dispatch for the adversarial pass, its prompt including`', 'and `an Agent dispatch for the adversarial pass`'),
+    },
+    {
+      name: 'attacker parts: drop Codex wording in list (c)',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('and `an Agent dispatch for the adversarial pass, its prompt including` or ``a `spawn_agent` (`task_name: adversarial`), its prompt including``', 'and `an Agent dispatch for the adversarial pass, its prompt including`'),
+    },
+    {
+      name: 'attacker parts: drop anchor-changed fallback clause',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('`delegation: inactive — <reason>` naming the changed anchor', '`delegation: active`'),
+    },
+    // Value: protects=the Step 1 adversarial-pass item rule and literal shell quoting;
+    // fails_when=both wordings are required, absence or partial matches are handled incorrectly, or quote guidance is lost;
+    // why_new=the existing prose lock checked fragments that could survive those changes; seam=none;
+    // no_claim=an installed agent follows the prose.
+    {
+      name: 'attacker parts: require both dispatch wordings in Step 1',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('`adversarial-pass` plus either dispatch\nwording', '`adversarial-pass` plus both dispatch wordings'),
+    },
+    {
+      name: 'attacker parts: count a marker alone as not declared',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('neither `adversarial-pass` nor either dispatch wording', 'there is no dispatch wording'),
+    },
+    {
+      name: 'attacker parts: omit the partial-item fallback conditions',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace(
+        'matching `adversarial-pass` with neither dispatch wording, or either\ndispatch wording without `adversarial-pass`, falls back to host review with',
+        'a fully matching item falls back to host review with',
+      ),
+    },
+    {
+      name: 'attacker parts: prescribe double quotes for literal backticks',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace("either host's dispatch wording (single-quote", "either host's dispatch wording (double-quote"),
+    },
+    {
+      name: 'first-cycle=overlap: mutate Codex wording in review anchor 5',
+      lock: checkOverlapAnchorsLock,
+      mutate: (t) => t.replace('\n`an Agent dispatch for the adversarial pass, its prompt including` or ``a `spawn_agent` (`task_name: adversarial`), its prompt including``', '\n`an Agent dispatch for the adversarial pass, its prompt including` or ``a `spawn_agent` (`task_name: review`), its prompt including``'),
     },
   ];
 

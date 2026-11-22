@@ -124,6 +124,90 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** the release that ships PR #284 is cut, or the handoff contract's versioning rule next changes.
 
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: reject mixed-width anchor delimiters
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The parser tests cover an overlong run and an unclosed double-backtick span. They do not cover a single opener followed by a double delimiter.
+- **Hypothesis (untested):** Add a mixed-width span fixture and check for the unbalanced-backtick diagnostic.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:212`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: reject a leading dangling or in an anchor list
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The anchor inventories test a dangling join at the end of a list and joins split across lines.
+- **Hypothesis (untested):** Insert a standalone `or` before the first span and check that the list is rejected.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:239`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: reject repeated dispatch alternatives
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The valid alternative slot uses two distinct forms. Repetition of one form has no dedicated test.
+- **Hypothesis (untested):** Repeat the Claude wording in one slot and check that the inventory rejects the duplicate.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:252`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: keep dispatch alternatives in the final slot
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The current fixtures catch joins that reduce the total slot count. A join in an earlier slot can be paired with a split later in the list to retain the expected count.
+- **Hypothesis (untested):** Keep the slot count fixed while moving an alternative earlier, then assert that the inventory rejects the shape.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:255`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: report malformed local adversarial lists through the CLI
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The parser tests check malformed inventories directly. The launcher test checks a missing overlap heading.
+- **Hypothesis (untested):** Pass a malformed local adversarial list through `bin/upstream-check` and verify its inventory drift, stage effect and omitted anchor rows.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:753`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: exercise both forms together and Codex wording in the nested layout
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The healthy fixtures cover one dispatch wording at a time and use Codex wording only in the sibling layout.
+- **Hypothesis (untested):** Add a nested fixture with Codex wording and a fixture with both exact forms. Each should have 108 checks and zero drift.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:775`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
+### [review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts] Test gap: report both attacker item drifts when upstream review is unreadable
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The missing-review tests assert other anchor groups or a general read diagnostic.
+- **Hypothesis (untested):** Assert both `adversarial-item` IDs drift and no `INFO not-declared` row appears when the review file cannot be read.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/upstream-check/cli.ts:784`
+- **Evidence:** Track 93C coverage audit at `ff5473c3` and passing final parser and CLI probes.
+- **Context:** Filed before PR creation by /review-and-prep for Track 93C on 2026-11-22.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** A Track next changes the anchor inventory or its CLI tests.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

@@ -329,7 +329,8 @@ the Codex sibling copy declares no item while the nested and Cursor copies do.
 The attacker parts add three `review/specialists/red-team.md` anchors, four
 adversarial anchors in `review/sections/adversarial.md` (nested) or the review
 file itself (sibling), and two all-or-none `adversarial-pass` contract-item
-anchors. Drift is reported by
+anchors (whose second slot accepts both the Claude copy's Agent wording and the
+Codex copy's `spawn_agent` wording under the all-or-none rule). Drift is reported by
 [`upstream-check`](upstream-check.md#what-it-checks) (the
 `review-and-prep.delegate` and `review-and-prep.attacker` IDs). When the anchors
 match, a delegated part runs through its delegate whichever model hosts the
