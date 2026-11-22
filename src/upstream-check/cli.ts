@@ -196,40 +196,29 @@ export type AttackerInventory = { ok: true; file: string; 'red-team': string[]; 
 function codeSpansIn(region: string, list: string): { ok: true; spans: string[]; gaps: string[] } | { ok: false; reason: string } {
   const spans: string[] = [];
   const gaps: string[] = [];
-  let i = 0;
-  while (i < region.length) {
-    const open = region.indexOf('`', i);
-    if (open < 0) {
-      gaps.push(region.slice(i));
-      break;
+  const unbalanced = { ok: false, reason: `${list} has an unbalanced backtick` } as const;
+  let gapStart = 0;
+  let opening: { offset: number; width: number } | undefined;
+  for (const run of region.matchAll(/`+/g)) {
+    const offset = run.index!;
+    const width = run[0].length;
+    if (width > 2) return unbalanced;
+    if (!opening) {
+      opening = { offset, width };
+      continue;
     }
-    let ticks = 1;
-    while (open + ticks < region.length && region[open + ticks] === '`') ticks++;
-    if (ticks > 2) return { ok: false, reason: `${list} has an unbalanced backtick` };
-    let close = -1;
-    if (ticks === 1) {
-      close = region.indexOf('`', open + 1);
-      if (close < 0) return { ok: false, reason: `${list} has an unbalanced backtick` };
-    } else {
-      let pos = open + 2;
-      while (pos < region.length) {
-        const next = region.indexOf('`', pos);
-        if (next < 0) return { ok: false, reason: `${list} has an unbalanced backtick` };
-        let run = 1;
-        while (next + run < region.length && region[next + run] === '`') run++;
-        if (run === 2) { close = next; break; }
-        if (run > 2) return { ok: false, reason: `${list} has an unbalanced backtick` };
-        pos = next + 1;
-      }
-      if (close < 0) return { ok: false, reason: `${list} has an unbalanced backtick` };
-    }
-    gaps.push(region.slice(i, open));
-    spans.push(region.slice(open + ticks, close));
-    i = close + ticks;
-    if (i === region.length) gaps.push('');
+    // A double-backtick span can quote literal single backticks.
+    if (opening.width === 2 && width === 1) continue;
+    if (opening.width !== width) return unbalanced;
+    gaps.push(region.slice(gapStart, opening.offset));
+    spans.push(region.slice(opening.offset + opening.width, offset));
+    gapStart = offset + width;
+    opening = undefined;
   }
+  if (opening) return unbalanced;
   if (!spans.length) return { ok: false, reason: `${list} has no backtick spans` };
   if (spans.some((s) => !s.length || /[\r\n]/.test(s))) return { ok: false, reason: `${list} has an empty span or a span containing a newline` };
+  gaps.push(region.slice(gapStart));
   return { ok: true, spans, gaps };
 }
 
@@ -237,12 +226,14 @@ function codeSpansIn(region: string, list: string): { ok: true; spans: string[];
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
   const parsed = codeSpansIn(region, list);
   if (!parsed.ok) return parsed;
-  if (parsed.gaps.some((g) => /\bor\b/.test(g))) return { ok: false, reason: `${list} has a malformed or alternative` };
+  if (parsed.gaps.slice(1, -1).some((gap) => /^\s+or\s+$/.test(gap))) {
+    return { ok: false, reason: `${list} has a malformed or alternative` };
+  }
   return { ok: true, spans: parsed.spans };
 }
 
 /** The anchor slots of one list that may carry inline same-line `or` alternatives. */
-function slotsIn(region: string, list: string): { ok: true; slots: Anchor[] } | { ok: false; reason: string } {
+function slotsIn(region: string, list: string, slotCount: number): { ok: true; slots: Anchor[] } | { ok: false; reason: string } {
   const parsed = codeSpansIn(region, list);
   if (!parsed.ok) return parsed;
   if (/\bor\b/.test(parsed.gaps[0]!) || /\bor\b/.test(parsed.gaps[parsed.spans.length]!)) {
@@ -260,6 +251,9 @@ function slotsIn(region: string, list: string): { ok: true; slots: Anchor[] } | 
   }
   if (groups.some((g) => new Set(g).size !== g.length)) {
     return { ok: false, reason: `${list} has a malformed or alternative` };
+  }
+  if (groups.length !== slotCount || groups.slice(0, -1).some((group) => group.length > 1)) {
+    return { ok: false, reason: `${list} must have ${slotCount} slots with alternatives only in the last slot` };
   }
   return { ok: true, slots: groups.map((g) => (g.length === 1 ? g[0]! : g)) };
 }
@@ -419,7 +413,7 @@ export function foldInventory(extendRootPath: string): FoldInventory {
 export function overlapInventory(extendRootPath: string): OverlapInventory {
   const found = activationRegions(extendRootPath, OVERLAP_HEADING, [OVERLAP_ADVERSARIAL_MARK, ANCHOR_LIST_TO]);
   if (!found.ok) return found;
-  const review = slotsIn(found.regions[0]!, 'review anchor list');
+  const review = slotsIn(found.regions[0]!, 'review anchor list', 5);
   if (!review.ok) return { ok: false, file: found.file, reason: review.reason };
   const adversarial = spansIn(found.regions[1]!, 'adversarial anchor list');
   if (!adversarial.ok) return { ok: false, file: found.file, reason: adversarial.reason };
@@ -439,7 +433,7 @@ export function attackerInventory(extendRootPath: string): AttackerInventory {
   if (!redTeam.ok) return { ok: false, file: found.file, reason: redTeam.reason };
   const adversarial = spansIn(found.regions[1]!, 'adversarial anchor list');
   if (!adversarial.ok) return { ok: false, file: found.file, reason: adversarial.reason };
-  const adversarialItem = slotsIn(found.regions[2]!, 'adversarial-item anchor list');
+  const adversarialItem = slotsIn(found.regions[2]!, 'adversarial-item anchor list', 2);
   if (!adversarialItem.ok) return { ok: false, file: found.file, reason: adversarialItem.reason };
   return { ok: true, file: found.file, 'red-team': redTeam.spans, adversarial: adversarial.spans, 'adversarial-item': adversarialItem.slots };
 }

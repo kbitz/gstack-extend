@@ -1247,8 +1247,8 @@ describe('drift', () => {
     expect(r.out).not.toContain('INFO not-declared review-and-prep.attacker.adversarial-item');
   }, 30000);
 
-  // Value: protects=double-backtick and alternative-slot parser rejects unclosed double backticks, newlines in double backticks, and dangling or newline-split `or`; fails_when=malformed anchor syntax silently drops or splits alternatives; why_new=Track 93C parser negative lock; seam=none
-  test('attacker and overlap inventories reject malformed double-backtick spans and malformed or alternatives', () => {
+  // Value: protects=backtick delimiters, fixed slot counts and single-form prose; fails_when=malformed syntax parses, a join hides a required check, or ordinary prose is treated as an alternative; why_new=Track 93C parser regression lock; seam=none
+  test('attacker and overlap inventories enforce dispatch grammar and keep single-form prose', () => {
     const withCopy = (label: string, mutate: (text: string) => string) => {
       const copy = fresh(label);
       cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
@@ -1262,6 +1262,9 @@ describe('drift', () => {
     const unclosed = withCopy('unclosed-double-tick', (t) => t.replace(codexSpan, codexSpan.slice(0, -2)));
     expect(attackerInventory(unclosed)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has an unbalanced backtick' });
 
+    const longRun = withCopy('long-tick-run', (t) => t.replace('`adversarial-pass`\nand ', '`adversarial-pass```fixture``\nand '));
+    expect(attackerInventory(longRun)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has an unbalanced backtick' });
+
     const withNewline = withCopy('newline-double-tick', (t) => t.replace(codexSpan, '``a `spawn_agent`\n(`task_name: adversarial`), its prompt including``'));
     expect(attackerInventory(withNewline)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has an empty span or a span containing a newline' });
 
@@ -1273,6 +1276,19 @@ describe('drift', () => {
 
     const overlapNewlineOr = withCopy('overlap-newline-or', (t) => t.replace(`\n${pair}`, `\n\`an Agent dispatch for the adversarial pass, its prompt including\`\nor ${codexSpan}`));
     expect(overlapInventory(overlapNewlineOr)).toMatchObject({ ok: false, reason: 'review anchor list has a malformed or alternative' });
+
+    const mergedAttacker = withCopy('merged-attacker-slots', (t) => t.replace('`adversarial-pass`\nand ', '`adversarial-pass` or '));
+    expect(attackerInventory(mergedAttacker)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list must have 2 slots with alternatives only in the last slot' });
+
+    const precedingOverlap = '`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`';
+    const mergedOverlap = withCopy('merged-overlap-slots', (t) => t.replace(`\n${precedingOverlap}\n${pair}`, `\n${precedingOverlap} or ${pair}`));
+    expect(overlapInventory(mergedOverlap)).toMatchObject({ ok: false, reason: 'review anchor list must have 5 slots with alternatives only in the last slot' });
+
+    const prose = withCopy('single-form-prose', (t) => t.replace('`# Red Team Review`\n', '`# Red Team Review`\n(applies in the nested or sibling layout)\n'));
+    expect(attackerInventory(prose)).toMatchObject({ ok: true, 'red-team': ATTACKER['red-team'] });
+
+    const alternatives = withCopy('single-form-alternative', (t) => t.replace('`# Red Team Review`\n', '`# Red Team Review` or '));
+    expect(attackerInventory(alternatives)).toMatchObject({ ok: false, reason: 'red-team anchor list has a malformed or alternative' });
   });
 
   const NARROW_EFFECT = '  effect: /review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so';
