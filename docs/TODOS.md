@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/quota/cli.py|bin/lib/quota/samples.py|tests/quota_cases.py] Test gap: refresh with a legacy quota pool list
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Existing fixtures check supported-pool gating and retired CLI input. They do not cover a saved `quota_pools=claude,codex,cursor` list.
+- **Hypothesis (untested):** Keep that preference in an isolated fixture and check that refresh and doctor still report the two supported pools.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** Track 93B structured review on `256ef38`.
+- **Evidence:** The active pool selection uses `KINDS`. The reviewer found a missing direct fixture and showed no failing command.
+- **Context:** Filed by /review-and-prep for Track 93B (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=setup|tests/setup-hosts.test.ts] Test gap: preserve copies when checkout access fails
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
