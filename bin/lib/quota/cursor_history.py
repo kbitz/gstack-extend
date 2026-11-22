@@ -107,8 +107,8 @@ def _project(store, row, observed, at):
     why.update(reason for event in events for reason in event['why'])
     if not sources:
         why.add('no_usage')
-        if expired:
-            why.add('expired')
+    if expired and not final:
+        why.add('expired')
     strengths = {'exact': 3, 'turn': 2, 'window': 1, 'unknown': 0}
     attributable = [event['attributable_cents'] for event in events if event['attributable_cents'] is not None]
     shared = [event['shared_cents'] for event in events if event['shared_cents'] is not None]
@@ -125,7 +125,7 @@ def _project(store, row, observed, at):
                 why=sorted(why))
 
 
-def _keep_snapshot(store, row, observed, facts, at):
+def _keep_snapshot(store, row, native, observed, facts, at):
     saved = {event['event_id']: event for event in row.get('events', [])}
     if not saved:
         return not observed
@@ -141,10 +141,19 @@ def _keep_snapshot(store, row, observed, facts, at):
             return True
     if row['settlement'] != 'final' or saved.keys() != linked.keys():
         return False
-    return all(link['revision'] <= saved[event_id].get('revision', link['revision'])
-               and link['shared_turn'] == saved[event_id].get('shared_turn', link['shared_turn'])
-               and link['other_session_ids'] == saved[event_id].get('other_session_ids', link['other_session_ids'])
-               for event_id, link in linked.items())
+    completeness = {event_id: source.get('complete') for source in row['sources'] if source.get('source') == 'cursor-api2'
+                    for event_id in source['event_ids']}
+    for fact, link, _ in observed:
+        event_id = link['event_id']
+        earlier = saved[event_id]
+        if (link['revision'] > earlier.get('revision', link['revision'])
+                or link['shared_turn'] != earlier.get('shared_turn', link['shared_turn'])
+                or link['other_session_ids'] != earlier.get('other_session_ids', link['other_session_ids'])
+                or (fact['complete'] and not fact['ambiguous']) != completeness.get(event_id)):
+            return False
+    billed = {fact['conversation_hash'] for fact, _, _ in observed}
+    return not native or all(source in row['sources'] for source in native['sources']
+                             if source.get('harness_session') not in billed)
 
 
 def project_runs(store, rows, native_rows):
@@ -165,14 +174,20 @@ def project_runs(store, rows, native_rows):
         key = sid, pool
         observed = links.get(key, ())
         previous = cursor_rows.get(key)
-        if previous and _keep_snapshot(store, previous, observed, by_id, at):
+        native = native_rows.get(key)
+        if previous and _keep_snapshot(store, previous, native, observed, by_id, at):
             continue
         if pool == 'pending' and not previous:
             continue
         template = templates[sid]
-        native = native_rows.get(key) or previous or dict(
+        base = native or previous or dict(
             template, pool_kind='cursor', pool=pool, sources=[], why=[], resolves_pending=template['pool'] == 'pending')
-        projected[key] = _project(store, native, observed, at)
+        row = _project(store, base, observed, at)
+        if previous and previous['settlement'] == row['settlement'] == 'final':
+            revisions = {event['event_id']: event.get('revision') for event in previous.get('events', [])}
+            if revisions == {event['event_id']: event['revision'] for event in row['events']}:
+                row['settled_at'] = previous.get('settled_at') or row['settled_at']
+        projected[key] = row
 
     result = []
     for row in rows:

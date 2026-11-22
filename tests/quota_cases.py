@@ -699,6 +699,34 @@ class QuotaTests(unittest.TestCase):
 
         args=parser().parse_args(['runs'])
         projected,=get_runs(self.store,args,self.context)['runs']
+        with self.subTest(change='billing feed became complete without a new revision'):
+            partial=copy.deepcopy(projected)
+            partial['sources'][0]['complete']=False
+            with self.store.transaction():
+                self.store.put('run',key,partial)
+            result=self.command('summary','--by','agent')
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            group,=json.loads(result.stdout)['groups']
+            self.assertEqual(group['consumption']['input']['median'],100)
+
+        with self.subTest(change='a distinct native conversation was indexed later'):
+            native=self.store.digest('late-native','session')
+            lifecycle['attachments'].append(dict(agent='cursor',session=native,attached_at=start))
+            native_source=dict(key='late-native-source',agent='cursor',session=native,parent=None,native_sdk=True,
+                               cwd=self.context['cwd'],first=start+5,last=start+25,complete=True,reason=None)
+            native_fact=dict(id='late-native-event',agent='cursor',session=native,source_keys=['late-native-source'],pool=pool,
+                             ts=start+15,start=start+5,end=start+25,model='composer-fixture',boundary=False,complete=True,
+                             tokens=dict(input=7,cache_read=0,cache_write=0,output=5,reasoning=0))
+            with self.store.transaction():
+                self.store.put('run',key,projected)
+                self.store.put('state','historical-run',lifecycle)
+                self.store.put('source',native_source['key'],native_source)
+                self.store.put('usage',native_fact['id'],native_fact)
+            result=self.command('summary','--by','agent')
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            group,=json.loads(result.stdout)['groups']
+            self.assertEqual(group['consumption']['input']['median'],107)
+
         with self.store.transaction():
             self.store.put('run',key,projected)
             fact=self.store.get('cursor_event','history-charge')
@@ -736,6 +764,18 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(runs['historical-run']['attributable_cents'],3)
         self.assertEqual(runs['other-run']['attributable_cents'],25)
         self.assertEqual(self.store.get('run',key),settled)
+
+        self.advance(48*3600)
+        with self.store.transaction():
+            self.store.put('cursor_event','later-charge',dict(fact,id='later-charge',revision=2,event_ts=start+140,
+                                                             turn_start=start+130,turn_end=start+150,last_read_at=start+500))
+        result=self.command('runs')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        runs={row['session_id']:row for row in json.loads(result.stdout)['runs']}
+        expired=runs['historical-run']
+        self.assertEqual(expired['settlement'],'expired')
+        self.assertIn('expired',expired['why'])
+        self.assertEqual(expired['consumption'][0]['input'],7)
 
     def test_transport_reason_mapping_and_schema_failures(self):
         from quota.readers.transport import response
@@ -1113,24 +1153,30 @@ class QuotaTests(unittest.TestCase):
         planted.parent.mkdir(parents=True)
         planted.write_text('user:\nplanted cursor transcript\n')
         legacy_file=dict(agent='cursor',root=str(self.home/'.cursor/projects'),path=str(planted),key='legacy-file')
+        new_log=planted.with_suffix('.jsonl')
+        new_log.write_text('{}\n')
+        legacy_key=self.store.digest(str(new_log),'file')
+        legacy_json=dict(legacy_file,path=str(new_log),key=legacy_key,offset=42,parser={'session':'legacy-cursor-session'})
         with self.store.transaction():
             self.store.put('file','legacy-file',legacy_file)
+            self.store.put('file',legacy_key,legacy_json)
         coverage=scan(self.store,self.context)
         self.assertFalse(any(r['agent']=='cursor' for r in coverage['roots']))
         self.assertEqual(self.store.all('source'),[])
         # A supported host can explicitly reuse the same root path.
         scan(self.store,dict(self.context,claude_config_dir=str(self.home/'.cursor')))
         self.assertEqual(self.store.get('file','legacy-file'),legacy_file)
-        self.assertEqual(self.store.all('source'),[])
+        self.assertEqual(self.store.get('file',legacy_key),legacy_json)
+        self.assertEqual([source['agent'] for source in self.store.all('source')],['claude'])
         start=now()
         pool=self.store.pool('cursor','stored-owner')
         conv_hash=self.store.digest('conv-stored','session')
         end=start+60
-        self.advance(60)
+        self.advance(360)
         tokens=dict(input=100,cache_read=20,cache_write=0,output=40,reasoning=5)
         cursor_event=dict(id='ce-1',pool=pool,conversation_hash=conv_hash,event_ts=start+20,turn_start=start+10,turn_end=start+30,
                           evidence='cursor-api2',model='composer-fixture',tokens=tokens,charged_cents=15,ambiguous=False,
-                          stable_reads=2,complete=True,revision=1)
+                          stable_reads=2,complete=True,revision=1,last_read_at=end+300)
         stored_meta=dict(stage='implement',agent='cursor',model='composer-fixture',effort=None,route='cli',auth='subscription',
                          context=self.context,model_vendor='cursor',gstack_extend_version='0.108.0',gstack_version=None,initial_harness_session=None)
         stored_state=dict(session_id='cursor-hist-1',started_at=start,ended_at=end,lease_at=end,start_metadata=stored_meta,metadata=stored_meta,
@@ -1141,9 +1187,9 @@ class QuotaTests(unittest.TestCase):
                         sources=[dict(source='cursor-api2',agent='cursor',kind='own',harness_session=conv_hash,model='composer-fixture',
                                       attribution='turn',status='ok',reason=None,why=[],consumption=[dict(model='composer-fixture',**tokens,why={})],
                                       event_ids=['ce-1'],observed_through=start+30,complete=True,outlived_stage=False,identity_evidence={'pool':pool})],
-                        events=[dict(event_id='ce-1',charged_cents=15,attributable_cents=15,shared_turn=False,why=[])],
-                        attributable_cents=15,shared_cents=0,consumption=[dict(model='composer-fixture',**tokens,why={})],why=[],
-                        attribution='turn',settlement='final',revision=1,lifecycle='recorded',local_persisted_at=end,settled_at=end+300,
+                        events=[dict(event_id='ce-1',charged_cents=15,attributable_cents=15,shared_turn=False,why=[],revision=1)],
+                        attributable_cents=15,shared_cents=None,consumption=[dict(model='composer-fixture',**tokens,why={})],why=[],
+                        attribution='turn',settlement='final',revision=1,lifecycle='settled',local_persisted_at=end,settled_at=end+300,
                         roots=[],complete=True,as_of=end,observed_through=start+30,stale=False,paused=False,outcome='unknown',fixture=True)
         native_source=dict(key='legacy-native',agent='cursor',session='native-conv',parent=None,native_sdk=True,
                            cwd=self.context['cwd'],first=start+5,last=start+25,complete=True,reason=None)
@@ -1165,18 +1211,18 @@ class QuotaTests(unittest.TestCase):
         runs=json.loads(runs_res.stdout)['runs']
         row=next(r for r in runs if r['session_id']=='cursor-hist-1')
         self.assertEqual(row['attributable_cents'],15)
-        self.assertEqual(row['shared_cents'],0)
+        self.assertIsNone(row['shared_cents'])
         self.assertEqual(row['settlement'],'final')
         self.assertIsNotNone(row['settled_at'])
         self.assertEqual(row['events'][0]['event_id'],'ce-1')
-        self.assertEqual(row['sources'][0]['source'],'cursor-api2')
+        self.assertIn('cursor-api2',[source['source'] for source in row['sources']])
         sum_res=self.command('summary','--by','agent')
         self.assertEqual(sum_res.returncode,0,sum_res.stdout+sum_res.stderr)
         groups=json.loads(sum_res.stdout)['groups']
         cur_group=next(g for g in groups if g['config']=={'agent':'cursor'})
         self.assertEqual(cur_group['attributable_cents'],15)
-        self.assertEqual(cur_group['consumption']['input']['median'],100)
-        self.assertEqual(cur_group['consumption']['output']['median'],40)
+        self.assertEqual(cur_group['consumption']['input']['median'],200)
+        self.assertEqual(cur_group['consumption']['output']['median'],80)
         int_res=self.command('intervals')
         self.assertEqual(int_res.returncode,0,int_res.stdout+int_res.stderr)
         cur_intervals=[i for i in json.loads(int_res.stdout)['intervals'] if i['pool_kind']=='cursor']

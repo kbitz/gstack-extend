@@ -52,6 +52,9 @@ def discover(store,context):
                         elif entry.is_file(follow_symlinks=False) and entry.name.endswith('.jsonl'):
                             filekey=store.digest(entry.path,'file')
                             previous=store.get('file',filekey,{})
+                            if previous.get('agent',agent)!=agent:
+                                filekey=store.digest([agent,entry.path],'file')
+                                previous=store.get('file',filekey,{})
                             previous.update(key=filekey,path=entry.path,root=root,agent=agent,discovered_at=previous.get('discovered_at',now()))
                             store.put('file',filekey,previous)
             except OSError:
