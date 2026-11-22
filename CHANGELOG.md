@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.110.0] - 2026-11-22
+
+### Changed
+
+- With quota enabled, the retired Cursor quota commands and flags exit with usage status 2.
+- `gstack-extend doctor quota` omits `unsettled_cursor_rows` from its v1 JSON.
+- Existing quota stores load and unfiltered `gstack-extend quota runs` can show stored Cursor rows.
+- New telemetry ignores Cursor markers and `--agent cursor`, and historical Cursor rows remain valid.
+- Telemetry helper lookup drops the former Cursor and OpenCode default directories.
+
+### Removed
+
+- Removed the Cursor quota reader, cost accounting, and settlement paths (removing `gstack-extend quota settle`, `--cursor-projects-dir`, `--agent cursor`, `--pool cursor` and `cursor:*`, `gstack-extend quota probe cursor`, and `unsettled_cursor_rows` in `gstack-extend quota doctor`), and stopped classifying new telemetry runs as Cursor (removing `--agent cursor`, `CURSOR_CONVERSATION_ID` fingerprinting, `CURSOR_SDK_REASONS`, and gstack helper lookup under `~/.config/opencode/skills/gstack/bin` and `~/.cursor/skills/gstack/bin`).
+
+### Upgrade notes
+
+- Under the 0.x policy this is an incompatible CLI change because `gstack-extend quota settle`, `gstack-extend quota probe cursor`, `--cursor-projects-dir`, `--agent cursor`, and `--pool cursor` now exit with status 2, and telemetry `--agent cursor` is ignored as an invalid harness; existing quota stores and historical telemetry rows carrying `cursor` still load and validate without error under schema version 4, with stored Cursor quota runs listed verbatim as stored in `gstack-extend quota runs` and omitted from aggregation, interval calculation, or settlement.
+
 ## [0.109.1] - 2026-11-22
 
 ### Fixed
