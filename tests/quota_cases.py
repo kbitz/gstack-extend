@@ -650,7 +650,19 @@ class QuotaTests(unittest.TestCase):
             self.assertIsNone(row['event_count'])
             self.assertIsNone(row['consumption'])
 
+        # Discovery can commit a newer root inventory before parsing its files.
+        with self.store.transaction():
+            self.store.put('inventory','cursor-root',dict(agent='cursor',root=root,complete=True,as_of=now(),queue=[]))
+            self.store.put('file','cursor-file',dict(agent='cursor',root=root,complete=True,checked_at=start))
+        result=self.command('intervals')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        row,=json.loads(result.stdout)['intervals']
+        self.assertFalse(row['complete'])
+        self.assertIsNone(row['event_count'])
+
     def test_historical_cursor_raw_events_remain_visible_in_run_and_summary(self):
+        from quota.cli import get_runs
+
         start=now()
         end=start+60
         pool=self.store.pool('cursor','stored-owner')
@@ -685,6 +697,8 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(group['consumption']['input']['median'],100)
         self.assertEqual(self.store.get('run',key),row)
 
+        args=parser().parse_args(['runs'])
+        projected,=get_runs(self.store,args,self.context)['runs']
         with self.store.transaction():
             self.store.put('run',key,projected)
             fact=self.store.get('cursor_event','history-charge')
@@ -694,6 +708,34 @@ class QuotaTests(unittest.TestCase):
         group,=json.loads(summary.stdout)['groups']
         self.assertEqual(group['attributable_cents'],18)
         self.assertEqual(self.store.get('run',key),projected)
+
+        # A second stage can have attached after the first snapshot was finalized.
+        settled,=get_runs(self.store,args,self.context)['runs']
+        other=dict(lifecycle,session_id='other-run')
+        with self.store.transaction():
+            self.store.put('run',key,settled)
+            self.store.put('state','other-run',other)
+        result=self.command('runs')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        runs=json.loads(result.stdout)['runs']
+        self.assertEqual(len(runs),2)
+        for row in runs:
+            self.assertIsNone(row['attributable_cents'])
+            self.assertEqual(row['shared_cents'],18)
+
+        # A saved provider revision can move a previously exclusive charge.
+        self.advance(150)
+        with self.store.transaction():
+            self.store.put('state','other-run',dict(other,started_at=start+120,ended_at=start+180,lease_at=start+180))
+            self.store.put('cursor_event','history-charge',dict(fact,revision=2,event_ts=start+140,turn_start=start+130,
+                                                               turn_end=start+150,last_read_at=start+500,charged_cents=25))
+        result=self.command('runs')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        runs={row['session_id']:row for row in json.loads(result.stdout)['runs']}
+        self.assertEqual([event['event_id'] for event in runs['historical-run']['events']],['later-charge'])
+        self.assertEqual(runs['historical-run']['attributable_cents'],3)
+        self.assertEqual(runs['other-run']['attributable_cents'],25)
+        self.assertEqual(self.store.get('run',key),settled)
 
     def test_transport_reason_mapping_and_schema_failures(self):
         from quota.readers.transport import response
@@ -1045,6 +1087,8 @@ class QuotaTests(unittest.TestCase):
                   boundary=False,complete=True,why=[],turn_evidence='cursor-sdk')
         with self.store.transaction():
             self.store.put('state','run-a',legacy_state)
+            placeholder,=ledger.run_rows(self.store,legacy_state,dict(roots=[],complete=True))
+            self.store.put('run',json.dumps(['run-a','cursor',pool]),placeholder)
             self.store.put('source',source['key'],source)
             self.store.put('usage',fact['id'],fact)
         runs_res=self.command('runs')
@@ -1068,8 +1112,15 @@ class QuotaTests(unittest.TestCase):
         planted=self.home/'.cursor/projects/workspace-project/agent-transcripts/conv-planted/conv-planted.txt'
         planted.parent.mkdir(parents=True)
         planted.write_text('user:\nplanted cursor transcript\n')
+        legacy_file=dict(agent='cursor',root=str(self.home/'.cursor/projects'),path=str(planted),key='legacy-file')
+        with self.store.transaction():
+            self.store.put('file','legacy-file',legacy_file)
         coverage=scan(self.store,self.context)
         self.assertFalse(any(r['agent']=='cursor' for r in coverage['roots']))
+        self.assertEqual(self.store.all('source'),[])
+        # A supported host can explicitly reuse the same root path.
+        scan(self.store,dict(self.context,claude_config_dir=str(self.home/'.cursor')))
+        self.assertEqual(self.store.get('file','legacy-file'),legacy_file)
         self.assertEqual(self.store.all('source'),[])
         start=now()
         pool=self.store.pool('cursor','stored-owner')

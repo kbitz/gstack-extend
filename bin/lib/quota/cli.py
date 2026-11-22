@@ -140,6 +140,7 @@ def coverage_for(store,context,cache):
 
 def get_runs(store,args,context):
     cache={}
+    native_cursor_rows={}
     coverage=coverage_for(store,context,cache)
     if args.active:
         rows=[]
@@ -156,12 +157,14 @@ def get_runs(store,args,context):
             own_coverage=coverage_for(store,state['metadata']['context'],cache)
             current=run_rows(store,state,own_coverage)
             for row in current:
-                previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==(row['session_id'],row['pool_kind'],row['pool'])),{})
-                if row['pool_kind']=='cursor' and previous:
-                    rows.append(dict(previous))
-                    continue
+                key=(row['session_id'],row['pool_kind'],row['pool'])
+                previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==key),{})
                 row['local_persisted_at']=previous.get('local_persisted_at') or (store.get('receipt',state['session_id']+':finish') or store.get('receipt',state['session_id']+':abandon') or {}).get('local_persisted_at')
                 row['lifecycle']='interrupted' if state.get('outcome')=='interrupted' else 'recorded'
+                if row['pool_kind']=='cursor' and previous.get('events'):
+                    native_cursor_rows[row['session_id'],row['pool']]=row
+                    rows.append(dict(previous))
+                    continue
                 rows.append(row)
         covered={(r['session_id'],r['pool_kind'],r['pool']) for r in rows}
         rows.extend(r for r in stored if (r['session_id'],r['pool_kind'],r['pool']) not in covered)
@@ -173,11 +176,11 @@ def get_runs(store,args,context):
             if r.get('session_id'):
                 provenance[r['session_id']]=r
     if provenance:
-        for row in rows:
+        for row in [*rows,*native_cursor_rows.values()]:
             for field in ('stage','agent','model','effort','route'):
                 if row.get(field) is None:
                     row[field]=provenance.get(row['session_id'],{}).get(field)
-    rows=project_runs(store,rows)
+    rows=project_runs(store,rows,native_cursor_rows)
     resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending'}
     rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved]
     return dict(v=1,runs=[r for r in rows if matches(r,args)],as_of=now(),coverage=coverage)

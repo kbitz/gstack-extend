@@ -46,9 +46,19 @@ def meter_change(before,after,left,right):
 
 
 def _cursor_inventory(store):
-    incomplete={row['root'] for row in store.all('file') if row.get('agent')=='cursor' and not row.get('complete')}
-    return [(row['root'],row.get('as_of',0),row.get('complete',False) and row['root'] not in incomplete)
-            for row in store.all('inventory') if row.get('agent')=='cursor']
+    earliest_checkpoint={}
+    for row in store.all('file'):
+        if row.get('agent')=='cursor':
+            root=row['root']
+            checked_at=row.get('checked_at',-1) if row.get('complete') else -1
+            earliest_checkpoint[root]=min(earliest_checkpoint.get(root,checked_at),checked_at)
+    inventories=[]
+    for row in store.all('inventory'):
+        if row.get('agent')=='cursor':
+            root,as_of=row['root'],row.get('as_of',0)
+            complete=row.get('complete',False) and earliest_checkpoint.get(root,as_of)>=as_of
+            inventories.append((root,as_of,complete))
+    return inventories
 
 
 def interval(store,before,after,coverage,cursor_reads=None,cursor_inventory=None):

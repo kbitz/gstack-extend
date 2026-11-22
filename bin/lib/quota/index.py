@@ -101,8 +101,8 @@ def _scan(store,context):
         reports,operations=discover(store,context)
     deadline=time.monotonic()+budget(2)
     read_bytes,malformed=0,0
-    active_roots={r['root'] for r in reports}
-    files=sorted((f for f in store.all('file') if f['root'] in active_roots),key=lambda f:f.get('checked_at',0))
+    active_roots={(r['agent'],r['root']) for r in reports}
+    files=sorted((f for f in store.all('file') if (f['agent'],f['root']) in active_roots),key=lambda f:f.get('checked_at',0))
     visited=set()
     stopped_early=False
     for file in files:
@@ -211,7 +211,7 @@ def _scan(store,context):
             file.update(complete=False,reason='source_unreadable',checked_at=now())
             with store.transaction():
                 store.put('file',file['key'],file)
-    indexed=[f for f in store.all('file') if f['root'] in active_roots]
+    indexed=[f for f in store.all('file') if (f['agent'],f['root']) in active_roots]
     if stopped_early:
         for report in reports:
             if any(f['root']==report['root'] and f['key'] not in visited for f in files):

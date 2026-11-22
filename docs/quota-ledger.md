@@ -191,7 +191,10 @@ already in a store stay readable via unfiltered `quota runs`, `quota summary`,
 `quota intervals`, and `doctor quota` without losing previously settled fields.
 Runs and summaries can still join saved billing events to saved lifecycle and
 source records when a run was never settled. Historical intervals need saved
-local scan coverage through the interval end as well as billing-event coverage.
+local inventory and file checkpoints through the interval end as well as
+billing-event coverage. When a store has several retired roots and their
+coverage differs, incomplete coverage precludes calibration. Observed events
+remain visible in those intervals.
 
 ## Troubleshooting
 

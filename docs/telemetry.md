@@ -2183,6 +2183,7 @@ support was dropped on 2026-11-21); `CURSOR_*` environment variables and
 `--agent cursor` / `--agent opencode` are ignored, while existing historical
 rows remain valid against `docs/stage-runs.schema.json` and readable in
 `report`.
+`CURSOR_AGENT` alone no longer sets `route: "cli"` for Claude Code or Codex.
 
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows

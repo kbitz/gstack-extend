@@ -87,7 +87,7 @@ def _relationships(store, facts, sources, at):
     return links
 
 
-def _project(store, row, observed):
+def _project(store, row, observed, at):
     events = [link for _, link, _ in observed]
     sessions = {fact['conversation_hash'] for fact, _, _ in observed}
     sources = [source for source in row['sources'] if source.get('source') != 'cursor-api2'
@@ -101,27 +101,57 @@ def _project(store, row, observed):
                             status='partial' if why else 'ok', reason=why[0] if why else None, why=why,
                             consumption=aggregate([fact]), event_ids=[fact['id']], observed_through=fact['event_ts'],
                             complete=fact['complete'] and not fact['ambiguous'], outlived_stage=link['shared_turn']))
-    final = all(event['settlement'] == 'final' for event in events)
-    expired = any(event['settlement'] == 'expired' for event in events)
+    final = bool(events) and all(event['settlement'] == 'final' for event in events)
+    expired = _expired(row, at)
     why = set(row.get('why', [])) - {'expired', 'pending_settlement', 'no_usage'}
     why.update(reason for event in events for reason in event['why'])
+    if not sources:
+        why.add('no_usage')
+        if expired:
+            why.add('expired')
     strengths = {'exact': 3, 'turn': 2, 'window': 1, 'unknown': 0}
     attributable = [event['attributable_cents'] for event in events if event['attributable_cents'] is not None]
     shared = [event['shared_cents'] for event in events if event['shared_cents'] is not None]
+    lifecycle = row['lifecycle']
+    if lifecycle == 'settled':
+        lifecycle = 'interrupted' if row.get('outcome') == 'interrupted' else 'recorded'
     return dict(row, events=events, sources=sources, consumption=aggregate(facts) if facts else None,
-                attribution=min((source['attribution'] for source in sources), key=strengths.__getitem__),
+                attribution=min((source['attribution'] for source in sources), key=strengths.__getitem__, default='unknown'),
                 attributable_cents=sum(attributable) if attributable else None, shared_cents=sum(shared) if shared else None,
-                revision=max(event['revision'] for event in events),
+                revision=max((event['revision'] for event in events), default=row.get('revision', 1)),
                 settlement='final' if final else 'expired' if expired else 'provisional',
-                lifecycle='settled' if final else 'expired' if expired else row['lifecycle'],
+                lifecycle='settled' if final else 'expired' if expired else lifecycle,
                 settled_at=max((fact.get('last_read_at', 0) for fact, _, _ in observed)) if final else None,
                 why=sorted(why))
 
 
-def project_runs(store, rows):
+def _keep_snapshot(store, row, observed, facts, at):
+    saved = {event['event_id']: event for event in row.get('events', [])}
+    if not saved:
+        return not observed
+    linked = {link['event_id']: link for _, link, _ in observed}
+    for event_id in saved.keys() - linked.keys():
+        # An unmatched row may still be the only record of its attribution.
+        # Supersede it only when a later saved revision proves non-overlap.
+        fact = facts.get(event_id)
+        if not fact or fact['ambiguous'] or fact['revision'] <= saved[event_id].get('revision', fact['revision']):
+            return True
+        start, end, _ = boundaries(store, fact)
+        if start is None or end is None or (end > row['started_at'] and start < (row.get('ended_at') or at)):
+            return True
+    if row['settlement'] != 'final' or saved.keys() != linked.keys():
+        return False
+    return all(link['revision'] <= saved[event_id].get('revision', link['revision'])
+               and link['shared_turn'] == saved[event_id].get('shared_turn', link['shared_turn'])
+               and link['other_session_ids'] == saved[event_id].get('other_session_ids', link['other_session_ids'])
+               for event_id, link in linked.items())
+
+
+def project_runs(store, rows, native_rows):
     at = now()
     facts = store.all('cursor_event')
     links = _relationships(store, facts, store.all('source'), at) if facts else {}
+    by_id = {fact['id']: fact for fact in facts}
     cursor_rows = {(row['session_id'], row['pool']): row for row in rows if row['pool_kind'] == 'cursor'}
     templates = {}
     for row in rows:
@@ -129,24 +159,20 @@ def project_runs(store, rows):
         if row['pool_kind'] == 'cursor' and (template['pool_kind'] != 'cursor' or row['pool'] == 'pending'):
             templates[row['session_id']] = row
     projected = {}
-    for (sid, pool), observed in links.items():
+    for sid, pool in dict.fromkeys((*links, *cursor_rows)):
         if sid not in templates:
             continue
-        previous = cursor_rows.get((sid, pool))
-        if previous and previous.get('settlement') == 'final':
-            # Preserve the settled snapshot unless the stored facts can explain
-            # every old event and also contain an addition or later revision.
-            recorded = {event['event_id']: event for event in previous.get('events', [])}
-            current = {link['event_id']: link for _, link, _ in observed}
-            if not recorded.keys() <= current.keys() or not any(
-                    event_id not in recorded or event['revision'] > recorded[event_id].get('revision', event['revision'])
-                    for event_id, event in current.items()):
-                continue
+        key = sid, pool
+        observed = links.get(key, ())
+        previous = cursor_rows.get(key)
+        if previous and _keep_snapshot(store, previous, observed, by_id, at):
+            continue
         if pool == 'pending' and not previous:
             continue
         template = templates[sid]
-        projected[sid, pool] = _project(store, previous or dict(
-            template, pool_kind='cursor', pool=pool, sources=[], why=[], resolves_pending=template['pool'] == 'pending'), observed)
+        native = native_rows.get(key) or previous or dict(
+            template, pool_kind='cursor', pool=pool, sources=[], why=[], resolves_pending=template['pool'] == 'pending')
+        projected[key] = _project(store, native, observed, at)
 
     result = []
     for row in rows:
