@@ -4,9 +4,8 @@ from .usage import aggregate
 
 def activity_groups(store,sessions):
     """Known children and attached sessions are one local activity family."""
-    from .ledger import is_cursor_attachment, source_parents, source_relationship
+    from .ledger import source_relationship
     sources=store.all('source')
-    source_index=source_parents(sources)
     sources=[s for s in sources if s.get('agent')!='cursor']
     states=store.all('state')
     parents={session:session for session in sessions if session}
@@ -21,13 +20,13 @@ def activity_groups(store,sessions):
     for source in sources:
         join(source.get('session'),source.get('parent'))
     for state in states:
-        attached=[a['session'] for a in state['attachments'] if not is_cursor_attachment(a,source_index)]
+        attached=[a['session'] for a in state['attachments'] if a['agent']!='cursor']
         if not attached:
             continue
         for session in attached[1:]:
             join(session,attached[0])
         for source in sources:
-            relationship=source_relationship(source,state,states,sources,source_index)
+            relationship=source_relationship(source,state,states,sources)
             if relationship and relationship[1]!='unknown':
                 join(source.get('session'),attached[0])
     return {find(session) for session in sessions if session}

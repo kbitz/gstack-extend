@@ -48,21 +48,14 @@ def attach_identity(store,state,args):
         state['attachments'].append(item)
 
 
-def is_cursor_attachment(attachment, source_index):
-    agent=attachment['agent']
-    session=attachment['session']
-    return (agent=='cursor' or (agent=='unknown' and ('cursor',session) in source_index and
-                               not any((kind,session) in source_index for kind in (*KINDS,'grok'))))
-
-
-def is_legacy_cursor_state(state, source_index=()):
+def is_legacy_cursor_state(state):
     agent=state.get('metadata',{}).get('agent')
     attachments=state.get('attachments',[])
     finishing=state.get('finishing')
     return (agent=='cursor' or
             (agent in (None,'unknown') and bool(attachments) and
-             all(is_cursor_attachment(a,source_index) for a in attachments)) or
-            (finishing is not None and is_legacy_cursor_state(finishing,source_index)))
+             all(a['agent']=='cursor' for a in attachments)) or
+            (finishing is not None and is_legacy_cursor_state(finishing)))
 
 
 def lifecycle(store,args,context):
@@ -73,11 +66,8 @@ def lifecycle(store,args,context):
     with store.lock('run:'+sid):
         receipt=store.get('receipt',sid+':'+phase)
         state=store.get('state',sid)
-        if state:
-            attachments=state['attachments']+(state.get('finishing') or {}).get('attachments',[])
-            source_index=source_parents(store.all('source')) if any(a['agent']=='unknown' for a in attachments) else ()
-            if is_legacy_cursor_state(state,source_index):
-                raise QuotaError('conflict','This session belongs to the retired Cursor adapter.')
+        if state and is_legacy_cursor_state(state):
+            raise QuotaError('conflict','This session belongs to the retired Cursor adapter.')
         incoming=metadata(args,context)
         incoming['initial_harness_session']=store.digest(args.harness_session,'session') if args.harness_session else None
         if phase=='start':
@@ -186,8 +176,8 @@ def inside(path,root):
         return False
 
 
-def source_relationship(source,state,all_states,all_sources=None,source_index=()):
-    own={a['session'] for a in state['attachments'] if not is_cursor_attachment(a,source_index)}
+def source_relationship(source,state,all_states,all_sources=None):
+    own={a['session'] for a in state['attachments'] if a['agent']!='cursor'}
     start,end=state['started_at'],state.get('ended_at') or now()
     if source.get('session') in own:
         return 'own','exact',[]
@@ -221,7 +211,7 @@ def uses_api_auth(source,state,sources,parents=None):
     if state['metadata'].get('auth')!='api':
         return False
     parents=source_parents(sources) if parents is None else parents
-    attachments=[a for a in state['attachments'] if not is_cursor_attachment(a,parents)]
+    attachments=[a for a in state['attachments'] if a['agent']!='cursor']
     own={a['session'] for a in attachments if a['agent'] in (agent,'unknown')}
     session=source.get('session')
     if session in {a['session'] for a in attachments}:
@@ -253,7 +243,7 @@ def run_rows(store,state,coverage):
     parents=source_parents(all_sources)
     all_sources=[s for s in all_sources if s.get('agent')!='cursor']
     for source in all_sources:
-        relation=source_relationship(source,state,all_states,all_sources,parents)
+        relation=source_relationship(source,state,all_states,all_sources)
         if not relation:
             continue
         kind,attribution,why=relation
@@ -323,7 +313,7 @@ def run_rows(store,state,coverage):
                  roots=coverage['roots'],complete=coverage['complete'] and bool(sources) and all(s['complete'] for s in sources),
                  as_of=now(),observed_through=max((s['observed_through'] for s in sources),default=None),
                  stale=now()-max(state['lease_at'],max((s['observed_through'] for s in sources),default=0))>48*3600,
-                 paused=sum(not is_cursor_attachment(a,parents) for a in state['attachments'])>1,
+                 paused=sum(a['agent']!='cursor' for a in state['attachments'])>1,
                  outcome=state.get('outcome'),fixture=state['fixture'])
         row['model_vendor']=model_vendor(row.get('model'))
         row['metadata_conflicts']=state.get('metadata_conflicts',{})

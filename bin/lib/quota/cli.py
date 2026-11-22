@@ -13,7 +13,7 @@ from .common import (CLASSES, KINDS, QuotaError, budget, check_fixture, config_e
 from .identity import identity
 from .index import scan
 from .intervals import interval, intervals
-from .ledger import is_legacy_cursor_state, lifecycle, run_rows, source_parents
+from .ledger import is_legacy_cursor_state, lifecycle, run_rows
 from .samples import refresh
 from .store import Store, record_refusal
 
@@ -140,8 +140,7 @@ def get_runs(store,args,context,include_legacy=True):
     cache={}
     coverage=coverage_for(store,context,cache)
     states=store.all('state')
-    source_index=source_parents(store.all('source'))
-    legacy_sessions={state['session_id'] for state in states if is_legacy_cursor_state(state,source_index)}
+    legacy_sessions={state['session_id'] for state in states if is_legacy_cursor_state(state)}
 
     def legacy_run(row):
         sources=row.get('sources') or []
@@ -277,8 +276,7 @@ def doctor(store,context,warnings,args):
                           executable_available=executable_available,credential_source='fixture' if fixture_dir() else 'vendor-managed account',
                           coverage=len(ok)/len(rows) if rows else None,attempts=len(rows),last_ok_age_s=max(0,now()-max(s['observed_at'] for s in ok)) if ok else None,
                           reasons=reasons,diagnostics=[explanation(code) for code in reasons],drift_count=sum(len(s['unknown_fields']) for s in rows)))
-    source_index=source_parents(store.all('source'))
-    states=[s for s in store.all('state') if not is_legacy_cursor_state(s,source_index)]
+    states=[s for s in store.all('state') if not is_legacy_cursor_state(s)]
     try:
         from telemetry import read_capped
         refusals=read_capped(store.root/'quota-refusals',1 << 20).count(b'\n')
