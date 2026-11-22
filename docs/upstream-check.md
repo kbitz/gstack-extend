@@ -251,11 +251,16 @@ The inventory comes from this extension's own source, never a second copy:
   the third (following "and, where that `/review` contains any line of the next
   list, it still contains every line of it,") are checked all-or-none in the
   installed `/review` skill file, reporting `OK` plus
-  `INFO not-declared review-and-prep.attacker.adversarial-item <path>` when neither
-  line is present. The second `adversarial-item` line is also an overlap anchor:
-  a change to it while `adversarial-pass` is present drifts both IDs, each with
-  its own effect. They are listed by `attackerInventory`, a separate check
-  (`review-and-prep.attacker`). Anchor IDs read
+  `INFO not-declared review-and-prep.attacker.adversarial-item <path>` only when
+  `adversarial-pass` and both dispatch wordings are absent. The second
+  `adversarial-item` anchor accepts either the Claude copy's Agent wording
+  (`an Agent dispatch for the adversarial pass, its prompt including`) or the
+  Codex copy's `spawn_agent` wording (``a `spawn_agent` (`task_name: adversarial`), its prompt including``),
+  written inline with `or` and a double-backtick span in `skills/review-and-prep.md`.
+  The second `adversarial-item` slot is also the fifth overlap review anchor:
+  a change that matches neither wording while `adversarial-pass` is present drifts
+  both IDs, each with its own effect. They are listed by `attackerInventory`, a
+  separate check (`review-and-prep.attacker`). Anchor IDs read
   `review-and-prep.attacker.<red-team|adversarial|adversarial-item>.<n>`, nine in
   all. `bin/review-delegate` repeats the `red-team` or `adversarial` anchors when
   asked to check or run those parts, and also checks a shape this checker does
@@ -289,7 +294,10 @@ The inventory comes from this extension's own source, never a second copy:
 - **Overlap anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation (`first-cycle=overlap`).**`),
   in two lists each opened by "byte for byte,": the five after the first are
-  checked as raw bytes in the installed `/review` skill file, and the three after
+  checked as raw bytes in the installed `/review` skill file (with the fifth
+  accepting either the Claude copy's Agent wording or the Codex copy's
+  `spawn_agent` wording, written inline with `or` and a double-backtick span in
+  `skills/review-and-prep.md`), and the three after
   the second (following "and its adversarial instructions
   (`review/sections/adversarial.md` in the nested layout, the review file itself
   in the sibling layout) still contain,") in `<root>/review/sections/adversarial.md`
@@ -506,8 +514,8 @@ and the test-gap routing value.
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
 | Delegation anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Fold anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
-| Overlap anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
-| Attacker-part anchors | `297f50c7e1d46aab1404f5f2e8a9584af76ad6b2` | 1.97.0.0 |
+| Overlap anchors | `b3323f47b8cb6ec074bc755d3b108983a816007a` | 1.102.2.0 |
+| Attacker-part anchors | `b3323f47b8cb6ec074bc755d3b108983a816007a` | 1.102.2.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
 ## Measured startup profile

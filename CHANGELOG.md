@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.109.1] - 2026-11-22
+
+### Fixed
+
+- `/review-and-prep` and `bin/upstream-check` now accept both the Claude and Codex `adversarial-pass` dispatch wordings in gstack `1.102.2.0`, restoring delegated adversarial review and first-cycle overlap on Codex while keeping anchor-changed fallback when neither wording matches.
+- Review preparation and the upstream checker now accept either the Claude or Codex wording for the adversarial dispatch anchor.
+
 ## [0.109.0] - 2026-11-22
 
 ### Removed

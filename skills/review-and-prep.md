@@ -1423,7 +1423,7 @@ its adversarial instructions (`review/sections/adversarial.md` in the nested lay
 and `findings** are CRITICAL and are queued for the parent's Fix-First handling at Step 5`,
 and, where that `/review` contains any line of the next list, it still contains every line of it, byte for byte,
 `adversarial-pass`
-and `an Agent dispatch for the adversarial pass, its prompt including`
+and `an Agent dispatch for the adversarial pass, its prompt including` or ``a `spawn_agent` (`task_name: adversarial`), its prompt including``
 Check each with `grep -F`.
 
 Read [the delegate contract](https://github.com/kbitz/gstack-extend/blob/main/docs/delegated-review.md)
@@ -1440,7 +1440,14 @@ named, using `review/sections/adversarial.md` in the nested layout or the review
 file itself in the sibling layout) once. The item list matches when that
 `/review` contains all of its lines or none of them, and none means it declares
 no `specialists-dispatched` item; list (c) in **Activation (attacker parts)**
-matches under the same all-or-none rule for `adversarial-pass`.
+matches under the same all-or-none rule for `adversarial-pass`: its second item
+matches when `/review` contains either host's dispatch wording (single-quote
+patterns containing backticks when checking so a shell does not expand them), so
+list (c) matches when `/review` contains `adversarial-pass` plus either dispatch
+wording, or neither `adversarial-pass` nor either dispatch wording (`not
+declared`); matching `adversarial-pass` with neither dispatch wording, or either
+dispatch wording without `adversarial-pass`, falls back to host review with
+`delegation: inactive — <reason>` naming the changed anchor.
 `delegation: active` also requires the attacker lists in **Activation (attacker
 parts)** for each named attacker part: list (a) for `red-team`, and lists (b)
 and (c) for `adversarial`. Exit 0 with every required anchor matching records
@@ -1758,7 +1765,7 @@ change, record that there and stop; never edit an upstream file.
 `Do not edit reviewed source until Step 5.`
 `Before edits, every dispatched reader/writer must have returned or be confirmed`
 `Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`
-`an Agent dispatch for the adversarial pass, its prompt including`
+`an Agent dispatch for the adversarial pass, its prompt including` or ``a `spawn_agent` (`task_name: adversarial`), its prompt including``
 and its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain, byte for byte,
 `Read the diff for this branch. First list changed files:`
 `Wait until every started task has finished or is confirmed stopped.`
