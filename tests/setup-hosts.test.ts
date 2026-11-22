@@ -3111,6 +3111,18 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       writeFileSync(join(relPtr, 'SKILL.md'), 'rel ptr\n');
       writeFileSync(join(relPtr, '.extend-root'), './relative/path\n');
 
+      // A malformed pointer cannot establish that a checkout was deleted.
+      const ambiguousOwners = [
+        ['gstack-extend-init', `${otherCheckout}\r\n`],
+        ['gstack-extend-upgrade', `${baseTmp}/missing-ancestor/../other-co-${host}\n`],
+      ] as const;
+      for (const [skill, pointer] of ambiguousOwners) {
+        const dir = join(root, skill);
+        mkdirSync(dir);
+        writeFileSync(join(dir, 'SKILL.md'), 'KEEP COPY\n');
+        writeFileSync(join(dir, '.extend-root'), pointer);
+      }
+
       // Unknown skill name -> kept and reported, never deleted
       const unknownSkill = join(root, 'custom-skill-name');
       mkdirSync(unknownSkill, { recursive: true });
@@ -3144,6 +3156,11 @@ describe('retired hosts: Cursor and OpenCode (Track 92A)', () => {
       expect(readFileSync(join(emptyPtr, 'SKILL.md'), 'utf8')).toBe('empty ptr\n');
       expect(readFileSync(join(relPtr, 'SKILL.md'), 'utf8')).toBe('rel ptr\n');
       expect(r.stderr).toContain('unknown owner: invalid .extend-root pointer');
+      for (const [skill, pointer] of ambiguousOwners) {
+        const dir = join(root, skill);
+        expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('KEEP COPY\n');
+        expect(readFileSync(join(dir, '.extend-root'), 'utf8')).toBe(pointer);
+      }
       expect(readFileSync(join(unknownSkill, 'SKILL.md'), 'utf8')).toBe('unknown skill\n');
       expect(r.stderr).toContain('unknown skill name');
       expect(readFileSync(join(userOwned, 'SKILL.md'), 'utf8')).toBe('USER OWNED\n');

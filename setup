@@ -418,7 +418,11 @@ retired_copy_owner() {
     RETIRED_OWNER=this_checkout
   elif [ -f "$checkout/setup" ] && [ -f "$checkout/bin/update-check" ]; then
     RETIRED_OWNER=other_checkout
-  elif [[ "$checkout" != *$'\n'* ]] && [ ! -e "$checkout" ] && [ ! -L "$checkout" ]; then
+  elif [ ! -e "$checkout" ] && [ ! -L "$checkout" ]; then
+    # Only a path setup could have recorded can establish missing ownership.
+    # Keep ambiguous line endings and noncanonical spellings for inspection.
+    case "$checkout" in *$'\r'*|*$'\n'*) return 0 ;; esac
+    [ "$(lex_abs "$checkout")" = "$checkout" ] || return 0
     # Shell file tests cannot distinguish a missing path from denied access.
     # A final dangling symlink also stays unknown rather than orphaned.
     if bun --no-env-file --config=/dev/null -e '
