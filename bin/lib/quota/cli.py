@@ -136,26 +136,30 @@ def coverage_for(store,context,cache):
     return cache[key]
 
 
-def is_legacy_cursor_run(row):
-    return row.get('pool_kind')=='cursor' or row.get('agent')=='cursor'
-
-
-def get_runs(store,args,context):
+def get_runs(store,args,context,include_legacy=True):
     cache={}
     coverage=coverage_for(store,context,cache)
+    states=store.all('state')
+    legacy_sessions={state['session_id'] for state in states if is_legacy_cursor_state(state)}
+
+    def legacy_run(row):
+        sources=row.get('sources') or []
+        return (row.get('session_id') in legacy_sessions or row.get('pool_kind')=='cursor' or
+                row.get('agent')=='cursor' or (bool(sources) and all(s.get('agent')=='cursor' for s in sources)))
+
     if args.active:
         rows=[]
-        for state in store.all('state'):
-            if is_legacy_cursor_state(state):
+        for state in states:
+            if state['session_id'] in legacy_sessions:
                 continue
             if state['ended_at'] is None and (not args.session_id or state['session_id']==args.session_id):
                 own_coverage=coverage_for(store,state['metadata']['context'],cache)
                 rows.extend(run_rows(store,state,own_coverage))
     else:
-        stored=store.all('run')
+        stored=[row for row in store.all('run') if include_legacy or not legacy_run(row)]
         rows=[]
-        for state in store.all('state'):
-            if is_legacy_cursor_state(state):
+        for state in states:
+            if state['session_id'] in legacy_sessions:
                 continue
             if state['ended_at'] is None or (args.session_id and state['session_id']!=args.session_id):
                 continue
@@ -163,7 +167,7 @@ def get_runs(store,args,context):
             current=run_rows(store,state,own_coverage)
             for row in current:
                 previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==(row['session_id'],row['pool_kind'],row['pool'])),{})
-                if is_legacy_cursor_run(previous):
+                if legacy_run(previous):
                     continue
                 row['local_persisted_at']=previous.get('local_persisted_at') or (store.get('receipt',state['session_id']+':finish') or store.get('receipt',state['session_id']+':abandon') or {}).get('local_persisted_at')
                 row['lifecycle']='interrupted' if state.get('outcome')=='interrupted' else 'recorded'
@@ -179,13 +183,13 @@ def get_runs(store,args,context):
                 provenance[r['session_id']]=r
     if provenance:
         for row in rows:
-            if is_legacy_cursor_run(row):
+            if legacy_run(row):
                 continue
             for field in ('stage','agent','model','effort','route'):
                 if row.get(field) is None:
                     row[field]=provenance.get(row['session_id'],{}).get(field)
-    resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending' and not is_legacy_cursor_run(r)}
-    rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved or is_legacy_cursor_run(r)]
+    resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending' and not legacy_run(r)}
+    rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved or legacy_run(r)]
     return dict(v=1,runs=[r for r in rows if matches(r,args)],as_of=now(),coverage=coverage)
 
 
@@ -194,12 +198,10 @@ def summary(store,args,context):
     if any(f not in ('stage','agent','model','effort','route','pool') for f in fields):
         raise QuotaError('usage','Invalid --by field.',2)
     args.active=False
-    rows=get_runs(store,args,context)['runs']
+    rows=get_runs(store,args,context,include_legacy=False)['runs']
     groups={}
     claimed=set()
     for row in sorted(rows,key=lambda r:(r['started_at'],r['session_id'],r['pool'])):
-        if is_legacy_cursor_run(row):
-            continue
         key=tuple(row.get(f) for f in fields)
         group=groups.setdefault(key,dict(config=dict(zip(fields,key)),sessions=set(),attribution=Counter(),settlement=Counter(),
                                         run_values={},model_values={},excluded=Counter(),attributable_cents=0,attributable_event_count=0))
@@ -208,6 +210,8 @@ def summary(store,args,context):
         group['settlement'][row['settlement']]+=1
         sources=[]
         for source in row['sources']:
+            if source.get('agent')=='cursor':
+                continue
             exclusions=set(source.get('why',[])) & {'ambiguous','shared_turn','identity_unknown','identity_changed'}
             if not source.get('complete'):
                 exclusions.add('partial_source')
@@ -218,7 +222,7 @@ def summary(store,args,context):
             else:
                 sources.append(source)
         ids={ident for s in sources for ident in s['event_ids']}-claimed
-        facts=store.get_many('usage',ids)
+        facts=[fact for fact in store.get_many('usage',ids) if fact.get('agent')!='cursor']
         if not facts:
             group['excluded']['no_usage_or_duplicate']+=1
         claimed|=ids

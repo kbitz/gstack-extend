@@ -52,8 +52,8 @@ def is_legacy_cursor_state(state):
     agent=state.get('metadata',{}).get('agent')
     attachments=state.get('attachments',[])
     finishing=state.get('finishing')
-    return (agent=='cursor' or state.get('start_metadata',{}).get('agent')=='cursor' or
-            (agent is None and bool(attachments) and all(a['agent']=='cursor' for a in attachments)) or
+    return (agent=='cursor' or
+            (agent in (None,'unknown') and bool(attachments) and all(a['agent']=='cursor' for a in attachments)) or
             (finishing is not None and is_legacy_cursor_state(finishing)))
 
 
@@ -193,6 +193,7 @@ def source_relationship(source,state,all_states,all_sources=None):
     if source.get('first') is None or not start<=source['first']<end or not inside(source.get('cwd'),state['metadata']['context']['repo_root']):
         return None
     eligible=[s for s in all_states if s['started_at']<=source['first']<(s.get('ended_at') or now()) and
+              (not is_legacy_cursor_state(s) or any(a['agent']!='cursor' for a in s['attachments'])) and
               inside(source.get('cwd'),s['metadata']['context']['repo_root'])]
     return 'child','window' if len(eligible)==1 else 'unknown', [] if len(eligible)==1 else ['ambiguous']
 
@@ -233,7 +234,7 @@ def run_rows(store,state,coverage):
     sid=state['session_id']
     start,end=state['started_at'],state.get('ended_at') or now()
     groups={}
-    all_states=[s for s in store.all('state') if not is_legacy_cursor_state(s)]
+    all_states=store.all('state')
     if not any(s['session_id']==sid for s in all_states):
         all_states.append(state)
     events=[e for e in store.usage_between(start,end) if e.get('agent')!='cursor']

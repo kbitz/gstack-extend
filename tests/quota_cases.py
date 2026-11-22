@@ -1108,6 +1108,70 @@ class QuotaTests(unittest.TestCase):
             self.store.put('state','run-a',state)
         self.assertEqual(ledger.lifecycle(self.store,self.args,self.context),receipt)
 
+    def test_unknown_agent_cursor_state_and_api_run_are_read_only(self):
+        sid='legacy-unknown-cursor'
+        stamp=now()
+        metadata=dict(agent='unknown',auth='api',context=self.context)
+        state=dict(session_id=sid,started_at=stamp,ended_at=None,lease_at=stamp,
+                   start_metadata=metadata,metadata=metadata,identities={},fixture=True,
+                   attachments=[dict(agent='cursor',session='legacy-cursor-session',attached_at=stamp)])
+        row=dict(v=1,session_id=sid,pool_kind='api',pool='pending',agent='unknown',
+                 auth='api',started_at=stamp,ended_at=stamp,sources=[],attribution='unknown',
+                 settlement='final',stage=None,model=None)
+        with self.store.transaction():
+            self.store.put('state',sid,state)
+            self.store.put('run',json.dumps([sid,'api','pending']),row)
+        analytics=self.dir/'state/analytics'
+        analytics.mkdir(exist_ok=True)
+        (analytics/'stage-runs.jsonl').write_text(json.dumps(dict(session_id=sid,stage='review',agent='claude',model='should-not-fill'))+'\n')
+
+        active=json.loads(self.command('runs','--active').stdout)['runs']
+        self.assertEqual(active,[])
+        from quota.cli import public
+        self.assertEqual(json.loads(self.command('runs').stdout)['runs'],public([row]))
+        self.assertEqual(json.loads(self.command('summary').stdout)['groups'],[])
+        result=self.command('sample','--session-id',sid,'--phase','finish')
+        self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+        self.assertEqual(json.loads(result.stdout)['error']['code'],'conflict')
+        self.assertEqual(self.store.get('state',sid),state)
+
+    def test_legacy_cursor_state_keeps_claude_api_facts_out_of_subscription(self):
+        from quota.samples import sample_one
+        before=sample_one(self.dir/'state','claude',self.context,'periodic')
+        self.args.auth='api'
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.write_claude(output=19)
+        self.advance(30)
+        self.args.phase='finish'
+        ledger.lifecycle(self.store,self.args,self.context)
+        after=sample_one(self.dir/'state','claude',self.context,'periodic',force=True)
+        state=self.store.get('state','run-a')
+        state['start_metadata']['agent']='cursor'
+        state['attachments'].append(dict(agent='cursor',session='legacy-cursor-session',attached_at=state['started_at']))
+        coverage=scan(self.store,self.context)
+        self.assertEqual(len(self.store.usage_between(before['observed_at'],after['observed_at'])),1)
+        for final_agent in ('claude','cursor'):
+            with self.subTest(final_agent=final_agent):
+                state['metadata']['agent']=final_agent
+                with self.store.transaction():
+                    self.store.put('state','run-a',state)
+                bracket=intervals.interval(self.store,before,after,coverage)
+                self.assertEqual(bracket['event_count'],0)
+                self.assertEqual(bracket['consumption'],[])
+
+    def test_unmarked_cursor_api_row_is_preserved_without_state(self):
+        from quota.cli import public
+        sid='legacy-api-row'
+        row=dict(v=1,session_id=sid,pool_kind='api',pool='api',agent=None,
+                 auth='api',started_at=now(),ended_at=now(),attribution='exact',settlement='final',
+                 sources=[dict(agent='cursor',attribution='exact',complete=True,event_ids=['old-fact'])])
+        with self.store.transaction():
+            self.store.put('run',json.dumps([sid,'api','api']),row)
+            self.store.put('usage','old-fact',dict(id='old-fact',agent='cursor',ts=now(),pool='api',
+                                                 model='legacy-model',tokens=dict(output=5)))
+        self.assertEqual(json.loads(self.command('runs').stdout)['runs'],public([row]))
+        self.assertEqual(json.loads(self.command('summary').stdout)['groups'],[])
+
     def test_cursor_modules_and_root_removed(self):
         self.assertFalse((ROOT/'bin/lib/quota/readers/cursor.py').exists())
         self.assertFalse((ROOT/'bin/lib/quota/cursor_cost.py').exists())

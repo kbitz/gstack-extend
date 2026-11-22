@@ -395,7 +395,10 @@ The marker stays in the fingerprint.
 one only within 24 hours. Resumable skills are unaffected. To finish an older
 non-resumable run, pass the original wrapper-issued session id and start epoch from
 that run's `GE_TELEMETRY: session=… start=…` line. Those values are not harness markers
-such as `CODEX_THREAD_ID`. A handoff written before per-invocation files sits at
+such as `CODEX_THREAD_ID`. When upgrading from an older build that included
+`CURSOR_CONVERSATION_ID` in a pending run's fingerprint, finish the run before
+upgrading or pass its original `--session-id` and `--start` if automatic
+adoption fails. A handoff written before per-invocation files sits at
 telemetry/<hash>.json. It is still read as a candidate (the pre-rule shape included), a
 finish that consumes it removes it, and a new start never writes it or replaces it.
 Reading it has no sunset. On downgrade, an older copy sees none of the per-invocation
@@ -2967,15 +2970,16 @@ shards only; earlier or unknown producer rows stay uncertified without their
 own implementation evidence. A Conductor Cursor row written on a SQLite-layout
 build, whose `producer_version` predates `0.36.7.0`, the first release that
 reads SQLite shards, shows a reader gap, not run evidence: its null model, null effort and
-`unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
-and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
-from a matching store record of any shape; those stayed null unless finish flags
-supplied them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
+`unknown` route say nothing about the run. The 0.36.2.0 repair could record
+`route` `unknown` for invalid or ambiguous store evidence. It also stopped
+copying model or effort from the store to explicit CLI rows
+(`CURSOR_INVOKED_AS`). Those values stayed null unless finish flags supplied
+them. The repair left the row schema, field order, source labels and finish flags
 unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
 treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
-Current finish can also fill otherwise-null CLI values from the requested variables;
-that fallback was added later.
+Later producers could also fill otherwise-null CLI values from the requested
+variables.
 
 <a id="cursor-ledger-recipe"></a>
 

@@ -1418,7 +1418,9 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(parsed.schema_version).toBe(4);
     expect(parsed.harnesses).not.toContain('cursor');
     const validate = compileSchema();
-    expect(validate({ ...quickstartRow(), agent: 'cursor', agent_source: 'detected' })).toBe(true);
+    for (const row of [historicalRow(), historicalV2Row(), historicalV3Row(), quickstartRow()]) {
+      expect(validate({ ...row, agent: 'cursor', agent_source: 'detected' })).toBe(true);
+    }
   });
 
   test('Cursor and quota documents retirement, omits cursor-sdk-transcript-unreadable, and retains historical anchors', () => {

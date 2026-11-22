@@ -4,9 +4,9 @@ from .usage import aggregate
 
 def activity_groups(store,sessions):
     """Known children and attached sessions are one local activity family."""
-    from .ledger import is_legacy_cursor_state, source_relationship
+    from .ledger import source_relationship
     sources=[s for s in store.all('source') if s.get('agent')!='cursor']
-    states=[s for s in store.all('state') if not is_legacy_cursor_state(s)]
+    states=store.all('state')
     parents={session:session for session in sessions if session}
     def find(value):
         parents.setdefault(value,value)
@@ -48,12 +48,12 @@ def interval(store,before,after,coverage):
     left,right=before['observed_at'],after['observed_at'] if after else now()
     pool=before['pool']
     all_events=[e for e in store.usage_between(left,right) if e.get('agent')!='cursor']
-    from .ledger import is_legacy_cursor_state, uses_api_auth, source_parents
+    from .ledger import uses_api_auth, source_parents
     sources=[s for s in store.all('source') if s.get('agent')!='cursor']
     parents=source_parents(sources)
     api_ids=set()
     for state in store.all('state'):
-        if state.get('metadata',{}).get('auth')!='api' or is_legacy_cursor_state(state):
+        if state.get('metadata',{}).get('auth')!='api':
             continue
         start,end=state['started_at'],state.get('ended_at') or right
         owned=[s['key'] for s in sources if uses_api_auth(s,state,sources,parents)]
