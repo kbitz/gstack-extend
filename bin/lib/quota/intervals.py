@@ -44,6 +44,16 @@ def meter_change(before,after,left,right):
                 below_resolution=below,why=why,resolution=after.get('resolution'))
 
 
+def _cursor_boundaries(store,fact):
+    if fact.get('evidence'):
+        return fact['turn_start'],fact['turn_end'],fact['evidence']
+    candidates=[e for e in store.usage_for_session(fact['conversation_hash']) if e.get('agent')=='cursor' and
+                e.get('turn_evidence') and e.get('start') is not None and e.get('end') is not None and e['start']<=fact['event_ts']<=e['end']]
+    if len(candidates)==1:
+        return candidates[0]['start'],candidates[0]['end'],candidates[0]['turn_evidence']
+    return None,None,None
+
+
 def interval(store,before,after,coverage,cursor_reads=None):
     left,right=before['observed_at'],after['observed_at'] if after else now()
     pool=before['pool']
@@ -83,14 +93,13 @@ def interval(store,before,after,coverage,cursor_reads=None):
     pending_cursor=[]
     contained=[]
     if before['pool_kind']=='cursor':
-        from .cursor_cost import boundaries
         reads=store.all('cursor_coverage') if cursor_reads is None else cursor_reads
         candidates=[entry for entry in reads if entry.get('pool')==pool and
                     entry.get('start',right)<=left and entry.get('end',left)>=right and entry.get('observed_at',left)>=right]
         feed=max(candidates,key=lambda entry:(entry['observed_at'],not entry['complete']),default={})
         feed_complete=feed.get('complete',False)
         for event in local_cursor:
-            start,end,_=boundaries(store,event)
+            start,end,_=_cursor_boundaries(store,event)
             if event['ambiguous'] or start is None or end is None or start<left or end>right:
                 cursor_unknown.append(event)
             else:

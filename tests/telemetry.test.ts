@@ -1566,17 +1566,17 @@ function provenanceRun(fix: TelemetryFixture, env: Record<string, string> = {}, 
 }
 
 describe('execution provenance', () => {
-  test('Cursor is detected with leaked outer markers and quota enabled never starts a sampler', () => {
+  test('Cursor markers are not classified as Cursor and quota enabled never starts a sampler', () => {
     const fix = makeTelemetryFixture('off');
     mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
     writeFileSync(join(fix.home, '.gstack-extend/config'), 'quota=on\n');
-    const env = { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-session', CURSOR_INVOKED_AS: 'cursor-agent', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'outer-session' };
-    const { row } = provenanceRun(fix, env, start => {
-      writeJsonl(join(fix.home, '.claude/projects/project/outer-session.jsonl'), [claudeTurn(start - 100, 'old', 'claude-fixture', 'high')]);
+    const env = { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-session', CURSOR_INVOKED_AS: 'cursor-agent' };
+    const { row } = provenanceRun(fix, env, () => {
       writeJsonl(join(fix.home, '.cursor/projects/project/agent-transcripts/cursor-session/transcript.jsonl'), [{ role: 'assistant', message: 'fixture' }]);
     });
-    expect(row).toMatchObject({ agent: 'cursor', route: 'cli', model: null, effort: null,
-      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown' });
+    expect(row).toMatchObject({ agent: null, route: 'unknown', model: null, effort: null,
+      agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown',
+      run_mode_source: 'no-harness', user_signals_source: 'no-harness' });
     expect(existsSync(join(fix.home, '.gstack-extend/quota'))).toBe(false);
     expect(fix.readJsonl()).toHaveLength(0);
   });
@@ -2265,8 +2265,8 @@ function cursorFinish(fix: TelemetryFixture, env: Record<string, string>, plant:
   return { finish, row: fix.readLedger().at(-1)!, epoch, cwd };
 }
 
-describe('Conductor Cursor store retirement (Track 73A)', () => {
-  test('finish with CURSOR_AGENT=1 never touches a planted Conductor Cursor store or sqlite3.connect, and leaves model/effort null with route unknown', () => {
+describe('Cursor classification and Conductor store retirement (Track 73A / Track 93B)', () => {
+  test('finish with CURSOR_AGENT=1 leaves agent null, never touches Conductor store or ~/.cursor/projects, and removes cursor_logs', () => {
     const fix = makeTelemetryFixture('off');
     const cwd = cursorWork(fix);
     const storeShard = join(fix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
@@ -2280,24 +2280,28 @@ describe('Conductor Cursor store retirement (Track 73A)', () => {
       endedAt: null,
       model: { id: 'grok-4.7', params: [{ id: 'reasoning_effort', value: 'high' }] },
     }]);
+    writeJsonl(join(fix.home, '.cursor/projects/project/agent-transcripts/conv-1/transcript.jsonl'), [{ role: 'assistant', message: 'fixture' }]);
 
     // End-to-end finish via wrapper
-    const finished = cursorFinish(fix, { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' }, () => {});
+    const finished = cursorFinish(fix, { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1', CURSOR_INVOKED_AS: 'cursor-agent' }, () => {});
     expect([finished.finish.status, finished.finish.stdout, finished.finish.stderr]).toEqual([0, '', '']);
     expect(finished.row).toMatchObject({
-      agent: 'cursor',
+      agent: null,
+      agent_source: 'unknown',
       model: null,
       effort: null,
       model_source: 'unknown',
       effort_source: 'unknown',
       route: 'unknown',
+      run_mode_source: 'no-harness',
+      user_signals_source: 'no-harness',
       schema_version: 4,
     });
     expect(validRow(finished.row)).toBe(true);
 
-    // Python audit-hook verification: zero filesystem calls under cursor-sdk-store and zero sqlite3.connect calls
+    // Python audit-hook verification: zero filesystem calls under cursor-sdk-store or ~/.cursor/projects and zero sqlite3.connect calls
     const auditScript = [
-      'import contextlib, io, json, os, sys',
+      'import json, os, sys',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
       'bad = []',
@@ -2306,19 +2310,13 @@ describe('Conductor Cursor store retirement (Track 73A)', () => {
       '        bad.append((event, str(args[:1])))',
       '    elif event in ("open", "os.listdir", "os.scandir", "os.stat"):',
       '        target = str(args[0]) if args else ""',
-      '        if "cursor-sdk-store" in target or "com.conductor.app" in target:',
+      '        if "cursor-sdk-store" in target or "com.conductor.app" in target or ".cursor/projects" in target:',
       '            bad.append((event, target))',
       'sys.addaudithook(hook)',
       'os.environ["CURSOR_AGENT"] = "1"',
       'os.environ["CURSOR_CONVERSATION_ID"] = "conv-1"',
       'row = telemetry.provenance_row("roadmap", "sid-cursor-audit", 1790000000, 5, {"--outcome": "success"}, None)',
-      'os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
-      'def broken(*a, **k): raise PermissionError(13, "SENTINEL_TRANSCRIPT_ERR")',
-      'telemetry.cursor_logs = broken',
-      'buf = io.StringIO()',
-      'with contextlib.redirect_stderr(buf):',
-      '    telemetry.provenance_row("roadmap", "sid-cursor-err", 1790000000, 5, {"--outcome": "success"}, None)',
-      'print(json.dumps({"bad": bad, "row": row, "stderr": buf.getvalue()}))',
+      'print(json.dumps({"bad": bad, "row": row, "has_cursor_logs": hasattr(telemetry, "cursor_logs"), "has_reasons": hasattr(telemetry, "CURSOR_SDK_REASONS")}))',
     ].join('\n');
     const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib')], {
       env: fix.env,
@@ -2329,16 +2327,59 @@ describe('Conductor Cursor store retirement (Track 73A)', () => {
     expect([audit.status, audit.stderr]).toEqual([0, '']);
     const parsed = JSON.parse(audit.stdout);
     expect(parsed.bad).toEqual([]);
+    expect(parsed.has_cursor_logs).toBe(false);
+    expect(parsed.has_reasons).toBe(false);
     expect(parsed.row).toMatchObject({
-      agent: 'cursor',
+      agent: null,
+      agent_source: 'unknown',
       model: null,
       effort: null,
       model_source: 'unknown',
       effort_source: 'unknown',
       route: 'unknown',
     });
-    expect(parsed.stderr).toContain('telemetry: cursor-sdk transcript-unreadable. See docs/telemetry.md#cursor-sdk-transcript-unreadable.');
-    expect(parsed.stderr).not.toContain('SENTINEL_TRANSCRIPT_ERR');
+  });
+
+  test('historical stage-runs rows with agent cursor stay schema-valid and readable in report and report --by-host', () => {
+    const fix = makeTelemetryFixture('off');
+    const perHostDir = join(fix.home, '.gstack-extend/analytics/stage-runs');
+    mkdirSync(perHostDir, { recursive: true });
+    const v4CursorRow = {
+      stage: 'implement', agent: 'cursor', model: 'composer-1', effort: 'high', rung: 0,
+      outcome: 'success', started_at: '2026-11-20T12:00:00Z', duration_s: 42,
+      session_id: 'extend-00000000-0000-4000-8000-000000000093', repo: 'acme/widget',
+      branch: 'main', work_item: null, source: 'gstack-extend', route: 'cli',
+      entrypoint_raw: 'cursor-agent', schema_version: 4, producer_version: '0.108.0',
+      agent_source: 'detected', model_source: 'requested', effort_source: 'requested',
+      workspace_host: null, run_mode: 'unknown', run_mode_source: 'harness-unqualified',
+      questions: null, user_wait_s: null, resumes: null, user_signals_source: 'harness-unsupported',
+      blocked_reason: null, blocked_reason_source: 'not-blocked',
+    };
+    const legacyCursorRow = {
+      stage: 'roadmap', agent: 'cursor', model: null, effort: null, rung: 0,
+      outcome: 'success', started_at: '2026-10-01T12:00:00Z', duration_s: 15,
+      session_id: 'extend-00000000-0000-4000-8000-000000000094', repo: 'acme/widget',
+      branch: 'main', work_item: null, source: 'gstack-extend', route: 'conductor',
+      entrypoint_raw: null, schema_version: 2, producer_version: '0.70.0.0',
+      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown',
+      workspace_host: 'conductor', host_agent_id: 'legacy-1',
+    };
+    expect(validRow(v4CursorRow)).toBe(true);
+    writeJsonl(join(perHostDir, 'hist-host.jsonl'), [v4CursorRow]);
+    writeJsonl(join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl'), [legacyCursorRow]);
+
+    const rep = runHelper(fix.env, ['report', '--json']);
+    expect([rep.status, rep.stderr]).toEqual([0, '']);
+    const data = JSON.parse(rep.stdout);
+    expect(data.rows.counted).toBe(2);
+    expect(data.skills.find((s: any) => s.skill === 'implement').cells.unknown.runs).toBe(1);
+    expect(data.skills.find((s: any) => s.skill === 'roadmap').cells.unrecorded.runs).toBe(1);
+
+    const byHost = runHelper(fix.env, ['report', '--by-host', '--json']);
+    expect([byHost.status, byHost.stderr]).toEqual([0, '']);
+    const hostData = JSON.parse(byHost.stdout);
+    expect(hostData.rows.counted).toBe(2);
+    expect(hostData.hosts.map((h: any) => h.host).sort()).toEqual(['(legacy)', 'hist-host']);
   });
 });
 
@@ -2474,7 +2515,9 @@ describe('row version, producer and sources', () => {
       ['same agent flag, nothing else detected', ['claude', null, null], { '--agent': 'claude' }, ['claude', null, null, 'flag', 'unknown', 'unknown']],
       ['changed agent drops detected values', D, { '--agent': 'codex' }, ['codex', null, null, 'flag', 'unknown', 'unknown']],
       ['changed agent, partial override', D, { '--agent': 'codex', '--model': 'gpt-6-astra' }, ['codex', 'gpt-6-astra', null, 'flag', 'flag', 'unknown']],
-      ['agent flag over nothing', NONE, { '--agent': 'cursor' }, ['cursor', null, null, 'flag', 'unknown', 'unknown']],
+      ['agent flag over nothing', NONE, { '--agent': 'grok' }, ['grok', null, null, 'flag', 'unknown', 'unknown']],
+      ['retired cursor agent flag ignored', NONE, { '--agent': 'cursor' }, [null, null, null, 'unknown', 'unknown', 'unknown']],
+      ['retired opencode agent flag ignored', NONE, { '--agent': 'opencode' }, [null, null, null, 'unknown', 'unknown', 'unknown']],
       ['equal-value model flag', D, { '--model': 'claude-opus-5' }, [...D, 'detected', 'flag', 'detected']],
       ['effort-only flag', D, { '--effort': 'max' }, ['claude', 'claude-opus-5', 'max', 'detected', 'detected', 'flag']],
       ['model flag without an agent', NONE, { '--model': 'gpt-6-astra' }, [null, 'gpt-6-astra', null, 'unknown', 'flag', 'unknown']],
@@ -2683,8 +2726,8 @@ function gitRepo(fix: TelemetryFixture, name: string) {
 }
 
 describe('gstack helper roots', () => {
-  test('helpers under each host root pair, and closer roots win', () => {
-    for (const relativeBin of ['.codex/skills/gstack/bin', '.config/opencode/skills/gstack/bin', '.cursor/skills/gstack/bin']) {
+  test('helpers under each host root pair, closer roots win, and retired Cursor/OpenCode roots are ignored', () => {
+    for (const relativeBin of ['.codex/skills/gstack/bin']) {
       const fix = makeTelemetryFixture('community', 'stub');
       relocateHelpers(fix, relativeBin);
       expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
@@ -2697,14 +2740,18 @@ describe('gstack helper roots', () => {
     const ranked = makeTelemetryFixture('community', 'stub');
     const source = join(ranked.home, '.claude/skills/gstack/bin');
     const codex = plantHelpers(join(ranked.home, '.codex/skills/gstack/bin'), source);
-    const opencode = plantHelpers(join(ranked.home, '.config/opencode/skills/gstack/bin'), source);
-    const cursor = plantHelpers(join(ranked.home, '.cursor/skills/gstack/bin'), source);
+    plantHelpers(join(ranked.home, '.config/opencode/skills/gstack/bin'), source);
+    plantHelpers(join(ranked.home, '.cursor/skills/gstack/bin'), source);
     rmSync(source, { recursive: true });
     expect(loggedHelpers(ranked.env)).toEqual([join(codex, 'gstack-telemetry-log'), join(codex, 'gstack-config')]);
     rmSync(codex, { recursive: true });
-    expect(loggedHelpers(ranked.env)).toEqual([join(opencode, 'gstack-telemetry-log'), join(opencode, 'gstack-config')]);
-    rmSync(opencode, { recursive: true });
-    expect(loggedHelpers(ranked.env)).toEqual([join(cursor, 'gstack-telemetry-log'), join(cursor, 'gstack-config')]);
+    const beforeMissing = ranked.readJsonl().length;
+    const missing = runHelper({ ...ranked.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+    expect(missing.status).toBe(0);
+    expect(missing.stderr).toContain('gstack helper unresolvable:');
+    expect(missing.stderr).not.toContain('.config/opencode/skills/gstack/bin');
+    expect(missing.stderr).not.toContain('.cursor/skills/gstack/bin');
+    expect(ranked.readJsonl()).toHaveLength(beforeMissing);
 
     const claude = makeTelemetryFixture('community', 'stub');
     const claudeBin = join(claude.home, '.claude/skills/gstack/bin');
@@ -2946,10 +2993,10 @@ describe('handoff adoption', () => {
     expect(handoff.skill).toBe('extend:roadmap');
     expect(handoff.root).toBe(process.cwd());
     expect(handoff.harness).toBe(sessionFingerprint([['CODEX_THREAD_ID', secret]]));
-    expect(sessionFingerprint([['CODEX_THREAD_ID', 'same-id']])).not.toBe(sessionFingerprint([['CURSOR_CONVERSATION_ID', 'same-id']]));
+    expect(sessionFingerprint([['CODEX_THREAD_ID', 'same-id']])).not.toBe(sessionFingerprint([['GROK_SESSION_ID', 'same-id']]));
 
     const quiet = makeTelemetryFixture('community', 'stub');
-    const none = runHelper({ ...quiet.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+    const none = runHelper({ ...quiet.env, ...DEBUG, CURSOR_CONVERSATION_ID: 'ignored-cursor-conv' }, ['start', '--skill', 'extend:roadmap']);
     expect(readHandoff(quiet).harness).toBeNull();
     expect(none.stderr).toContain('harness markers: none');
 
@@ -3096,7 +3143,7 @@ describe('handoff adoption', () => {
 
     const extra = makeTelemetryFixture('community', 'stub');
     expect(runHelper({ ...extra.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
-    const extraFinish = runHelper({ ...extra.env, ...DEBUG, CODEX_THREAD_ID: 'thread-a', CURSOR_CONVERSATION_ID: 'conv-b' },
+    const extraFinish = runHelper({ ...extra.env, ...DEBUG, CODEX_THREAD_ID: 'thread-a', GROK_SESSION_ID: 'grok-b' },
       ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
     expectRefusal(extraFinish.stderr, 'handoff from another session');
     expect(skillRuns(extra)).toHaveLength(0);
@@ -3421,20 +3468,21 @@ describe('handoff adoption', () => {
     expect(reasons[9]).toBe('handoff from another session');
   });
 
-  test('invalid session markers are omitted and a valid sibling is fingerprinted', () => {
+  test('invalid and retired session markers are omitted and a valid sibling is fingerprinted', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const traced = runHelper({
       ...fix.env,
       ...DEBUG,
       CODEX_THREAD_ID: '-bad',
-      CURSOR_CONVERSATION_ID: 'thread-ok',
+      CURSOR_CONVERSATION_ID: 'ignored-cursor',
+      MUSE_SESSION_ID: 'thread-ok',
     }, ['start', '--skill', 'extend:roadmap']);
     expect(traced.status).toBe(0);
     const line = traced.stderr.split('\n').find(item => item.includes('harness markers:'));
-    expect(line).toBe('telemetry: harness markers: CURSOR_CONVERSATION_ID');
+    expect(line).toBe('telemetry: harness markers: MUSE_SESSION_ID');
     expect(traced.stderr.includes('-bad')).toBe(false);
     expect(traced.stderr.includes('thread-ok')).toBe(false);
-    expect(readHandoff(fix).harness).toBe(sessionFingerprint([['CURSOR_CONVERSATION_ID', 'thread-ok']]));
+    expect(readHandoff(fix).harness).toBe(sessionFingerprint([['MUSE_SESSION_ID', 'thread-ok']]));
   });
 });
 
@@ -4814,7 +4862,7 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     // Value: protects=launcher-requested GSTACK_EXTEND_MODEL/GSTACK_EXTEND_EFFORT fill only null model/effort with source requested while detection, flags and the CLI store-skip win;
     // fails_when=requested values overwrite detected/flag values, label as detected, read the Conductor store on cursor-agent, or leak rejected values;
     // why_new=Track 26A reserved the requested label without a producer; seam=none; no_claim=live cursor-agent invocation.
-    test('cursor-agent route fills null model and effort from the launcher variables without reading the Conductor store, and finish flags win', () => {
+    test('requested launcher variables fill null model and effort without reading the Conductor store, and finish flags win', () => {
       const env = {
         CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1', CURSOR_INVOKED_AS: 'cursor-agent',
         GSTACK_EXTEND_MODEL: 'requested-model', GSTACK_EXTEND_EFFORT: 'high',
@@ -4832,8 +4880,8 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
       const first = makeTelemetryFixture('off');
       const { row } = cursorFinish(first, env, plant(first));
       expect(row).toMatchObject({
-        agent: 'cursor', route: 'cli', model: 'requested-model', effort: 'high',
-        agent_source: 'detected', model_source: 'requested', effort_source: 'requested',
+        agent: null, route: 'unknown', model: 'requested-model', effort: 'high',
+        agent_source: 'unknown', model_source: 'requested', effort_source: 'requested',
       });
       expect(Object.keys(row)).toEqual(SCHEMA);
       expect(validRow(row)).toBe(true);
@@ -4842,8 +4890,8 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
       const second = makeTelemetryFixture('off');
       const flagged = cursorFinish(second, env, plant(second), ['--model', 'flag-model']);
       expect(flagged.row).toMatchObject({
-        agent: 'cursor', route: 'cli', model: 'flag-model', effort: 'high',
-        agent_source: 'detected', model_source: 'flag', effort_source: 'requested',
+        agent: null, route: 'unknown', model: 'flag-model', effort: 'high',
+        agent_source: 'unknown', model_source: 'flag', effort_source: 'requested',
       });
     });
 
@@ -5319,10 +5367,10 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'entrypoint-unavailable',
       },
       {
-        name: 'cursor markers only gives harness-unqualified',
+        name: 'cursor markers only gives no-harness',
         finishEnv: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-rm-1', CURSOR_INVOKED_AS: 'cursor-agent' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'no-harness',
       },
       {
         name: 'grok markers only gives harness-unqualified',
@@ -5343,10 +5391,10 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'entrypoint-unavailable',
       },
       {
-        name: 'cursor markers under Paseo gives harness-unqualified',
+        name: 'cursor markers under Paseo gives no-harness',
         finishEnv: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-rm-1', PASEO_AGENT_ID: 'paseo-cursor-rm' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'no-harness',
       },
       {
         name: 'muse markers only without session log gives entrypoint-unavailable',
@@ -6168,7 +6216,6 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     });
     for (const [agent, unsupportedEnv] of [
       ['grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok-session' }],
-      ['cursor', { CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent', CURSOR_CONVERSATION_ID: 'synthetic-cursor-session' }],
       ['muse', { MUSE_SESSION_ID: 'synthetic-muse-session' }],
     ] as Array<[string, Record<string, string>]>) {
       const unsupported = provenanceRun(fix, unsupportedEnv, () => {}, ['--outcome', 'success']);
@@ -6181,6 +6228,15 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       });
       expect(validRow(unsupported.row)).toBe(true);
     }
+    const cursorRetired = provenanceRun(fix, { CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent', CURSOR_CONVERSATION_ID: 'synthetic-cursor-session' }, () => {}, ['--outcome', 'success']);
+    expect(cursorRetired.row).toMatchObject({
+      agent: null,
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'no-harness',
+    });
+    expect(validRow(cursorRetired.row)).toBe(true);
     const flagOverride = provenanceRun(fix, env, () => {}, ['--outcome', 'success', '--agent', 'codex']);
     expect(flagOverride.row).toMatchObject({
       agent: 'codex',

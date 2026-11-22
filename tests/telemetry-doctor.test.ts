@@ -865,4 +865,27 @@ describe('stage-runs report regressions', () => {
     expect([result.status, result.stderr]).toEqual([0, '']);
     expect(JSON.parse(result.stdout).rows.counted).toBe(1);
   });
+
+  test('ignores gstack helpers planted only in retired Cursor and OpenCode skills directories and omits them from warnings', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const claudeBin = join(fix.home, '.claude/skills/gstack/bin');
+    for (const retiredRel of ['.config/opencode/skills/gstack/bin', '.cursor/skills/gstack/bin']) {
+      const dir = join(fix.home, retiredRel);
+      mkdirSync(dir, { recursive: true });
+      for (const name of ['gstack-telemetry-log', 'gstack-config']) {
+        writeFileSync(join(dir, name), '#!/bin/sh\necho community\n');
+        chmodSync(join(dir, name), 0o755);
+      }
+    }
+    rmSync(claudeBin, { recursive: true });
+    const jsonRes = run(fix.env);
+    expect([jsonRes.status, jsonRes.stderr]).toEqual([0, '']);
+    const report = JSON.parse(jsonRes.stdout);
+    expect(report.gstack_logger).toBeNull();
+    expect(report.gstack_config).toBeNull();
+    const warning = report.warnings.join('\n');
+    expect(warning).toContain('gstack helper unresolvable:');
+    expect(warning).not.toContain('.config/opencode/skills/gstack/bin');
+    expect(warning).not.toContain('.cursor/skills/gstack/bin');
+  });
 });

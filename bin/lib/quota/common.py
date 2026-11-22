@@ -12,11 +12,11 @@ from datetime import datetime, timezone
 from telemetry import parse_ts, valid_session, which, executable, config_enabled, config_value
 
 VERSION = 1
-KINDS = ('claude', 'codex', 'cursor')
+KINDS = ('claude', 'codex')
 CLASSES = ('input', 'cache_read', 'cache_write', 'output', 'reasoning')
 REASONS = {
     'no_sample': ('No capacity observation recorded', 'Run gstack-extend quota status --refresh.'),
-    'no_credentials': ('No usable credential source; capacity unknown', 'Sign in with the vendor CLI; Cursor needs CURSOR_API_KEY.'),
+    'no_credentials': ('No usable credential source; capacity unknown', 'Sign in with the vendor CLI.'),
     'auth_expired': ('Access token expired; capacity unknown', 'Use the vendor CLI to sign in again.'),
     'missing_executable': ('Vendor CLI absent', 'Install the vendor CLI and check PATH.'),
     'unsupported_version': ('Required CLI flags unavailable', 'Upgrade the vendor CLI.'),
@@ -31,7 +31,6 @@ REASONS = {
     'spawn_failed': ('Vendor process could not start', 'Check executable permissions and retry.'),
     'disabled': ('Pool disabled in quota_pools', 'Enable the pool in quota_pools.'),
     'sandboxed': ('Network forbidden by sandbox markers', 'Retry from an unsandboxed caller.'),
-    'exchange_throttled': ('Cursor key exchanged within 60 seconds', 'Retry after retry_at.'),
     'identity_unknown': ('Paying account cannot be established', 'Attach a session with verified subscription identity.'),
     'identity_changed': ('Account changed during observation', 'Finish this run and start a new bracket.'),
     'log_too_large': ('Source exceeds the per-file read cap', 'Narrow declared roots or archive completed vendor logs.'),
@@ -81,8 +80,6 @@ def check_fixture():
         explicit = os.environ.get('GSTACK_EXTEND_STATE_DIR')
         if not fixture_dir() or not explicit or state_root().resolve() == (Path.home()/'.gstack-extend').resolve():
             raise QuotaError('fixture_refused', 'Test variables require fixture mode and an isolated state directory.')
-        if os.environ.get('CURSOR_API_KEY'):
-            raise QuotaError('fixture_refused', 'Fixture processes must not inherit vendor credentials.')
     return test_names
 
 
@@ -270,7 +267,6 @@ def context_from(args):
     return dict(cwd=str(Path(cwd).absolute()), repo_root=str(Path(getattr(args, 'repo_root', None) or cwd).absolute()),
                 claude_config_dir=str(Path(getattr(args, 'claude_config_dir', None) or os.environ.get('CLAUDE_CONFIG_DIR') or home/'.claude').absolute()),
                 codex_home=str(Path(getattr(args, 'codex_home', None) or os.environ.get('CODEX_HOME') or home/'.codex').absolute()),
-                cursor_projects_dir=str(Path(getattr(args, 'cursor_projects_dir', None) or home/'.cursor/projects').absolute()),
                 grok_home=str(home/'.grok'), auth=auth,
                 sandboxed=bool(os.environ.get('CODEX_SANDBOX') or os.environ.get('CODEX_SANDBOX_NETWORK_DISABLED')))
 

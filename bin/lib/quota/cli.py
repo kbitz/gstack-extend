@@ -11,7 +11,6 @@ import time
 
 from .common import (CLASSES, KINDS, QuotaError, budget, check_fixture, config_enabled, config_value, context_from,
                      explanation, fixture_dir, iso, now, state_root, timestamp)
-from .cursor_cost import decorate, settle
 from .identity import identity
 from .index import scan
 from .intervals import interval, intervals
@@ -32,7 +31,7 @@ def parser():
     sub=root.add_subparsers(dest='command',required=True,parser_class=Parser)
     examples={'status':'status --refresh --json','sample':'sample --session-id build-1 --phase start --agent codex --json',
               'runs':'runs --active --session-id build-1 --json','summary':'summary --by stage,agent,model --since 7d --json',
-              'intervals':'intervals --pool codex --since 7d --json','settle':'settle --json',
+              'intervals':'intervals --pool codex --since 7d --json',
               'probe':'probe claude --raw','doctor':'doctor --json'}
     for name,example in examples.items():
         p=sub.add_parser(name,epilog='Example: gstack-extend quota '+example)
@@ -40,11 +39,11 @@ def parser():
         p.add_argument('--pool')
         p.add_argument('--since')
         p.add_argument('--days',type=float)
-        for field in ('claude-config-dir','codex-home','cursor-projects-dir','cwd','repo-root'):
+        for field in ('claude-config-dir','codex-home','cwd','repo-root'):
             p.add_argument('--'+field)
         if name in ('sample','runs','summary'):
             for field in ('session-id','stage','agent','model','effort','route'):
-                choices=('claude','codex','cursor','grok','unknown') if field=='agent' else ('cli','sdk','unknown') if field=='route' else None
+                choices=('claude','codex','grok','unknown') if field=='agent' else ('cli','sdk','unknown') if field=='route' else None
                 p.add_argument('--'+field,choices=choices)
         if name=='sample':
             p.add_argument('--phase',choices=('start','attach','finish','abandon'))
@@ -128,7 +127,7 @@ def status(store,args,context,sampled):
 
 
 def discovery_key(context):
-    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','cursor_projects_dir','grok_home','cwd','repo_root'))
+    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','grok_home','cwd','repo_root'))
 
 
 def coverage_for(store,context,cache):
@@ -157,6 +156,9 @@ def get_runs(store,args,context):
             current=run_rows(store,state,own_coverage)
             for row in current:
                 previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==(row['session_id'],row['pool_kind'],row['pool'])),{})
+                if row['pool_kind']=='cursor' and previous:
+                    rows.append(dict(previous))
+                    continue
                 row['local_persisted_at']=previous.get('local_persisted_at') or (store.get('receipt',state['session_id']+':finish') or store.get('receipt',state['session_id']+':abandon') or {}).get('local_persisted_at')
                 row['lifecycle']='interrupted' if state.get('outcome')=='interrupted' else 'recorded'
                 rows.append(row)
@@ -174,7 +176,6 @@ def get_runs(store,args,context):
             for field in ('stage','agent','model','effort','route'):
                 if row.get(field) is None:
                     row[field]=provenance.get(row['session_id'],{}).get(field)
-    rows=decorate(store,rows)
     resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending'}
     rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved]
     return dict(v=1,runs=[r for r in rows if matches(r,args)],as_of=now(),coverage=coverage)
@@ -266,10 +267,10 @@ def doctor(store,context,warnings,args):
             executable_available=True
         except QuotaError:
             executable_available=False
-        available=bool(os.environ.get('CURSOR_API_KEY')) if kind=='cursor' and not fixture_dir() else evidence.get('pool','pending')!='pending'
+        available=evidence.get('pool','pending')!='pending'
         pools.append(dict(pool_kind=kind,pool=args.pool if args.pool and ':' in args.pool else evidence.get('pool','pending'),
                           support='experimental',credential_available=available,
-                          executable_available=executable_available,credential_source='fixture' if fixture_dir() else 'CURSOR_API_KEY' if kind=='cursor' else 'vendor-managed account',
+                          executable_available=executable_available,credential_source='fixture' if fixture_dir() else 'vendor-managed account',
                           coverage=len(ok)/len(rows) if rows else None,attempts=len(rows),last_ok_age_s=max(0,now()-max(s['observed_at'] for s in ok)) if ok else None,
                           reasons=reasons,diagnostics=[explanation(code) for code in reasons],drift_count=sum(len(s['unknown_fields']) for s in rows)))
     states=store.all('state')
@@ -390,8 +391,6 @@ def main(argv=None):
         elif args.command=='intervals':
             coverage=scan(store,context)
             result=dict(v=1,intervals=[r for r in intervals(store,coverage) if matches(r,args)],coverage=coverage,as_of=now())
-        elif args.command=='settle':
-            result=settle(store,context,args.pool,since(args))
         elif args.command=='probe':
             if context['sandboxed']:
                 raise QuotaError('sandboxed')
@@ -400,14 +399,14 @@ def main(argv=None):
                 raise QuotaError('identity_unknown')
             if args.kind not in [p.strip() for p in config_value(root,'quota_pools',','.join(KINDS)).split(',')]:
                 raise QuotaError('disabled')
-            from .readers import claude,codex,cursor
+            from .readers import claude,codex
             deadline=time.monotonic()+budget(8)
             with store.lock('sample:'+args.kind,deadline):
                 backoff=store.get('backoff',evidence['fingerprint'],{})
                 if backoff.get('retry_at',0)>now():
                     raise QuotaError('http_429',retry_at=backoff['retry_at'])
                 try:
-                    _,body={'claude':claude,'codex':codex,'cursor':cursor}[args.kind].read(store,context,deadline)
+                    _,body={'claude':claude,'codex':codex}[args.kind].read(store,context,deadline)
                 except QuotaError as error:
                     if error.code=='http_429':
                         with store.transaction():

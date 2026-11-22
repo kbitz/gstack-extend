@@ -2828,7 +2828,7 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(ambData.totals.unknown.input).toBe(300);
   }, 60_000);
 
-  test('overlapping sibling steps go to unattributed; outlived-step and may-continue flags; Cursor/Grok unverified-source; scan-budget and too-many-buckets fallback', () => {
+  test('overlapping sibling steps go to unattributed; outlived-step and may-continue flags; Grok unverified-source; Cursor/OpenCode unknown; scan-budget and too-many-buckets fallback', () => {
     const fix = makeTelemetryFixture('community');
     const repo = join(fix.home, 'edge-repo');
     mkdirSync(repo, { recursive: true });
@@ -2872,17 +2872,74 @@ describe('Track 67A run token usage capture and read --usage', () => {
       expect.objectContaining({ step_id: null, input: 100, output: 40 }),
     ]));
 
-    // Cursor and Grok return unavailable with unverified-source.
-    for (const unsupportedAgent of ['cursor', 'grok']) {
+    // Grok returns unavailable with unverified-source; Cursor and OpenCode are no longer classified and yield unknown/harness-session-unknown.
+    {
+      const gSid = 'extend-' + u();
+      craft(fix, gSid, runRows(gSid, T0).rows);
+      runPythonCollect(fix, [
+        `print(json.dumps(wm.capture_usage(${JSON.stringify(gSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "grok", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+      ]);
+      const gRead = JSON.parse(readUsage(fix, gSid).stdout).data;
+      expect(gRead.harness).toBe('grok');
+      expect(gRead.reasons).toContain('unverified-source');
+      expect(gRead.totals.direct.input).toBeNull();
+    }
+    for (const retiredAgent of ['cursor', 'opencode']) {
       const uSid = 'extend-' + u();
       craft(fix, uSid, runRows(uSid, T0).rows);
       runPythonCollect(fix, [
-        `print(json.dumps(wm.capture_usage(${JSON.stringify(uSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, ${JSON.stringify(unsupportedAgent)}, ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+        `print(json.dumps(wm.capture_usage(${JSON.stringify(uSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, ${JSON.stringify(retiredAgent)}, ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
       ]);
       const uRead = JSON.parse(readUsage(fix, uSid).stdout).data;
-      expect(uRead.harness).toBe(unsupportedAgent);
-      expect(uRead.reasons).toContain('unverified-source');
+      expect(uRead.harness).toBe('unknown');
+      expect(uRead.reasons).toContain('harness-session-unknown');
+      expect(uRead.reasons).not.toContain('unverified-source');
       expect(uRead.totals.direct.input).toBeNull();
+    }
+    // Pre-existing v:2 usage records with historical harness "cursor" stay readable without malformed-record.
+    {
+      const hSid = 'extend-' + u();
+      const hRun = runRows(hSid, T0);
+      craft(fix, hSid, [
+        ...hRun.rows,
+        {
+          op: 'usage',
+          at: T_END,
+          request: {
+            v: 1,
+            stage: 'review-and-prep',
+            session_id: hSid,
+            event_id: u(),
+            status: 'unavailable',
+            reasons: ['unverified-source'],
+            harness: 'cursor',
+            window: { begin_ms: T0, end_ms: T_END },
+            observed_through_ms: T_END,
+            sources: [{
+              ref: 'a'.repeat(64),
+              agent: 'cursor',
+              relation: 'own',
+              evidence: 'direct',
+              parent_ref: null,
+              link: null,
+              link_evidence: null,
+              models: [],
+              first_ms: T0,
+              last_ms: T_END,
+              complete: false,
+              reasons: ['unverified-source'],
+            }],
+            buckets: [],
+            windows: [],
+            cli_reported: [],
+          },
+        },
+      ]);
+      const hRead = JSON.parse(readUsage(fix, hSid).stdout);
+      expect(hRead.status).toBe('ok');
+      expect(hRead.data.capture).toBe('partial');
+      expect(hRead.data.harness).toBe('cursor');
+      expect(hRead.data.reasons).not.toContain('malformed-record');
     }
 
     // Tiny scan budget triggers scan-budget.

@@ -3,7 +3,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from .common import QuotaError, fixture_dir, now, valid_session, model_vendor
+from .common import KINDS, QuotaError, fixture_dir, now, valid_session, model_vendor
 from .identity import identity, bind
 from .usage import aggregate
 
@@ -70,7 +70,7 @@ def lifecycle(store,args,context):
                        metadata=incoming,attachments=[],identities={},fixture=bool(fixture_dir()))
             attach_identity(store,state,args)
             with store.transaction():
-                for kind in ('claude','codex','cursor'):
+                for kind in KINDS:
                     evidence=identity(store,kind,context)
                     state['identities'][kind]=evidence
                     bind(store,kind,context,evidence)
@@ -122,14 +122,14 @@ def lifecycle(store,args,context):
                         conflicts[field]=state['metadata'][field]
                     state['metadata'][field]=value
             state['metadata_conflicts']=conflicts
-            for field in ('cwd','repo_root','claude_config_dir','codex_home','cursor_projects_dir','auth'):
+            for field in ('cwd','repo_root','claude_config_dir','codex_home','auth'):
                 value=getattr(args,field,None)
                 if value is not None:
                     state['metadata']['context'][field]=value
             state['metadata']['model_vendor']=model_vendor(state['metadata'].get('model'))
             state['ended_at']=now()
             state['lease_at']=now()
-            state['identities_at_finish']={kind:identity(store,kind,state['metadata']['context']) for kind in ('claude','codex','cursor')}
+            state['identities_at_finish']={kind:identity(store,kind,state['metadata']['context']) for kind in KINDS}
             state['outcome']='interrupted' if phase=='abandon' else 'unknown'
             # An immutable terminal timestamp survives a failed scan/commit.
             # This is lifecycle state, not a queue or background request.
@@ -248,7 +248,7 @@ def run_rows(store,state,coverage):
             attribution='window'
         pool_kind=agent
         original=state['identities'].get(agent,{})
-        current=state.get('identities_at_finish',{}).get(agent) or (identity(store,agent,state['metadata']['context']) if agent in ('claude','codex','cursor') else {})
+        current=state.get('identities_at_finish',{}).get(agent) or (identity(store,agent,state['metadata']['context']) if agent in KINDS else original)
         changed=original.get('pool')!=current.get('pool')
         auth=state['metadata'].get('auth') or 'unknown'
         api_auth=uses_api_auth(source,state,all_sources,parents)

@@ -5,7 +5,7 @@ import time
 import uuid
 from .common import KINDS, QuotaError, budget, config_value, fixture_dir, now
 from .identity import identity, bind
-from .readers import claude, codex, cursor
+from .readers import claude, codex
 from .store import Store
 
 
@@ -27,12 +27,10 @@ def drift(kind,body):
     known={
         'claude':{'usage_report','rate_limits','session','limits','extra_usage','five_hour','seven_day'},
         'codex':{'rateLimits','rateLimitsByLimitId','accountId','ordinaryUsageAllowed','rateLimitResetCredits','rateLimitUpsell','rate_limits','type','info'},
-        'cursor':{'billingCycleStart','billingCycleEnd','planUsage','spendLimitUsage','autoBucketModels','displayMessage','displayThreshold','enabled','namedModelSelectedDisplayMessage','autoModelSelectedDisplayMessage'},
     }[kind]
     nested={
         'claude':{'kind','group','percent','resets_at','scope','model','surface','id','display_name','severity','is_active','utilization','is_enabled','monthly_limit','used_credits'},
         'codex':{'limitId','limit_id','limitName','primary','secondary','usedPercent','used_percent','windowDurationMins','window_minutes','resetsAt','resets_at','credits','hasCredits','unlimited','balance','planType','plan_type','rateLimitReachedType','spendControlReached','individualLimit','total_token_usage','last_token_usage','model_context_window','input_tokens','cached_input_tokens','cache_write_input_tokens','output_tokens','reasoning_output_tokens','total_tokens'},
-        'cursor':{'totalSpend','includedSpend','remaining','limit','autoPercentUsed','apiPercentUsed','totalPercentUsed','remainingBonus','bonusTooltip','spendLimit','used','remainingSpend','model'},
     }[kind]
     unknown=[]
     maps={}
@@ -73,7 +71,7 @@ def sample_one(root,kind,context,trigger,session_id=None,force=False,deadline=No
             if not force and latest and 0<=now()-latest['observed_at']<minimum and kind in enabled and backoff.get('retry_at',0)<=now():
                 return dict(latest,reused_sample=True)
             row=dict(v=1,sample_id=str(uuid.uuid4()),ts=now(),observed_at=now(),pool=pool,pool_kind=kind,
-                     source={'claude':'claude-usage','codex':'codex-app-server','cursor':'cursor-api2'}[kind],
+                     source={'claude':'claude-usage','codex':'codex-app-server'}[kind],
                      status='unavailable',reason=None,meters=[],trigger=trigger,session_id=session_id,
                      identity=evidence,raw_shape_hash=None,unknown_fields=[],fixture=bool(fixture_dir()))
             try:
@@ -90,14 +88,14 @@ def sample_one(root,kind,context,trigger,session_id=None,force=False,deadline=No
                     meters,partial=codex.parse(recent_rollout[1])
                     result,body=dict(source='codex-rollout',meters=meters,status='partial' if partial else 'ok',observed_at=recent_rollout[0]),recent_rollout[1]
                 else:
-                    result,body={'claude':claude,'codex':codex,'cursor':cursor}[kind].read(store,context,deadline)
+                    result,body={'claude':claude,'codex':codex}[kind].read(store,context,deadline)
                 row.update(result)
                 row['raw_shape_hash']=shape(body)
                 row['unknown_fields'],row['data_keyed_map_counts']=drift(kind,body)
                 row['ts']=now()
                 row['observed_at']=result.get('observed_at',now())
                 after=identity(store,kind,context)
-                if kind!='cursor' and after['pool']!=evidence['pool']:
+                if after['pool']!=evidence['pool']:
                     row.update(pool='pending',identity=after,reason='identity_changed')
             except (QuotaError,TypeError,KeyError,AttributeError,ValueError) as error:
                 if not isinstance(error,QuotaError):

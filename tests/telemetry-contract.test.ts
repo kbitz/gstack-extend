@@ -768,7 +768,9 @@ describe('docs/stage-runs.schema.json', () => {
     const defs = schema.definitions;
     expect(defs.agent.enum).toContain(null);
     const agents = defs.agent.enum.filter((value: unknown) => value !== null);
-    if (!same(agents, constants.harnesses)) mismatch('schema agent enum differs from HARNESSES', agents, constants.harnesses);
+    // "cursor" is retained in the schema for historical rows after Cursor classification was removed.
+    const schemaAgents = [...constants.harnesses, 'cursor'];
+    if (!same(agents, schemaAgents)) mismatch('schema agent enum differs from HARNESSES + cursor', agents, schemaAgents);
     // v1 rows never carry blocked; the v2 vocabulary is the writer's whole OUTCOMES.
     const v1Outcomes = constants.outcomes.filter((value: string) => value !== 'blocked');
     if (!same(defs.outcome.enum, v1Outcomes)) mismatch('schema v1 outcome enum differs from OUTCOMES without blocked', defs.outcome.enum, v1Outcomes);
@@ -1406,31 +1408,49 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(byStart.stdout.trim()).toBe(JSON.stringify(known));
   });
 
-  test('every Cursor reader reason in the registry has its documented anchor row', () => {
+  test('Cursor reader reason registry is removed and docs have no active transcript-unreadable anchor', () => {
     const result = spawnSync('python3', ['-B', '-I', '-c',
-      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_REASONS))',
+      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps({"has": hasattr(telemetry, "CURSOR_SDK_REASONS")}))',
       join(ROOT, 'bin/lib')], { encoding: 'utf8' });
     expect([result.status, result.stderr]).toEqual([0, '']);
-    const registry = JSON.parse(result.stdout) as Array<[string, string]>;
-    for (const [code, anchor] of registry) expect(anchor).toBe(`cursor-sdk-${code}`);
+    expect(JSON.parse(result.stdout).has).toBe(false);
     const doc = readFileSync(DOC, 'utf8');
-    const documented = [...doc.matchAll(/<a id="(cursor-sdk-[a-z-]+)"><\/a>`([a-z-]+)`/g)].map(match => [match[2], match[1]]);
-    expect(documented).toEqual(registry);
+    expect(doc).not.toContain('id="cursor-sdk-transcript-unreadable"');
   });
 
-  test('Cursor and quota documents the retired Conductor store, transcript-unreadable anchor, and honored orchestration-contract status', () => {
+  test('Cursor and quota documents the retired Cursor classifier and Conductor store, keeps historical anchors, and preserves schema validity for historical Cursor rows', () => {
     const doc = readFileSync(DOC, 'utf8');
     const cursor = doc.slice(doc.indexOf('## Cursor and quota'));
     expect(cursor.startsWith('## Cursor and quota')).toBe(true);
-    expect(cursor).toContain("Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read");
+    expect(cursor).toContain('Cursor telemetry classification and the Cursor quota reader were removed');
+    expect(cursor).toContain('~/Library/Application Support/com.conductor.app/cursor-sdk-store/');
     expect(cursor).toContain('id="cursor-sdk-historical-route"');
-    expect(cursor).toContain('id="cursor-sdk-transcript-unreadable"');
     expect(cursor).toContain('id="cursor-ledger-recipe"');
     expect(cursor.replace(/\s+/g, ' ')).toContain('Do not rewrite old rows');
 
     const orchContract = readFileSync(join(ROOT, 'docs/orchestration-contract.md'), 'utf8');
     expect(orchContract).toContain('| Host attribution | Set `GSTACK_EXTEND_WORKSPACE_OWNER=<host label>`, recorded as provenance `workspace_host` ([Host attribution](telemetry.md#host-attribution)) | `bin/lib/telemetry.py` `workspace_host()` | `honored` |');
     expect(orchContract).toContain('| Run-mode signal | Set `GSTACK_EXTEND_RUN_MODE=orchestrated` on every stage launched, interactive or not ([Run mode](telemetry.md#run-mode)) | `bin/lib/telemetry.py` `run_mode()` | `honored` |');
+
+    // Historical stage-runs row with agent: "cursor" remains valid against docs/stage-runs.schema.json.
+    expect(verdict({
+      ...quickstartRow(),
+      agent: 'cursor',
+      agent_source: 'detected',
+      route: 'cli',
+      entrypoint_raw: 'cursor-agent',
+      run_mode: 'unknown',
+      run_mode_source: 'harness-unqualified',
+      user_signals_source: 'harness-unsupported',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+    }).ok).toBe(true);
+
+    // Historical workflow-metrics v:2 usage record with harness: "cursor" remains valid against docs/workflow-metrics.schema.json.
+    const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+    expect(metricsSchema.definitions.usage_harness.enum).toContain('cursor');
+    expect(metricsSchema.definitions.usage_source.properties.agent.$ref).toBe('#/definitions/usage_harness');
   });
 });
 
@@ -2105,8 +2125,9 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     for (const [harness, agent, route] of [
       [{ CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-fixture' }, 'claude', 'sdk'],
       [{ CODEX_THREAD_ID: 'host-matrix' }, 'codex', 'unknown'],
-      [{ CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, 'cursor', 'cli'],
-    ] as Array<[Record<string, string>, string, string]>) {
+      [{ GROK_AGENT: '1' }, 'grok', 'unknown'],
+      [{ CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, null, 'unknown'],
+    ] as Array<[Record<string, string>, string | null, string]>) {
       run({ PASEO_AGENT_ID: 'p' }, null, harness, agent, route);
       run({ CONDUCTOR_SESSION_ID: 'c' }, null, harness, agent, route);
       run({ GSTACK_EXTEND_WORKSPACE_OWNER: 'owner-host' }, 'owner-host', harness, agent, route);
@@ -2531,10 +2552,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'harness-unqualified',
       },
       {
-        name: 'Cursor under Paseo yields harness-unqualified',
+        name: 'Cursor under Paseo yields no-harness',
         env: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
         expectedMode: 'unknown',
-        expectedSource: 'harness-unqualified',
+        expectedSource: 'no-harness',
       },
       {
         name: 'no harness yields no-harness',
@@ -2871,9 +2892,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `cursor` |', '| `muse` |']) {
+    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `muse` |']) {
       expect(runModeSection).toContain(h);
     }
+    expect(runModeSection).not.toContain('| `cursor` |');
     // Value: protects=qualification needs three real readbacks, not candidate labels; fails_when=incomplete evidence clears pending or complete evidence stays pending; why_new=Track 80D now has all three readbacks; seam=none
     const recordedRunsSection = section(record, '## Recorded runs');
     const recordedRows = recordedRunsSection.split('\n')

@@ -17,7 +17,6 @@ test('fixture scrubber removes numeric identities and embedded credentials', () 
 test('quota contract and failure scenarios under an allowlisted environment', () => {
   const fixture = quotaFixture();
   try {
-    expect(fixture.env.CURSOR_API_KEY).toBeUndefined();
     const result = spawnSync('/usr/bin/python3', ['-B', '-E', '-s', join(QUOTA_ROOT, 'tests/quota_cases.py')], {
       cwd: QUOTA_ROOT, env: fixture.env, encoding: 'utf8', timeout: 120_000,
     });
@@ -34,8 +33,6 @@ test('JSON failures, no real credentials, no default-state fixture writes', () =
       expect(result.status).toBeGreaterThan(0);
       expect(JSON.parse(result.stdout).error).toBeDefined();
     }
-    const leaked = fixture.run(['status', '--json'], { CURSOR_API_KEY: 'fixture-sentinel' });
-    expect(JSON.parse(leaked.stdout).error.code).toBe('fixture_refused');
     const unsafe = fixture.run(['status', '--json'], { GSTACK_EXTEND_STATE_DIR: join(fixture.home, '.gstack-extend') });
     expect(JSON.parse(unsafe.stdout).error.code).toBe('fixture_refused');
   } finally { fixture.cleanup(); }

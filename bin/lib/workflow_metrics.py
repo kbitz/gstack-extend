@@ -39,6 +39,8 @@ GIT_DEADLINE_S = 0.25
 OPS = ("begin", "end", "decision", "pass", "correction", "read")
 RECORD_OPS = ("begin", "end", "decision", "pass", "correction", "usage")
 USAGE_STATUSES = ("ok", "partial", "unavailable")
+# "cursor" is retained for reading historical v:2 usage records via parse_ledger() -> _validate_usage();
+# telemetry_usage.collect() no longer emits "cursor" for new runs.
 USAGE_HARNESSES = ("claude", "codex", "cursor", "grok", "unknown")
 USAGE_RELATIONS = ("own", "subagent", "nested", "cross-harness")
 USAGE_EVIDENCE = ("direct", "correlated", "unknown")
