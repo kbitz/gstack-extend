@@ -2,7 +2,7 @@ import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROTOCOL_LINE, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
+import { HELPER_SOURCE, PROTOCOL_LINE, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
 afterAll(cleanupTelemetryFixtures);
@@ -273,9 +273,26 @@ describe('doctor environment and arguments', () => {
     const relative = point(bare, '.codex/skills', '.\n');
     expect(relative.telemetry_binary).toBeNull();
     expect(relative.diagnostic).toContain('unresolvable');
-    expect(point(bare, '.config/opencode/skills', '/nonexistent/root\n').telemetry_binary).toBeNull();
-    // ...while an absolute pointer resolves from every host directory.
-    for (const host of ['.claude/skills', '.codex/skills', '.config/opencode/skills', '.cursor/skills']) {
+    // Value: protects=installed helper and doctor agree on a retired-only home;
+    // fails_when=either follows a retired pointer; why_new=the separate resolver fixtures do not establish same-home parity; seam=none.
+    for (const retiredHost of ['.config/opencode/skills', '.cursor/skills']) {
+      const retiredFix = makeTelemetryFixture('community', 'absent');
+      const helperDir = join(retiredFix.home, '.gstack-extend/bin');
+      const helper = join(helperDir, 'telemetry-call');
+      mkdirSync(helperDir, { recursive: true });
+      copyFileSync(HELPER_SOURCE, helper);
+      chmodSync(helper, 0o755);
+      const retiredReport = point(retiredFix, retiredHost, ROOT + '\n');
+      const resolved = spawnSync(helper, ['--resolve'], {
+        env: retiredFix.env, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+      });
+      expect(resolved.status).toBe(0);
+      expect(resolved.stdout).toBe('');
+      expect(retiredReport).toMatchObject({ telemetry_binary: null, call_helper: helper });
+      expect(retiredReport.diagnostic).toContain('unresolvable');
+    }
+    // ...while an absolute pointer resolves from both supported host directories.
+    for (const host of ['.claude/skills', '.codex/skills']) {
       const resolved = point(makeTelemetryFixture('community', 'absent'), host, ROOT + '\n');
       expect(resolved).toMatchObject({ telemetry_binary: join(ROOT, 'bin/gstack-extend-telemetry'), diagnostic: null });
     }
@@ -283,6 +300,22 @@ describe('doctor environment and arguments', () => {
     const stale = makeTelemetryFixture('community', 'absent');
     point(stale, '.claude/skills', '.\n');
     expect(point(stale, '.codex/skills', ROOT + '\n').telemetry_binary).toBe(join(ROOT, 'bin/gstack-extend-telemetry'));
+
+    // Start-command check (E6): present executable vs missing vs non-executable.
+    const preambleFix = makeTelemetryFixture('community', 'stub');
+    const preambleDir = join(preambleFix.home, '.gstack-extend/bin');
+    const preamblePath = join(preambleDir, 'preamble');
+    mkdirSync(preambleDir, { recursive: true });
+    writeFileSync(preamblePath, '#!/bin/sh\nexit 0\n');
+    chmodSync(preamblePath, 0o755);
+    expect(JSON.parse(run(preambleFix.env).stdout).start_command).toBe(preamblePath);
+    expect(run(preambleFix.env, []).stdout).not.toContain('start command missing or not executable');
+    chmodSync(preamblePath, 0o644);
+    expect(JSON.parse(run(preambleFix.env).stdout).start_command).toBeNull();
+    expect(run(preambleFix.env, []).stdout).toContain('start command missing or not executable at ~/.gstack-extend/bin/preamble');
+    rmSync(preamblePath);
+    expect(JSON.parse(run(preambleFix.env).stdout).start_command).toBeNull();
+    expect(run(preambleFix.env, []).stdout).toContain('produce zero starts');
   }, 30_000);
 
   test('warns about a stale wrapper and a logger without --no-sweep, and never resolves a relative PATH wrapper', () => {

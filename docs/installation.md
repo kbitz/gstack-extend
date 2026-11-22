@@ -38,28 +38,10 @@ To run setup for its detected host paths, use:
 |------|------|
 | Claude | `~/.claude/skills/<name>/` |
 | Codex | `~/.codex/skills/<name>/` |
-| OpenCode (legacy path) | `~/.config/opencode/skills/<name>/` |
-| Cursor (legacy path) | `~/.cursor/skills/<name>/` |
 
 Each skill is its own directory with `SKILL.md`. The package checkout is never linked as a skill.
 
-Setup still recognizes the legacy Cursor and OpenCode paths. An install that
-uses only those paths cannot resolve a checkout through the start command.
-For recovery, install explicitly for Claude Code or Codex and run the
-[first-run check](#start-command) in that host.
-
-Auto mode detects Cursor when `cursor` is on PATH or `~/.cursor` exists,
-including an existing skill install. Detection can create `~/.cursor/skills`.
-Explicit `--host cursor` can write legacy copies on a machine without Cursor.
-
-Cursor receives regular-file copies with the authored shell paths, a multiline
-description, and no `allowed-tools` frontmatter, plus an `.extend-root` pointer
-to the checkout. Setup refreshes generated copies. A user-owned regular
-`SKILL.md` is preserved without claiming ownership, and setup still exits 0.
-Use `setup --host cursor --uninstall` to remove copies owned by this checkout.
-Cursor may also discover same-named skills in other hosts' directories. If
-`~/.cursor/skills` is another host's skills directory (for example a symlink to
-`~/.claude/skills`), setup warns and leaves it to that host.
+Cursor and OpenCode are no longer supported install hosts (dropped 2026-11-21); see [Retired install hosts](#retired-install-hosts) for leftover copies and removal.
 
 On every host, a `SKILL.md` symlink that points anywhere other than a
 gstack-extend checkout's `skills/` directory (a dotfiles-managed personal
@@ -67,16 +49,14 @@ skill, say) is treated like a user-owned file: setup warns and leaves it alone.
 A link into a checkout that no longer exists is repointed only when setup's own
 `.extend-root` beside it still names that checkout.
 
-Codex and OpenCode passes skip a skills directory shared with Claude or with
-each other, on both install and uninstall, even if that other host was not
-selected. This includes aliases through parent directories, dangling links
-into a directory not created yet, and case variants: path components that do
-not exist yet are compared case-blind, so on a case-sensitive volume a case
-variant can skip a host until that directory exists. Claude can maintain its symlinks in a shared
-directory; Codex and OpenCode need separate directories to refresh their
-copies, so if they share one, both skip it. Cursor keeps yielding to whichever
-host's directory it shares, as described above. Setup preserves existing
-regular files in Claude's directory, including old generated copies; see
+Codex passes skip a skills directory shared with Claude, on both install and
+uninstall, even if Claude was not selected. This includes aliases through parent
+directories, dangling links into a directory not created yet, and case variants:
+path components that do not exist yet are compared case-blind, so on a
+case-sensitive volume a case variant can skip Codex until that directory exists.
+Claude can maintain its symlinks in a shared directory; Codex needs a separate
+directory to refresh its copies. Setup preserves existing regular files in
+Claude's directory, including old generated copies; see
 **Shared-directory migration** below. A `--host` run whose host was skipped
 installs or uninstalls nothing and leaves the CLI links and registry alone.
 
@@ -92,17 +72,14 @@ move the personal link if replacing it, then rerun setup. A symlink collision
 remains an error even when other skill names could be installed.
 
 In `--host auto`, a detected host whose skills directory is outside HOME, not
-owned by you, or world-writable is skipped with a warning, and the other hosts
-still install. Naming that host with `--host` stops setup instead. If nothing
-is left to install, setup installs Claude when only Cursor was skipped (Cursor
-also reads `~/.claude/skills`) and fails otherwise.
+owned by you, or world-writable is skipped with a warning, and the other host
+still installs. Naming that host with `--host` stops setup instead. If every
+detected host is skipped, setup fails without installing anything.
 
 When hosts are skipped because of shared or unsafe directories, stdout includes
 one `SETUP_SKIPPED_HOSTS <csv>` line (for example,
-`SETUP_SKIPPED_HOSTS codex,opencode`) even with `--quiet` or when setup later
-fails. No such line is printed when no host was skipped. During an install, a
-Cursor that yields is listed only when the same run did not process the host it
-yields to; otherwise Cursor reads that host's refreshed install. Reasons and
+`SETUP_SKIPPED_HOSTS codex`) even with `--quiet` or when setup later
+fails. No such line is printed when no host was skipped. Reasons and
 recovery guidance remain on stderr. `bin/update-run` forwards the line;
 `UPGRADE_OK` means the checkout upgraded, while listed hosts were left untouched
 and may still have stale copies. The refreshed `/gstack-extend-upgrade` skill and
@@ -115,8 +92,8 @@ rerun `<checkout>/bin/update-run <checkout>` instead so its post-setup steps
 also run.
 
 `UPGRADE_OK` means the git checkout upgraded. It does not mean every on-disk
-skill copy was refreshed. A preserved regular file, a shared directory, an
-unsafe directory, or a Cursor install whose owner was not processed stays
+skill copy was refreshed. A preserved regular file, a shared directory, or an
+unsafe directory stays
 recorded. The next enabled `bin/update-check` prints one `INSTALL_WARN` line
 per unresolved fact, including when the version check is cached, snoozed, or
 offline. Those lines are not version results. `update_check=false` hides them
@@ -146,9 +123,9 @@ names the cause and `gstack-extend doctor telemetry` reports a missing helper.
 
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
-Every host-specific uninstall, and `--host auto --uninstall`, keeps
-`~/.local/bin/gstack-extend` and `~/.local/bin/gstack-extend-telemetry` while any
-of the four hosts has an `.extend-root` pointer naming this checkout beside a
+Every managed-host uninstall, including `--host auto --uninstall`, keeps
+`~/.local/bin/gstack-extend` and `~/.local/bin/gstack-extend-telemetry` while either
+of the two managed hosts (Claude Code or Codex) has an `.extend-root` pointer naming this checkout beside a
 `SKILL.md`, or a Claude `SKILL.md` link into it (installs that predate pointers
 have only the link), and prints that file as `Kept for: <path>`. A non-dangling
 `.extend-root` that does not resolve to a regular file causes setup to skip the
@@ -160,11 +137,11 @@ beside it untouched, and removes the dangling link only when it otherwise
 refreshes or removes that skill. The last uninstall removes both links if they
 point at this checkout. A preserved, customized skill's pointer also keeps the links; a
 pointer naming another checkout does not. The `telemetry-call` copy is kept while
-any host skill directory still holds an `.extend-root` pointer, whichever checkout
+either managed host skill directory still holds an `.extend-root` pointer, whichever checkout
 wrote it, and removed with the last one. Foreign links and regular files are left alone. Legacy
 `--skills-dir ... --uninstall` cleanup leaves the shared CLI links alone.
 
-Uninstall from a named host or with `--host auto` keeps the shared preamble
+Uninstall from a managed host or with `--host auto` keeps the shared preamble
 while Claude Code or Codex has an `.extend-root` pointer or a recognized
 older skill link into a live checkout. This applies across checkouts.
 Uninstall removes the shared copy when neither kind of install remains.
@@ -175,15 +152,13 @@ foreign install pointers, and unrelated files are preserved.
 
 ### Hosts setup does not manage
 
-`setup` manages Claude Code and Codex and still handles the legacy OpenCode and
-Cursor paths from the table above. Another agent that reads
+`setup` manages Claude Code and Codex from the table above. Another agent that reads
 `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
 `~/.gemini/config/skills/` is one such directory.
 
 With a managed Claude install, link the directory `setup` already maintains, so
-the link follows later refreshes. For another managed host, use its skill
-directory from the table above:
+the link follows later refreshes. For Codex, use `~/.codex/skills`:
 
 ```bash
 mkdir -p <host-skills-dir>
@@ -205,7 +180,20 @@ dangles after `setup --uninstall` or a moved checkout. Skills that call checkout
 helpers need a Claude Code or Codex install. The start command resolves only
 these two hosts. If your only skill copies are under Cursor or OpenCode, run
 `./setup --host claude` or `./setup --host codex` from your checkout and start the
-skill in that host.
+skill in that host; see [Retired install hosts](#retired-install-hosts) to clean up
+leftover copies.
+
+### Retired install hosts
+
+Cursor (`~/.cursor/skills/`) and OpenCode (`~/.config/opencode/skills/`) install support was dropped on 2026-11-21. Supported install hosts are Claude Code (`claude`) and Codex (`codex`).
+
+- **Install refusal:** `setup --host cursor` and `setup --host opencode` exit `1` without touching any directory, link, helper, registry or `install-status` file, and print an unsupported message with the removal command. `--host auto` and `--host auto --uninstall` ignore both directories (aside from the install-run notice below).
+- Run `<checkout>/setup --host cursor --uninstall` or `<checkout>/setup --host opencode --uninstall` to remove leftover copies. The command handles known skill names only. It removes a `SKILL.md` link to the matching source in that checkout's `skills/` or a regular `SKILL.md` beside a regular, readable `.extend-root` naming that checkout. It also removes orphaned regular copies when the pointer gives a normalized absolute path and the checkout is confirmed missing. It preserves unrelated personal files, shared CLI links, `telemetry-call`, `preamble`, the registry and `install-status`. It skips a directory with a warning if it belongs to Claude Code or Codex, resolves outside your home, is foreign-owned, or is world-writable. Successful removal and safe skips exit `0`.
+- For remaining copies, inspect `~/.cursor/skills/<name>/.extend-root` or `~/.config/opencode/skills/<name>/.extend-root`. Empty, relative, or otherwise unverified pointers and copies under unknown skill names stay in place. The command also reports copies owned by another checkout and prints that checkout's removal command. Inspect the named checkout before running it.
+- Setup checks for regular leftover copies beside regular, readable `.extend-root` files before installing, including under `--quiet`. For each safe, unshared retired skills directory with matching copies, it reports counts by owner on stderr and gives the removal command or manual recovery guidance.
+- When update checks are enabled, `bin/update-check` reports regular leftover copies in safe, unshared retired directories. The scan reads up to 4096 bytes from each regular `.extend-root` pointer and groups copies by the first line. It emits up to four `INSTALL_WARN host=<cursor|opencode> skill=- path=<dir> reason=retired_host cause=host_dropped detection=not_applicable checkout=<root> freshness=unverified Fix: <checkout>/docs/installation.md#retired-install-hosts` lines per directory. An overflow line substitutes `more_owners=<count>` for `checkout=<root>`. Warnings appear after any version line and also appear when the version check is cached, snoozed or offline. Remove the old copies to clear their warnings. `update_check=false` silences all update checks.
+- **Legacy `install-status` facts:** existing `cursor` and `opencode` facts in `install-status` (including `cursor_unserved` and `cursor_home`) remain readable so existing frames never turn `malformed`. `bin/update-check` suppresses them (the live `retired_host` scan supersedes them), and `setup` drops them on its next reconciling install run.
+- **Transitional status:** the refusal, removal path, install notice, `retired_host` scan and legacy-fact acceptance are transitional and will be removed once the owner's machines hold no Cursor or OpenCode copies, or in the first release after 1.0, whichever comes first.
 
 ### Start command
 
@@ -361,7 +349,7 @@ qualified: `this_checkout` (the checkout that recorded the fact),
 `verified_checkout` (another existing gstack-extend checkout) or
 `prior_qualified` (one that has since moved or been deleted). A host line shows
 `detection=` instead: how setup selected that host (`binary`,
-`existing_skill`, `cursor_home`, `explicit_host`, or `not_applicable` for the
+`existing_skill`, `explicit_host`, or `not_applicable` for the
 Claude fallback). Recover with a verified checkout, normally the one in the Fix link,
 whatever `checkout=` shows. A status line (`reason=status_*`) names the state
 path and its cause instead. Paths are shell-quoted when needed. Treat the
@@ -388,21 +376,14 @@ there, run the example again. Once it is gone, the warning stays until you put
 the file back and repeat the example, or turn checks off as described below.
 A host fact clears when that host's setup succeeds into a safe directory of
 its own. `shared_directory` also needs that directory separated from the other
-copy-producing hosts. Cursor still reading the directory does not keep the
-fact. A Cursor `unsafe_directory` or `cursor_unserved` fact clears when this
-run installed the host whose skills directory Cursor points at (`setup --host
-auto`, or `setup --host` for that owner). `unsafe_directory` still needs that
-directory to pass the install-path check. `setup --host cursor` does not clear
-either fact while Cursor still yields.
+managed host's directory. Legacy `cursor` and `opencode` facts are dropped
+automatically on the next reconciling install run (see [Retired install hosts](#retired-install-hosts)).
 
 A pointer that names a moved or deleted checkout does not by itself refresh
 or delete the copy. A second verified checkout can clear a fact only for the
-exact host path it re-checks and finds repaired. Another HOME's facts stay
-in the file and are not printed for this HOME. Copy-producing hosts that
-already have their own skills directory are refreshed with
-`setup --host codex`, `setup --host opencode`, or `setup --host cursor`.
-Cursor can keep reading Claude's directory when that owner was installed in
-the same run; otherwise the warning says `cursor_unserved`.
+exact host path it re-checks and finds repaired. Another HOME's managed-host
+facts stay in the file and are not printed for this HOME. Codex with its own skills
+directory is refreshed with `setup --host codex`.
 
 On-disk repair does not replace text this session already loaded. After the
 files and a repeat check look right, reload the skill or start a new session.
@@ -423,14 +404,11 @@ checkout to recreate the source symlink. Preserve customized
 files; setup will continue to warn without overwriting them. Do not bulk-delete
 files based on the pointer alone.
 
-For Codex or OpenCode, back up the shared-directory wiring and give the host a
-separate skills directory, then run `setup --host codex` or
-`setup --host opencode` to install fresh copies there. Apply the same separation
-when only copy-producing hosts share a directory. Cursor can continue reading
-Claude's shared skills, or use a separate directory with `setup --host cursor`.
-If you no longer use that host, its `shared_directory` warning stays until its
+For Codex, back up the shared-directory wiring and give Codex a
+separate skills directory, then run `setup --host codex` to install fresh copies there.
+If you no longer use Codex, its `shared_directory` warning stays until its
 setup succeeds once into a directory of its own. Run that setup, then
-`setup --host <host> --uninstall` if you do not want its copies.
+`setup --host codex --uninstall` if you do not want its copies.
 
 Uninstall leaves those regular copies in place too. While a pointer naming the
 checkout sits beside a `SKILL.md`, the shared CLI links stay, and the uninstall
@@ -639,9 +617,9 @@ echo "RECOVERY_UPDATE_CHECK_$value"
 ```
 <!-- /recovery-example:custom-retain -->
 
-Codex, OpenCode, or Cursor already using its own skills directory is refreshed
-with that host's setup. This does not rewrite Claude's preserved files. Set
-`GSTACK_EXTEND_RECOVERY_HOST` to the host. `RECOVERY_HOST_SKIPPED` (exit 6)
+Codex already using its own skills directory is refreshed
+with `setup --host codex`. This does not rewrite Claude's preserved files. Set
+`GSTACK_EXTEND_RECOVERY_HOST` to `codex`. `RECOVERY_HOST_SKIPPED` (exit 6)
 means setup still skipped that host, usually because its directory is shared,
 and `RECOVERY_STATUS_UNSAVED` (exit 7) means setup could not save its record.
 
@@ -651,7 +629,7 @@ and `RECOVERY_STATUS_UNSAVED` (exit 7) means setup could not save its record.
 checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
 host=${GSTACK_EXTEND_RECOVERY_HOST:?}
 case "$host" in
-  codex|opencode|cursor) ;;
+  codex) ;;
   *) echo RECOVERY_HOST_REFUSED; exit 2 ;;
 esac
 if ! out=$("$checkout/setup" --host "$host" --quiet); then
@@ -681,8 +659,8 @@ echo RECOVERY_HOST_SETUP
 | `bin/update-check` lacks `# extend-root-protocol: v1` (older checkout, or not gstack-extend) | `git pull --ff-only` in that checkout, then `setup --host auto` |
 | The pointer names a non-absolute path | `setup --host auto` from your gstack-extend checkout |
 
-If that pointer sits beside a regular `SKILL.md` in a directory Codex or
-OpenCode shares with Claude, rerunning setup does not regenerate it; follow
+If that pointer sits beside a regular `SKILL.md` in a directory Codex
+shares with Claude, rerunning setup does not regenerate it; follow
 **Shared-directory migration** instead.
 
 Copy-paste checks, replacing `<skill>` and `<root>`:
@@ -722,8 +700,6 @@ check. `path=` names the directory and `cause=` says why:
 
 Then run `"<checkout>/setup" --host <host>` from the verified checkout. The
 warning clears when that run installs the host into the corrected directory.
-If Cursor's directory is the skills directory of a host this run installs,
-that host's setup clears the Cursor fact; `setup --host cursor` still skips it.
 
 ## State recovery
 

@@ -90,8 +90,7 @@ def wrapper_candidates():
     # .extend-root pointers.
     yield which("gstack-extend-telemetry")
     yield str(Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry")
-    for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills",
-                      Path.home() / ".config/opencode/skills", Path.home() / ".cursor/skills"):
+    for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills"):
         for pointer in sorted(directory.glob("*/.extend-root")):
             try:
                 # Regular files only (a FIFO or device would block). Like the skill block's `IFS= read -r`, take
@@ -109,6 +108,13 @@ def call_helper():
     """The resolver setup copies for the skill blocks, at the fixed path they call, or None. Without it every
     block skips telemetry, whatever extend_binary finds."""
     path = str(Path.home() / ".gstack-extend/bin/telemetry-call")
+    return path if executable(path) else None
+
+
+def start_command():
+    """The start command setup copies for skill preambles, at the fixed path they call, or None. Without it
+    skill preambles produce zero starts."""
+    path = str(Path.home() / ".gstack-extend/bin/preamble")
     return path if executable(path) else None
 
 
@@ -215,6 +221,7 @@ def report(days):
             pass  # a config helper that cannot run leaves the tier unavailable; the pairing stats still print
     binary, stale = extend_binary()
     helper = call_helper()
+    preamble = start_command()
     logger = resolve("gstack-telemetry-log")
     no_sweep = supports_no_sweep(logger) if logger else None
     warnings = []
@@ -235,7 +242,7 @@ def report(days):
         warnings.append(helper_warning)
     return dict(days=days, since=since.isoformat(), as_of=now.isoformat(), sink=str(sink),
                 sink_exists=sink.exists(), tier=tier, telemetry_binary=binary,
-                stale_wrapper=stale, call_helper=helper, logger_supports_no_sweep=no_sweep,
+                stale_wrapper=stale, call_helper=helper, start_command=preamble, logger_supports_no_sweep=no_sweep,
                 gstack_logger=logger, gstack_config=config,
                 warnings=warnings,
                 diagnostic=None if binary else "gstack-extend-telemetry unresolvable; re-run ./setup. See docs/telemetry.md.",
@@ -273,6 +280,9 @@ def main(args):
     if not result["call_helper"]:
         print("telemetry-call helper missing at ~/.gstack-extend/bin/telemetry-call, so every skill's telemetry "
               "call is skipped; re-run ./setup.")
+    if not result["start_command"]:
+        print("start command missing or not executable at ~/.gstack-extend/bin/preamble, so skill preambles "
+              "produce zero starts; re-run ./setup.")
     print("skill                  activation completion paired/eligible deferred unpaired-finish transcripts status")
     for stat in result["skills"]:
         ratio = f"{stat['paired']}/{stat['denominator']}"

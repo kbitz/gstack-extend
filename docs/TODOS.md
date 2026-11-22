@@ -2,6 +2,61 @@
 
 ## Unprocessed
 
+### [review:files=setup|tests/setup-hosts.test.ts] Test gap: preserve copies when checkout access fails
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The orphan fixtures cover missing, foreign and malformed paths. Checkout access errors and oversized markers remain untested.
+- **Hypothesis (untested):** Use an unsearchable checkout parent or oversized marker and check that explicit cleanup preserves the copy.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, `retired_copy_owner`
+- **Evidence:** Track 92A coverage audit at `84ce65c`.
+- **Context:** Filed by /review-and-prep for Track 92A host retirement.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=setup|tests/setup-hosts.test.ts] Test gap: verify all retired notice owner groups
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The quiet notice fixture uses one spelling per known owner and omits the unknown-owner group.
+- **Hypothesis (untested):** Add two spellings of one foreign checkout and an invalid pointer. Check that setup combines the aliases and reports the unknown count.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, `report_retired_host_leftovers`
+- **Evidence:** Track 92A coverage audit at `84ce65c`.
+- **Context:** Filed by /review-and-prep for Track 92A host retirement.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/update-check|tests/update.test.ts] Test gap: exercise retired warning scan input filters
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The live scan tests cover supported aliases and regular pointers. They do not exercise nonregular markers or unsafe retired directories.
+- **Hypothesis (untested):** Add isolated ineligible entries and verify update-check preserves its version result and emits no retirement warning for them.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/update-check`, `_uc_scan_retired_hosts`
+- **Evidence:** Track 92A coverage audit at `84ce65c`.
+- **Context:** Filed by /review-and-prep for Track 92A host retirement.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=setup|tests/setup-hosts.test.ts] Test gap: exercise auto-uninstall with both retired hosts present
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Managed uninstall and retired-copy preservation appear in separate fixtures.
+- **Hypothesis (untested):** Leave copies in both retired directories, remove the last managed install through auto mode, and compare retired tree bytes and CLI links.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, auto host selection and uninstall
+- **Evidence:** Track 92A coverage audit at `84ce65c`.
+- **Context:** Filed by /review-and-prep for Track 92A host retirement.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=setup|bin/update-check|tests/update.test.ts] Test gap: verify ownership-scoped warning clearance
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The removal and warning fixtures do not run both commands against one retired directory with two owners.
+- **Hypothesis (untested):** Remove one checkout's copies and verify update-check still reports the other checkout.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `setup`, retired uninstall, and `bin/update-check`, retired warning scan
+- **Evidence:** Track 92A coverage audit at `84ce65c`.
+- **Context:** Filed by /review-and-prep for Track 92A host retirement.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=setup|tests/setup-hosts.test.ts] Test gap: preserve the preamble after failed publication
 
 - **Test gap:** no demonstrated defect. Filed under `test-gaps=record`.

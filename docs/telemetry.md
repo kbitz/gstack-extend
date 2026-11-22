@@ -2773,10 +2773,10 @@ Start telemetry through the skill's [start command](installation.md#start-comman
 For finish, copy the complete `SHARED:telemetry-finish` block below and replace
 the quoted `"extend:full-review"` argument with the skill's name. Keep the quotes
 for the drift check. Both calls use `telemetry-call`, which `setup` installs as a
-file at `$HOME/.gstack-extend/bin/telemetry-call` for every host. That path ignores
-`GSTACK_EXTEND_STATE_DIR`. The helper's lookup is PATH →
-$HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
-$HOME host skill directories (setup writes one for Claude, Codex, OpenCode, and Cursor).
+file at `$HOME/.gstack-extend/bin/telemetry-call` for both managed hosts. That path
+ignores `GSTACK_EXTEND_STATE_DIR`. The helper and the doctor look for the wrapper
+on PATH, then under `$HOME/.claude/skills/gstack-extend/bin`, then through
+`.extend-root` pointers under `$HOME/.claude/skills` and `$HOME/.codex/skills` in that order.
 A candidate must be an absolute regular file and carry the `telemetry-protocol:
 start-finish-v1` line, so a relative PATH entry such as node_modules/.bin, or an
 older wrapper another checkout re-linked onto PATH, is skipped instead of run.
@@ -2800,8 +2800,9 @@ workflow-span library lookup uses it. GSTACK_EXTEND_DIR is not required.
 CWD-relative pointers are ignored. Upgrade invokes setup again to refresh the
 helper. If a manual pull brings in the start command for the first time, rerun
 setup before starting a skill. `GSTACK_EXTEND_TELEMETRY_DEBUG=1` and the doctor
-diagnose a missing `telemetry-call` or an unusable telemetry wrapper. Uninstall
-removes `telemetry-call` only when no host keeps an `.extend-root` pointer.
+diagnose a missing `telemetry-call` or an unusable telemetry wrapper. Managed-host
+uninstall removes `telemetry-call` when neither Claude Code nor Codex keeps an
+`.extend-root` pointer.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
@@ -2866,6 +2867,9 @@ gstack logger without --no-sweep; both mean completions or starts are being
 skipped rather than misfiled. JSON `call_helper` is the path of the `telemetry-call`
 helper the skill blocks run, or null when `setup` has not installed it; text mode
 then prints one line saying every skill's telemetry call is skipped.
+JSON `start_command` is the path to the runnable `~/.gstack-extend/bin/preamble`
+or null. When it is unavailable, text mode explains that skill preambles
+produce zero starts and points to rerunning setup.
 
 Every installed skill appears, including zero-row skills. Activity counts include
 legacy rows, but ratios exclude them. Completions the pre-rollout wrapper wrote

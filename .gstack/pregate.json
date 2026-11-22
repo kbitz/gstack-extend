@@ -147,6 +147,7 @@
       "tests/setup-hosts.test.ts",
       "tests/skill-content.test.ts",
       "tests/skill-protocols.test.ts",
+      "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts"
     ],
     "bin/lib/telemetry.py": [

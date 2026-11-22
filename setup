@@ -3,8 +3,8 @@
 #
 # Usage:
 #   ./setup                                          # Claude (~/.claude/skills/)
-#   ./setup --host auto                              # detect claude/codex/opencode/cursor
-#   ./setup --host claude|codex|opencode|cursor
+#   ./setup --host auto                              # detect claude/codex
+#   ./setup --host claude|codex
 #   ./setup --host <host> --uninstall
 #   ./setup --skills-dir <path> --uninstall          # legacy v0.16.0 cleanup
 #   ./setup --quiet
@@ -27,7 +27,7 @@ SKILLS_DIR_GIVEN=0
 UNINSTALL=0
 QUIET=0
 HOST="claude"
-USAGE="Usage: ./setup [--host claude|codex|opencode|cursor|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
+USAGE="Usage: ./setup [--host claude|codex|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
 
 # shellcheck source=bin/lib/install-safety.sh
 . "$SCRIPT_DIR/bin/lib/install-safety.sh"
@@ -36,15 +36,11 @@ log() { [ "$QUIET" -eq 0 ] && echo "$@" || true; }
 
 # Protocol output survives --quiet and failures after a host was skipped.
 SKIPPED_HOSTS=""
-SKIPPED_NON_CURSOR=0
 skip_host() {
   case "$1" in
     claude) INSTALL_CLAUDE=0 ;;
     codex) INSTALL_CODEX=0 ;;
-    opencode) INSTALL_OPENCODE=0 ;;
-    cursor) INSTALL_CURSOR=0 ;;
   esac
-  [ "$1" = "cursor" ] || SKIPPED_NON_CURSOR=1
   SKIPPED_HOSTS="${SKIPPED_HOSTS:+$SKIPPED_HOSTS,}$1"
 }
 report_skipped_hosts() {
@@ -74,12 +70,8 @@ INSTALL_STATUS_DIR=""
 INSTALL_STATUS_HOME_ID=""
 HOST_DETECT_claude=""
 HOST_DETECT_codex=""
-HOST_DETECT_opencode=""
-HOST_DETECT_cursor=""
 HOST_DONE_claude=0
 HOST_DONE_codex=0
-HOST_DONE_opencode=0
-HOST_DONE_cursor=0
 IS_NEW_F=()
 IS_NEW_KEY=()
 IS_NEW_QUAL=()
@@ -123,7 +115,7 @@ while [ $# -gt 0 ]; do
       ;;
     --host)
       if [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
-        echo "Error: --host requires claude, codex, opencode, cursor, or auto (got: '${2:-<missing>}')" >&2
+        echo "Error: --host requires claude, codex, or auto (got: '${2:-<missing>}')" >&2
         echo "$USAGE" >&2
         exit 1
       fi
@@ -159,9 +151,12 @@ while [ $# -gt 0 ]; do
 done
 
 case "$HOST" in
-  claude|codex|opencode|cursor|auto) ;;
+  claude|codex|auto) ;;
+  # Transitional (Track 92A): cursor and opencode are handled below (refusal on install, removal-only on --uninstall).
+  # Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+  opencode|cursor) ;;
   *)
-    echo "Unknown --host value: $HOST (expected claude, codex, opencode, cursor, or auto)" >&2
+    echo "Unknown --host value: $HOST (expected claude, codex, or auto)" >&2
     echo "$USAGE" >&2
     exit 1
     ;;
@@ -206,6 +201,14 @@ host_skills_dir() {
   case "$1" in
     claude) echo "${HOME}/.claude/skills" ;;
     codex) echo "${HOME}/.codex/skills" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Transitional (Track 92A): only for retired-host refusal, removal, install notice and legacy-frame binding.
+# Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+retired_host_dir() {
+  case "$1" in
     opencode) echo "${HOME}/.config/opencode/skills" ;;
     cursor) echo "${HOME}/.cursor/skills" ;;
     *) echo "" ;;
@@ -229,7 +232,7 @@ refuse_package_root_link() {
 # when it contains spaces or shell metacharacters; the skill resolver probes hosts.
 host_skill_body() {
   local src="$1" host="$2"
-  if [ "$host" = "codex" ] || [ "$host" = "cursor" ]; then
+  if [ "$host" = "codex" ]; then
     awk '
       BEGIN { fm=0; skip=0 }
       /^---[[:space:]]*$/ {
@@ -271,13 +274,13 @@ rewrite_skill_body() {
   return 1
 }
 
-# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode/Cursor. Claude
+# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex. Claude
 # installs are symlinks, so there the pointer must never make a user's detached, customized SKILL.md look generated.
-# Only those three hosts qualify; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
+# Only Codex qualifies; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
 # symlink installs) never removes or overwrites a regular file.
 generated_copy() {
   local target="$1" host="${2:-}"
-  case "$host" in codex|opencode|cursor) ;; *) return 1 ;; esac
+  [ "$host" = codex ] || return 1
   [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
 }
 
@@ -371,7 +374,7 @@ same_skills_dir() {
 HOST_INSTALL_POINTER=""
 checkout_has_host_install() {
   local host pointer root link
-  for host in claude codex opencode cursor; do
+  for host in claude codex; do
     for pointer in "$(host_skills_dir "$host")"/*/.extend-root; do
       [ -f "$pointer" ] && [ -r "$pointer" ] || continue
       [ -e "${pointer%/.extend-root}/SKILL.md" ] || [ -L "${pointer%/.extend-root}/SKILL.md" ] || continue
@@ -394,11 +397,50 @@ checkout_has_host_install() {
   return 1
 }
 
+# Track 92A retired-copy ownership. Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+retired_copy() {
+  local target="$1" pointer="$1/.extend-root"
+  [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] &&
+    [ -f "$pointer" ] && [ ! -L "$pointer" ] && [ -r "$pointer" ]
+}
+
+retired_copy_owner() {
+  local checkout=""
+  RETIRED_OWNER=unknown
+  RETIRED_CHECKOUT=""
+  # Setup writes the physical path verbatim, followed by LF. Refuse NUL
+  # and oversized markers and preserve the pathname's literal bytes.
+  if LC_ALL=C IFS= read -r -d '' -n 4097 checkout < "$1/.extend-root"; then return 0; fi
+  checkout=${checkout%$'\n'}
+  case "$checkout" in /*) ;; *) return 0 ;; esac
+  RETIRED_CHECKOUT="$checkout"
+  if [ "$checkout" -ef "$SCRIPT_DIR" ]; then
+    RETIRED_OWNER=this_checkout
+  elif [ -f "$checkout/setup" ] && [ -f "$checkout/bin/update-check" ]; then
+    RETIRED_OWNER=other_checkout
+  elif [ ! -e "$checkout" ] && [ ! -L "$checkout" ]; then
+    # Only a path setup could have recorded can establish missing ownership.
+    # Keep ambiguous line endings and noncanonical spellings for inspection.
+    case "$checkout" in *$'\r'*|*$'\n'*) return 0 ;; esac
+    [ "$(lex_abs "$checkout")" = "$checkout" ] || return 0
+    # Shell file tests cannot distinguish a missing path from denied access.
+    # A final dangling symlink also stays unknown rather than orphaned.
+    if bun --no-env-file --config=/dev/null -e '
+      const { lstatSync } = require("node:fs");
+      try { lstatSync(process.argv[1]); }
+      catch (error) { process.exit(error.code === "ENOENT" ? 0 : 1); }
+      process.exit(1);
+    ' "$checkout"; then
+      RETIRED_OWNER=orphaned
+    fi
+  fi
+}
+
 uninstall_from_dir() {
   local skills_dir="$1"
-  local host="${2:-}"
+  local host="${2:-}" mode="${3:-}"
   local names=("${SKILLS[@]}" "${LEGACY_SKILLS[@]}")
-  if [ "${3:-}" = "legacy" ]; then
+  if [ "$mode" = "legacy" ]; then
     names=("${LEGACY_SKILLS[@]}")
   fi
   local skill target link_target expected
@@ -416,6 +458,13 @@ uninstall_from_dir() {
     else
       continue
     fi
+    if [ "$mode" = retired ]; then
+      is_safe_install_path "$target" || continue
+      if [ -L "$target/.extend-root" ]; then
+        log "Skipped $skill (.extend-root is a symlink)"
+        continue
+      fi
+    fi
     if [ -e "$target/.extend-root" ] && [ ! -f "$target/.extend-root" ]; then
       log "Skipped $skill (.extend-root is not a regular file)"
       continue
@@ -427,7 +476,17 @@ uninstall_from_dir() {
         *) link_target="$(dirname "$target/SKILL.md")/$link_target" ;;
       esac
       expected="$SCRIPT_DIR/skills/${skill}.md"
-      if [ "$(lex_abs "$link_target")" = "$(lex_abs "$expected")" ]; then
+      if [ "$mode" = retired ]; then
+        if [ ! "${link_target%/*}" -ef "$SCRIPT_DIR/skills" ]; then
+          log "Skipped $skill (symlink points elsewhere)"
+          continue
+        fi
+        link_target="$SCRIPT_DIR/skills/${link_target##*/}"
+      else
+        link_target="$(lex_abs "$link_target")"
+        expected="$(lex_abs "$expected")"
+      fi
+      if [ "$link_target" = "$expected" ]; then
         rm -f "$target/SKILL.md"
         rm -f "$target/.extend-root"
         rmdir "$target" 2>/dev/null || true
@@ -435,6 +494,32 @@ uninstall_from_dir() {
       else
         log "Skipped $skill (symlink points elsewhere)"
       fi
+    elif [ "$mode" = retired ] && retired_copy "$target"; then
+      retired_copy_owner "$target"
+      case "$RETIRED_OWNER" in
+        this_checkout|orphaned)
+          rm -f "$target/SKILL.md" "$target/.extend-root"
+          rmdir "$target" 2>/dev/null || true
+          if [ "$RETIRED_OWNER" = orphaned ]; then
+            [ "$QUIET" -ne 0 ] || printf 'Removed orphaned %s (missing checkout %q)\n' "$skill" "$RETIRED_CHECKOUT"
+          else
+            log "Removed $skill"
+          fi
+          ;;
+        other_checkout)
+          printf 'Kept %q (owned by %q). If you recognize this checkout, run: %q --host %s --uninstall\n' \
+            "$target" "$RETIRED_CHECKOUT" "$RETIRED_CHECKOUT/setup" "$host" >&2
+          ;;
+        *)
+          if [ -n "$RETIRED_CHECKOUT" ]; then
+            printf 'Kept %q (unknown owner: cannot verify checkout %q). See %q\n' \
+              "$target" "$RETIRED_CHECKOUT" "$SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+          else
+            printf 'Kept %q (unknown owner: invalid .extend-root pointer). See %q\n' \
+              "$target" "$SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+          fi
+          ;;
+      esac
     elif generated_copy "$target" "$host"; then
       local baked
       baked="$(cat "$target/.extend-root" 2>/dev/null || true)"
@@ -447,7 +532,9 @@ uninstall_from_dir() {
       fi
     fi
   done
-  refuse_package_root_link "$skills_dir/gstack-extend"
+  if [ "$mode" != retired ]; then
+    refuse_package_root_link "$skills_dir/gstack-extend"
+  fi
 }
 
 preflight_dir() {
@@ -684,8 +771,6 @@ _is_detect() {
   case "$1" in
     claude) printf '%s' "${HOST_DETECT_claude:-explicit_host}" ;;
     codex) printf '%s' "${HOST_DETECT_codex:-explicit_host}" ;;
-    opencode) printf '%s' "${HOST_DETECT_opencode:-explicit_host}" ;;
-    cursor) printf '%s' "${HOST_DETECT_cursor:-explicit_host}" ;;
     *) printf '%s' explicit_host ;;
   esac
 }
@@ -814,19 +899,14 @@ _is_host_done() {
   case "$1" in
     claude) [ "$HOST_DONE_claude" -eq 1 ] ;;
     codex) [ "$HOST_DONE_codex" -eq 1 ] ;;
-    opencode) [ "$HOST_DONE_opencode" -eq 1 ] ;;
-    cursor) [ "$HOST_DONE_cursor" -eq 1 ] ;;
     *) return 1 ;;
   esac
 }
-# Cursor may read another host's directory, so it does not make a copy host
-# shared, matching the skip loop; Cursor's own facts still compare everything.
 _is_separated() {
   local host="$1" dir other
   dir=$(host_skills_dir "$host")
-  for other in claude codex opencode cursor; do
+  for other in claude codex; do
     [ "$other" = "$host" ] && continue
-    [ "$host" != cursor ] && [ "$other" = cursor ] && continue
     if same_skills_dir "$dir" "$(host_skills_dir "$other")"; then
       return 1
     fi
@@ -837,25 +917,13 @@ _is_mark() {
   _is_key "$1" "$2" "$3" "$4"
   IS_RESOLVE[${#IS_RESOLVE[@]}]=$IS_KEY
 }
-# A yielding Cursor is served when the host whose directory it reads was
-# installed this run.
-_is_cursor_yield_served() {
-  local dir host
-  dir=$(host_skills_dir cursor)
-  for host in claude codex opencode; do
-    if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
-      return 0
-    fi
-  done
-  return 1
-}
 # Candidate resolutions. Each one is reverified under the lock before a fact
 # clears. An unsafe directory needs only to pass safety now; a shared one must
-# also be separated from every other host's directory.
+# also be separated from the other host's directory.
 install_status_mark_resolutions() {
   local host dir skill skills_dir home
   home=$INSTALL_STATUS_HOME_ID
-  for host in claude codex opencode cursor; do
+  for host in claude codex; do
     _is_host_done "$host" || continue
     dir=$(host_skills_dir "$host")
     is_safe_install_path "$dir" >/dev/null 2>&1 || continue
@@ -864,16 +932,6 @@ install_status_mark_resolutions() {
     _is_separated "$host" || continue
     _is_mark "$home" "$host" "$IS_HOST_DIR" shared_directory
   done
-  dir=$(host_skills_dir cursor)
-  _is_host_dir cursor
-  if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
-    _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
-  elif _is_cursor_yield_served; then
-    _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
-    if is_safe_install_path "$dir" >/dev/null 2>&1; then
-      _is_mark "$home" cursor "$IS_HOST_DIR" unsafe_directory
-    fi
-  fi
   if [ "$HOST_DONE_claude" -eq 1 ] || [ "$INSTALL_STATUS_SCAN_CLAUDE" -eq 1 ]; then
     _is_host_dir claude
     skills_dir=$IS_HOST_DIR
@@ -946,6 +1004,8 @@ _is_enum() {
 _is_valid_fact() {
   _is_enum "$UF_KIND" fact || return 1
   _is_enum "$UF_OQUAL" this_checkout verified_checkout prior_qualified || return 1
+  # Transitional (Track 92A): keep accepting legacy cursor/opencode/cursor_unserved/cursor_home facts so existing
+  # frames never turn malformed. Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
   _is_enum "$UF_HOST" claude codex opencode cursor || return 1
   _is_enum "$UF_REASON" shared_directory unsafe_directory cursor_unserved preserved_regular || return 1
   _is_enum "$UF_CANON" matches_canonical differs_canonical source_unavailable not_applicable || return 1
@@ -991,8 +1051,12 @@ _is_bind_fact() {
   case "$UF_HOST" in
     claude) want=/.claude/skills ;;
     codex) want=/.codex/skills ;;
-    opencode) want=/.config/opencode/skills ;;
-    cursor) want=/.cursor/skills ;;
+    # Transitional (Track 92A): keep binding legacy retired-host directories via retired_host_dir.
+    # Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+    opencode|cursor)
+      _is_norm_path "$(retired_host_dir "$UF_HOST")"
+      want="${IS_NORM#"$IS_HOME_NORM"}"
+      ;;
     *) return 1 ;;
   esac
   _is_norm_path "$UF_LOGICAL"
@@ -1122,30 +1186,17 @@ _is_canonical_link() {
   [ "$(lex_abs "$target")" = "$(lex_abs "$expected")" ]
 }
 _is_reverify() {
-  local dir current_inode host
+  local dir current_inode
   case "$UF_REASON" in
     shared_directory|unsafe_directory)
       _is_host_dir "$UF_HOST"
       [ "$UF_LOGICAL" = "$IS_HOST_DIR" ] || return 1
       is_safe_install_path "$(host_skills_dir "$UF_HOST")" >/dev/null 2>&1 || return 1
-      # A Cursor directory repaired by pointing it at a served host's directory.
-      if [ "$UF_REASON" = unsafe_directory ] && [ "$UF_HOST" = cursor ] && _is_cursor_yield_served; then
-        return 0
-      fi
       _is_host_done "$UF_HOST" || return 1
       if [ "$UF_REASON" = shared_directory ]; then
         _is_separated "$UF_HOST" || return 1
       fi
       return 0
-      ;;
-    cursor_unserved)
-      dir=$(host_skills_dir cursor)
-      _is_host_dir cursor
-      [ "$UF_LOGICAL" = "$IS_HOST_DIR" ] || return 1
-      if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
-        return 0
-      fi
-      _is_cursor_yield_served
       ;;
     preserved_regular)
       [ "$UF_HOST" = "claude" ] || return 1
@@ -1205,12 +1256,20 @@ _is_merge() {
     i=$((i + 1))
   done
 }
-# Drop only facts whose candidate resolution reverifies now.
+# Drop facts whose candidate resolution reverifies now, plus legacy retired-host facts.
 _is_reconcile() {
   local i=0 n kept_f=() kept_key=()
   n=${#IS_OUT_KEY[@]}
   while [ "$i" -lt "$n" ]; do
     _is_load IS_OUT_F "$i"
+    # Transitional (Track 92A): drop every cursor/opencode fact on any reconciling run without calling _is_reverify.
+    # Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+    case "$UF_HOST" in
+      cursor|opencode)
+        i=$((i + 1))
+        continue
+        ;;
+    esac
     if _is_marked_key "${IS_OUT_KEY[$i]}" && _is_reverify; then
       i=$((i + 1))
       continue
@@ -1336,89 +1395,158 @@ install_status_finalize() {
   install_status_release_lock || true
 }
 
+# ─── Transitional retired-host refusal and removal (Track 92A) ──────
+# Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+known_skill_name() {
+  local s="$1" x
+  for x in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
+    [ "$x" = "$s" ] && return 0
+  done
+  return 1
+}
+
+uninstall_retired_host() {
+  local host="$1" label="$2" rdir other entry name
+  rdir="$(retired_host_dir "$host")"
+  echo "Note: $label is no longer a supported gstack-extend install host (dropped 2026-11-21; supported hosts: claude, codex)." >&2
+  for other in claude codex; do
+    if same_skills_dir "$rdir" "$(host_skills_dir "$other")"; then
+      echo "Warning: $rdir is the $other skills directory; skipping $host uninstall." >&2
+      echo "  See: $SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+      return 0
+    fi
+  done
+  [ -d "$rdir" ] || { log "Uninstall complete."; return 0; }
+  if ! is_safe_install_path "$rdir"; then
+    printf 'Warning: skipping %s uninstall. See %q\n' "$host" "$SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+    return 0
+  fi
+  uninstall_from_dir "$rdir" "$host" retired
+  for entry in "$rdir"/*; do
+    [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+    retired_copy "$entry" || continue
+    name="$(basename "$entry")"
+    if ! known_skill_name "$name"; then
+      printf 'Kept %q (unknown skill name; remove manually if it is a leftover copy). See %q\n' \
+        "$entry" "$SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+    fi
+  done
+  log "Uninstall complete."
+}
+
+if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "cursor" ] || [ "$HOST" = "opencode" ]; }; then
+  _retired_label="Cursor"
+  [ "$HOST" = "opencode" ] && _retired_label="OpenCode"
+  if [ "$UNINSTALL" -eq 0 ]; then
+    echo "Error: $_retired_label is no longer a supported gstack-extend install host (dropped 2026-11-21; supported hosts: claude, codex). Nothing was installed." >&2
+    printf '  To remove copies this checkout installed, run: %q --host %s --uninstall\n' "$SCRIPT_DIR/setup" "$HOST" >&2
+    echo "  See: $SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+    exit 1
+  fi
+  uninstall_retired_host "$HOST" "$_retired_label"
+  exit 0
+fi
+
+# Transitional (Track 92A): report regular leftover copies before setup starts changing host state.
+# Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+report_retired_host_leftovers() {
+  local rhost rdir entry this_count orphan_count unknown_count total k
+  local -a other_roots other_counts
+  for rhost in cursor opencode; do
+    rdir="$(retired_host_dir "$rhost")"
+    [ -d "$rdir" ] || continue
+    if same_skills_dir "$rdir" "$(host_skills_dir claude)" || same_skills_dir "$rdir" "$(host_skills_dir codex)"; then
+      continue
+    fi
+    is_safe_install_path "$rdir" 2>/dev/null || continue
+    this_count=0
+    orphan_count=0
+    unknown_count=0
+    total=0
+    other_roots=()
+    other_counts=()
+    for entry in "$rdir"/*; do
+      [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+      retired_copy "$entry" || continue
+      [ -O "$entry" ] && ! _is_world_writable "$entry" || continue
+      total=$((total + 1))
+      retired_copy_owner "$entry"
+      case "$RETIRED_OWNER" in
+        this_checkout) this_count=$((this_count + 1)) ;;
+        orphaned) orphan_count=$((orphan_count + 1)) ;;
+        other_checkout)
+          k=0
+          while [ "$k" -lt "${#other_roots[@]}" ]; do
+            [ "${other_roots[$k]}" -ef "$RETIRED_CHECKOUT" ] && break
+            k=$((k + 1))
+          done
+          if [ "$k" -eq "${#other_roots[@]}" ]; then
+            other_roots[$k]="$RETIRED_CHECKOUT"
+            other_counts[$k]=0
+          fi
+          other_counts[$k]=$((other_counts[$k] + 1))
+          ;;
+        *) unknown_count=$((unknown_count + 1)) ;;
+      esac
+    done
+    [ "$total" -gt 0 ] || continue
+    printf 'Note: %q holds %s setup-generated skill copies; setup no longer refreshes %s installs (dropped 2026-11-21).\n' \
+      "$rdir" "$total" "$rhost" >&2
+    if [ "$this_count" -gt 0 ] || [ "$orphan_count" -gt 0 ]; then
+      printf '  %s owned by this checkout, %s orphaned (missing checkout) — remove with: %q --host %s --uninstall\n' \
+        "$this_count" "$orphan_count" "$SCRIPT_DIR/setup" "$rhost" >&2
+    fi
+    k=0
+    while [ "$k" -lt "${#other_roots[@]}" ]; do
+      printf '  %s owned by %q — if you recognize this checkout, remove with: %q --host %s --uninstall\n' \
+        "${other_counts[$k]}" "${other_roots[$k]}" "${other_roots[$k]}/setup" "$rhost" >&2
+      k=$((k + 1))
+    done
+    if [ "$unknown_count" -gt 0 ]; then
+      echo "  $unknown_count with unknown owner — inspect and remove manually." >&2
+    fi
+    printf '  See: %q\n' "$SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
+  done
+}
+if [ "$UNINSTALL" -eq 0 ]; then
+  report_retired_host_leftovers || true
+fi
+
 # ─── Resolve which hosts to touch ──────────────────────────────────
 INSTALL_CLAUDE=0
 INSTALL_CODEX=0
-INSTALL_OPENCODE=0
-INSTALL_CURSOR=0
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
   :
 elif [ "$HOST" = "auto" ]; then
   if command -v claude >/dev/null 2>&1; then INSTALL_CLAUDE=1; HOST_DETECT_claude=binary; fi
   if command -v codex >/dev/null 2>&1; then INSTALL_CODEX=1; HOST_DETECT_codex=binary; fi
-  if command -v opencode >/dev/null 2>&1; then INSTALL_OPENCODE=1; HOST_DETECT_opencode=binary; fi
-  if command -v cursor >/dev/null 2>&1; then INSTALL_CURSOR=1; HOST_DETECT_cursor=binary; fi
-  if [ -d "${HOME}/.cursor" ]; then INSTALL_CURSOR=1; [ -n "$HOST_DETECT_cursor" ] || HOST_DETECT_cursor=cursor_home; fi
   if [ -e "${HOME}/.claude/skills/pair-review/SKILL.md" ]; then INSTALL_CLAUDE=1; [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=existing_skill; fi
   if [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ]; then INSTALL_CODEX=1; [ -n "$HOST_DETECT_codex" ] || HOST_DETECT_codex=existing_skill; fi
-  if [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ]; then INSTALL_OPENCODE=1; [ -n "$HOST_DETECT_opencode" ] || HOST_DETECT_opencode=existing_skill; fi
-  if [ -e "${HOME}/.cursor/skills/pair-review/SKILL.md" ]; then INSTALL_CURSOR=1; [ -n "$HOST_DETECT_cursor" ] || HOST_DETECT_cursor=existing_skill; fi
 elif [ "$HOST" = "claude" ]; then
   INSTALL_CLAUDE=1
   HOST_DETECT_claude=explicit_host
 elif [ "$HOST" = "codex" ]; then
   INSTALL_CODEX=1
   HOST_DETECT_codex=explicit_host
-elif [ "$HOST" = "opencode" ]; then
-  INSTALL_OPENCODE=1
-  HOST_DETECT_opencode=explicit_host
-elif [ "$HOST" = "cursor" ]; then
-  INSTALL_CURSOR=1
-  HOST_DETECT_cursor=explicit_host
 fi
 
 # A copy-producing pass must never rewrite or remove another host's directory, even if that other host was not
-# selected. Codex and OpenCode skip a directory shared with Claude or with each other; they need separate dirs.
-# Cursor yields to any host whose directory it shares, as it always has, and reads that host's install there.
-CURSOR_OWNER=""
-for _host in codex opencode cursor; do
-  case "$_host" in
-    codex) [ "$INSTALL_CODEX" -eq 1 ] || continue ;;
-    opencode) [ "$INSTALL_OPENCODE" -eq 1 ] || continue ;;
-    cursor) [ "$INSTALL_CURSOR" -eq 1 ] || continue ;;
-  esac
-  for _other in claude codex opencode cursor; do
-    case "$_other" in "$_host"|cursor) continue ;; esac
-    if same_skills_dir "$(host_skills_dir "$_host")" "$(host_skills_dir "$_other")"; then
-      echo "Warning: $(host_skills_dir "$_host") is the $_other skills directory; skipping $_host" >&2
-      if [ "$_host" = "cursor" ]; then
-        INSTALL_CURSOR=0
-        CURSOR_OWNER="$_other"
-      else
-        echo "  Use separate host skills directories. For legacy copies, see docs/installation.md: Shared-directory migration." >&2
-        install_status_note_host "$_host" shared_directory "shared_with_${_other}"
-        [ "$_other" = "claude" ] && INSTALL_STATUS_SCAN_CLAUDE=1
-        skip_host "$_host"
-      fi
-      break
-    fi
-  done
-done
+# selected. Codex skips a directory shared with Claude; it needs a separate skills directory.
+if [ "$INSTALL_CODEX" -eq 1 ] && same_skills_dir "$(host_skills_dir codex)" "$(host_skills_dir claude)"; then
+  echo "Warning: $(host_skills_dir codex) is the claude skills directory; skipping codex" >&2
+  echo "  Use separate host skills directories. For legacy copies, see docs/installation.md: Shared-directory migration." >&2
+  install_status_note_host codex shared_directory shared_with_claude
+  INSTALL_STATUS_SCAN_CLAUDE=1
+  skip_host codex
+fi
 
 any_host_selected() {
-  [ "$INSTALL_CLAUDE" -eq 1 ] || [ "$INSTALL_CODEX" -eq 1 ] || [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ]
+  [ "$INSTALL_CLAUDE" -eq 1 ] || [ "$INSTALL_CODEX" -eq 1 ]
 }
 
-# A Cursor that yielded is served when this run also processes the host it yielded to; otherwise report it.
-# Call once host selection is final.
-report_unserved_cursor() {
-  local served=0
-  case "$CURSOR_OWNER" in
-    '') return 0 ;;
-    claude) served=$INSTALL_CLAUDE ;;
-    codex) served=$INSTALL_CODEX ;;
-    opencode) served=$INSTALL_OPENCODE ;;
-  esac
-  if [ "$served" -eq 0 ]; then
-    install_status_note_host cursor cursor_unserved owner_not_selected
-    [ "$CURSOR_OWNER" = "claude" ] && INSTALL_STATUS_SCAN_CLAUDE=1
-    skip_host cursor
-  fi
-}
-
-# A lone yielded Cursor falls back to Claude, as detecting nothing does; a skipped Codex or OpenCode does not.
-if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ "$SKIPPED_NON_CURSOR" -eq 0 ] && ! any_host_selected; then
+# Detecting nothing falls back to Claude; a skipped Codex does not.
+if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ -z "$SKIPPED_HOSTS" ] && ! any_host_selected; then
   INSTALL_CLAUDE=1
   [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=not_applicable
 fi
@@ -1517,7 +1645,6 @@ fi
 
 # ─── Uninstall ─────────────────────────────────────────────────────
 if [ "$UNINSTALL" -eq 1 ]; then
-  report_unserved_cursor
   # Every selected host was skipped: uninstall nothing, and leave the shared CLI links alone too.
   if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && ! any_host_selected; then
     log "Nothing uninstalled: skipped $SKIPPED_HOSTS."
@@ -1531,8 +1658,6 @@ if [ "$UNINSTALL" -eq 1 ]; then
     fi
     [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)" claude
     [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)" codex
-    [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)" opencode
-    [ "$INSTALL_CURSOR" -eq 1 ] && uninstall_from_dir "$(host_skills_dir cursor)" cursor
   fi
 
   if [ "$SKILLS_DIR_GIVEN" -eq 0 ]; then
@@ -1562,15 +1687,13 @@ if [ "$UNINSTALL" -eq 1 ]; then
     [ "$_kept_links" -eq 0 ] || log "  Kept for: $HOST_INSTALL_POINTER"
 
     if [ -n "$HELPER_LOCK" ] && { [ -f "$telemetry_call_dir/telemetry-call" ] || [ -f "$telemetry_call_dir/preamble" ]; }; then
-      # The first pointer suffices for telemetry-call. Supported hosts are
-      # visited first because only their pointers keep the preamble.
       _keep_call=0
       _keep_preamble=0
-      for _host in claude codex opencode cursor; do
+      for _host in claude codex; do
         for _pointer in "$(host_skills_dir "$_host")"/*/.extend-root; do
           [ -e "$_pointer" ] || [ -L "$_pointer" ] || continue
           _keep_call=1
-          case "$_host" in claude|codex) _keep_preamble=1 ;; esac
+          _keep_preamble=1
           break 2
         done
       done
@@ -1614,12 +1737,10 @@ fi
 # Auto mode skips a detected host whose skills dir fails the install-path check (outside HOME, not yours,
 # world-writable) instead of stopping every host; a host named with --host still stops setup.
 if [ "$HOST" = "auto" ]; then
-  for _host in claude codex opencode cursor; do
+  for _host in claude codex; do
     case "$_host" in
       claude) [ "$INSTALL_CLAUDE" -eq 1 ] || continue ;;
       codex) [ "$INSTALL_CODEX" -eq 1 ] || continue ;;
-      opencode) [ "$INSTALL_OPENCODE" -eq 1 ] || continue ;;
-      cursor) [ "$INSTALL_CURSOR" -eq 1 ] || continue ;;
     esac
     if ! _unsafe=$(is_safe_install_path "$(host_skills_dir "$_host")" 2>&1); then
       echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
@@ -1629,12 +1750,9 @@ if [ "$HOST" = "auto" ]; then
     fi
   done
 fi
-report_unserved_cursor
 INSTALL_STATUS_ACTIVE=1
 if [ "$HOST" = "auto" ] && ! any_host_selected; then
-  # Cursor also reads ~/.claude/skills, so a lone skipped Cursor falls back to Claude as detecting nothing does.
-  # Any other skipped host needs its own refreshed copies, so that stays a failure.
-  if [ "$SKIPPED_NON_CURSOR" -eq 1 ]; then
+  if [ -n "$SKIPPED_HOSTS" ]; then
     echo "Error: no detected host has a usable skills directory (unsafe, or shared with another host); nothing installed." >&2
     echo "$USAGE" >&2
     # Record preserved copies a shared host pointed at before failing.
@@ -1661,12 +1779,6 @@ if [ "$INSTALL_CLAUDE" -eq 1 ]; then
 fi
 if [ "$INSTALL_CODEX" -eq 1 ]; then
   preflight_dir "$(host_skills_dir codex)" codex
-fi
-if [ "$INSTALL_OPENCODE" -eq 1 ]; then
-  preflight_dir "$(host_skills_dir opencode)" opencode
-fi
-if [ "$INSTALL_CURSOR" -eq 1 ]; then
-  preflight_dir "$(host_skills_dir cursor)" cursor
 fi
 
 # Install the shared start command before publishing any skill copy or link.
@@ -1707,14 +1819,6 @@ fi
 if [ "$INSTALL_CODEX" -eq 1 ]; then
   install_into_dir "$(host_skills_dir codex)" codex
   HOST_DONE_codex=1
-fi
-if [ "$INSTALL_OPENCODE" -eq 1 ]; then
-  install_into_dir "$(host_skills_dir opencode)" opencode
-  HOST_DONE_opencode=1
-fi
-if [ "$INSTALL_CURSOR" -eq 1 ]; then
-  install_into_dir "$(host_skills_dir cursor)" cursor
-  HOST_DONE_cursor=1
 fi
 INSTALL_STATUS_RECONCILE=1
 

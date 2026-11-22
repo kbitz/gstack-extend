@@ -41,7 +41,9 @@ import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { runBin } from './helpers/run-bin.ts';
 import { systemPath } from './helpers/system-path.ts';
 import {
+  CANONICAL_SPAN,
   MARKER_LINE,
+  WORKFLOW_TAIL,
   extractPreambleFence,
   hostDir,
   resolverProbeScript,
@@ -218,18 +220,15 @@ describe('bin/update-run', () => {
     mkdirSync(custom);
     writeFileSync(join(custom, 'SKILL.md'), 'CUSTOMIZED\n');
     writeFileSync(join(custom, '.extend-root'), `${repo}\n`);
-    for (const host of ['codex', 'opencode', 'cursor'] as const) {
-      const root = hostDir(home, host, '');
-      mkdirSync(dirname(root), { recursive: true });
-      symlinkSync(claude, root);
-    }
+    const codexRoot = hostDir(home, 'codex', '');
+    mkdirSync(dirname(codexRoot), { recursive: true });
+    symlinkSync(claude, codexRoot);
     const result = runBin(UPDATE_RUN, [repo], {
       home, gstackExtendDir: repo, gstackExtendStateDir: join(baseTmp, 'skipped-hosts-state'),
     });
     expect(result.exitCode).toBe(0);
-    // Cursor yields to Claude, which this run refreshed; the copy hosts stay stale.
     expect(result.stdout.match(/^SETUP_SKIPPED_HOSTS .+$/gm)).toEqual([
-      'SETUP_SKIPPED_HOSTS codex,opencode',
+      'SETUP_SKIPPED_HOSTS codex',
     ]);
     expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
     expect(result.stderr).toContain('Shared-directory migration');
@@ -2720,4 +2719,198 @@ describe('legacy four-part install to three-part candidate', () => {
       expect([version, result.exitCode, result.stdout, result.stderr]).toEqual([version, 0, '', '']);
     }
   }, 20000);
+});
+
+describe('retired hosts in bin/update-check (Track 92A)', () => {
+  function writeInstallStatusFrame(stateDir: string, facts: string[][]) {
+    mkdirSync(stateDir, { recursive: true });
+    const parts: string[] = ['gstack-extend-install-status', '1'];
+    for (const f of facts) parts.push(...f);
+    parts.push('END', String(facts.length));
+    writeFileSync(join(stateDir, 'install-status'), parts.join('\0') + '\0');
+  }
+
+  function homeIdOf(home: string): string {
+    const st = statSync(home);
+    return `${st.dev}:${st.ino}`;
+  }
+
+  test('legacy cursor and opencode facts stay valid (never malformed) and are suppressed beside a codex fact', () => {
+    const home = join(baseTmp, 'uc-legacy-facts-home');
+    const state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    const hid = homeIdOf(home);
+    writeInstallStatusFrame(state, [
+      ['fact', hid, ROOT, 'this_checkout', 'cursor', `${home}/.cursor/skills`, '', '', '', 'cursor_unserved', 'owner_not_selected', 'not_applicable', 'not_applicable', '0.107.0', '', 'cursor_home'],
+      ['fact', hid, ROOT, 'this_checkout', 'opencode', `${home}/.config/opencode/skills`, '', '', '', 'shared_directory', 'shared_with_claude', 'not_applicable', 'not_applicable', '0.107.0', '', 'binary'],
+      ['fact', hid, ROOT, 'this_checkout', 'codex', `${home}/.codex/skills`, '', '', '', 'shared_directory', 'shared_with_claude', 'not_applicable', 'not_applicable', '0.107.0', '', 'binary'],
+    ]);
+    const r = runBin(UPDATE_CHECK, ['--force'], {
+      home,
+      gstackExtendDir: ROOT,
+      gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version' },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('host=codex');
+    expect(r.stdout).toContain('reason=shared_directory');
+    expect(r.stdout).not.toContain('host=cursor');
+    expect(r.stdout).not.toContain('host=opencode');
+    expect(r.stdout).not.toContain('status_unverified');
+    expect(r.stdout).not.toContain('malformed');
+  });
+
+  test('live retired_host scan reports one, two, and >4 distinct owners (capped at 4 + overflow), skips aliases, and honors update_check=false', () => {
+    const home = join(baseTmp, 'uc-retired-scan-home');
+    const state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+
+    // One owning checkout in cursor
+    const c1 = join(home, '.cursor', 'skills', 'implement');
+    mkdirSync(c1, { recursive: true });
+    writeFileSync(join(c1, 'SKILL.md'), 'legacy copy\n');
+    writeFileSync(join(c1, '.extend-root'), '/opt/checkout-a\n');
+
+    // Six distinct owning checkouts in opencode (should emit 4 + 1 overflow with more_owners=2)
+    for (const [idx, skill] of ['a', 'b', 'c', 'd', 'e', 'f'].entries()) {
+      const dir = join(home, '.config', 'opencode', 'skills', `skill-${skill}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), 'legacy copy\n');
+      writeFileSync(join(dir, '.extend-root'), `/opt/co-${idx + 1}\n`);
+    }
+
+    const r = runBin(UPDATE_CHECK, ['--force'], {
+      home,
+      gstackExtendDir: ROOT,
+      gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version' },
+    });
+    expect(r.exitCode).toBe(0);
+    const lines = r.stdout.trim().split('\n').filter(Boolean);
+    const cursorLines = lines.filter((l) => l.includes('host=cursor'));
+    const opencodeLines = lines.filter((l) => l.includes('host=opencode'));
+    expect(cursorLines).toHaveLength(1);
+    expect(cursorLines[0]).toContain('reason=retired_host cause=host_dropped detection=not_applicable checkout=/opt/checkout-a freshness=unverified Fix: ');
+    expect(cursorLines[0]).toContain('docs/installation.md#retired-install-hosts');
+    expect(opencodeLines).toHaveLength(5);
+    expect(opencodeLines.slice(0, 4).every((l) => l.includes('reason=retired_host cause=host_dropped') && l.includes('checkout=/opt/co-'))).toBe(true);
+    expect(opencodeLines[4]).toContain('more_owners=2');
+
+    // Cached UP_TO_DATE still emits retired_host lines
+    const cached = runBin(UPDATE_CHECK, [], {
+      home,
+      gstackExtendDir: ROOT,
+      gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version' },
+    });
+    expect(cached.exitCode).toBe(0);
+    expect(cached.stdout).toContain('host=cursor');
+    expect(cached.stdout).toContain('host=opencode');
+
+    // Snoozed UPGRADE_AVAILABLE still emits retired_host lines
+    const localVer = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+    const remoteFile = join(baseTmp, 'uc-retired-remote-ver');
+    writeFileSync(remoteFile, '99.0.0\n');
+    writeFileSync(join(state, 'last-update-check'), `UPGRADE_AVAILABLE ${localVer} 99.0.0\n`);
+    writeFileSync(join(state, 'update-snoozed'), `99.0.0 1 ${Math.floor(Date.now() / 1000)}\n`);
+    const snoozed = runBin(UPDATE_CHECK, [], {
+      home,
+      gstackExtendDir: ROOT,
+      gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remoteFile}` },
+    });
+    expect(snoozed.exitCode).toBe(0);
+    expect(snoozed.stdout).not.toContain('UPGRADE_AVAILABLE');
+    expect(snoozed.stdout).toContain('reason=retired_host');
+
+    // update_check=false hides retired_host lines
+    writeFileSync(join(state, 'config'), 'update_check=false\n');
+    const disabled = runBin(UPDATE_CHECK, ['--force'], {
+      home,
+      gstackExtendDir: ROOT,
+      gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remoteFile}` },
+    });
+    expect(disabled.exitCode).toBe(0);
+    expect(disabled.stdout).toBe('');
+  });
+
+  test('live retired_host scan prints nothing when a retired directory aliases Claude or Codex', () => {
+    for (const targetHost of ['claude', 'codex'] as const) {
+      const home = join(baseTmp, `uc-retired-alias-${targetHost}`);
+      const state = join(home, '.gstack-extend');
+      mkdirSync(state, { recursive: true });
+      const targetDir = hostDir(home, targetHost, '');
+      const skillDir = join(targetDir, 'implement');
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, 'SKILL.md'), 'copy\n');
+      writeFileSync(join(skillDir, '.extend-root'), '/opt/checkout-alias\n');
+      mkdirSync(join(home, '.cursor'), { recursive: true });
+      symlinkSync(targetDir, join(home, '.cursor', 'skills'));
+      mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+      symlinkSync(targetDir, join(home, '.config', 'opencode', 'skills'));
+      const r = runBin(UPDATE_CHECK, ['--force'], {
+        home,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: state,
+        extraEnv: { GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version' },
+      });
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).not.toContain('reason=retired_host');
+    }
+  });
+
+  test('retired_host warnings quote paths, use distinct first lines, and follow the version line', () => {
+    const home = join(baseTmp, 'retired home');
+    const state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, 'just-upgraded-from'), '0.107.0\n');
+    const root = join(home, '.cursor', 'skills');
+    const longPointer = '/' + 'a'.repeat(4095);
+    for (const [name, pointer] of [
+      ['a', '/some checkout\nsecond line\n'],
+      ['b', '/some checkout\nanother second line\n'],
+      ['c', longPointer + '-beyond-limit\n'],
+    ]) {
+      const dir = join(root, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), 'legacy copy\n');
+      writeFileSync(join(dir, '.extend-root'), pointer);
+    }
+
+    const result = runBin(UPDATE_CHECK, [], {
+      home, gstackExtendDir: ROOT, gstackExtendStateDir: state,
+      extraEnv: { GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version' },
+    });
+    expect(result.exitCode).toBe(0);
+    const [version, short, long, ...extra] = result.stdout.trimEnd().split('\n');
+    expect(version).toStartWith('JUST_UPGRADED 0.107.0 ');
+    expect(short).toContain('retired\\ home/.cursor/skills');
+    expect(short).toContain('checkout=/some\\ checkout freshness=unverified');
+    expect(long).toContain(`checkout=${longPointer} freshness=unverified`);
+    expect(extra).toEqual([]);
+  });
+
+  test('CEO-9: frozen inline block with a leftover Cursor pointer resolves the new checkout and prints retired_host', () => {
+    const home = join(baseTmp, 'uc-ceo9-leftover');
+    const state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    const cursorSkill = join(home, '.cursor', 'skills', 'roadmap');
+    mkdirSync(cursorSkill, { recursive: true });
+    writeFileSync(join(cursorSkill, 'SKILL.md'), 'old inline copy\n');
+    writeFileSync(join(cursorSkill, '.extend-root'), `${ROOT}\n`);
+    const script = `_ER_SKILL="roadmap"\n${CANONICAL_SPAN}\n${WORKFLOW_TAIL}\n`;
+    const r = spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: {
+        ...scopedEnv(home),
+        GSTACK_EXTEND_STATE_DIR: state,
+        GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent-remote-version',
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`EXTEND_ROOT: ${ROOT}`);
+    expect(r.stdout).toContain('INSTALL_WARN host=cursor');
+    expect(r.stdout).toContain('reason=retired_host cause=host_dropped');
+  });
 });

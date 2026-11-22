@@ -401,6 +401,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend-telemetry',
     'bin/lib/install-safety.sh',
     'bin/lib/projects-registry.sh',
+    'bin/lib/telemetry-call.sh',
     'bin/lib/telemetry*.py',
     'setup',
     'skills/**',

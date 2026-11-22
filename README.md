@@ -56,8 +56,8 @@ git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-ext
 
 `--host auto` detects agents. To select a supported agent explicitly, use
 `--host claude` or `--host codex`. Without a host flag, setup installs for
-Claude Code. See the [installation guide](docs/installation.md#hosts-setup-does-not-manage)
-for recovery from a Cursor- or OpenCode-only install.
+Claude Code. See [Retired install hosts](docs/installation.md#retired-install-hosts)
+for leftover Cursor or OpenCode copies.
 
 Check that the start command can find the installed checkout:
 
