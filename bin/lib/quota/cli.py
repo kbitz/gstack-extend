@@ -13,7 +13,7 @@ from .common import (CLASSES, KINDS, QuotaError, budget, check_fixture, config_e
 from .identity import identity
 from .index import scan
 from .intervals import interval, intervals
-from .ledger import is_legacy_cursor_state, lifecycle, run_rows
+from .ledger import is_legacy_cursor_state, lifecycle, run_rows, source_parents
 from .samples import refresh
 from .store import Store, record_refusal
 
@@ -140,7 +140,8 @@ def get_runs(store,args,context,include_legacy=True):
     cache={}
     coverage=coverage_for(store,context,cache)
     states=store.all('state')
-    legacy_sessions={state['session_id'] for state in states if is_legacy_cursor_state(state)}
+    source_index=source_parents(store.all('source'))
+    legacy_sessions={state['session_id'] for state in states if is_legacy_cursor_state(state,source_index)}
 
     def legacy_run(row):
         sources=row.get('sources') or []
@@ -276,7 +277,8 @@ def doctor(store,context,warnings,args):
                           executable_available=executable_available,credential_source='fixture' if fixture_dir() else 'vendor-managed account',
                           coverage=len(ok)/len(rows) if rows else None,attempts=len(rows),last_ok_age_s=max(0,now()-max(s['observed_at'] for s in ok)) if ok else None,
                           reasons=reasons,diagnostics=[explanation(code) for code in reasons],drift_count=sum(len(s['unknown_fields']) for s in rows)))
-    states=[s for s in store.all('state') if not is_legacy_cursor_state(s)]
+    source_index=source_parents(store.all('source'))
+    states=[s for s in store.all('state') if not is_legacy_cursor_state(s,source_index)]
     try:
         from telemetry import read_capped
         refusals=read_capped(store.root/'quota-refusals',1 << 20).count(b'\n')
@@ -284,7 +286,7 @@ def doctor(store,context,warnings,args):
         refusals=0
     return dict(v=1,pools=pools,test_variable_warnings=warnings,open_runs=sum(s['ended_at'] is None for s in states),
                 stale_runs=sum(s['ended_at'] is None and now()-s['lease_at']>48*3600 for s in states),
-                refusals=refusals,malformed_records=sum(f.get('malformed',0) for f in store.all('file') if f.get('agent')!='cursor'),
+                refusals=refusals,malformed_records=sum(f.get('malformed',0) for f in store.all('file') if f.get('agent') not in ('cursor','cursor-sdk')),
                 counters=[c for c in store.all('counter') if c.get('name')!='cursor_exchanges'],
                 store_bytes=store.path.stat().st_size if store.path.exists() else 0,
                 notice='Only explicit quota commands sample vendors. Telemetry has no quota hook. Disable with bin/config set quota off.')

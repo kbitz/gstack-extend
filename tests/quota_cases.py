@@ -1075,7 +1075,8 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(summary_doc['shared_cents'],0)
         self.assertEqual(len(summary_doc['groups']),1)
         self.assertEqual(summary_doc['groups'][0]['config']['agent'],'claude')
-        self.assertEqual(summary_doc['groups'][0]['consumption']['output']['median'],10)
+        self.assertEqual(summary_doc['groups'][0]['consumption']['output']['median'],7)
+        self.assertEqual(summary_doc['groups'][0]['excluded']['ambiguous'],1)
 
         intervals_doc=json.loads(self.command('intervals').stdout)
         self.assertTrue(intervals_doc['intervals'])
@@ -1171,6 +1172,43 @@ class QuotaTests(unittest.TestCase):
                                                  model='legacy-model',tokens=dict(output=5)))
         self.assertEqual(json.loads(self.command('runs').stdout)['runs'],public([row]))
         self.assertEqual(json.loads(self.command('summary').stdout)['groups'],[])
+
+    def test_native_cursor_history_with_unknown_attachment_stays_archived(self):
+        from quota.cli import public
+        sid='native-cursor'
+        session=self.store.digest('native-cursor-source','session')
+        t0=now()
+        metadata=dict(agent=None,context=self.context,auth='subscription')
+        state=dict(session_id=sid,started_at=t0,ended_at=t0+20,lease_at=t0+20,
+                   metadata=metadata,start_metadata=metadata,identities={},fixture=True,
+                   attachments=[dict(agent='unknown',session=session,attached_at=t0)])
+        row=dict(v=1,session_id=sid,agent=None,pool_kind='cursor',pool='pending',
+                 started_at=t0,ended_at=t0+20,sources=[],settlement='provisional',
+                 attribution='unknown',stage=None)
+        with self.store.transaction():
+            self.store.put('state',sid,state)
+            self.store.put('state',sid+'-open',dict(state,session_id=sid+'-open',ended_at=None))
+            self.store.put('run',json.dumps([sid,'cursor','pending']),row)
+            self.store.put('source','sdk-source',dict(key='sdk-source',agent='cursor',session=session,
+                                                      native_sdk=True,complete=False,reason='malformed_record'))
+            self.store.put('file','sdk-file',dict(key='sdk-file',agent='cursor-sdk',root=str(self.home/'legacy-sdk'),malformed=1))
+            self.store.put('usage','sdk-fact',dict(id='sdk-fact',agent='cursor',session=session,pool='unresolved',
+                                                  source_keys=['sdk-source'],ts=t0+4))
+
+        with self.subTest('archived lifecycle'):
+            self.assertEqual(json.loads(self.command('runs').stdout)['runs'],public([row]))
+            self.assertEqual(json.loads(self.command('runs','--active').stdout)['runs'],[])
+            self.assertEqual(json.loads(self.command('summary').stdout)['groups'],[])
+            result=self.command('sample','--session-id',sid+'-open','--phase','finish')
+            self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+            self.assertEqual(json.loads(result.stdout)['error']['code'],'conflict')
+            self.assertIsNone(self.store.get('state',sid+'-open')['ended_at'])
+        with self.subTest('archived SDK facts'):
+            for cmd in ('status','intervals'):
+                result=json.loads(self.command(cmd).stdout)
+                self.assertEqual(result['coverage']['unresolved_events'],0)
+        with self.subTest('archived SDK files'):
+            self.assertEqual(json.loads(self.command('doctor').stdout)['malformed_records'],0)
 
     def test_cursor_modules_and_root_removed(self):
         self.assertFalse((ROOT/'bin/lib/quota/readers/cursor.py').exists())

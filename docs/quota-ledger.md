@@ -71,8 +71,11 @@ failure, and 2 for invalid usage. Errors are
 When a vendor backoff is active, that error object also includes
 `retry_at`.
 Report text and fixture banners never contaminate JSON stdout. Additive fields
-preserve the version; removed fields, renames and meaning changes require a new
-version and release notes. The database layout is private. Provenance remains
+preserve the version. Removed fields, renames and meaning changes require a new
+version and release notes. Cursor retirement has one explicit exception for
+`doctor quota`: it drops `unsettled_cursor_rows` and still emits `v: 1`.
+Consumers of that field must check for its presence. The database layout is
+private. Provenance remains
 JSONL in legacy `analytics/stage-runs.jsonl` and per-host
 `analytics/stage-runs/*.jsonl`, joined by `session_id`; consumers own work-item,
 tier and outcome joins. See the [provenance contract](telemetry.md#execution-provenance).
