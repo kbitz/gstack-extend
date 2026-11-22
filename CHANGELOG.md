@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.109.0] - 2026-11-22
+
+### Removed
+
+- Cursor and OpenCode are retired as skill install hosts.
+
+### Changed
+
+- `setup` and `bin/update-check` report leftover Cursor and OpenCode skill copies and give cleanup guidance.
+- The telemetry helper and doctor look for `.extend-root` pointers in the Claude Code and Codex skill directories.
+- The telemetry doctor reports whether the `preamble` start command is executable.
+
+### Upgrade notes
+
+- Use `setup --host cursor --uninstall` or `setup --host opencode --uninstall` to remove verified leftover skill copies.
+
 ## [0.108.0] - 2026-11-21
 
 ### Added
