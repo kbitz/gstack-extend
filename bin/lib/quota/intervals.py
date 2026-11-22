@@ -55,7 +55,8 @@ def interval(store,before,after,coverage):
     parents=source_parents(sources)
     sources=[s for s in sources if s.get('agent')!='cursor']
     api_ids=set()
-    for state in store.all('state'):
+    for saved_state in store.all('state'):
+        state=saved_state.get('finishing') or saved_state
         if state.get('metadata',{}).get('auth')!='api':
             continue
         start,end=state['started_at'],state.get('ended_at') or right

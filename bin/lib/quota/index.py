@@ -52,6 +52,8 @@ def discover(store,context):
                         elif entry.is_file(follow_symlinks=False) and entry.name.endswith('.jsonl'):
                             filekey=store.digest(entry.path,'file')
                             previous=store.get('file',filekey,{})
+                            if previous.get('agent') in ('cursor','cursor-sdk'):
+                                continue
                             previous.update(key=filekey,path=entry.path,root=root,agent=agent,discovered_at=previous.get('discovered_at',now()))
                             store.put('file',filekey,previous)
             except OSError:
@@ -101,8 +103,9 @@ def _scan(store,context):
         reports,operations=discover(store,context)
     deadline=time.monotonic()+budget(2)
     read_bytes,malformed=0,0
-    active_roots={r['root'] for r in reports}
-    files=sorted((f for f in store.all('file') if f['root'] in active_roots),key=lambda f:f.get('checked_at',0))
+    active_roots={(r['agent'],r['root']) for r in reports}
+    files=sorted((f for f in store.all('file') if (f.get('agent'),f.get('root')) in active_roots),
+                 key=lambda f:f.get('checked_at',0))
     visited=set()
     stopped_early=False
     for file in files:
@@ -211,14 +214,13 @@ def _scan(store,context):
             file.update(complete=False,reason='source_unreadable',checked_at=now())
             with store.transaction():
                 store.put('file',file['key'],file)
-    indexed=[f for f in store.all('file') if f['root'] in active_roots]
-    if stopped_early:
-        for report in reports:
-            if any(f['root']==report['root'] and f['key'] not in visited for f in files):
-                report['complete']=False
-                report['why']=sorted(set(report['why']+['scan_budget']))
+    indexed=store.all('file')
     for report in reports:
-        bad=[f for f in indexed if f['root']==report['root'] and not f.get('complete')]
+        root_key=(report['agent'],report['root'])
+        if stopped_early and any((f.get('agent'),f.get('root'))==root_key and f['key'] not in visited for f in files):
+            report['complete']=False
+            report['why']=sorted(set(report['why']+['scan_budget']))
+        bad=[f for f in indexed if (f.get('agent'),f.get('root'))==root_key and not f.get('complete')]
         if bad:
             report['complete']=False
             report['why']=sorted(set(report['why']+[f.get('reason') or 'scan_budget' for f in bad]))

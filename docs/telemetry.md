@@ -397,8 +397,8 @@ non-resumable run, pass the original wrapper-issued session id and start epoch f
 that run's `GE_TELEMETRY: session=… start=…` line. Those values are not harness markers
 such as `CODEX_THREAD_ID`. When upgrading from an older build that included
 `CURSOR_CONVERSATION_ID` in a pending run's fingerprint, finish the run before
-upgrading or pass its original `--session-id` and `--start` if automatic
-adoption fails. A handoff written before per-invocation files sits at
+upgrading or pass its original `--session-id` and `--start` when finishing
+after the upgrade. A handoff written before per-invocation files sits at
 telemetry/<hash>.json. It is still read as a candidate (the pre-rule shape included), a
 finish that consumes it removes it, and a new start never writes it or replaces it.
 Reading it has no sunset. On downgrade, an older copy sees none of the per-invocation
@@ -2182,7 +2182,9 @@ until finish flags or requested variables supply them:
   stays `4`, and `cursor` stays accepted in `docs/stage-runs.schema.json` and
   `docs/workflow-metrics.schema.json` (and mirrored parser enums) so old rows
   still validate and parse, with nothing further added for them; see
-  [Cursor and quota](#cursor-and-quota).
+  [Cursor and quota](#cursor-and-quota). An inherited `CURSOR_AGENT` also
+  ceases to imply `route: "cli"` for a nested Claude or Codex run. Those runs
+  use the remaining supported route signals.
 
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows

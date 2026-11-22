@@ -1160,6 +1160,16 @@ class QuotaTests(unittest.TestCase):
                 self.assertEqual(bracket['event_count'],0)
                 self.assertEqual(bracket['consumption'],[])
 
+
+        # An old finish can persist its terminal metadata before finalizing the
+        # outer state. It still provides evidence for the supported attachment.
+        pending=dict(state,ended_at=None,finishing=dict(state,metadata=dict(state['metadata'],agent='claude')))
+        pending['metadata']=dict(state['metadata'],agent='cursor',auth='subscription')
+        pending['attachments']=[dict(agent='cursor',session='legacy-cursor-session',attached_at=state['started_at'])]
+        with self.store.transaction():
+            self.store.put('state','run-a',pending)
+        self.assertEqual(intervals.interval(self.store,before,after,coverage)['event_count'],0)
+
     def test_unmarked_cursor_api_row_is_preserved_without_state(self):
         from quota.cli import public
         sid='legacy-api-row'
@@ -1209,6 +1219,24 @@ class QuotaTests(unittest.TestCase):
                 self.assertEqual(result['coverage']['unresolved_events'],0)
         with self.subTest('archived SDK files'):
             self.assertEqual(json.loads(self.command('doctor').stdout)['malformed_records'],0)
+
+    def test_retired_inventory_is_not_opened_from_a_reused_root(self):
+        root=self.home/'.claude/projects'
+        saved=[]
+        for suffix, agent in (('.txt','cursor'),('.jsonl','cursor'),('.ndjson','cursor-sdk')):
+            path=root/f'legacy{suffix}'
+            path.write_text('not a Claude transcript\n')
+            key=self.store.digest(str(path),'file')
+            saved.append(dict(key=key,path=str(path),root=str(root),agent=agent,complete=False,
+                              malformed=1,reason='malformed_record'))
+        with self.store.transaction():
+            for retired in saved:
+                self.store.put('file',retired['key'],retired)
+        self.write_claude()
+        coverage=scan(self.store,self.context)
+        self.assertEqual([self.store.get('file',retired['key']) for retired in saved],saved)
+        self.assertTrue(coverage['complete'])
+        self.assertEqual([fact['agent'] for fact in self.store.all('usage')],['claude'])
 
     def test_cursor_modules_and_root_removed(self):
         self.assertFalse((ROOT/'bin/lib/quota/readers/cursor.py').exists())
