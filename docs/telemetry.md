@@ -2776,7 +2776,7 @@ for the drift check. Both calls use `telemetry-call`, which `setup` installs as 
 file at `$HOME/.gstack-extend/bin/telemetry-call` for every host. That path ignores
 `GSTACK_EXTEND_STATE_DIR`. The helper's lookup is PATH →
 $HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
-$HOME host skill directories (setup writes one for Claude, Codex, OpenCode, and Cursor).
+$HOME host skill directories (setup writes one for Claude and Codex).
 A candidate must be an absolute regular file and carry the `telemetry-protocol:
 start-finish-v1` line, so a relative PATH entry such as node_modules/.bin, or an
 older wrapper another checkout re-linked onto PATH, is skipped instead of run.

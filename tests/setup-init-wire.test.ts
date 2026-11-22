@@ -235,31 +235,16 @@ describe('uninstall', () => {
   }
 
   for (const host of ['opencode', 'cursor'] as const) {
-    test(`--host ${host} --uninstall keeps both links while Claude remains installed`, () => {
-      const s = scope(`uninstall-${host}-keeps`);
+    test(`--host ${host} --uninstall leaves ~/.local/bin links untouched and prints unsupported note`, () => {
+      const s = scope(`uninstall-${host}-leaves-links`);
       runSetup(s);
       const r = runSetup(s, ['--host', host, '--uninstall']);
       expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain('is no longer a supported gstack-extend install host');
       expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
       expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
-      for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
-        expect(r.stdout).toContain(`Kept ~/.local/bin/${name} (this checkout still has a host install)`);
-      }
-    });
-
-    test(`--host ${host} --uninstall keeps an owned telemetry link and names only that link`, () => {
-      const s = scope(`uninstall-${host}-telemetry-only`);
-      runSetup(s);
-      const cli = join(s.localBin, 'gstack-extend');
-      rmSync(cli);
-      symlinkSync('/usr/bin/true', cli);
-      const tel = join(s.localBin, 'gstack-extend-telemetry');
-      const r = runSetup(s, ['--host', host, '--uninstall']);
-      expect(r.exitCode).toBe(0);
-      expect(readlinkSync(tel)).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
-      expect(readlinkSync(cli)).toBe('/usr/bin/true');
-      expect(r.stdout.split('\n').find(line => line.includes('Kept ~/.local/bin/')))
-        .toBe('Kept ~/.local/bin/gstack-extend-telemetry (this checkout still has a host install)');
+      expect(r.stdout).not.toContain('Kept ~/.local/bin/');
+      expect(r.stdout).not.toContain('Removed gstack-extend');
     });
   }
 

@@ -54,7 +54,7 @@ describe('shipped blocks and installation lookup', () => {
     expect(r.stdout).toBe('path-resolved\n');
     expect(fix.readJsonl()).toHaveLength(0);
   });
-  for (const host of ['claude', 'codex', 'opencode', 'cursor']) {
+  for (const host of ['claude', 'codex']) {
     test('setup-generated ' + host + ' install resolves .extend-root without PATH wiring or GSTACK_EXTEND_DIR', () => {
       const fix = makeTelemetryFixture('community');
       rmSync(join(fix.home, '.claude/skills/gstack-extend'), { recursive: true });
@@ -63,7 +63,7 @@ describe('shipped blocks and installation lookup', () => {
       symlinkSync(process.execPath, join(setupTools, 'bun'));
       const result = spawnSync(join(ROOT, 'setup'), ['--host', host, '--quiet'], { env: { ...fix.env, PATH: setupTools + ':' + fix.env.PATH, ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}) }, encoding: 'utf8', timeout: 20_000 });
       expect(result.status).toBe(0);
-      const hostDir = host === 'claude' ? '.claude/skills' : host === 'codex' ? '.codex/skills' : host === 'cursor' ? '.cursor/skills' : '.config/opencode/skills';
+      const hostDir = host === 'claude' ? '.claude/skills' : '.codex/skills';
       const path = join(fix.home, hostDir, 'full-review/SKILL.md');
       expect(existsSync(join(fix.home, hostDir, 'full-review/.extend-root'))).toBe(true);
       expect(existsSync(join(fix.home, '.local/bin/gstack-extend-telemetry'))).toBe(false);
@@ -81,6 +81,22 @@ describe('shipped blocks and installation lookup', () => {
       expect(validRow(ledger[0])).toBe(true);
     }, 30_000);
   }
+  test('telemetry-call --resolve ignores retired Cursor and OpenCode .extend-root pointers', () => {
+    for (const relDir of ['.cursor/skills', '.config/opencode/skills']) {
+      const fix = makeTelemetryFixture('community');
+      rmSync(join(fix.home, '.claude/skills/gstack-extend'), { recursive: true });
+      const skillDir = join(fix.home, relDir, 'full-review');
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, '.extend-root'), ROOT + '\n');
+      const r = spawnSync(join(ROOT, 'bin/lib/telemetry-call.sh'), ['--resolve'], {
+        env: fix.env,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout.trim()).toBe('');
+    }
+  });
   test('missing python3 is a silent no-op and diagnosable without failing the skill', () => {
     const fix = makeTelemetryFixture('community');
     // A PATH holding only bash makes python3 provably absent on every host; a bare /bin still ships python3 on usr-merged Linux.

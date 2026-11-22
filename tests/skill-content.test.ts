@@ -78,11 +78,9 @@ function isolatedPath(names: string[] = []): string {
   return `${bins}:${systemPath(baseTmp)}`;
 }
 
-function hostDir(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor'): string {
+function hostDir(home: string, host: 'claude' | 'codex'): string {
   if (host === 'claude') return join(home, '.claude', 'skills');
-  if (host === 'codex') return join(home, '.codex', 'skills');
-  if (host === 'cursor') return join(home, '.cursor', 'skills');
-  return join(home, '.config', 'opencode', 'skills');
+  return join(home, '.codex', 'skills');
 }
 
 describe('skill sources', () => {
@@ -121,12 +119,12 @@ describe('skill sources', () => {
     }
   });
 
-  test('--host cursor preserves skill bodies and strips allowed-tools from all skills', () => {
-    const home = join(baseTmp, 'cursor-explicit');
+  test('--host codex preserves skill bodies and strips allowed-tools from all skills', () => {
+    const home = join(baseTmp, 'codex-explicit');
     mkdirSync(home, { recursive: true });
-    expect(runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(runSetup(['--host', 'codex', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
     for (const skill of SKILLS) {
-      const dir = join(hostDir(home, 'cursor'), skill);
+      const dir = join(hostDir(home, 'codex'), skill);
       const skillMd = join(dir, 'SKILL.md');
       const source = readFileSync(skillPath(skill), 'utf8');
       const body = readFileSync(skillMd, 'utf8');
@@ -139,22 +137,21 @@ describe('skill sources', () => {
       expect(body.slice(body.indexOf('\n---', 4))).toBe(source.slice(source.indexOf('\n---', 4)));
     }
     expect(existsSync(join(home, '.claude'))).toBe(false);
-    expect(existsSync(join(hostDir(home, 'cursor'), 'gstack-extend', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(hostDir(home, 'codex'), 'gstack-extend', 'SKILL.md'))).toBe(false);
   });
 
   test('generated host copies carry the extend-root resolver', () => {
-    for (const host of ['codex', 'opencode', 'cursor'] as const) {
-      const home = join(baseTmp, `resolver-copy-${host}`);
-      mkdirSync(home, { recursive: true });
-      const r = runSetup(['--host', host], home);
-      expect(r.exitCode).toBe(0);
-      for (const skill of ROOT_RESOLVER_SKILLS) {
-        const source = readFileSync(skillPath(skill), 'utf8');
-        const copy = readFileSync(join(hostDir(home, host), skill, 'SKILL.md'), 'utf8');
-        expect(copy).toContain(expectedPreambleLine(skill));
-        expect(extractPreambleFence(copy)).toBe(extractPreambleFence(source));
-        expect(copy.split(GUARD_LINE).length - 1).toBe(source.split(GUARD_LINE).length - 1);
-      }
+    const host = 'codex' as const;
+    const home = join(baseTmp, `resolver-copy-${host}`);
+    mkdirSync(home, { recursive: true });
+    const r = runSetup(['--host', host], home);
+    expect(r.exitCode).toBe(0);
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      const source = readFileSync(skillPath(skill), 'utf8');
+      const copy = readFileSync(join(hostDir(home, host), skill, 'SKILL.md'), 'utf8');
+      expect(copy).toContain(expectedPreambleLine(skill));
+      expect(extractPreambleFence(copy)).toBe(extractPreambleFence(source));
+      expect(copy.split(GUARD_LINE).length - 1).toBe(source.split(GUARD_LINE).length - 1);
     }
   });
 

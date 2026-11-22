@@ -122,6 +122,8 @@ _uc_valid_fact() {
   local version="${14}" sha="${15}" detect="${16}"
   _uc_enum "$kind" fact || return 1
   _uc_enum "$oqual" this_checkout verified_checkout prior_qualified || return 1
+  # Transitional (Track 92A): keep accepting legacy cursor/opencode/cursor_unserved/cursor_home facts so existing
+  # frames never turn malformed. Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
   _uc_enum "$host" claude codex opencode cursor || return 1
   _uc_enum "$reason" shared_directory unsafe_directory cursor_unserved preserved_regular || return 1
   _uc_enum "$canon" matches_canonical differs_canonical source_unavailable not_applicable || return 1
@@ -165,6 +167,8 @@ _uc_bound_fact() {
   case "$host" in
     claude) want=/.claude/skills ;;
     codex) want=/.codex/skills ;;
+    # Transitional (Track 92A): keep binding legacy retired-host directories.
+    # Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
     opencode) want=/.config/opencode/skills ;;
     cursor) want=/.cursor/skills ;;
     *) return 1 ;;
@@ -252,10 +256,17 @@ _uc_read_status() {
         _uc_status_line status_unverified malformed "$file"
         return 0
       fi
-      _uc_emit_fact \
-        "${fields[$((i+4))]}" "${fields[$((i+8))]}" "$_UC_BOUND" "${fields[$((i+9))]}" \
-        "${fields[$((i+10))]}" "${fields[$((i+11))]}" "${fields[$((i+12))]}" "${fields[$((i+13))]}" \
-        "${fields[$((i+3))]}" "${fields[$((i+15))]}" "${fields[$((i+2))]}"
+      # Transitional (Track 92A): suppress legacy retired-host facts; the live retired_host scan supersedes them.
+      # Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+      case "${fields[$((i+4))]}" in
+        cursor|opencode) ;;
+        *)
+          _uc_emit_fact \
+            "${fields[$((i+4))]}" "${fields[$((i+8))]}" "$_UC_BOUND" "${fields[$((i+9))]}" \
+            "${fields[$((i+10))]}" "${fields[$((i+11))]}" "${fields[$((i+12))]}" "${fields[$((i+13))]}" \
+            "${fields[$((i+3))]}" "${fields[$((i+15))]}" "${fields[$((i+2))]}"
+          ;;
+      esac
     fi
     _UC_FACTS=$((_UC_FACTS + 1))
     i=$((i + 16))
@@ -292,7 +303,67 @@ _uc_on_exit() {
   done
   return 0
 }
+# Transitional (Track 92A): scan retired host directories for leftover setup-generated copies.
+# Remove once the owner's machines hold no Cursor or OpenCode copies, or the first release after 1.0, whichever comes first.
+_uc_scan_retired_hosts() {
+  local home_norm claude_dir codex_dir host dir entry ptr q_dir q_checkout q_docs line
+  local -a owners
+  local seen i extra
+  _uc_norm_path "$HOME"
+  home_norm=$_UC_NORM
+  [ "$home_norm" != "/" ] || home_norm=""
+  claude_dir="$home_norm/.claude/skills"
+  codex_dir="$home_norm/.codex/skills"
+  printf -v q_docs '%q' "$EXTEND_DIR/docs/installation.md#retired-install-hosts"
+  for host in cursor opencode; do
+    case "$host" in
+      cursor) dir="$home_norm/.cursor/skills" ;;
+      opencode) dir="$home_norm/.config/opencode/skills" ;;
+    esac
+    [ -d "$dir" ] || continue
+    if [ -d "$claude_dir" ] && [ "$dir" -ef "$claude_dir" ]; then continue; fi
+    if [ -d "$codex_dir" ] && [ "$dir" -ef "$codex_dir" ]; then continue; fi
+    owners=()
+    for entry in "$dir"/*; do
+      [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+      [ -f "$entry/SKILL.md" ] && [ ! -L "$entry/SKILL.md" ] || continue
+      [ -f "$entry/.extend-root" ] && [ ! -L "$entry/.extend-root" ] && [ -r "$entry/.extend-root" ] || continue
+      ptr=""
+      IFS= read -r -n 4096 ptr < "$entry/.extend-root" || [ -n "$ptr" ] || true
+      ptr=${ptr%$'\r'}
+      seen=0
+      i=0
+      while [ "$i" -lt "${#owners[@]}" ]; do
+        if [ "${owners[$i]}" = "$ptr" ]; then
+          seen=1
+          break
+        fi
+        i=$((i + 1))
+      done
+      if [ "$seen" -eq 0 ]; then
+        owners[${#owners[@]}]="$ptr"
+      fi
+    done
+    [ "${#owners[@]}" -gt 0 ] || continue
+    printf -v q_dir '%q' "$dir"
+    i=0
+    while [ "$i" -lt "${#owners[@]}" ] && [ "$i" -lt 4 ]; do
+      printf -v q_checkout '%q' "${owners[$i]}"
+      printf -v line 'INSTALL_WARN host=%s skill=- path=%s reason=retired_host cause=host_dropped detection=not_applicable checkout=%s freshness=unverified Fix: %s' \
+        "$host" "$q_dir" "$q_checkout" "$q_docs"
+      _uc_emit "$line"
+      i=$((i + 1))
+    done
+    if [ "${#owners[@]}" -gt 4 ]; then
+      extra=$(( ${#owners[@]} - 4 ))
+      printf -v line 'INSTALL_WARN host=%s skill=- path=%s reason=retired_host cause=host_dropped detection=not_applicable more_owners=%s freshness=unverified Fix: %s' \
+        "$host" "$q_dir" "$extra" "$q_docs"
+      _uc_emit "$line"
+    fi
+  done
+}
 _uc_collect || true
+_uc_scan_retired_hosts || true
 INSTALL_WARN_ARMED=1
 trap _uc_on_exit EXIT
 
