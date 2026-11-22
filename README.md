@@ -40,8 +40,8 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 
 ## Installation
 
-Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
-agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
+Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and Claude Code or
+Codex. The commands that start Bun with
 `--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
 `/roadmap` audit tools, `gstack-extend init`, the merge gate,
 `bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps`, `bin/review-delegate`, `bin/review-state` (and the experimental `gstack-extend-telemetry derive`, which runs it), `bin/upstream-check` and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
@@ -54,14 +54,24 @@ git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-ext
 ~/.claude/skills/gstack-extend/setup --host auto
 ```
 
-`--host auto` installs for detected agents. To target one, use `--host claude`,
-`--host codex`, `--host opencode`, or `--host cursor`. Without a host flag,
-setup installs for Claude only.
+`--host auto` detects agents. To select a supported agent explicitly, use
+`--host claude` or `--host codex`. Without a host flag, setup installs for
+Claude Code. See the [installation guide](docs/installation.md#hosts-setup-does-not-manage)
+for recovery from a Cursor- or OpenCode-only install.
 
-Update with `/gstack-extend-upgrade`. Every skill checks for updates when it
-starts. A caller that launches skills without a person sets
-`GSTACK_SESSION_KIND=spawned` so a stage never asks or upgrades; see
-[Update checks](docs/installation.md#update-checks). Uninstall with:
+Check that the start command can find the installed checkout:
+
+```bash
+~/.gstack-extend/bin/preamble plan-track --root
+```
+
+The output shows `EXTEND_ROOT:` and `_EXTEND_ROOT=` for the checkout. See
+[Start command](docs/installation.md#start-command) for recovery and permission details.
+
+Update with `/gstack-extend-upgrade`. A fresh skill start checks for updates
+once it finds a verified checkout. A caller that launches skills without a
+person sets `GSTACK_SESSION_KIND=spawned` to suppress upgrade prompts and automatic
+upgrades. See [Update checks](docs/installation.md#update-checks). Uninstall with:
 
 ```bash
 ~/.claude/skills/gstack-extend/setup --host auto --uninstall

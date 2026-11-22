@@ -124,19 +124,56 @@ export const GUARD_LINE =
 
 export const GUARD_COMMENT = '# Start with the _EXTEND_ROOT=… line the preamble printed.';
 
+export const PREAMBLE_CMD_PREFIX = '~/.gstack-extend/bin/preamble';
+export const PREAMBLE_GRANT = 'Bash(~/.gstack-extend/bin/preamble:*)';
+// DX-13 / E4 committed spike outcome: T1 bash tilde probe passed (bash 5.3.20; zsh absent;
+// claude 2.1.330, codex-cli 0.171.0; managed settings absent; no env API/OAuth credentials, so
+// per E4 the headless Claude auto-mode probe moves to the owner-run required check before merge).
+// Per CEO-14, skills ship the frontmatter grant unless the probe shows (b) stops while (c) does not.
+export const PREAMBLE_GRANT_OUTCOME: 'frontmatter-grant' | 'user-rule' = 'frontmatter-grant';
+
+export function expectedPreambleLine(skill: string): string {
+  if (skill === 'gstack-extend-upgrade') return `${PREAMBLE_CMD_PREFIX} gstack-extend-upgrade --force`;
+  if (skill === 'gstack-extend-init') return `${PREAMBLE_CMD_PREFIX} gstack-extend-init --require gstack-extend`;
+  if (skill === 'docs-ship') return `${PREAMBLE_CMD_PREFIX} docs-ship --require docs-ship`;
+  return `${PREAMBLE_CMD_PREFIX} ${skill}`;
+}
+
 export const NO_INSTALL_MESSAGE =
-  'No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).';
+  'No gstack-extend install found under ~/.claude or ~/.codex. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).';
+
+export const PREAMBLE_MISSING_MESSAGE =
+  "PREAMBLE_MISSING: gstack-extend's start command ~/.gstack-extend/bin/preamble is missing or not executable: this install predates it, or setup has not run since the checkout was updated. Fix: in your gstack-extend checkout (README: Installation), run ./setup --host auto, then start this skill again. See docs/installation.md#start-command.";
+
+export const PREAMBLE_ARGS_MESSAGE =
+  "PREAMBLE_ARGS: gstack-extend's start command rejected this skill's arguments, most likely because the installed command is older than this skill text. Fix: first rerun the skill's start line exactly as written; if it is rejected again, in your gstack-extend checkout (README: Installation), run ./setup --host auto, then start this skill again. See docs/installation.md#start-command.";
+
+export function preambleFailedMessage(skill: string): string {
+  return `PREAMBLE_FAILED: gstack-extend's start command failed unexpectedly. Fix: in your gstack-extend checkout (README: Installation), run ./setup --host auto, then start this skill again; if it fails again, report the output of bash -x ~/.gstack-extend/bin/preamble ${skill}. See docs/installation.md#start-command.`;
+}
 
 export const HANDOFF_PARAGRAPH =
-  'Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init\'s later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `' +
+  'Run the start command above exactly as written, with no `cd`, expansion, absolute path or wrapper. If the harness refuses or holds it, do not run its steps by hand: tell the user to allow the command (`docs/installation.md#start-command`) and stop (plan-track notes it once in its final message, skips Telemetry finish for this run, and continues). Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init\'s later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run the same start command with ` --root` added at the end (it prints only the root lines and runs neither update-check nor telemetry). If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `' +
   NO_INSTALL_MESSAGE +
-  '` roadmap, pair-review and full-review then stop, because their tool and session-state steps need the root.';
+  '` roadmap, pair-review and full-review then run Telemetry finish with `--outcome error` and stop, because their tool and session-state steps need the root. Relay any `INSTALL_WARN … reason=retired_host` line once with its Fix link in the run\'s final message before any fenced prompt, result, handoff, stage or pause line, and never inside a fence or a receipt field.';
+
+export function preambleFailureParagraph(skill: string): string {
+  return (
+    'If the shell cannot run `~/.gstack-extend/bin/preamble` (exit 127 or 126), tell the user: `' +
+    PREAMBLE_MISSING_MESSAGE +
+    '` If the command exits 2 with stderr starting `preamble: PREAMBLE_USAGE:`, tell the user: `' +
+    PREAMBLE_ARGS_MESSAGE +
+    '` On any other non-zero exit (or exit 2 without that stderr prefix), relay stderr verbatim, then tell the user: `' +
+    preambleFailedMessage(skill) +
+    '` On any of these three start-command failures, every skill except plan-track relays the applicable message and stops without Telemetry finish; plan-track relays the message once in its final message, skips Telemetry finish for this run, and continues.'
+  );
+}
 
 export const UPGRADE_NO_ROOT =
   'If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.';
 
-export const INIT_ERROR_STOP =
-  'In this skill, an `ERROR:` line from the preamble replaces the no-install message above: relay that line verbatim and stop.';
+export const REQUIRED_HELPER_ERROR_STOP =
+  'If the start command exits 1 with an `ERROR:` line on stdout, relay that line verbatim and stop without Telemetry finish. This check comes before the other preamble handling below.';
 
 export const RENAMES_ER_LINE =
   'ER="$_EXTEND_ROOT" bun -e "const { computeRenames, formatRenamesTable } = await import(process.env.ER + \'/src/audit/lib/renames-diff.ts\');';
@@ -173,7 +210,9 @@ export function extractFences(content: string): Array<{ lang: string; body: stri
 }
 
 export function extractPreambleFence(content: string): string {
-  const fence = extractFences(content).find((f) => f.body.includes(SPAN_START));
+  const idx = content.indexOf('## Preamble (run first)');
+  if (idx < 0) throw new Error('## Preamble (run first) heading not found');
+  const fence = extractFences(content.slice(idx))[0];
   if (!fence) throw new Error('preamble fence not found');
   return fence.body.replace(/\n$/, '');
 }

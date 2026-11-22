@@ -60,6 +60,7 @@ const SETUP = join(ROOT, 'setup');
 const SEMVER_LIB = join(ROOT, 'bin', 'lib', 'semver.sh');
 const RUN_MIGRATIONS = join(ROOT, 'bin', 'lib', 'run-migrations.sh');
 const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
+const PREAMBLE_LIB = join(ROOT, 'bin', 'lib', 'preamble.sh');
 
 const baseTmp = makeBaseTmp('update-test-');
 afterAll(() => {
@@ -138,6 +139,8 @@ function createFixtureRepoWithRealSetup(
   writeFileSync(join(dir, 'setup'), opts.setupText ?? readFileSync(SETUP, 'utf8'));
   chmodSync(join(dir, 'setup'), 0o755);
   writeFileSync(join(dir, 'bin', 'lib', 'install-safety.sh'), readFileSync(INSTALL_SAFETY_LIB));
+  writeFileSync(join(dir, 'bin', 'lib', 'preamble.sh'), readFileSync(PREAMBLE_LIB));
+  chmodSync(join(dir, 'bin', 'lib', 'preamble.sh'), 0o755);
 
   // Real update-run.
   writeFileSync(join(dir, 'bin', 'update-run'), readFileSync(UPDATE_RUN));
@@ -1455,36 +1458,50 @@ describe('setup install-time safety: per-$target layer', () => {
 
 // ─── Track 16D: extend-root resolver behavior ────────────────────────
 //
-// The extracted span from skills/gstack-extend-upgrade.md is the only
-// probe. It never runs a tail and never the real bin/update-check,
-// except the env-pin test below.
+// Root-only probes exercise the shared command without calling update-check.
 
 const RESOLVER_SKILL = 'gstack-extend-upgrade';
 
-function probeExtendRoot(home: string, cwd: string, skillText?: string) {
-  const text = skillText ?? readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
-  const script = resolverProbeScript(text);
+function installPreamble(home: string): void {
+  const binDir = join(home, '.gstack-extend', 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const dst = join(binDir, 'preamble');
+  writeFileSync(dst, readFileSync(PREAMBLE_LIB));
+  chmodSync(dst, 0o755);
+}
+
+function probeExtendRoot(home: string, cwd: string) {
+  installPreamble(home);
+  const script = `~/.gstack-extend/bin/preamble ${RESOLVER_SKILL} --root`;
   return strictShells().map((sh) => {
     const r = runShell(sh.shell, sh.args, script, scopedEnv(home), cwd);
     const lines = (r.stdout ?? '').split('\n');
+    const rootLine = lines.find((l) => l.startsWith('EXTEND_ROOT: ')) ?? '';
+    const unvLine = lines.find((l) => l.startsWith('EXTEND_ROOT_UNVERIFIED: ')) ?? '';
+    const root = rootLine ? rootLine.slice('EXTEND_ROOT: '.length) : '';
+    const unverified = unvLine ? unvLine.slice('EXTEND_ROOT_UNVERIFIED: '.length) : '';
     return {
       shell: sh.shell,
       status: r.status,
       stderr: r.stderr ?? '',
-      root: lines[0] ?? '',
-      unverified: lines[1] ?? '',
+      root,
+      unverified,
     };
   });
 }
 
-function expectResolved(home: string, cwd: string, root: string, skillText?: string): void {
-  const results = probeExtendRoot(home, cwd, skillText);
+function expectResolved(home: string, cwd: string, root: string): void {
+  const results = probeExtendRoot(home, cwd);
   expect(results.length).toBeGreaterThan(0);
   for (const r of results) {
-    expect(r.stderr).toBe('');
     expect(r.status).toBe(0);
-    if (root === '') expect(r.root).toBe('');
-    else expect(realpathSync(r.root)).toBe(realpathSync(root));
+    if (root === '') {
+      expect(r.root).toBe('');
+      expect(r.stderr.trim()).toBe(`preamble: no gstack-extend install under ~/.claude/skills/${RESOLVER_SKILL} or ~/.codex/skills/${RESOLVER_SKILL}`);
+    } else {
+      expect(r.stderr).toBe('');
+      expect(realpathSync(r.root)).toBe(realpathSync(root));
+    }
   }
 }
 
@@ -1681,7 +1698,13 @@ describe('Track 16D extend-root resolver matrix', () => {
     const copy = readFileSync(join(hostDir(home, 'codex', RESOLVER_SKILL), 'SKILL.md'), 'utf8');
     const cwd = join(baseTmp, 'mx-gen-hostile');
     plantHostile(cwd, join(cwd, 'evil'));
-    expectResolved(home, cwd, ROOT, copy);
+    const line = extractPreambleFence(copy);
+    expect(line.trim()).toBe(`~/.gstack-extend/bin/preamble ${RESOLVER_SKILL} --force`);
+    for (const sh of strictShells()) {
+      const r = runShell(sh.shell, sh.args, `${line.trim()} --root`, scopedEnv(home), cwd);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout?.split('\n')[0]).toBe(`EXTEND_ROOT: ${realpathSync(ROOT)}`);
+    }
   });
 });
 
@@ -1698,6 +1721,10 @@ describe('Track 16D update-check env pin', () => {
     chmodSync(join(hostile, 'bin', 'config'), 0o755);
     writePointer(home, 'claude', RESOLVER_SKILL, ROOT);
     writeFileSync(join(hostDir(home, 'claude', RESOLVER_SKILL), 'SKILL.md'), 'copy\n');
+    const binDir = join(home, '.gstack-extend', 'bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'preamble'), readFileSync(PREAMBLE_LIB));
+    chmodSync(join(binDir, 'preamble'), 0o755);
     const script = extractPreambleFence(readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8'));
     const r = runShell('bash', ['-euc'], script, scopedEnv(home, {
       GSTACK_EXTEND_DIR: hostile,
@@ -2284,19 +2311,31 @@ exec /bin/mv "$@"
     expect(second.stdout).toContain('reason=preserved_regular');
   });
 
-  test('R6 frozen preambles show warnings after version results', () => {
-    for (const skill of ['roadmap.md', 'pair-review.md', 'full-review.md']) {
-      expect(readFileSync(join(ROOT, 'skills', skill), 'utf8')).toContain(ORDINARY_CAPTURE.split('\n')[0]!);
-    }
-    expect(readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8')).toContain(FORCE_CAPTURE.split('\n')[0]!);
+  test('R6 the shipped and frozen preambles show warnings after version results', () => {
     const fx = warnedFixture('r6', '2.0.0\n');
-    for (const capture of [ORDINARY_CAPTURE, FORCE_CAPTURE]) {
-      const seen = runFrozen(fx.repo, fx.home, fx.state, capture, fx.remote);
+    const assertWarningOrder = (seen: {status: number | null; stdout: string | null; stderr: string | null}) => {
       expect(seen.status).toBe(0);
       const text = seen.stdout ?? '';
       expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeGreaterThanOrEqual(0);
       expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeLessThan(text.indexOf('reason=preserved_regular'));
       expect(seen.stderr ?? '').not.toContain('INSTALL_WARN');
+    };
+    for (const capture of [ORDINARY_CAPTURE, FORCE_CAPTURE]) {
+      assertWarningOrder(runFrozen(fx.repo, fx.home, fx.state, capture, fx.remote));
+    }
+    installPreamble(fx.home);
+    for (const [skill, flags] of [['full-review', ''], ['gstack-extend-upgrade', ' --force']]) {
+      writePointer(fx.home, 'codex', skill, fx.repo);
+      const seen = spawnSync('/bin/bash', ['-c', `~/.gstack-extend/bin/preamble ${skill}${flags}`], {
+        encoding: 'utf8',
+        env: {
+          HOME: fx.home,
+          PATH: '/bin:/usr/bin',
+          GSTACK_EXTEND_STATE_DIR: fx.state,
+          GSTACK_EXTEND_REMOTE_URL: fx.remote,
+        },
+      });
+      assertWarningOrder(seen);
     }
   });
 

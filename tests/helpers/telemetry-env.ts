@@ -74,6 +74,13 @@ export const REAL_GSTACK_BIN = join(REAL_GSTACK_ROOT, 'bin');
 // suites that name it and not to every importer of this helper.
 export function skillBlock(path: string, kind: 'start' | 'finish') {
   const text = readFileSync(path, 'utf8');
+  if (kind === 'start') {
+    const skill =
+      text.match(/~\/\.gstack-extend\/bin\/preamble ([a-z0-9-]+)/)?.[1] ??
+      text.match(/^name:\s*([a-z0-9-]+)\s*$/m)?.[1];
+    if (!skill) throw new Error('Missing skill name for preamble start in ' + path);
+    return `~/.gstack-extend/bin/preamble ${skill} --resume\n`;
+  }
   const marker = new RegExp('<!-- SHARED:telemetry-' + kind + ' -->[\\s\\S]*?<!-- /SHARED:telemetry-' + kind + ' -->');
   const block = text.match(marker)?.[0];
   if (!block) throw new Error('Missing telemetry block in ' + path);
@@ -82,6 +89,7 @@ export function skillBlock(path: string, kind: 'start' | 'finish') {
   return code;
 }
 export const HELPER_SOURCE = join(ROOT, 'bin/lib/telemetry-call.sh');
+export const PREAMBLE_SOURCE = join(ROOT, 'bin/lib/preamble.sh');
 // What `setup` installs for the blocks to call. The fixture does not create it, because several suites assert the
 // fixture home holds no .gstack-extend; a test that runs a block asks for it, and the generated-host test leaves it
 // to the real setup.
@@ -90,6 +98,8 @@ export function installCallHelper(home: string) {
   mkdirSync(dir, { recursive: true });
   copyFileSync(HELPER_SOURCE, join(dir, 'telemetry-call'));
   chmodSync(join(dir, 'telemetry-call'), 0o755);
+  copyFileSync(PREAMBLE_SOURCE, join(dir, 'preamble'));
+  chmodSync(join(dir, 'preamble'), 0o755);
 }
 export function executeSkillBlock(env: Record<string, string>, kind: 'start' | 'finish', path: string, cwd?: string, helper = true) {
   if (helper) installCallHelper(env.HOME);

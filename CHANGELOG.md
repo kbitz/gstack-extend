@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.108.0] - 2026-11-21
+
+### Added
+
+- All eleven skills start with the setup-installed `~/.gstack-extend/bin/preamble`, which resolves the checkout, checks for updates, and starts telemetry.
+- Use `--root` to recover the checkout path or `--resume` to start a new telemetry segment after a pause.
+
+### Upgrade notes
+
+- After a manual update, run `./setup --host auto` from the checkout your skills use to refresh the shared start command.
+
 ## [0.107.0] - 2026-11-21
 
 ### Added

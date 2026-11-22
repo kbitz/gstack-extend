@@ -2685,20 +2685,17 @@ run. See [Handoff adoption](#handoff-adoption), including the upgrade note for
 handoffs written before that rule.
 
 Two wrappers also emit optional step/pass metrics (`/review-and-prep` and
-`/ship-and-land`). That is a metrics-only instruction outside the SHARED
-blocks below, keyed to the start ID printed here; the blocks themselves and
-their no-copying rule for legacy calls are unchanged. Authors changing those
-wrappers update their phase mapping in the same change. See
+`/ship-and-land`) keyed to the session ID printed at start. The start and
+finish calls keep their own session values. Authors changing those wrappers
+update their phase mapping in the same change. See
 [Workflow metrics](#workflow-metrics).
 
-**Block size.** Each skill carries one start and one finish fence. The table counts the UTF-8
-bytes of both fences together, from the opening fence line to the closing one,
-before (the base `a74abf4`, where each fence held the whole lookup) and after
-(a call to the `telemetry-call` helper). `tests/skill-protocols.test.ts`
-recomputes the "after" column from each skill and fails on a stale row. The table
-covers the eleven skills measured at base `a74abf4`; `/plan-track`, added later with
-the same blocks, has no before figure and no row. `/autoplan-lean` was retired after
-the measurement, and its row stays as measured.
+**Historical block sizes.** Track 49A measured the UTF-8 bytes of both fences
+together before (base `a74abf4`, with the lookup inline) and after (a call to
+the `telemetry-call` helper). `tests/skill-protocols.test.ts` pins the recorded
+rows and checks that the current skills have moved their telemetry start into
+the preamble command. The table includes `/autoplan-lean` as measured and
+predates `/plan-track`.
 
 | Skill | Before (bytes) | After (bytes) | Saved (bytes) |
 |---|---:|---:|---:|
@@ -2772,13 +2769,12 @@ loses its `skill_run` duration.
 {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":4,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"example-host","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"}
 ~~~
 
-Copy both complete SHARED blocks below into a skill and replace the quoted
-"extend:full-review" argument with its name. Keep the quotes: the drift lock
-substitutes that exact string. Each block is one call to the `telemetry-call`
-helper, which `setup` copies (a copy, not a link, so a moved checkout does not
-break it) to the fixed path `$HOME/.gstack-extend/bin/telemetry-call` for every
-host, ignoring `GSTACK_EXTEND_STATE_DIR`. The block only checks that the helper
-is there and contains a missing one; the helper holds the lookup, which is PATH →
+Start telemetry through the skill's [start command](installation.md#start-command).
+For finish, copy the complete `SHARED:telemetry-finish` block below and replace
+the quoted `"extend:full-review"` argument with the skill's name. Keep the quotes
+for the drift check. Both calls use `telemetry-call`, which `setup` installs as a
+file at `$HOME/.gstack-extend/bin/telemetry-call` for every host. That path ignores
+`GSTACK_EXTEND_STATE_DIR`. The helper's lookup is PATH →
 $HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
 $HOME host skill directories (setup writes one for Claude, Codex, OpenCode, and Cursor).
 A candidate must be an absolute regular file and carry the `telemetry-protocol:
@@ -2788,27 +2784,24 @@ The line is a version-compatibility probe, not a trust check, and the same
 absolute-path rule protects the wrapper's lookup of gstack's own helpers. It does
 not protect other commands: a relative PATH entry still affects git, python3, and
 everything else an agent runs, so remove such entries from PATH.
-The helper replaces itself with the wrapper (`exec`), so the wrapper's parent is
-still the shell that ran the block, which the harness lookup walks from.
+The helper replaces itself with the wrapper (`exec`). The ancestry lookup in
+`bin/lib/telemetry.py` walks past the preamble process to find the nearest
+matching harness.
+Skills no longer embed a `SHARED:telemetry-start` block: `~/.gstack-extend/bin/preamble <skill>`
+runs the start call before the inline upgrade flow (so a segment can straddle an
+in-place upgrade), and resume passages run `~/.gstack-extend/bin/preamble <skill> --resume`.
+Use `--root` to recover the checkout path. Running the plain start command again
+can create a second segment with a fresh session ID and leave an open start, as
+an interruption can. The doctor counts distinct session IDs as separate
+activations. Its `duplicate-starts` counter counts repeated start rows for the
+same skill and session ID.
 `telemetry-call --resolve` prints the wrapper's path, or nothing; the
 workflow-span library lookup uses it. GSTACK_EXTEND_DIR is not required.
-CWD-relative pointers are ignored. Upgrade invokes setup again, which refreshes
-the helper; pulling a checkout by hand skips telemetry until `setup` runs, and
-`GSTACK_EXTEND_TELEMETRY_DEBUG=1` or the doctor says so. Uninstall removes the
-helper only when no host keeps an `.extend-root` pointer.
-
-<!-- SHARED:telemetry-start -->
-### Telemetry start
-
-Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
-
-```bash
-_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
-if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:full-review" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
-true
-```
-<!-- /SHARED:telemetry-start -->
+CWD-relative pointers are ignored. Upgrade invokes setup again to refresh the
+helper. If a manual pull brings in the start command for the first time, rerun
+setup before starting a skill. `GSTACK_EXTEND_TELEMETRY_DEBUG=1` and the doctor
+diagnose a missing `telemetry-call` or an unusable telemetry wrapper. Uninstall
+removes `telemetry-call` only when no host keeps an `.extend-root` pointer.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
