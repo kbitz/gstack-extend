@@ -768,7 +768,9 @@ describe('docs/stage-runs.schema.json', () => {
     const defs = schema.definitions;
     expect(defs.agent.enum).toContain(null);
     const agents = defs.agent.enum.filter((value: unknown) => value !== null);
-    if (!same(agents, constants.harnesses)) mismatch('schema agent enum differs from HARNESSES', agents, constants.harnesses);
+    const schemaAgents = [...constants.harnesses, 'cursor'];
+    if (!same(agents, schemaAgents)) mismatch('schema agent enum differs from HARNESSES + cursor', agents, schemaAgents);
+    expect(constants.schema_version).toBe(4);
     // v1 rows never carry blocked; the v2 vocabulary is the writer's whole OUTCOMES.
     const v1Outcomes = constants.outcomes.filter((value: string) => value !== 'blocked');
     if (!same(defs.outcome.enum, v1Outcomes)) mismatch('schema v1 outcome enum differs from OUTCOMES without blocked', defs.outcome.enum, v1Outcomes);
@@ -1406,25 +1408,26 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(byStart.stdout.trim()).toBe(JSON.stringify(known));
   });
 
-  test('every Cursor reader reason in the registry has its documented anchor row', () => {
+  test('CURSOR_SDK_REASONS is removed and historical Cursor rows still validate against stage-runs.schema.json', () => {
     const result = spawnSync('python3', ['-B', '-I', '-c',
-      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_REASONS))',
+      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps({"has_reasons": hasattr(telemetry, "CURSOR_SDK_REASONS"), "schema_version": telemetry.SCHEMA_VERSION, "harnesses": list(telemetry.HARNESSES)}))',
       join(ROOT, 'bin/lib')], { encoding: 'utf8' });
     expect([result.status, result.stderr]).toEqual([0, '']);
-    const registry = JSON.parse(result.stdout) as Array<[string, string]>;
-    for (const [code, anchor] of registry) expect(anchor).toBe(`cursor-sdk-${code}`);
-    const doc = readFileSync(DOC, 'utf8');
-    const documented = [...doc.matchAll(/<a id="(cursor-sdk-[a-z-]+)"><\/a>`([a-z-]+)`/g)].map(match => [match[2], match[1]]);
-    expect(documented).toEqual(registry);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.has_reasons).toBe(false);
+    expect(parsed.schema_version).toBe(4);
+    expect(parsed.harnesses).not.toContain('cursor');
+    const validate = compileSchema();
+    expect(validate({ ...quickstartRow(), agent: 'cursor', agent_source: 'detected' })).toBe(true);
   });
 
-  test('Cursor and quota documents the retired Conductor store, transcript-unreadable anchor, and honored orchestration-contract status', () => {
+  test('Cursor and quota documents retirement, omits cursor-sdk-transcript-unreadable, and retains historical anchors', () => {
     const doc = readFileSync(DOC, 'utf8');
     const cursor = doc.slice(doc.indexOf('## Cursor and quota'));
     expect(cursor.startsWith('## Cursor and quota')).toBe(true);
     expect(cursor).toContain("Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read");
     expect(cursor).toContain('id="cursor-sdk-historical-route"');
-    expect(cursor).toContain('id="cursor-sdk-transcript-unreadable"');
+    expect(cursor).not.toContain('cursor-sdk-transcript-unreadable');
     expect(cursor).toContain('id="cursor-ledger-recipe"');
     expect(cursor.replace(/\s+/g, ' ')).toContain('Do not rewrite old rows');
 
@@ -2105,7 +2108,7 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     for (const [harness, agent, route] of [
       [{ CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-fixture' }, 'claude', 'sdk'],
       [{ CODEX_THREAD_ID: 'host-matrix' }, 'codex', 'unknown'],
-      [{ CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, 'cursor', 'cli'],
+      [{ GROK_AGENT: '1', GROK_SESSION_ID: 'grok-host-matrix' }, 'grok', 'unknown'],
     ] as Array<[Record<string, string>, string, string]>) {
       run({ PASEO_AGENT_ID: 'p' }, null, harness, agent, route);
       run({ CONDUCTOR_SESSION_ID: 'c' }, null, harness, agent, route);
@@ -2531,10 +2534,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'harness-unqualified',
       },
       {
-        name: 'Cursor under Paseo yields harness-unqualified',
+        name: 'Cursor markers under Paseo are no longer classified and yield no-harness',
         env: { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
         expectedMode: 'unknown',
-        expectedSource: 'harness-unqualified',
+        expectedSource: 'no-harness',
       },
       {
         name: 'no harness yields no-harness',
@@ -2693,7 +2696,6 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
       ['Claude Paseo', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' }],
       ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
-      ['Cursor', { CURSOR_AGENT: '1' }],
       ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
       ['Muse', { MUSE_SESSION_ID: 'synthetic-muse' }],
     ] as Array<[string, Record<string, string>]>) {
@@ -2871,9 +2873,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `cursor` |', '| `muse` |']) {
+    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `muse` |']) {
       expect(runModeSection).toContain(h);
     }
+    expect(runModeSection).not.toContain('| `cursor` |');
     // Value: protects=qualification needs three real readbacks, not candidate labels; fails_when=incomplete evidence clears pending or complete evidence stays pending; why_new=Track 80D now has all three readbacks; seam=none
     const recordedRunsSection = section(record, '## Recorded runs');
     const recordedRows = recordedRunsSection.split('\n')

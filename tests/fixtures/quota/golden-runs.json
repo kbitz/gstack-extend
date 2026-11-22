@@ -19,12 +19,6 @@
         "why": []
       },
       {
-        "agent": "cursor",
-        "complete": true,
-        "root": "$HOME/.cursor/projects",
-        "why": []
-      },
-      {
         "agent": "grok",
         "complete": true,
         "root": "$HOME/.grok/sessions",

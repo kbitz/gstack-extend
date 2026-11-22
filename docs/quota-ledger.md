@@ -24,8 +24,7 @@ trial records at least 95% successful reads over 24 hours.
 Ledger session IDs belong to the caller; harness session IDs belong to the vendor.
 Use the same ledger ID in any independently written stage-runs provenance row.
 For Claude, preassign a UUID with `claude -p --session-id`; Codex emits its thread
-ID in the first `codex exec --json` event; Cursor returns `session_id` with
-`--output-format json`. Capture that ID without printing the surrounding response.
+ID in the first `codex exec --json` event. Capture that ID without printing the surrounding response.
 
 ```bash
 gstack-extend quota sample --session-id example-build --phase start --stage build --agent codex --auth subscription --cwd "$PWD" --repo-root "$PWD" --json
@@ -69,7 +68,7 @@ Every JSON command emits exactly one object with `v: 1`. Exit codes are 0 for a
 successful command (including unavailable or partial data), 1 for an operational
 failure, and 2 for invalid usage. Errors are
 `{"v":1,"error":{"code":"...","message":"...","fix":"...","doc":"..."}}`.
-When a vendor or exchange backoff is active, that error object also includes
+When a vendor backoff is active, that error object also includes
 `retry_at`.
 Report text and fixture banners never contaminate JSON stdout. Additive fields
 preserve the version; removed fields, renames and meaning changes require a new
@@ -84,11 +83,10 @@ tier and outcome joins. See the [provenance contract](telemetry.md#execution-pro
 | `quota sample --pool KIND` | Periodic capacity sample, with sample IDs and `reused_sample`. |
 | `quota sample --session-id ID --phase start\|attach\|finish\|abandon` | Durable lifecycle receipt. Finish without a start fails `no_start_state`; attach after completion fails `run_finished`; changed metadata on an open start fails `conflict`. Abandon records `interrupted`. |
 | `quota runs [--active] [--session-id ID]` | `runs[]` with native consumption and configuration, source evidence, lifecycle, `local_persisted_at`, `settled_at`, `as_of`, completeness and `observed_through`. |
-| `quota summary [--by stage,agent,model]` | `groups[]` with unique run counts, median/p90 per token class, attribution/settlement counts, excluded counts and reasons. Cursor totals deduplicate canonical events across all groups. Shared cost is listed separately and never allocated to a configuration. |
-| `quota intervals` | Consecutive same-pool sample pairs, derived from current indexed events; `as_of`, per-meter changes and coverage. Late records and charge revisions update past intervals. |
-| `quota settle` | Refresh Cursor event facts and recompute affected rows, including previously final or expired rows. |
+| `quota summary [--by stage,agent,model]` | `groups[]` with unique run counts, median/p90 per token class, attribution/settlement counts, excluded counts and reasons. |
+| `quota intervals` | Consecutive same-pool sample pairs, derived from current indexed events; `as_of`, per-meter changes and coverage. Late records update past intervals. |
 | `quota probe KIND --raw` | One foreground response on stdout, intended only for a direct pipe into the fixture scrubber. Raw responses must never be saved or pasted into an agent session. |
-| `doctor quota` | Read-only report: sources, reasons/counts, drift, coverage, bytes, refusals, open/stale runs, pending settlement and exchange counts. Report exits 0 even if the store cannot be read. Invalid arguments still exit 2. |
+| `doctor quota` | Read-only report: sources, reasons/counts, drift, coverage, bytes, refusals, open/stale runs and counters. Report exits 0 even if the store cannot be read. Invalid arguments still exit 2. |
 
 All commands support `--json` and help with an example. Filters accept a pool kind
 or full pool ID in `--pool`; `--since` accepts ISO-8601 or durations such as `7d`
@@ -97,20 +95,29 @@ model, effort and route filters. `--route` accepts `cli`, `sdk` and `unknown`;
 `conductor` was removed and is rejected as invalid usage (exit 2), while runs
 recorded with it are still returned by unfiltered `runs` and grouped by
 `summary --by route`. Summary grouping supports these fields and pool.
-Filtering never reallocates shared Cursor cost.
 For lifecycle sampling, `--pool` restricts capacity reads while consumption still
-covers all locally observed pools. Settlement fetches only the current Cursor
-account; a different full pool ID reports `identity_unknown`. Doctor applies pool
+covers all locally observed pools. Doctor applies pool
 and time filters to its sample coverage. Probe requires its pool filter to match
 the requested adapter and current account. All network paths honor pool disable,
 sandbox and rate-limit backoff settings.
+
+Cursor quota support is retired (`gstack-extend quota settle`,
+`--cursor-projects-dir`, `--agent cursor`, `--pool cursor` and `cursor:*`, and
+`gstack-extend quota probe cursor` exit 2 with `usage`). Existing stores that
+already contain legacy Cursor records still load without error: unfiltered
+`gstack-extend quota runs` lists stored Cursor `'run'` rows verbatim as stored
+without recomputation, reconciliation, re-attribution, or settlement, while
+`status`, `doctor`, `intervals`, and `summary` omit stored Cursor records.
+`runs --active` omits open legacy Cursor states. Lifecycle commands return
+`conflict` for an existing session that belongs to Cursor, leaving its
+stored records intact. Use a new session ID for supported harnesses.
 
 ### Samples
 
 A sample contains `v`, `sample_id`, `ts` (write time), `observed_at` (source time),
 `pool`, `pool_kind`, `source`, `status`, `reason`, `meters`, identity evidence,
 `raw_shape_hash` and bounded `unknown_fields`. Trigger is
-`run_start|run_finish|attach|periodic|refresh|status|settle`; a run-triggered sample
+`run_start|run_finish|attach|periodic|refresh|status`; a run-triggered sample
 includes `session_id`. Status is `ok|partial|unavailable`. Partial reads keep only
 valid meters; unavailable reads have none. No raw response or credential is stored.
 
@@ -150,8 +157,7 @@ Token classes are disjoint: uncached `input`, `cache_read`, `cache_write`, and
 `output`. `reasoning` is an informational subset of output and is never added.
 Unreported classes are null. Claude maps input/cache-read/cache-creation/output
 directly and takes thinking tokens from output details. Codex subtracts cached
-reads and reported cache writes from inclusive input. Cursor event input is
-uncached; its output includes reasoning if reported. Consumption is grouped by
+reads and reported cache writes from inclusive input. Consumption is grouped by
 billed model.
 
 Claude response identity is message ID; streaming copies retain the entry with
@@ -175,43 +181,7 @@ Multiple eligible parents make the child unknown for each parent, and the event
 is reported once as unassigned/concurrent consumption.
 
 Claude subagent transcripts belong to the explicitly attached stage session.
-Cursor subagent IDs are used only when billing events actually join them; the T0
-trial found no matching child billing IDs and this remains a coverage limitation.
-A Cursor account event alone is never child evidence. Local transcript directories
-provide cwd/creation evidence. Conductor's Cursor SDK store is no longer read,
-because Conductor support was dropped on 2026-11-06 ([SPEC Audience and target](SPEC.md#audience-and-target)).
-Native SDK sources it indexed earlier stay in the store, and an unattached Cursor
-run still matches one of them only when it is the single overlapping candidate in
-the run's cwd (unknown with zero or several), so recorded runs read back
-unchanged. Route is provenance; billed model, not route,
-is the price-bearing fact.
-Text-format Cursor transcripts establish local conversation identity and creation
-evidence, but have no structured usage. Their coverage is `not_reported`, never a
-zero-token observation.
-
-### Cursor cost
-
-One event store owns all charge facts. Canonical identity is provider event ID, or
-`(pool, conversation_hash, event_ts, model)` when no ID exists. Unresolvable
-same-key collisions are ambiguous, never silently merged. Relationships store
-only event references. Facts include charged cents, tokens, revision,
-last_changed_at and explicit turn-boundary evidence with its source.
-
-Allocation is a query. A turn wholly within one stage is attributable. A turn
-overlapping stages or extending outside a stage is `shared_turn`; runs list
-`shared_cents` and other stage IDs. Without explicit start and end evidence it is
-`boundary_unknown`, excluded from attributable cents and calibration. Polling
-cadence cannot manufacture a turn end or change containment.
-
-Mutable events are provisional. Two unchanged reads, at least five minutes after
-run end, plus local completion evidence allow final settlement; otherwise stability
-is assumed and remains revisable. After 48 hours without settlement the state is
-expired. Any later revision increments revision and can restore final settlement.
-Revision takes precedence over settlement rank (`final > expired > unavailable >
-provisional`), then write time. Finish persists local consumption before settlement
-work. Cursor sampling and explicit settle are the only settlement triggers. Event
-queries cover start minus six hours to finish plus ten minutes, page size 1000,
-maximum 20 pages; exhausted paging or time budgets report partial coverage.
+Route is provenance; billed model, not route, is the price-bearing fact.
 
 ## Troubleshooting
 
@@ -223,7 +193,7 @@ Adapters fail independently. Disabled capacity readers still permit local usage.
 | Reason | Cause / what is shown | Fix |
 |---|---|---|
 | no_sample | No capacity observation recorded | Run gstack-extend quota status --refresh. |
-| no_credentials | No usable credential source; capacity unknown | Sign in with the vendor CLI; Cursor needs CURSOR_API_KEY. |
+| no_credentials | No usable credential source; capacity unknown | Sign in with the vendor CLI. |
 | auth_expired | Access token expired; capacity unknown | Use the vendor CLI to sign in again. |
 | missing_executable | Vendor CLI absent | Install the vendor CLI and check PATH. |
 | unsupported_version | Required CLI flags unavailable | Upgrade the vendor CLI. |
@@ -238,7 +208,6 @@ Adapters fail independently. Disabled capacity readers still permit local usage.
 | spawn_failed | Vendor process could not start | Check executable permissions and retry. |
 | disabled | Pool disabled in quota_pools | Enable the pool in quota_pools. |
 | sandboxed | Network forbidden by sandbox markers | Retry from an unsandboxed caller. |
-| exchange_throttled | Cursor key exchanged within 60 seconds | Retry after retry_at. |
 | identity_unknown | Paying account cannot be established | Attach a session with verified subscription identity. |
 | identity_changed | Account changed during observation | Finish this run and start a new bracket. |
 | log_too_large | Source exceeds the per-file read cap | Narrow declared roots or archive completed vendor logs. |
@@ -248,7 +217,6 @@ Adapters fail independently. Disabled capacity readers still permit local usage.
 | no_usage | No attributable usage record is available | Attach the correct harness session and retry. |
 | not_reported | Source does not report structured usage | Keep consumption unknown; inspect another supported source. |
 | ordering_unknown | Usage counter order cannot be established | Check vendor log integrity. |
-| boundary_unknown | Turn boundaries are not recorded | Keep the charge uncertain; do not allocate it. |
 | ambiguous | Evidence matches several identities or parents | Supply an explicit harness identity. |
 | store_refused | Store path is not a private regular file | Remove the unsafe link or repair permissions. |
 | store_error | Transaction could not commit | Free disk space and retry the same command. |
@@ -264,8 +232,8 @@ Adapters fail independently. Disabled capacity readers still permit local usage.
 `bin/config set quota off` disables every quota command: exit 0,
 `{"v":1,"disabled":true}`, no store, source, credential or network reads after
 the configuration check. A missing quota key enables explicit commands; unreadable
-configuration disables them. `quota_pools` is a comma list (default all three
-readable kinds); `quota_min_interval` is seconds (default 60). Turning quota off
+configuration disables them. `quota_pools` is a comma list (default both
+readable kinds: `claude,codex`); `quota_min_interval` is seconds (default 60). Turning quota off
 leaves existing data in place. Telemetry has no quota hook and starts no sampler.
 There is no upgrade migration or consent command.
 
@@ -273,7 +241,6 @@ There is no upgrade migration or consent command.
 |---|---|
 | GSTACK_EXTEND_STATE_DIR | Production; local state root, default ~/.gstack-extend |
 | GSTACK_EXTEND_TELEMETRY_DEBUG | Production; existing telemetry diagnostics |
-| CURSOR_API_KEY | Production; in-memory Cursor exchange credential, never forwarded to vendor child processes |
 | CLAUDE_CONFIG_DIR, CODEX_HOME | Production; default roots when caller flags are absent |
 | CODEX_SANDBOX, CODEX_SANDBOX_NETWORK_DISABLED | Production; sandbox detection, disables network readers |
 | GSTACK_EXTEND_QUOTA_FIXTURES | Tests only; endpoint fixture directory, requires isolated state |
@@ -283,7 +250,7 @@ There is no upgrade migration or consent command.
 Doctor warns about test variables. A test variable with default state is refused.
 Vendor binaries resolve through one resolver; in fixture mode only its fixture
 bin directory is searched. Tests reduce the environment to an allowlist and
-assert no real Cursor key or vendor binary is reachable. Production vendor
+assert no real vendor binary is reachable. Production vendor
 children receive HOME, PATH, USER, TMPDIR, LANG and the relevant config root only.
 Harness and workspace-host markers never reach those children. Values and process
 arguments are never printed. Ancestry uses argv[0] in memory, then command name;
@@ -301,7 +268,7 @@ files and extra hard links; files are mode 0600 in a private directory. Refusals
 are visible in doctor. No retention or automatic deletion is performed.
 
 Pool IDs are `<kind>:<HMAC-SHA256(account)[:12]>`, keyed by one per-install 0600
-random key. Claude uses organization UUID, Codex account ID, Cursor owningUser.
+random key. Claude uses organization UUID and Codex uses account ID.
 No email or raw account identity is retained. IDs are stable locally and cannot
 be compared across machines. Do not synchronize this ledger across machines.
 
@@ -309,7 +276,6 @@ be compared across machines. Do not synchronize this ledger across machines.
 |---|---|
 | Snapshot refresh | 8 seconds total; pools read concurrently, each remote call at most 5 seconds |
 | Claude usage | Included in the 8-second cap; T0 measured below 5 seconds |
-| Cursor pages / settlement | 60 seconds, independent of snapshot work |
 | Active runs / interval source parsing | 2 seconds, up to 50 MiB per pass; resumes from checkpoint |
 | Discovery | Separate bounded inventory pass; uncovered roots listed |
 | Single source | 512 MiB maximum, streaming rather than tail-only |
@@ -317,13 +283,12 @@ be compared across machines. Do not synchronize this ledger across machines.
 
 Process groups are killed at deadline, including a process ignoring SIGTERM.
 Locks poll nonblocking within the same operation budget. Snapshot locks are per
-pool and freshness/backoff is rechecked after acquisition. Cursor exchanges have
-a separate cross-process 60-second budget per hashed key, with tokens kept only
-in process memory. Retry-After is respected; unspecified 429 backoff is 300 seconds.
+pool and freshness/backoff is rechecked after acquisition. Retry-After is
+respected; unspecified 429 backoff is 300 seconds.
 
-Source discovery records explicit roots: Claude projects, Codex sessions, Cursor
-projects and Grok sessions. Flags `--claude-config-dir`, `--codex-home`,
-`--cursor-projects-dir`, `--cwd`, `--repo-root` capture context
+Source discovery records explicit roots: Claude projects, Codex sessions, and
+Grok sessions. Flags `--claude-config-dir`, `--codex-home`,
+`--cwd`, and `--repo-root` capture context
 for later reads. Locators take this context instead of using the query's cwd.
 Each file has device/inode/size, offset, parser state and coverage. Rotation resets
 its checkpoint. Partial final lines are retried after append; malformed records
@@ -342,11 +307,8 @@ are labeled, not promoted to exact measurements. Local usage is deduplicated by
 event identity across all discovered sessions. Claude and Codex always declare
 remote_unobservable: other machines and chat surfaces cannot be counted locally.
 Known subagents and attributed children belong to their parent's activity family;
-unrelated local families and foreign Cursor events indicate concurrency. Boundary,
-incomplete and provisionally settled observations are excluded from calibration.
-Cursor completeness also requires a successful, fully paged billing-event read
-for that account covering the entire interval. Missing, failed, or narrower reads
-leave consumption incomplete even when the capacity endpoint succeeds.
+unrelated local families indicate concurrency. Boundary and
+incomplete observations are excluded from calibration.
 
 Run state becomes stale after 48 hours without activity, remains finishable, and
 is renewed by every sample call. Abandon explicitly records interruption. Finish
@@ -356,8 +318,7 @@ remains as a source. Auth comes from `--auth subscription|api|unknown`, default
 unknown; caller flags win. Explicit API mode never charges a subscription pool.
 Linked children in the same harness inherit that API mode; unrelated or
 cross-harness children do not. An unattached run leaves consumption unknown
-until a harness session is attached, except when it matches a single overlapping
-native Cursor SDK source already in the store. Network permission always comes from the current invocation,
+until a harness session is attached. Network permission always comes from the current invocation,
 including when attaching or finishing a run started in a different sandbox.
 Inside-stage detection recognizes API keys and alternative provider markers.
 Claude account JSON is capped at 16 MiB; larger files leave identity pending.
@@ -383,27 +344,15 @@ Expired or missing tokens prevent spawn. It does not implement refresh or a
 second Bearer endpoint. Vendor-side refresh on unexpected revocation remains a
 vendor behavior; the live trial did not force a credential rotation.
 
-Cursor uses only CURSOR_API_KEY, exchanging it at
-`https://api2.cursor.sh/auth/exchange_user_api_key`, then calling
-`aiserver.v1.DashboardService/GetCurrentPeriodUsage`, `GetPlanInfo` and
-`GetFilteredUsageEvents` on that host. Cents and percent meters remain separate;
-auto/API percent denominators are unknown. Snapshot identity comes from the same
-credential's hashed owningUser cache or one event page. Missing identity is shown
-as pending and never assigned a different account's cached sample.
-An existing Cursor CLI login is not read by this adapter. The quota process must
-inherit the API key; a shell startup script that unsets it produces
-`no_credentials` even when the launching host originally supplied it.
-
 | Adapter | macOS / Linux | Credential | Trial |
 |---|---|---|---|
 | Claude | Native CLI required on either OS | Vendor-managed subscription sign-in | experimental; 24-hour trial pending |
 | Codex | Native CLI or readable rollout on either OS | Read-only account metadata; fresh token for app-server | experimental; 24-hour trial pending |
-| Cursor | HTTP and local logs on either OS | CURSOR_API_KEY in the quota process environment | experimental; 24-hour trial pending |
 | Grok | Local usage only | None read by quota | No capacity adapter |
 
 For reset/retention, stop quota commands, back up the private quota directory,
 then remove the database together with its WAL/SHM files. This discards samples,
-bindings, pending settlements and receipts. Preserve the key for stable pool IDs;
+bindings and receipts. Preserve the key for stable pool IDs;
 removing it starts a new identity namespace. Never truncate a live SQLite file.
 The stage-runs provenance files are independent. Disabling quota is sufficient to stop new work.
 

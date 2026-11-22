@@ -3,7 +3,6 @@ import argparse
 from collections import Counter
 import json
 import math
-import os
 import re
 import statistics
 import sys
@@ -11,11 +10,10 @@ import time
 
 from .common import (CLASSES, KINDS, QuotaError, budget, check_fixture, config_enabled, config_value, context_from,
                      explanation, fixture_dir, iso, now, state_root, timestamp)
-from .cursor_cost import decorate, settle
 from .identity import identity
 from .index import scan
 from .intervals import interval, intervals
-from .ledger import lifecycle, run_rows
+from .ledger import is_legacy_cursor_state, lifecycle, run_rows
 from .samples import refresh
 from .store import Store, record_refusal
 
@@ -32,7 +30,7 @@ def parser():
     sub=root.add_subparsers(dest='command',required=True,parser_class=Parser)
     examples={'status':'status --refresh --json','sample':'sample --session-id build-1 --phase start --agent codex --json',
               'runs':'runs --active --session-id build-1 --json','summary':'summary --by stage,agent,model --since 7d --json',
-              'intervals':'intervals --pool codex --since 7d --json','settle':'settle --json',
+              'intervals':'intervals --pool codex --since 7d --json',
               'probe':'probe claude --raw','doctor':'doctor --json'}
     for name,example in examples.items():
         p=sub.add_parser(name,epilog='Example: gstack-extend quota '+example)
@@ -40,11 +38,11 @@ def parser():
         p.add_argument('--pool')
         p.add_argument('--since')
         p.add_argument('--days',type=float)
-        for field in ('claude-config-dir','codex-home','cursor-projects-dir','cwd','repo-root'):
+        for field in ('claude-config-dir','codex-home','cwd','repo-root'):
             p.add_argument('--'+field)
         if name in ('sample','runs','summary'):
             for field in ('session-id','stage','agent','model','effort','route'):
-                choices=('claude','codex','cursor','grok','unknown') if field=='agent' else ('cli','sdk','unknown') if field=='route' else None
+                choices=('claude','codex','grok','unknown') if field=='agent' else ('cli','sdk','unknown') if field=='route' else None
                 p.add_argument('--'+field,choices=choices)
         if name=='sample':
             p.add_argument('--phase',choices=('start','attach','finish','abandon'))
@@ -128,7 +126,7 @@ def status(store,args,context,sampled):
 
 
 def discovery_key(context):
-    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','cursor_projects_dir','grok_home','cwd','repo_root'))
+    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','grok_home','cwd','repo_root'))
 
 
 def coverage_for(store,context,cache):
@@ -138,12 +136,18 @@ def coverage_for(store,context,cache):
     return cache[key]
 
 
+def is_legacy_cursor_run(row):
+    return row.get('pool_kind')=='cursor' or row.get('agent')=='cursor'
+
+
 def get_runs(store,args,context):
     cache={}
     coverage=coverage_for(store,context,cache)
     if args.active:
         rows=[]
         for state in store.all('state'):
+            if is_legacy_cursor_state(state):
+                continue
             if state['ended_at'] is None and (not args.session_id or state['session_id']==args.session_id):
                 own_coverage=coverage_for(store,state['metadata']['context'],cache)
                 rows.extend(run_rows(store,state,own_coverage))
@@ -151,12 +155,16 @@ def get_runs(store,args,context):
         stored=store.all('run')
         rows=[]
         for state in store.all('state'):
+            if is_legacy_cursor_state(state):
+                continue
             if state['ended_at'] is None or (args.session_id and state['session_id']!=args.session_id):
                 continue
             own_coverage=coverage_for(store,state['metadata']['context'],cache)
             current=run_rows(store,state,own_coverage)
             for row in current:
                 previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==(row['session_id'],row['pool_kind'],row['pool'])),{})
+                if is_legacy_cursor_run(previous):
+                    continue
                 row['local_persisted_at']=previous.get('local_persisted_at') or (store.get('receipt',state['session_id']+':finish') or store.get('receipt',state['session_id']+':abandon') or {}).get('local_persisted_at')
                 row['lifecycle']='interrupted' if state.get('outcome')=='interrupted' else 'recorded'
                 rows.append(row)
@@ -167,16 +175,17 @@ def get_runs(store,args,context):
     provenance={}
     for path in stage_run_files(store.root):
         for r in tail_records(path):
-            if r.get('session_id'):
+            if r.get('session_id') and r.get('agent')!='cursor':
                 provenance[r['session_id']]=r
     if provenance:
         for row in rows:
+            if is_legacy_cursor_run(row):
+                continue
             for field in ('stage','agent','model','effort','route'):
                 if row.get(field) is None:
                     row[field]=provenance.get(row['session_id'],{}).get(field)
-    rows=decorate(store,rows)
-    resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending'}
-    rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved]
+    resolved={(r['session_id'],r['pool_kind']) for r in rows if r['pool']!='pending' and not is_legacy_cursor_run(r)}
+    rows=[r for r in rows if r['pool']!='pending' or (r['session_id'],r['pool_kind']) not in resolved or is_legacy_cursor_run(r)]
     return dict(v=1,runs=[r for r in rows if matches(r,args)],as_of=now(),coverage=coverage)
 
 
@@ -188,18 +197,18 @@ def summary(store,args,context):
     rows=get_runs(store,args,context)['runs']
     groups={}
     claimed=set()
-    shared={}
-    cents_seen=set()
     for row in sorted(rows,key=lambda r:(r['started_at'],r['session_id'],r['pool'])):
+        if is_legacy_cursor_run(row):
+            continue
         key=tuple(row.get(f) for f in fields)
         group=groups.setdefault(key,dict(config=dict(zip(fields,key)),sessions=set(),attribution=Counter(),settlement=Counter(),
-                                        run_values={},model_values={},excluded=Counter(),attributable_cents=0,events=set()))
+                                        run_values={},model_values={},excluded=Counter(),attributable_cents=0,attributable_event_count=0))
         group['sessions'].add(row['session_id'])
         group['attribution'][row['attribution']]+=1
         group['settlement'][row['settlement']]+=1
         sources=[]
         for source in row['sources']:
-            exclusions=set(source.get('why',[])) & {'ambiguous','shared_turn','boundary_unknown','identity_unknown','identity_changed'}
+            exclusions=set(source.get('why',[])) & {'ambiguous','shared_turn','identity_unknown','identity_changed'}
             if not source.get('complete'):
                 exclusions.add('partial_source')
             if source['attribution']=='unknown':
@@ -210,7 +219,6 @@ def summary(store,args,context):
                 sources.append(source)
         ids={ident for s in sources for ident in s['event_ids']}-claimed
         facts=store.get_many('usage',ids)
-        facts.extend(store.get_many('cursor_event',ids))
         if not facts:
             group['excluded']['no_usage_or_duplicate']+=1
         claimed|=ids
@@ -220,13 +228,6 @@ def summary(store,args,context):
             for token_class in CLASSES:
                 run_values[token_class].append(fact['tokens'].get(token_class))
                 model_values[token_class].append(fact['tokens'].get(token_class))
-        for event in row.get('events',[]):
-            if event['shared_turn'] and 'ambiguous' not in event['why']:
-                shared[event['event_id']]=dict(event_id=event['event_id'],charged_cents=event['charged_cents'])
-            if event['attributable_cents'] is not None and event['event_id'] not in cents_seen:
-                group['attributable_cents']+=event['attributable_cents']
-                group['events'].add(event['event_id'])
-                cents_seen.add(event['event_id'])
     result=[]
     def metrics_for(runs):
         metrics={}
@@ -240,11 +241,10 @@ def summary(store,args,context):
         metrics=metrics_for(group.pop('run_values'))
         group['by_billed_model']=[dict(model=model,consumption=metrics_for(runs)) for model,runs in sorted(group.pop('model_values').items())]
         group['run_count']=len(group.pop('sessions'))
-        group['attributable_event_count']=len(group.pop('events'))
         group['consumption']=metrics
         group['excluded']=dict(group['excluded'])
         result.append(group)
-    return dict(v=1,groups=result,shared_events=list(shared.values()),shared_cents=sum(x['charged_cents'] for x in shared.values()),as_of=now())
+    return dict(v=1,groups=result,shared_events=[],shared_cents=0,as_of=now())
 
 
 def doctor(store,context,warnings,args):
@@ -266,13 +266,13 @@ def doctor(store,context,warnings,args):
             executable_available=True
         except QuotaError:
             executable_available=False
-        available=bool(os.environ.get('CURSOR_API_KEY')) if kind=='cursor' and not fixture_dir() else evidence.get('pool','pending')!='pending'
+        available=evidence.get('pool','pending')!='pending'
         pools.append(dict(pool_kind=kind,pool=args.pool if args.pool and ':' in args.pool else evidence.get('pool','pending'),
                           support='experimental',credential_available=available,
-                          executable_available=executable_available,credential_source='fixture' if fixture_dir() else 'CURSOR_API_KEY' if kind=='cursor' else 'vendor-managed account',
+                          executable_available=executable_available,credential_source='fixture' if fixture_dir() else 'vendor-managed account',
                           coverage=len(ok)/len(rows) if rows else None,attempts=len(rows),last_ok_age_s=max(0,now()-max(s['observed_at'] for s in ok)) if ok else None,
                           reasons=reasons,diagnostics=[explanation(code) for code in reasons],drift_count=sum(len(s['unknown_fields']) for s in rows)))
-    states=store.all('state')
+    states=[s for s in store.all('state') if not is_legacy_cursor_state(s)]
     try:
         from telemetry import read_capped
         refusals=read_capped(store.root/'quota-refusals',1 << 20).count(b'\n')
@@ -280,9 +280,9 @@ def doctor(store,context,warnings,args):
         refusals=0
     return dict(v=1,pools=pools,test_variable_warnings=warnings,open_runs=sum(s['ended_at'] is None for s in states),
                 stale_runs=sum(s['ended_at'] is None and now()-s['lease_at']>48*3600 for s in states),
-                unsettled_cursor_rows=sum(r['pool_kind']=='cursor' and r['settlement']!='final' for r in store.all('run')),
-                refusals=refusals,malformed_records=sum(f.get('malformed',0) for f in store.all('file')),
-                counters=store.all('counter'),store_bytes=store.path.stat().st_size if store.path.exists() else 0,
+                refusals=refusals,malformed_records=sum(f.get('malformed',0) for f in store.all('file') if f.get('agent')!='cursor'),
+                counters=[c for c in store.all('counter') if c.get('name')!='cursor_exchanges'],
+                store_bytes=store.path.stat().st_size if store.path.exists() else 0,
                 notice='Only explicit quota commands sample vendors. Telemetry has no quota hook. Disable with bin/config set quota off.')
 
 
@@ -308,7 +308,7 @@ def human(result):
         return error['message']+' Fix: '+error['fix']
     if 'refusals' in result and 'pools' in result:
         lines=[result.get('notice') or 'Quota doctor']
-        lines.append('open '+str(result.get('open_runs',0))+'; stale '+str(result.get('stale_runs',0))+'; refusals '+str(result.get('refusals',0))+'; unsettled cursor '+str(result.get('unsettled_cursor_rows',0)))
+        lines.append('open '+str(result.get('open_runs',0))+'; stale '+str(result.get('stale_runs',0))+'; refusals '+str(result.get('refusals',0)))
         for pool in result['pools']:
             coverage=pool.get('coverage')
             lines.append(pool['pool_kind']+' ['+pool.get('support','experimental')+'] coverage '+(('%.0f%%'%(coverage*100)) if isinstance(coverage,(int,float)) else 'unknown'))
@@ -390,8 +390,6 @@ def main(argv=None):
         elif args.command=='intervals':
             coverage=scan(store,context)
             result=dict(v=1,intervals=[r for r in intervals(store,coverage) if matches(r,args)],coverage=coverage,as_of=now())
-        elif args.command=='settle':
-            result=settle(store,context,args.pool,since(args))
         elif args.command=='probe':
             if context['sandboxed']:
                 raise QuotaError('sandboxed')
@@ -400,14 +398,14 @@ def main(argv=None):
                 raise QuotaError('identity_unknown')
             if args.kind not in [p.strip() for p in config_value(root,'quota_pools',','.join(KINDS)).split(',')]:
                 raise QuotaError('disabled')
-            from .readers import claude,codex,cursor
+            from .readers import claude,codex
             deadline=time.monotonic()+budget(8)
             with store.lock('sample:'+args.kind,deadline):
                 backoff=store.get('backoff',evidence['fingerprint'],{})
                 if backoff.get('retry_at',0)>now():
                     raise QuotaError('http_429',retry_at=backoff['retry_at'])
                 try:
-                    _,body={'claude':claude,'codex':codex,'cursor':cursor}[args.kind].read(store,context,deadline)
+                    _,body={'claude':claude,'codex':codex}[args.kind].read(store,context,deadline)
                 except QuotaError as error:
                     if error.code=='http_429':
                         with store.transaction():

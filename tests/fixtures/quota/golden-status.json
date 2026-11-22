@@ -19,12 +19,6 @@
         "why": []
       },
       {
-        "agent": "cursor",
-        "complete": true,
-        "root": "$HOME/.cursor/projects",
-        "why": []
-      },
-      {
         "agent": "grok",
         "complete": true,
         "root": "$HOME/.grok/sessions",
@@ -112,12 +106,6 @@
             "why": []
           },
           {
-            "agent": "cursor",
-            "complete": true,
-            "root": "$HOME/.cursor/projects",
-            "why": []
-          },
-          {
             "agent": "grok",
             "complete": true,
             "root": "$HOME/.grok/sessions",
@@ -185,122 +173,6 @@
             "agent": "codex",
             "complete": true,
             "root": "$HOME/.codex/sessions",
-            "why": []
-          },
-          {
-            "agent": "cursor",
-            "complete": true,
-            "root": "$HOME/.cursor/projects",
-            "why": []
-          },
-          {
-            "agent": "grok",
-            "complete": true,
-            "root": "$HOME/.grok/sessions",
-            "why": []
-          }
-        ],
-        "started_at": "2026-09-23T12:00:00.000Z",
-        "uncovered_roots": [],
-        "unresolved_events": 0,
-        "why": []
-      },
-      "status": "ok",
-      "support": "experimental"
-    },
-    {
-      "latest_attempt": "2026-09-23T12:00:00.000Z",
-      "meters": [
-        {
-          "age_s": 0,
-          "clock_skew": false,
-          "label": "api percent",
-          "limit": 100,
-          "meter": "cursor:api_percent",
-          "resets_at": "2026-09-30T12:00:00.000Z",
-          "resolution": 1,
-          "sampled_at": "2026-09-23T12:00:00.000Z",
-          "stale_after": "2026-09-23T12:05:00.000Z",
-          "state": "ok",
-          "unit": "percent",
-          "used": 7.1,
-          "why": [],
-          "window_kind": "fixed_cycle",
-          "window_s": 2592000.0
-        },
-        {
-          "age_s": 0,
-          "clock_skew": false,
-          "label": "auto percent",
-          "limit": 100,
-          "meter": "cursor:auto_percent",
-          "resets_at": "2026-09-30T12:00:00.000Z",
-          "resolution": 1,
-          "sampled_at": "2026-09-23T12:00:00.000Z",
-          "stale_after": "2026-09-23T12:05:00.000Z",
-          "state": "ok",
-          "unit": "percent",
-          "used": 1.2,
-          "why": [],
-          "window_kind": "fixed_cycle",
-          "window_s": 2592000.0
-        },
-        {
-          "age_s": 0,
-          "clock_skew": false,
-          "label": "included cents",
-          "limit": 40000,
-          "meter": "cursor:included_cents",
-          "resets_at": "2026-09-30T12:00:00.000Z",
-          "resolution": 0.01,
-          "sampled_at": "2026-09-23T12:00:00.000Z",
-          "stale_after": "2026-09-23T12:05:00.000Z",
-          "state": "ok",
-          "unit": "cents",
-          "used": 3200,
-          "why": [],
-          "window_kind": "fixed_cycle",
-          "window_s": 2592000.0
-        }
-      ],
-      "plan_label": "Cursor subscription",
-      "pool": "cursor:POOL",
-      "pool_kind": "cursor",
-      "reused_sample": false,
-      "since_last_ok": {
-        "after_sample_id": null,
-        "as_of": "2026-09-23T12:00:00.000Z",
-        "before_sample_id": "SAMPLE",
-        "boundary_events": 0,
-        "calibration_eligible": true,
-        "charged_cents": null,
-        "complete": true,
-        "concurrent": false,
-        "consumption": [],
-        "ended_at": "2026-09-23T12:00:00.000Z",
-        "event_count": 0,
-        "meters": [],
-        "observed_charged_cents": null,
-        "pool": "cursor:POOL",
-        "pool_kind": "cursor",
-        "remote_unobservable": false,
-        "roots": [
-          {
-            "agent": "claude",
-            "complete": true,
-            "root": "$HOME/.claude/projects",
-            "why": []
-          },
-          {
-            "agent": "codex",
-            "complete": true,
-            "root": "$HOME/.codex/sessions",
-            "why": []
-          },
-          {
-            "agent": "cursor",
-            "complete": true,
-            "root": "$HOME/.cursor/projects",
             "why": []
           },
           {

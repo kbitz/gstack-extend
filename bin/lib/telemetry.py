@@ -31,7 +31,7 @@ LOGGER_TIMEOUT_S = 15  # the delegated completion logger
 # Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
-HARNESSES = ("claude", "codex", "grok", "cursor", "muse")
+HARNESSES = ("claude", "codex", "grok", "muse")
 OUTCOMES = ("success", "error", "abort", "blocked", "unknown")
 ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "sdk", "unknown"
 ROUTES = (ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN)
@@ -103,11 +103,6 @@ VERSION_BYTES = 128
 RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_HEAD_BYTES = 64 << 10  # launch-surface records sit at the head of a session log; bounds finish latency on huge logs
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
-# Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
-# Debug prints only these tokens: never a store path, id, cwd, exception, or field value.
-CURSOR_SDK_REASONS = (
-    ("transcript-unreadable", "cursor-sdk-transcript-unreadable"),
-)
 # Bare skill names. Finish strips the extend: prefix before consulting this set.
 RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
 ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
@@ -119,7 +114,7 @@ WORK_ITEM_ENV = "GSTACK_EXTEND_WORK_ITEM"
 REQUESTED_MODEL_ENV, REQUESTED_EFFORT_ENV = "GSTACK_EXTEND_MODEL", "GSTACK_EXTEND_EFFORT"
 REQUESTED_ENV = (("model", REQUESTED_MODEL_ENV), ("effort", REQUESTED_EFFORT_ENV))
 # Each marker counts on its own when valid_session(value) holds, matching detect().
-SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID", "MUSE_SESSION_ID")
+SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "GROK_SESSION_ID", "MUSE_SESSION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
               "or set GSTACK_DIR to a gstack checkout")
 
@@ -272,10 +267,6 @@ def helper_candidates(name):
         directory = Path(codex_home) / "skills/gstack/bin"
         add(str(directory), str(directory / name))
     directory = Path.home() / ".codex/skills/gstack/bin"
-    add(str(directory), str(directory / name))
-    directory = Path.home() / ".config/opencode/skills/gstack/bin"
-    add(str(directory), str(directory / name))
-    directory = Path.home() / ".cursor/skills/gstack/bin"
     add(str(directory), str(directory / name))
     return pairs
 
@@ -1381,7 +1372,7 @@ def process_argv0(pid):
 
 def harness_ancestor(candidates, table=None, pid=None):
     """Nearest marked harness; injectable table contains (ppid, argv0, comm)."""
-    names = {"claude": "claude", "codex": "codex", "cursor-agent": "cursor", "agent": "cursor", "grok": "grok", "muse": "muse"}
+    names = {"claude": "claude", "codex": "codex", "grok": "grok", "muse": "muse"}
     if table is None:
         ps = which("ps")
         if not ps:
@@ -1410,49 +1401,24 @@ def harness_ancestor(candidates, table=None, pid=None):
     return None
 
 
-def cursor_logs(session_id, projects=None):
-    if not valid_session(session_id):
-        return []
-    root = Path(projects or Path.home() / ".cursor/projects")
-    return list(root.glob(f"*/agent-transcripts/{session_id}.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.txt"))
-
-
-def _cursor_debug(reasons):
-    for code, anchor in CURSOR_SDK_REASONS:
-        if code in reasons:
-            trace(f"cursor-sdk {code}. See docs/telemetry.md#{anchor}.")
-
-
-def cursor_turns(root, begin):
-    log = newest(cursor_logs(os.environ.get("CURSOR_CONVERSATION_ID")))
-    return [(log.stat().st_mtime, None, None)] if log else []
-
-
 def route_for(agent):
-    entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if agent == "claude" else os.environ.get("CURSOR_INVOKED_AS", "") if agent == "cursor" else ""
+    entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if agent == "claude" else ""
     if agent == "claude" and entry.startswith("sdk-"):
         route = ROUTE_SDK
-    elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("CURSOR_AGENT") or os.environ.get("GROK_AGENT"))) or (agent == "claude" and (os.environ.get("CURSOR_AGENT") or os.environ.get("CODEX_THREAD_ID"))) or (agent == "cursor" and (os.environ.get("CLAUDECODE") or os.environ.get("CODEX_THREAD_ID"))):
+    elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("GROK_AGENT"))) or (agent == "claude" and os.environ.get("CODEX_THREAD_ID")):
         route = ROUTE_CLI
     else:
         route = ROUTE_UNKNOWN
     return route, clean(entry)
 
 
-def _trace_detection_error(agent, error):
-    # A Cursor reader failure comes from its transcript fallback and gets a fixed reason without the exception text.
-    # Other harnesses keep the existing exception text.
-    if agent == "cursor":
-        _cursor_debug(["transcript-unreadable"])
-        return
+def _trace_detection_error(error):
     trace(f"provenance detection failed ({type(error).__name__}: {error})")
 
 
 def detect(begin, end, root):
     """(agent, model, effort) for the harness running this command, from its own session log; None when unverifiable."""
     readers = []
-    if os.environ.get("CURSOR_AGENT") or os.environ.get("CURSOR_CONVERSATION_ID"):
-        readers.append(("cursor", True, lambda: cursor_turns(root, begin)))
     if os.environ.get("CODEX_THREAD_ID"):
         readers.append(("codex", True, lambda: codex_turns(os.environ["CODEX_THREAD_ID"])))
     if os.environ.get("GROK_AGENT") == "1" or valid_session(os.environ.get("GROK_SESSION_ID")):  # Grok's shell forces "1"; a user-set profile name is not a marker
@@ -1474,7 +1440,7 @@ def detect(begin, end, root):
         try:
             logged = turns(read)
         except Exception as error:
-            _trace_detection_error(agent, error)
+            _trace_detection_error(error)
             if len(readers) == 1:
                 return agent, None, None
             logged = []
@@ -1499,7 +1465,7 @@ def detect(begin, end, root):
     except Exception as error:
         # Intentional boundary: these logs belong to other tools and change without notice. An unreadable log costs
         # only the log-derived values (and the agent when nested markers need the logs to decide), never the row.
-        _trace_detection_error(readers[0][0] if len(readers) == 1 else None, error)
+        _trace_detection_error(error)
         return (readers[0][0] if len(readers) == 1 else None), None, None
     return agent, model, effort
 
@@ -1719,7 +1685,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
             agent = explicit
             flagged.add("agent")
         elif explicit is not None:
-            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor, grok or muse)")
+            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, grok or muse)")
         model_flag, effort_flag = clean(values.get("--model")), clean(values.get("--effort"))
         if model_flag is not None:
             model = model_flag
@@ -2406,7 +2372,7 @@ def main(args):
         print("       gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...")
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown] [--blocked-reason TOKEN]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
-        print("  finish provenance overrides: [--agent claude|codex|cursor|grok|muse] [--model ID] [--effort LEVEL] [--work-item ID]")
+        print("  finish provenance overrides: [--agent claude|codex|grok|muse] [--model ID] [--effort LEVEL] [--work-item ID]")
         print("  blocked_reason: --blocked-reason when --outcome blocked ([a-z0-9][a-z0-9-]{0,63}, local-only, otherwise null).")
         print("  work_item: --work-item, else the value start saved from GSTACK_EXTEND_WORK_ITEM, else that variable at finish;")
         print("  at most 200 printable characters, otherwise null.")
