@@ -124,6 +124,17 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** the release that ships PR #284 is cut, or the handoff contract's versioning rule next changes.
 
+### [review:files=bin/lib/quota/cursor_history.py|bin/lib/quota/intervals.py|tests/quota_cases.py] Test gap: combine historical Cursor account and ownership evidence
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The saved-store scenarios cover revisions, shared turns and ambiguous ownership. They have limited coverage of API-auth exclusions and child attribution across several historical pools in one store.
+- **Hypothesis (untested):** Seed subscription and API-auth stages with parent and child relationships and verify that summaries avoid duplicate account attribution and intervals exclude API-auth consumption.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/quota/cursor_history.py`, `_relationships`
+- **Evidence:** The continuation's outside review identified the combined fixture gap. The targeted quota suite and standalone readback checks passed.
+- **Context:** Filed by /review-and-prep on [PR #292](https://github.com/kbitz/gstack-extend/pull/292) for Track 93B.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
