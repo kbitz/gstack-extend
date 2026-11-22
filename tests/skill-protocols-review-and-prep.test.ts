@@ -403,10 +403,18 @@ function checkAttackerPartsAnchorsLock(text: string): string[] {
   if (!attackerParagraph.trimEnd().endsWith('Check each with `grep -F`.')) {
     violations.push('attacker parts missing grep -F delimiter');
   }
-  if (!rest.includes("list (c) in **Activation (attacker parts)**") || !rest.includes("either host's dispatch wording") || !rest.includes('neither `adversarial-pass` nor either dispatch wording')) {
+  const stepOne = rest.split('\n\n').find((paragraph) => paragraph.startsWith('**Step 1.**'))?.replace(/\s+/g, ' ') ?? '';
+  const itemRule = [
+    'list (c) in **Activation (attacker parts)** matches under the same all-or-none rule for `adversarial-pass`: its second item',
+    "matches when `/review` contains either host's dispatch wording (single-quote patterns containing backticks when checking so",
+    'a shell does not expand them), so list (c) matches when `/review` contains `adversarial-pass` plus either dispatch wording,',
+    'or neither `adversarial-pass` nor either dispatch wording (`not declared`); matching `adversarial-pass` with neither',
+    'dispatch wording, or either dispatch wording without `adversarial-pass`, falls back to host review with',
+  ].join(' ');
+  if (!stepOne.includes(itemRule)) {
     violations.push('attacker parts missing Step 1 all-or-none rule for list (c)');
   }
-  if (!rest.includes('`delegation: inactive — <reason>` naming the changed anchor')) {
+  if (!stepOne.includes('`delegation: inactive — <reason>` naming the changed anchor')) {
     violations.push('attacker parts missing anchor-changed fallback clause');
   }
   if (rest.includes('byte for byte') || rest.includes('grep -F')) {
@@ -2913,6 +2921,33 @@ describe('kept contract locks fail on mutation', () => {
       name: 'attacker parts: drop anchor-changed fallback clause',
       lock: checkAttackerPartsAnchorsLock,
       mutate: (t) => t.replace('`delegation: inactive — <reason>` naming the changed anchor', '`delegation: active`'),
+    },
+    // Value: protects=the Step 1 adversarial-pass item rule and literal shell quoting;
+    // fails_when=both wordings are required, absence or partial matches are handled incorrectly, or quote guidance is lost;
+    // why_new=the existing prose lock checked fragments that could survive those changes; seam=none;
+    // no_claim=an installed agent follows the prose.
+    {
+      name: 'attacker parts: require both dispatch wordings in Step 1',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('`adversarial-pass` plus either dispatch\nwording', '`adversarial-pass` plus both dispatch wordings'),
+    },
+    {
+      name: 'attacker parts: count a marker alone as not declared',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace('neither `adversarial-pass` nor either dispatch wording', 'there is no dispatch wording'),
+    },
+    {
+      name: 'attacker parts: omit the partial-item fallback conditions',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace(
+        'matching `adversarial-pass` with neither dispatch wording, or either\ndispatch wording without `adversarial-pass`, falls back to host review with',
+        'a fully matching item falls back to host review with',
+      ),
+    },
+    {
+      name: 'attacker parts: prescribe double quotes for literal backticks',
+      lock: checkAttackerPartsAnchorsLock,
+      mutate: (t) => t.replace("either host's dispatch wording (single-quote", "either host's dispatch wording (double-quote"),
     },
     {
       name: 'first-cycle=overlap: mutate Codex wording in review anchor 5',
