@@ -1020,13 +1020,13 @@ class QuotaTests(unittest.TestCase):
         pending_cursor_run=dict(cursor_run,pool='pending')
         api_cursor_run=dict(cursor_run,session_id='legacy-cursor-api',pool='api',pool_kind='api',auth='api')
         cursor_source=dict(
-            key='legacy-cursor-src',agent='cursor',session=self.store.digest('c-src','session'),
+            key='c-src',agent='cursor',session=self.store.digest('c-src','session'),
             parent=None,native_sdk=True,cwd=self.context['cwd'],first=t0+1,last=t0+15,
             complete=True,reason=None,
         )
         cursor_usage=dict(
             id='legacy-cursor-usage',agent='cursor',session=cursor_source['session'],
-            source_keys=['legacy-cursor-src'],pool=cursor_pool,ts=t0+10,model='composer-1',
+            source_keys=[cursor_source['key']],pool=cursor_pool,ts=t0+10,model='composer-1',
             tokens=dict(input=10,cache_read=0,cache_write=0,output=4,reasoning=0),
         )
         with self.store.transaction():
@@ -1039,7 +1039,7 @@ class QuotaTests(unittest.TestCase):
             self.store.put('run',json.dumps(['legacy-cursor-run','cursor',cursor_pool]),cursor_run)
             self.store.put('run',json.dumps(['legacy-cursor-run','cursor','pending']),pending_cursor_run)
             self.store.put('run',json.dumps(['legacy-cursor-api','api','api']),api_cursor_run)
-            self.store.put('source','legacy-cursor-src',cursor_source)
+            self.store.put('source',cursor_source['key'],cursor_source)
             self.store.put('file','legacy-cursor-file',dict(key='legacy-cursor-file',path=str(self.home/'.cursor/projects/x.jsonl'),root=str(self.home/'.cursor/projects'),agent='cursor',malformed=2,complete=False))
             self.store.put('usage','legacy-cursor-usage',cursor_usage)
             self.store.put('cursor_event','ce-1',dict(id='ce-1',pool=cursor_pool,conversation_hash=cursor_source['session'],event_ts=t0+10,model='composer-1',charged_cents=5,tokens=cursor_usage['tokens'],ambiguous=False,complete=True))
@@ -1206,12 +1206,12 @@ class QuotaTests(unittest.TestCase):
     def test_native_cursor_history_with_unknown_attachment_still_loads(self):
         from quota.cli import public
         sid='native-cursor'
-        session=self.store.digest('native-cursor-source','session')
+        attached_id=self.store.digest(sid,'session')
         t0=now()
         metadata=dict(agent=None,context=self.context,auth='subscription')
         state=dict(session_id=sid,started_at=t0,ended_at=t0+20,lease_at=t0+20,
                    metadata=metadata,start_metadata=metadata,identities={},fixture=True,
-                   attachments=[dict(agent='unknown',session=session,attached_at=t0)])
+                   attachments=[dict(agent='unknown',session=attached_id,attached_at=t0)])
         row=dict(v=1,session_id=sid,agent=None,pool_kind='cursor',pool='pending',
                  started_at=t0,ended_at=t0+20,sources=[],settlement='provisional',
                  attribution='unknown',stage=None)
@@ -1219,10 +1219,10 @@ class QuotaTests(unittest.TestCase):
             self.store.put('state',sid,state)
             self.store.put('state',sid+'-open',dict(state,session_id=sid+'-open',ended_at=None))
             self.store.put('run',json.dumps([sid,'cursor','pending']),row)
-            self.store.put('source','sdk-source',dict(key='sdk-source',agent='cursor',session=session,
+            self.store.put('source','sdk-source',dict(key='sdk-source',agent='cursor',session=attached_id,
                                                       native_sdk=True,complete=False,reason='malformed_record'))
             self.store.put('file','sdk-file',dict(key='sdk-file',agent='cursor-sdk',root=str(self.home/'legacy-sdk'),malformed=1))
-            self.store.put('usage','sdk-fact',dict(id='sdk-fact',agent='cursor',session=session,pool='unresolved',
+            self.store.put('usage','sdk-fact',dict(id='sdk-fact',agent='cursor',session=attached_id,pool='unresolved',
                                                   source_keys=['sdk-source'],ts=t0+4))
 
         for cmd in (('runs',),('runs','--active'),('summary',)):
