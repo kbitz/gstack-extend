@@ -290,6 +290,18 @@ describe('doctor environment and arguments', () => {
       expect(resolved.stdout).toBe('');
       expect(retiredReport).toMatchObject({ telemetry_binary: null, call_helper: helper });
       expect(retiredReport.diagnostic).toContain('unresolvable');
+      // Retired helper bin directories are omitted from gstack helper lookup too.
+      for (const binName of ['gstack-telemetry-log', 'gstack-config']) {
+        const retiredBin = join(retiredFix.home, retiredHost, 'gstack/bin', binName);
+        mkdirSync(join(retiredFix.home, retiredHost, 'gstack/bin'), { recursive: true });
+        writeFileSync(retiredBin, '#!/bin/sh\nexit 0\n');
+        chmodSync(retiredBin, 0o755);
+      }
+      const helperReport = JSON.parse(run(retiredFix.env, ['--json'], ROOT).stdout);
+      expect(helperReport.gstack_logger).toBeNull();
+      expect(helperReport.gstack_config).toBeNull();
+      expect(helperReport.diagnostic ?? '').not.toContain('.config/opencode/skills/gstack/bin');
+      expect(helperReport.diagnostic ?? '').not.toContain('.cursor/skills/gstack/bin');
     }
     // ...while an absolute pointer resolves from both supported host directories.
     for (const host of ['.claude/skills', '.codex/skills']) {

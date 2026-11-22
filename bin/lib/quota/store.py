@@ -168,7 +168,10 @@ class Store:
         return [json.loads(row[0]) for row in self.db.execute("SELECT value FROM documents WHERE kind='usage' AND json_extract(value,'$.session')=?",(session,))]
 
     def unresolved_count(self):
-        return self.db.execute("SELECT count(*) FROM documents WHERE kind='usage' AND json_extract(value,'$.pool')='unresolved'").fetchone()[0]
+        return self.db.execute(
+            "SELECT count(*) FROM documents WHERE kind='usage' AND json_extract(value,'$.pool')='unresolved' "
+            "AND json_extract(value,'$.agent') IS NOT 'cursor'"
+        ).fetchone()[0]
 
     def get_many(self,kind,keys):
         result=[]

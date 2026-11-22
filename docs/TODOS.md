@@ -2,6 +2,105 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/quota/cli.py|tests/quota_cases.py] Test gap: disabled quota with retired arguments
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The disabled-quota cases use recognized commands. Retired arguments are checked with quota enabled.
+- **Hypothesis (untested):** Send retired arguments with quota disabled. Assert that the command returns the existing disabled result and leaves the fixture store untouched.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/quota/cli.py:337`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/cli.py|tests/quota_cases.py] Test gap: successful raw probes on both supported adapters
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The probe fixtures assert error responses. They leave the success dispatch for the two supported adapters untested.
+- **Hypothesis (untested):** Use distinct Claude Code and Codex fixture bodies and assert that each raw probe returns the body for its requested adapter.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/quota_cases.py:639`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/index.py|tests/quota_cases.py] Test gap: scan budget before a previously complete file
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The byte-budget fixture interrupts an open file. It does not cover a budget stop before a second supported file whose stored record is complete.
+- **Hypothesis (untested):** Use two supported fixture files, then exhaust the scan budget before the second file. Check that its active root reports incomplete coverage with the scan budget reason.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/quota/index.py:218`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/ledger.py|tests/quota_cases.py] Test gap: explicit Cursor marker in a saved finishing snapshot
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Legacy-state tests exercise direct markers and Cursor-only attachment state. The finishing snapshot case is untested when the explicit marker is present only in the nested snapshot.
+- **Hypothesis (untested):** Read a store with that snapshot and assert that the retired state stays outside active results and replay.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/quota/ledger.py:51`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/cli.py|bin/lib/quota/common.py|tests/quota_cases.py] Test gap: supported run defaults with retired stage provenance
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Existing fixtures keep supported stage provenance away from retired rows. They do not cover the reverse direction or a retired model label on a supported run.
+- **Hypothesis (untested):** Use a saved Cursor stage row beside a supported run with missing provenance. Assert that the supported row keeps its defaults and uses the supported vendor output.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/quota_cases.py:1132`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/cli.py|tests/quota_cases.py] Test gap: supported summary with explicitly mixed stored inputs
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Historical rows are excluded in the summary fixture. No assertion checks a stored projection that already contains both retired and supported facts.
+- **Hypothesis (untested):** Seed explicit supported and retired facts in a disposable store. Assert that the summary counts the supported tokens and leaves the stored projection intact.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/quota_cases.py:1184`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/ledger.py|bin/lib/quota/intervals.py|tests/quota_cases.py] Test gap: supported activity groups with mixed attachments
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The concurrency fixture covers supported attachments. It leaves the mixed case untested when an explicitly retired attachment shares a supported state.
+- **Hypothesis (untested):** Use explicit retired and supported attachments. Check that the supported interval stays unpaused and separate from unrelated supported activity.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/quota/intervals.py:5`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: supported telemetry route with inherited Cursor variables
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Existing fixtures check only supported markers or only retired markers. They leave the mixed environment untested.
+- **Hypothesis (untested):** Start the supported telemetry fixture with inherited Cursor markers. Check that it keeps the supported route and fingerprint.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry.py:1404`
+- **Evidence:** Track 93B coverage audit on `913f9ed` found no direct assertion and showed no failure for this case.
+- **Context:** Filed by /review-and-prep for PR #294 (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/quota/cli.py|bin/lib/quota/samples.py|tests/quota_cases.py] Test gap: refresh with a legacy quota pool list
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Existing fixtures check supported-pool gating and retired CLI input. They do not cover a saved `quota_pools=claude,codex,cursor` list.
+- **Hypothesis (untested):** Keep that preference in an isolated fixture and check that refresh and doctor still report the two supported pools.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** Track 93B structured review on `256ef38`.
+- **Evidence:** The active pool selection uses `KINDS`. The reviewer found a missing direct fixture and showed no failing command.
+- **Context:** Filed by /review-and-prep for Track 93B (2026-11-22).
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=setup|tests/setup-hosts.test.ts] Test gap: preserve copies when checkout access fails
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.

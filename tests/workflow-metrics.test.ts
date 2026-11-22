@@ -2828,7 +2828,7 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(ambData.totals.unknown.input).toBe(300);
   }, 60_000);
 
-  test('overlapping sibling steps go to unattributed; outlived-step and may-continue flags; Cursor/Grok unverified-source; scan-budget and too-many-buckets fallback', () => {
+  test('overlapping sibling steps go to unattributed; outlived-step and may-continue flags; Grok unverified-source and retired Cursor fallback; scan-budget and too-many-buckets fallback', () => {
     const fix = makeTelemetryFixture('community');
     const repo = join(fix.home, 'edge-repo');
     mkdirSync(repo, { recursive: true });
@@ -2872,17 +2872,73 @@ describe('Track 67A run token usage capture and read --usage', () => {
       expect.objectContaining({ step_id: null, input: 100, output: 40 }),
     ]));
 
-    // Cursor and Grok return unavailable with unverified-source.
-    for (const unsupportedAgent of ['cursor', 'grok']) {
-      const uSid = 'extend-' + u();
-      craft(fix, uSid, runRows(uSid, T0).rows);
+    // Grok returns unavailable with unverified-source; retired Cursor falls through to unknown/harness-session-unknown.
+    {
+      const gSid = 'extend-' + u();
+      craft(fix, gSid, runRows(gSid, T0).rows);
       runPythonCollect(fix, [
-        `print(json.dumps(wm.capture_usage(${JSON.stringify(uSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, ${JSON.stringify(unsupportedAgent)}, ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+        `print(json.dumps(wm.capture_usage(${JSON.stringify(gSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "grok", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
       ]);
-      const uRead = JSON.parse(readUsage(fix, uSid).stdout).data;
-      expect(uRead.harness).toBe(unsupportedAgent);
-      expect(uRead.reasons).toContain('unverified-source');
-      expect(uRead.totals.direct.input).toBeNull();
+      const gRead = JSON.parse(readUsage(fix, gSid).stdout).data;
+      expect(gRead.harness).toBe('grok');
+      expect(gRead.reasons).toContain('unverified-source');
+      expect(gRead.totals.direct.input).toBeNull();
+    }
+    {
+      const cSid = 'extend-' + u();
+      craft(fix, cSid, runRows(cSid, T0).rows);
+      runPythonCollect(fix, [
+        `print(json.dumps(wm.capture_usage(${JSON.stringify(cSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "cursor", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+      ]);
+      const cRead = JSON.parse(readUsage(fix, cSid).stdout).data;
+      expect(cRead.harness).toBe('unknown');
+      expect(cRead.reasons).toContain('harness-session-unknown');
+      expect(cRead.totals.direct.input).toBeNull();
+    }
+    // Historical v2 usage rows carrying harness "cursor" still validate and parse cleanly.
+    {
+      const hSid = 'extend-' + u();
+      const hRun = runRows(hSid, T0);
+      craft(fix, hSid, [
+        ...hRun.rows,
+        {
+          op: 'usage',
+          at: T_END,
+          request: {
+            v: 1,
+            stage: 'review-and-prep',
+            session_id: hSid,
+            event_id: u(),
+            status: 'unavailable',
+            reasons: ['unverified-source'],
+            harness: 'cursor',
+            window: { begin_ms: T0, end_ms: T_END },
+            observed_through_ms: T_END,
+            sources: [{
+              ref: 'a'.repeat(64),
+              agent: 'cursor',
+              relation: 'own',
+              evidence: 'direct',
+              parent_ref: null,
+              link: null,
+              link_evidence: null,
+              models: [],
+              first_ms: T0,
+              last_ms: T_END,
+              complete: false,
+              reasons: ['unverified-source'],
+            }],
+            buckets: [],
+            windows: [],
+            cli_reported: [],
+          },
+        },
+      ]);
+      const hRead = JSON.parse(readUsage(fix, hSid).stdout).data;
+      expect(hRead.capture).toBe('partial');
+      expect(hRead.harness).toBe('cursor');
+      expect(hRead.reasons).toContain('unverified-source');
+      expect(hRead.totals.direct.input).toBeNull();
     }
 
     // Tiny scan budget triggers scan-budget.

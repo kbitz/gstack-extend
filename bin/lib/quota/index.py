@@ -2,10 +2,9 @@
 import json
 import os
 from pathlib import Path
-import re
 import stat
 import time
-from .common import budget, now
+from .common import KINDS, budget, now
 from .identity import identity, bind
 from .usage import parse_record, prefer
 
@@ -16,7 +15,6 @@ FILE_CAP=512 << 20
 def roots(context):
     return [('claude',str(Path(context['claude_config_dir'])/'projects')),
             ('codex',str(Path(context['codex_home'])/'sessions')),
-            ('cursor',context['cursor_projects_dir']),
             ('grok',str(Path(context['grok_home'])/'sessions'))]
 
 
@@ -51,10 +49,13 @@ def discover(store,context):
                             continue
                         if entry.is_dir(follow_symlinks=False):
                             pending.append(entry.path)
-                        elif entry.is_file(follow_symlinks=False) and (entry.name.endswith('.jsonl') or
-                                (agent=='cursor' and entry.name.endswith('.txt') and 'agent-transcripts' in Path(entry.path).parts)):
+                        elif entry.is_file(follow_symlinks=False) and entry.name.endswith('.jsonl'):
                             filekey=store.digest(entry.path,'file')
                             previous=store.get('file',filekey,{})
+                            if previous.get('agent') in ('cursor','cursor-sdk'):
+                                # A supported root can reuse a path from retired inventory.
+                                filekey=store.digest([agent,entry.path],'file')
+                                previous=store.get('file',filekey,{})
                             previous.update(key=filekey,path=entry.path,root=root,agent=agent,discovered_at=previous.get('discovered_at',now()))
                             store.put('file',filekey,previous)
             except OSError:
@@ -75,18 +76,11 @@ def source_state(store,file,context):
         if agent=='claude':
             parent=path.parent.parent.name if path.parent.name=='subagents' else None
             session=path.stem
-        elif agent=='cursor':
-            session=path.stem.removeprefix('agent-') if path.parent.name in ('agent-transcripts','subagents') else path.parent.name
-            parent=path.parent.parent.name if path.parent.name=='subagents' else None
         elif agent=='grok':
             session,parent=path.parent.name,None
         else:
             session,parent=None,None
         state.update(session=store.digest(session,'session') if session else None,parent=store.digest(parent,'session') if parent else None)
-    if agent=='cursor':
-        slug=re.sub(r'[^a-zA-Z0-9]+','-',context['cwd']).strip('-')
-        if slug in path.parts:
-            state['cwd']=context['cwd']
     return state
 
 
@@ -106,13 +100,14 @@ def scan(store,context):
 def _scan(store,context):
     histories={}
     with store.transaction():
-        for kind in ('claude','codex','cursor'):
+        for kind in KINDS:
             histories[kind]=bind(store,kind,context,identity(store,kind,context))
         reports,operations=discover(store,context)
     deadline=time.monotonic()+budget(2)
     read_bytes,malformed=0,0
-    active_roots={r['root'] for r in reports}
-    files=sorted((f for f in store.all('file') if f['root'] in active_roots),key=lambda f:f.get('checked_at',0))
+    active_roots={(r['agent'],r['root']) for r in reports}
+    files=sorted((f for f in store.all('file') if (f.get('agent'),f.get('root')) in active_roots),
+                 key=lambda f:f.get('checked_at',0))
     visited=set()
     stopped_early=False
     for file in files:
@@ -131,22 +126,13 @@ def _scan(store,context):
             if file.get('identity')!=generation or info.st_size<file.get('offset',0):
                 file.update(offset=0,line=0,parser={},identity=generation,malformed=0,skip_line=False)
             state=source_state(store,file,context)
-            if file['agent'] in ('claude','codex','cursor'):
+            if file['agent'] in KINDS:
                 state['identity_evidence']=identity(store,file['agent'],context)
-            if not state.get('first') and file['agent']=='cursor':
-                state['first']=getattr(info,'st_birthtime',info.st_mtime)
             offset,line=file.get('offset',0),file.get('line',0)
             facts={}
             with os.fdopen(fd,'rb') as stream:
                 stream.seek(offset)
                 while stream.tell()<min(info.st_size,FILE_CAP) and time.monotonic()<deadline and read_bytes<BYTE_BUDGET:
-                    if file['agent']=='cursor' and path.suffix=='.txt':
-                        # Text transcripts establish local identity/creation,
-                        # but contain no structured token or turn-end evidence.
-                        raw=stream.read(min(1 << 20,BYTE_BUDGET-read_bytes,FILE_CAP-stream.tell()))
-                        read_bytes+=len(raw)
-                        offset=stream.tell()
-                        continue
                     if file.get('skip_line'):
                         if stream.tell()>=info.st_size or stream.tell()>=FILE_CAP:
                             file['skip_line']=False
@@ -217,9 +203,6 @@ def _scan(store,context):
             file.update(offset=offset,line=line,parser=state,size=info.st_size,checked_at=now(),
                         complete=offset>=info.st_size and info.st_size<=FILE_CAP and not file.get('malformed') and not state.get('partial'))
             reason='log_too_large' if info.st_size>FILE_CAP else 'malformed_record' if file.get('malformed') else 'scan_budget' if offset<info.st_size else state.get('partial')
-            if file['agent']=='cursor' and path.suffix=='.txt' and reason is None:
-                file['complete']=False
-                reason='not_reported'
             file['reason']=reason
             with store.transaction():
                 for fact,sourcekey,metadata in facts.values():
@@ -233,14 +216,13 @@ def _scan(store,context):
             file.update(complete=False,reason='source_unreadable',checked_at=now())
             with store.transaction():
                 store.put('file',file['key'],file)
-    indexed=[f for f in store.all('file') if f['root'] in active_roots]
-    if stopped_early:
-        for report in reports:
-            if any(f['root']==report['root'] and f['key'] not in visited for f in files):
-                report['complete']=False
-                report['why']=sorted(set(report['why']+['scan_budget']))
+    indexed=store.all('file')
     for report in reports:
-        bad=[f for f in indexed if f['root']==report['root'] and not f.get('complete')]
+        root_key=(report['agent'],report['root'])
+        if stopped_early and any((f.get('agent'),f.get('root'))==root_key and f['key'] not in visited for f in files):
+            report['complete']=False
+            report['why']=sorted(set(report['why']+['scan_budget']))
+        bad=[f for f in indexed if (f.get('agent'),f.get('root'))==root_key and not f.get('complete')]
         if bad:
             report['complete']=False
             report['why']=sorted(set(report['why']+[f.get('reason') or 'scan_budget' for f in bad]))

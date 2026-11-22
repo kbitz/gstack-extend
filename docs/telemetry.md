@@ -100,8 +100,10 @@ that name the same directory are listed once:
 4. `~/.claude/skills/gstack/bin`.
 5. `$CODEX_HOME/skills/gstack/bin`, only when `CODEX_HOME` is set and absolute. gstack's own setup installs there when `CODEX_HOME` is set.
 6. `~/.codex/skills/gstack/bin`, always. A relative or empty `CODEX_HOME` drops only its own candidate.
-7. `~/.config/opencode/skills/gstack/bin`.
-8. `~/.cursor/skills/gstack/bin`.
+
+The former default lookup under `~/.cursor/skills/gstack/bin` and
+`~/.config/opencode/skills/gstack/bin` is retired. Use an absolute `GSTACK_DIR`
+for a custom layout.
 
 Every candidate is home-anchored or an absolute `GSTACK_DIR`, `CLAUDE_CONFIG_DIR`,
 or `CODEX_HOME`. Nothing cwd-relative or repository-local is probed. gstack's
@@ -158,7 +160,7 @@ age), beside `session_id`, `start`, and `usage`, plus `work_item` when the launc
 one ([Work item and launcher quick-start](#work-item-and-launcher-quick-start)). `harness` is a session-fingerprint hash, not a harness name:
 the SHA-256 hex digest of the compact JSON list of `[name, value]` pairs, sorted
 by name, for each marker whose value passes `valid_session`. The markers are
-`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_CONVERSATION_ID`,
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`,
 `GROK_SESSION_ID`, and `MUSE_SESSION_ID` (the same session-marker gate `detect()` uses). Names
 are hashed with the values, so equal IDs from different harnesses do not collide.
 No valid marker stores null. Debug mode names the markers that contributed and
@@ -388,7 +390,7 @@ stayed constant across real CLI user turns and a `claude --resume`. Two start/fi
 runs paired, including a finish after resume; debug named only that marker. The
 check used isolated telemetry storage and real logger/config copies with network
 sync omitted. Compaction and a Conductor chat continuation were not exercised.
-Within-run marker stability in Codex, Cursor, Grok, and Muse has not been verified by
+Within-run marker stability in Codex, Grok, and Muse has not been verified by
 this real-harness check; their automated tests use simulated markers.
 The marker stays in the fingerprint.
 
@@ -397,7 +399,10 @@ The marker stays in the fingerprint.
 one only within 24 hours. Resumable skills are unaffected. To finish an older
 non-resumable run, pass the original wrapper-issued session id and start epoch from
 that run's `GE_TELEMETRY: session=… start=…` line. Those values are not harness markers
-such as `CODEX_THREAD_ID`. A handoff written before per-invocation files sits at
+such as `CODEX_THREAD_ID`. When upgrading from an older build that included
+`CURSOR_CONVERSATION_ID` in a pending run's fingerprint, finish the run before
+upgrading or pass its original `--session-id` and `--start` when finishing
+after the upgrade. A handoff written before per-invocation files sits at
 telemetry/<hash>.json. It is still read as a candidate (the pre-rule shape included), a
 finish that consumes it removes it, and a new start never writes it or replaces it.
 Reading it has no sunset. On downgrade, an older copy sees none of the per-invocation
@@ -956,9 +961,14 @@ projection.
   `cli_reported` and `windows` remain separate. Missing usage records yield
   `capture: "missing"` and `no-usage-record`. Broken references or multiple
   usage records make capture partial with the corresponding reason.
-- **Limits.** Cursor and Grok record `status: "unavailable"` with
-  `unverified-source`; their projection has partial capture and null token
-  totals. Missing logs and unknown harness IDs also leave totals null.
+- **Limits.** Grok records `status: "unavailable"` with
+  `unverified-source`; its projection has partial capture and null token
+  totals. Cursor is no longer classified for new runs (`telemetry_usage.collect`
+  treats `"cursor"` as `"unknown"` with `harness-session-unknown`), while
+  `cursor` remains accepted in `docs/workflow-metrics.schema.json` (and
+  `bin/lib/workflow_metrics.py`'s `USAGE_HARNESSES` enum) solely so historical
+  v2 usage records still validate and parse. Missing logs and unknown harness
+  IDs also leave totals null.
   Unreported token classes are null with `not-reported`. Claude window
   percentages remain unknown. Events written after `finish` are not counted;
   `may-continue` can only flag records already observed by capture, not
@@ -970,7 +980,7 @@ projection.
 
 | Reason | Meaning |
 |---|---|
-| `unverified-source` | The detected harness (`cursor` or `grok`) has no verified local token log format. |
+| `unverified-source` | The detected harness (`grok`) has no verified local token log format. |
 | `harness-session-unknown` | The parent harness session ID was not supplied and could not be uniquely resolved. |
 | `log-missing` | A local log or join file was missing or could not be read. An unreadable source is incomplete and its evidence-grade token totals are null. |
 | `log-truncated` | The 32 MiB tail window started after `begin_ms`, so earlier in-window events may be missing. |
@@ -1726,7 +1736,7 @@ table below is the reader's reference; the schema is authoritative where they di
 | Field | Hand-run value |
 |---|---|
 | `stage` | Skill name without `extend:`, e.g. `roadmap` |
-| `agent` | `claude`, `codex`, `grok`, `cursor`, or `muse`; null when unverifiable |
+| `agent` | `claude`, `codex`, `grok`, or `muse`; null when unverifiable; historical rows may carry `cursor` |
 | `model` | Model ID from detection, a finish flag, or `GSTACK_EXTEND_MODEL`; see `model_source` |
 | `effort` | Effort level from detection, a finish flag, or `GSTACK_EXTEND_EFFORT`, in that source's vocabulary (`xhigh`, `high`); see `effort_source` |
 | `rung` | Always 0: a hand-run skill has no fallback chain |
@@ -1774,9 +1784,7 @@ still null after detection and finish flags, with source `requested`. Each value
 200 printable characters and must not be blank; a rejected value counts as absent, and debug mode prints a line
 naming the variable and the bound, never the value. A saved retry row keeps its first
 construction. Nested harnesses and subagents inherit the variables, so `requested` states the
-launch request, not which harness served it. Configured defaults such as Cursor's CLI
-configuration are never read. On the `cursor-agent` route these variables are the only in-band
-source, because the run's `--output-format json` result names no model.
+launch request, not which harness served it. Configured defaults are never read.
 
 <a id="host-attribution"></a>
 
@@ -1865,7 +1873,7 @@ Finish evaluates signals in this exact 10-rule precedence:
 6. A malformed non-empty `GSTACK_SESSION_KIND`, a rejected saved or finish-environment `GSTACK_EXTEND_WORK_ITEM`, or a relative non-empty `GSTACK_HOME` → `unknown` / `malformed-signal`.
 7. Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, including whitespace-only or malformed values → `unknown` / `host-managed-workspace`. A host-managed checkout without an orchestration signal is not proof of hand use, even when its attribution label is rejected.
 8. No detected harness → `unknown` / `no-harness`.
-9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (`grok`, `cursor`) → `unknown` / `harness-unqualified`.
+9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (`grok`) → `unknown` / `harness-unqualified`.
 10. Detected and final harness match and have a launch-surface reader (`claude`, `codex`, `muse`): the reader returns no class (evidence missing, unclean, unreadable, past the 64 KiB `LOG_HEAD_BYTES` head-read bound, reached through a link inside the harness's configured home or under a relative one, from a non-regular file, or the reader raised) → `unknown` / `entrypoint-unavailable`; the reader returns `other` (a headless, SDK, exec, subagent, or unlisted client surface) → `unknown` / `entrypoint-unqualified`; the reader returns `terminal` → `user-directed` / `terminal-session` (`cli` for Claude); the reader returns `host-app` → `user-directed` / `host-app-session` (`paseo-entrypoint` for Claude).
 
 `PASEO_AGENT_ID` is never read: Paseo sets it for every agent it launches, so it
@@ -1902,7 +1910,6 @@ upstream request status. This is not fleet-wide SPEC O6 acceptance.
 | `claude` | `CLAUDECODE=1` or non-empty `CLAUDE_CODE_SESSION_ID`; model and effort from `$CLAUDE_CONFIG_DIR/projects/*/<session>.jsonl` (default `~/.claude`) | `CLAUDE_CODE_ENTRYPOINT` from the detected session's environment (`clean(raw) == raw`) | `CLAUDE_CODE_ENTRYPOINT=cli` → `user-directed` / `cli` (legacy mapping for `terminal-session`; qualified by real readback) | `CLAUDE_CODE_ENTRYPOINT=Paseo` → `user-directed` / `paseo-entrypoint` (legacy mapping for `host-app-session`; qualified by real readback) | Both classes qualify. Any other clean `CLAUDE_CODE_ENTRYPOINT` (`sdk-*`, `acp`, `claude-desktop`, `claude-vscode`, `remote-daemon`, `github-action`, lowercase `paseo`, …) maps to `other` (`unknown` / `entrypoint-unqualified`); missing, empty or unclean values return no class (`unknown` / `entrypoint-unavailable`) |
 | `grok` | Valid `GROK_SESSION_ID` or `GROK_AGENT=1` (non-`"1"` profile names ignored); model and effort from `$GROK_HOME/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}` (default `~/.grok`). Unmarked under ACP `terminal/create` (`grok 1.0.77` and `1.0.89`), which spawns commands in the host's sibling terminal without forwarding `GROK_SESSION_ID` or `GROK_AGENT=1` (`agent: null`, `unknown` / `no-harness`) | None (no reader; detected runs record `unknown` / `harness-unqualified`) | None (unqualified) | None (unqualified) | Grok exposes no positive launch-surface evidence: `GROK_AGENT=1` is exported on both interactive and headless shell runs, `summary.json` records `session_kind` only for `"headless"` and `"subagent"` while omitting it on both interactive CLI and ACP (`grok acp`) sessions, and ACP `terminal/create` exports no Grok marker (`no-harness`) |
 | `codex` | Non-empty `CODEX_THREAD_ID`; model and effort from `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (default `~/.codex`) | First `type: "session_meta"` record (`payload.originator` and `payload.source`), whose `payload.id` must name `CODEX_THREAD_ID`, within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own named regular rollout log under an absolute `CODEX_HOME` | `(payload.originator, payload.source)` in `{("codex_cli_rs", "vscode"), ("codex-tui", "vscode")}` → `user-directed` / `terminal-session` (fixture-qualified; post-merge readback pending). Host-app `codex app-server` sessions that pass Codex's non-originating `clientInfo.name="codex_app_server_daemon"` share `("codex_cli_rs", "vscode")` and also classify as `terminal-session` | None (unqualified) | `host-app` cannot qualify separately because `codex app-server` sessions using Codex's non-originating `clientInfo.name="codex_app_server_daemon"` record the same `("codex_cli_rs", "vscode")` pair as the terminal TUI instead of a host client name. Non-interactive `("codex_exec", "exec")`, subagent object sources (`{"subagent": ...}`), and any other clean `(originator, source)` map to `other` (`unknown` / `entrypoint-unqualified`); a missing, symlinked, over-bound or malformed rollout, a linked `sessions` or date directory inside `CODEX_HOME`, a header naming another thread, or a relative `CODEX_HOME` returns no class (`unknown` / `entrypoint-unavailable`) |
-| `cursor` | `CURSOR_AGENT` or non-empty `CURSOR_CONVERSATION_ID` (`CURSOR_INVOKED_AS` for `route="cli"`); transcripts under `~/.cursor/projects/*/agent-transcripts/` break cross-harness ties while model and effort remain `null` unless supplied via flags or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` | None (no reader; detected runs record `unknown` / `harness-unqualified`) | None (unqualified) | None (unqualified) | Cursor exposes nothing that separates launch surfaces: `CURSOR_AGENT=1`, `CURSOR_CONVERSATION_ID`, and `CURSOR_INVOKED_AS` (`"cursor-agent"` or `"agent"`) are identical across interactive terminal use, ACP (`cursor-agent acp`) sessions, and headless runs, and agent transcripts record only `role` and `message.content` |
 | `muse` | Valid `MUSE_SESSION_ID`; model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT` | First `payload_type: "session.opened.observed"` record (`payload.kind == "session_opened"`, `payload.record.client_info_name`) within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own named top-level regular `session.jsonl` | None (unqualified) | `payload.record.client_info_name` in `HOST_APP_CLIENTS` → `user-directed` / `host-app-session` (fixture-qualified; post-merge readback pending) | `terminal` cannot qualify because Muse records `client_info_name` only at the MSP serve open boundary and omits it on both interactive `tui` and headless `exec` opens (as well as pre-`#23124` `1.4.14` logs and subagent logs), and exports no entrypoint environment variable. Any other clean non-empty `client_info_name` maps to `other` (`unknown` / `entrypoint-unqualified`); missing `client_info_name`, missing `session.opened.observed`, or a missing, symlinked or over-bound log, or one reached through a linked `muse`, `sessions`, date or session directory inside the data home, or a relative data home (a relative `HOME` with no absolute `XDG_DATA_HOME`), returns no class (`unknown` / `entrypoint-unavailable`) |
 
 <a id="hand-run-usability-signals"></a>
@@ -2173,14 +2180,14 @@ until finish flags or requested variables supply them:
   read, never a sibling session's log or a `<session>/subagent/<child>/session.jsonl`
   log, and a missing or unreadable log leaves model null. In the observed Paseo
   launch, `MUSE_SESSION_ID` reached commands in Muse's own shell.
-- **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. An explicit
-  `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker records
-  `route: "cli"`; otherwise `route` is `"unknown"`.
-  Conductor's private Cursor SDK store is no longer read; see
-  [Cursor and quota](#cursor-and-quota). Transcript mtime under
-  `~/.cursor/projects/*/agent-transcripts/` still breaks ties across harnesses,
-  while detected model and effort remain null (flags or
-  `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT` supply them).
+- **Cursor telemetry classification is retired.** Finish ignores `--agent cursor`
+  as an invalid override. The `CURSOR_CONVERSATION_ID`,
+  `CURSOR_AGENT` and `CURSOR_INVOKED_AS` markers and the `CURSOR_SDK_REASONS`
+  diagnostics are retired. Route classification for nested Claude and Codex
+  runs ignores inherited `CURSOR_AGENT` markers.
+  New stage-run rows use schema version `4`. Historical rows carrying `cursor` still
+  validate and parse under the stage-runs and workflow-metrics schemas.
+  [Cursor and quota](#cursor-and-quota)
 
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows
@@ -2191,7 +2198,7 @@ When ancestry is unavailable, the latest comparable log wins; without evidence
 the agent remains null. A failed
 detection costs only the detected values, never the row.
 
-Explicit finish flags override detection: `--agent claude|codex|cursor|grok|muse`, `--model`,
+Explicit finish flags override detection: `--agent claude|codex|grok|muse`, `--model`,
 `--effort`, and `--work-item`. When `--agent` names a different harness than the
 detected one, the detected model and effort are dropped. These flags never reach
 gstack's logger.
@@ -2928,23 +2935,27 @@ marker/crash detection subsystem.
 
 ## Cursor and quota
 
-Cursor is an execution harness (`agent: cursor`), independently of the vendor of
-the selected model. Historical model and effort values taken from the Conductor
-SDK store are requested configuration for one stage window. They support operator
-diagnosis and an external handoff. They are not served or billed proof, and they
-do not authorize quota routing or independence certification. Billed model and
-consumption stay in the [quota ledger](quota-ledger.md). Telemetry start and
+Cursor telemetry classification and Cursor quota reading/settlement are retired
+([SPEC Audience and target](SPEC.md#audience-and-target) dropped Cursor support
+on 2026-11-21). The writer ignores `--agent cursor` as an invalid override and
+emits stage-runs schema version `4`. The schemas and the corresponding readers
+accept historical rows carrying `cursor`.
+[Stage-runs schema](stage-runs.schema.json),
+[workflow-metrics schema](workflow-metrics.schema.json).
+
+Historical model and effort values taken from the Conductor SDK store are requested
+configuration for one stage window; they are not served or billed proof, and
+they do not authorize quota routing or independence certification. Billed model
+and consumption stay in the [quota ledger](quota-ledger.md). Telemetry start and
 finish never start a quota sampler or write quota records. Only explicit quota
 commands read vendor usage. The quota runs CLI is not this ledger: it fills
-stage, agent, model, effort, and route from provenance and does not print
-source labels. A quota row can name a model while the stage-runs source is
-`unknown`, or take its model and effort from a `requested` stage-runs value. That is not a substitute for this row and not permission to sample.
+stage, agent, model, effort, and route from provenance (omitting stored legacy
+Cursor rows from provenance enrichment) and does not print source labels. A
+quota row can name a model while the stage-runs source is `unknown`, or take its
+model and effort from a `requested` stage-runs value. That is not a substitute
+for this row and not permission to sample.
 
-Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read ([SPEC Audience and target](SPEC.md#audience-and-target) retired Conductor support on 2026-11-06); historical v1/v2/v3 rows that recorded `route: "conductor"` or detected Cursor store metadata remain valid under their schema branches, while v4 Cursor rows record `route: "cli"` when `CURSOR_INVOKED_AS` or an inherited `CLAUDECODE`/`CODEX_THREAD_ID` marker is set and `"unknown"` otherwise, and take model and effort from `--model`/`--effort` or `GSTACK_EXTEND_MODEL`/`GSTACK_EXTEND_EFFORT`.
-
-| Reason | Problem | Cause | Safe action |
-|---|---|---|---|
-| <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
+Conductor's private Cursor SDK store (`~/Library/Application Support/com.conductor.app/cursor-sdk-store/`) is no longer read ([SPEC Audience and target](SPEC.md#audience-and-target) retired Conductor support on 2026-11-06). Historical v1 through v4 rows still accept `agent: "cursor"`. The v1 through v3 schema branches also retain `route: "conductor"`.
 
 <a id="cursor-sdk-historical-route"></a>
 
@@ -2966,15 +2977,16 @@ shards only; earlier or unknown producer rows stay uncertified without their
 own implementation evidence. A Conductor Cursor row written on a SQLite-layout
 build, whose `producer_version` predates `0.36.7.0`, the first release that
 reads SQLite shards, shows a reader gap, not run evidence: its null model, null effort and
-`unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
-and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
-from a matching store record of any shape; those stayed null unless finish flags
-supplied them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
+`unknown` route say nothing about the run. The 0.36.2.0 repair could record
+`route` `unknown` for invalid or ambiguous store evidence. It also stopped
+copying model or effort from the store to explicit CLI rows
+(`CURSOR_INVOKED_AS`). Those values stayed null unless finish flags supplied
+them. The repair left the row schema, field order, source labels and finish flags
 unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
 treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
-Current finish can also fill otherwise-null CLI values from the requested variables;
-that fallback was added later.
+Later producers could also fill otherwise-null CLI values from the requested
+variables.
 
 <a id="cursor-ledger-recipe"></a>
 

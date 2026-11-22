@@ -3,7 +3,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from .common import QuotaError, fixture_dir, now, valid_session, model_vendor
+from .common import KINDS, QuotaError, fixture_dir, now, valid_session, model_vendor
 from .identity import identity, bind
 from .usage import aggregate
 
@@ -48,6 +48,16 @@ def attach_identity(store,state,args):
         state['attachments'].append(item)
 
 
+def is_legacy_cursor_state(state):
+    agent=state.get('metadata',{}).get('agent')
+    attachments=state.get('attachments',[])
+    finishing=state.get('finishing')
+    return (agent=='cursor' or
+            (agent in (None,'unknown') and bool(attachments) and
+             all(a['agent']=='cursor' for a in attachments)) or
+            (finishing is not None and is_legacy_cursor_state(finishing)))
+
+
 def lifecycle(store,args,context):
     sid=args.session_id
     if not valid_session(sid):
@@ -56,11 +66,15 @@ def lifecycle(store,args,context):
     with store.lock('run:'+sid):
         receipt=store.get('receipt',sid+':'+phase)
         state=store.get('state',sid)
+        if state and is_legacy_cursor_state(state):
+            raise QuotaError('conflict','This session belongs to the retired Cursor adapter.')
         incoming=metadata(args,context)
         incoming['initial_harness_session']=store.digest(args.harness_session,'session') if args.harness_session else None
         if phase=='start':
             if state:
-                if state['start_metadata']!=incoming:
+                saved=state['start_metadata']
+                saved_context={key:value for key,value in saved['context'].items() if key!='cursor_projects_dir'}
+                if dict(saved,context=saved_context)!=incoming:
                     raise QuotaError('conflict','The session ID already has different start metadata.')
                 with store.transaction():
                     state['lease_at']=now()
@@ -70,7 +84,7 @@ def lifecycle(store,args,context):
                        metadata=incoming,attachments=[],identities={},fixture=bool(fixture_dir()))
             attach_identity(store,state,args)
             with store.transaction():
-                for kind in ('claude','codex','cursor'):
+                for kind in KINDS:
                     evidence=identity(store,kind,context)
                     state['identities'][kind]=evidence
                     bind(store,kind,context,evidence)
@@ -122,14 +136,14 @@ def lifecycle(store,args,context):
                         conflicts[field]=state['metadata'][field]
                     state['metadata'][field]=value
             state['metadata_conflicts']=conflicts
-            for field in ('cwd','repo_root','claude_config_dir','codex_home','cursor_projects_dir','auth'):
+            for field in ('cwd','repo_root','claude_config_dir','codex_home','auth'):
                 value=getattr(args,field,None)
                 if value is not None:
                     state['metadata']['context'][field]=value
             state['metadata']['model_vendor']=model_vendor(state['metadata'].get('model'))
             state['ended_at']=now()
             state['lease_at']=now()
-            state['identities_at_finish']={kind:identity(store,kind,state['metadata']['context']) for kind in ('claude','codex','cursor')}
+            state['identities_at_finish']={kind:identity(store,kind,state['metadata']['context']) for kind in KINDS}
             state['outcome']='interrupted' if phase=='abandon' else 'unknown'
             # An immutable terminal timestamp survives a failed scan/commit.
             # This is lifecycle state, not a queue or background request.
@@ -163,16 +177,10 @@ def inside(path,root):
 
 
 def source_relationship(source,state,all_states,all_sources=None):
-    own={a['session'] for a in state['attachments']}
+    own={a['session'] for a in state['attachments'] if a['agent']!='cursor'}
     start,end=state['started_at'],state.get('ended_at') or now()
     if source.get('session') in own:
         return 'own','exact',[]
-    # Matches only native Cursor SDK sources indexed before the reader was removed, so runs recorded earlier read back unchanged.
-    if not own and state['metadata'].get('agent')=='cursor' and source.get('native_sdk'):
-        candidates=[s for s in (all_sources or []) if s.get('native_sdk') and s.get('cwd')==state['metadata']['context']['cwd'] and
-                    s.get('first') is not None and s['first']<end and (s.get('last') or end)>=start]
-        if source in candidates:
-            return 'own','turn' if len(candidates)==1 else 'unknown',[] if len(candidates)==1 else ['ambiguous']
     if not own:
         return None
     parent=source.get('parent')
@@ -202,17 +210,15 @@ def uses_api_auth(source,state,sources,parents=None):
     agent=source.get('agent')
     if state['metadata'].get('auth')!='api':
         return False
-    own={a['session'] for a in state['attachments'] if a['agent'] in (agent,'unknown')}
+    parents=source_parents(sources) if parents is None else parents
+    attachments=[a for a in state['attachments'] if a['agent']!='cursor']
+    own={a['session'] for a in attachments if a['agent'] in (agent,'unknown')}
     session=source.get('session')
-    if session in {a['session'] for a in state['attachments']}:
+    if session in {a['session'] for a in attachments}:
         return True
-    if not own and agent=='cursor':
-        relation=source_relationship(source,state,[state],sources)
-        return bool(relation and relation[0]=='own' and relation[1]!='unknown')
     parent=source.get('parent')
     if not parent:
         return False
-    parents=source_parents(sources) if parents is None else parents
     seen=set()
     while parent and parent not in seen:
         if parent in own:
@@ -232,9 +238,10 @@ def run_rows(store,state,coverage):
     all_states=store.all('state')
     if not any(s['session_id']==sid for s in all_states):
         all_states.append(state)
-    events=store.usage_between(start,end)
+    events=[e for e in store.usage_between(start,end) if e.get('agent')!='cursor']
     all_sources=store.all('source')
     parents=source_parents(all_sources)
+    all_sources=[s for s in all_sources if s.get('agent')!='cursor']
     for source in all_sources:
         relation=source_relationship(source,state,all_states,all_sources)
         if not relation:
@@ -248,7 +255,7 @@ def run_rows(store,state,coverage):
             attribution='window'
         pool_kind=agent
         original=state['identities'].get(agent,{})
-        current=state.get('identities_at_finish',{}).get(agent) or (identity(store,agent,state['metadata']['context']) if agent in ('claude','codex','cursor') else {})
+        current=state.get('identities_at_finish',{}).get(agent) or (identity(store,agent,state['metadata']['context']) if agent in KINDS else {})
         changed=original.get('pool')!=current.get('pool')
         auth=state['metadata'].get('auth') or 'unknown'
         api_auth=uses_api_auth(source,state,all_sources,parents)
@@ -301,12 +308,13 @@ def run_rows(store,state,coverage):
                  **{k:v for k,v in state['metadata'].items() if k not in ('context','initial_harness_session')},sources=sources,
                  consumption=aggregate(facts) if facts else None,why=[] if facts else ['no_usage'],
                  attribution=min((s['attribution'] for s in sources),key=lambda a:strengths[a],default='unknown'),
-                 settlement='provisional' if kind=='cursor' else 'final',revision=1,lifecycle='open' if not state.get('ended_at') else 'recorded',
+                 settlement='final',revision=1,lifecycle='open' if not state.get('ended_at') else 'recorded',
                  local_persisted_at=None,settled_at=None,
                  roots=coverage['roots'],complete=coverage['complete'] and bool(sources) and all(s['complete'] for s in sources),
                  as_of=now(),observed_through=max((s['observed_through'] for s in sources),default=None),
                  stale=now()-max(state['lease_at'],max((s['observed_through'] for s in sources),default=0))>48*3600,
-                 paused=len(state['attachments'])>1,outcome=state.get('outcome'),fixture=state['fixture'])
+                 paused=sum(a['agent']!='cursor' for a in state['attachments'])>1,
+                 outcome=state.get('outcome'),fixture=state['fixture'])
         row['model_vendor']=model_vendor(row.get('model'))
         row['metadata_conflicts']=state.get('metadata_conflicts',{})
         row['codex_percent']=[]

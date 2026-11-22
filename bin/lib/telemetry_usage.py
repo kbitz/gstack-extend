@@ -1167,7 +1167,7 @@ def collect(
     b_ms = max(0, int(begin_ms))
     e_ms = max(b_ms, int(end_ms))
     step_map = steps or {}
-    harness_label = agent if agent in ("claude", "codex", "cursor", "grok") else "unknown"
+    harness_label = agent if agent in ("claude", "codex", "grok") else "unknown"
     event_id = _usage_event_id(sid)
 
     def _empty_result(status: str, reasons: list[str]) -> dict[str, Any]:
@@ -1187,7 +1187,7 @@ def collect(
             "cli_reported": [],
         }
 
-    if agent in ("cursor", "grok"):
+    if agent == "grok":
         return _empty_result("unavailable", ["unverified-source"])
     if agent not in ("claude", "codex"):
         return _empty_result("unavailable", ["harness-session-unknown"])
