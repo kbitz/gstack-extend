@@ -706,6 +706,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   const policy = skillSection(text, '### Read an optional review policy').replace(/\s+/g, ' ');
   const postAuditRaw = skillSection(text, H_POST_AUDIT_CLASSIFY);
   const postAudit = postAuditRaw.replace(/\s+/g, ' ');
+  const gates = skillSection(text, '### Prove /ship\'s release gates on this head').replace(/\s+/g, ' ');
   const bound = skillSection(text, H_BOUND_DOC_AUDIT).replace(/\s+/g, ' ');
   const readiness = skillSection(text, '### Readiness').replace(/\s+/g, ' ');
   const underAt = postAuditRaw.indexOf('**Under `doc-audit-gap=auto`.**');
@@ -739,6 +740,9 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'Without active `doc-audit-gap=auto`, when the value is on the policy line but no exhausted-audit freshness check was reached',
   ]) {
     if (!postAudit.includes(required)) violations.push(`classify entry, outcome or receipt missing: ${required}`);
+  }
+  if (!gates.includes('If resuming an interrupted audit, confirm the child stopped and enforce the stopped-state evidence rule under **Under `doc-audit-gap=auto`** before Parent processing.')) {
+    violations.push('interrupted documentation audit must verify stopped-state evidence before Parent processing');
   }
 
   // D10 invariant carve-out names only doc-audit-gap=auto, and both cross-references exist
@@ -788,7 +792,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'Capture the clean-tree result and run the read-only comparison even when the tree is dirty.',
     'Save the outcome, including any non-waivable failure, in parent-held evidence bound to the invocation, attempt and Prepare snapshot before stopping or proceeding.',
     'On resume or a later trigger, verify the saved reconciliation and account for intervening authorized changes. A recorded non-waivable failure keeps that attempt stopped even if the tree is now clean or HEAD or the index were restored.',
-    'If first reconciliation was interrupted, require independent evidence that the checkout still reflects the state at the child\'s stop before comparing it. Otherwise stop.',
+    'On any resume without saved reconciliation, even when interruption preceded first reconciliation, require independent evidence that the checkout still reflects the state at the child\'s stop before comparing it. Otherwise stop.',
     'For each fallback decision, require the current clean tree and pass the base-policy cap check below before reuse or retry.',
     'Before granting reuse at any entry point, check the current clean tree against the documentation caps at the verified fetched base SHA, even after a qualifying base merge.',
     '`git ls-tree --full-tree <base-sha> -- .gstack/ship-policy.json` to distinguish a confirmed absent policy (no caps) from a failed lookup.',
@@ -843,6 +847,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'An `action=extra-audit` line with no later `action=result` line is an interrupted extra launch: the parent first runs blocked recovery step 1 (confirm the child stopped)',
     'verifies the original Prepare snapshot\'s pre-dispatch hash, invocation and audit ID before Parent processing. Missing or mismatched proof takes the non-waivable stop.',
     'Before Parent processing, enforce any saved non-waivable failure for that attempt.',
+    'Apply the stopped-state evidence rule above even when there is no saved reconciliation. If the required proof is missing or unverifiable, record `result=interrupted` and take the non-waivable stop.',
     'Otherwise record `result=interrupted` with the failure code in evidence.',
     'For any blocked or failed result, including a refusal or interruption, use the same safety-gated fallback above. Reuse carries the earlier accepted audit only. If fallback declines reuse, take the existing owner stop. The extra attempt remains spent.',
     'A later change after an accepted extra audit with no attempt left reaches the trigger again: classify, with these additions, runs against the extra audit as the last accepted audit; no second extra audit runs; the owner stop follows otherwise.',
@@ -2953,6 +2958,16 @@ describe('kept contract locks fail on mutation', () => {
       name: 'doc-audit-gap=auto: let a restored checkout clear a failed attempt',
       lock: checkDocAuditGapAutoLock,
       mutate: (t) => t.replace('A recorded non-waivable failure keeps\nthat attempt stopped even if the tree is now clean or HEAD or the index were\nrestored.', 'A clean checkout clears that failure.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: resume an unobserved child through first reconciliation',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('On any resume without saved reconciliation, even when interruption\npreceded first reconciliation,', 'If first reconciliation was interrupted,'),
+    },
+    {
+      name: 'doc-audit-gap=auto: accept an interrupted extra audit without stopped-state proof',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('Apply the stopped-state evidence rule\n   above even when there is no saved reconciliation.', 'A resumed comparison against Prepare is sufficient.'),
     },
     {
       name: 'capability grep -F lines: drop blocking=shown capability line',

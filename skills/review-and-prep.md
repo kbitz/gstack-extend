@@ -3026,8 +3026,11 @@ reuse these records.
    attempt, takes that section's fallback before blocked recovery's retry
    or owner decision.
    Under active `doc-audit-gap=auto`, verify the Prepare binding before Parent
-   processing uses it. After validating child edits, use the verified-base cap
-   check below in place of upstream's origin-based cap lookup for every audit
+   processing uses it. If resuming an interrupted audit, confirm the child
+   stopped and enforce the stopped-state evidence rule under **Under
+   `doc-audit-gap=auto`** before Parent processing. After validating child
+   edits, use the verified-base cap check below in place of upstream's
+   origin-based cap lookup for every audit
    acceptance, including the initial audit, ordinary re-audit and extra attempt.
 4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause
    for an external full-suite gate** below; this item's own steps run only on
@@ -3246,22 +3249,26 @@ when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase
 **Single classification rule and decision table (`doc-audit-gap=auto`).**
 For blocked or failed re-audit fallback, first execute blocked recovery step 1
 (**confirm the child stopped**). If dispatch was refused before any child
-started, retain proof that no child launched. At initial reconciliation,
+started, retain proof that no child launched. Use that refusal as the stop
+boundary. At initial reconciliation,
 make no checkout writes and verify the original
 Prepare snapshot against its pre-dispatch hash, invocation and audit ID.
 If that verification fails or cannot run, stop before trusting the snapshot.
+On resume, apply the stopped-state evidence rule below before comparing.
 Only then compare it to verify HEAD, index and ownership even without valid
 child output. Capture the clean-tree result and run the read-only
 comparison even when the tree is dirty. Save the outcome, including any
 non-waivable failure, in parent-held evidence bound to the invocation, attempt
 and Prepare snapshot before stopping or proceeding.
 
-On resume or a later trigger, verify the saved reconciliation and account for
-intervening authorized changes. A recorded non-waivable failure keeps
+**Stopped-state evidence on resume.** On resume or a later trigger, verify
+the saved reconciliation and account for intervening authorized changes.
+A recorded non-waivable failure keeps
 that attempt stopped even if the tree is now clean or HEAD or the index were
-restored. If first reconciliation was interrupted, require independent evidence
-that the checkout still reflects the state at the child's stop before comparing
-it. Otherwise stop.
+restored. On any resume without saved reconciliation, even when interruption
+preceded first reconciliation, require independent evidence that the checkout
+still reflects the state at the child's stop before comparing it. Otherwise
+stop.
 
 For each fallback decision, require the current clean tree and pass the
 base-policy cap check below before reuse or retry. Apply existing redaction and
@@ -3483,10 +3490,13 @@ there, and any unexpected command or script failure is `command-failed`.
    (confirm the child stopped), then verifies the original Prepare snapshot's
    pre-dispatch hash, invocation and audit ID before Parent processing. Missing
    or mismatched proof takes the non-waivable stop. Before Parent processing,
-   enforce any saved non-waivable failure for that attempt. With verified proof,
-   validate the saved output through upstream's Parent processing (collect,
-   check output, check ownership, check freshness and run the verified-base cap
-   check above).
+   enforce any saved non-waivable failure for that attempt.
+   Apply the stopped-state evidence rule
+   above even when there is no saved reconciliation. If the required proof is
+   missing or unverifiable, record `result=interrupted` and take the non-waivable
+   stop. With verified proof, validate the saved output through upstream's
+   Parent processing (collect, check output, check ownership, check freshness
+   and run the verified-base cap check above).
    Record `result=accepted` only when it passes. Otherwise record
    `result=interrupted` with the failure code in evidence.
    For any blocked or failed result, including a refusal or
