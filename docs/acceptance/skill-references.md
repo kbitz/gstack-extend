@@ -65,6 +65,26 @@ Every section of `skills/review-and-prep.md` mapped before moving any text:
 | `### Greptile exits that need a user decision` + `### Configuration repair` | Primary (conditional: Greptile exit/conflict) | Split | `conditional-greptile-recovery.md` | Stop/pause gate + `--outcome blocked` rule stay in core |
 | `## 5. Triage, fix, and verify locally` + `## 6. Final readiness gate and handoff` + `## 7. Emit the copyable prompt for a new session` + `### Telemetry finish` | Primary (every run) | Core-only | — | Readiness gates, receipt/handoff contract, and `SHARED:telemetry-finish` |
 
+### Reader-map revision after cycle 1
+
+The first draft moved parts of the stop and degraded-install procedures with
+their reference text. Before regenerating the core, the review mapped the
+affected paths again. The core keeps the trigger and outcome. The named
+references carry the procedure used after that decision.
+
+| Entry | Core decision | Reference reader |
+|---|---|---|
+| Step 1 resume | A recorded pause, stop or ready state keeps its restriction until corroborated. External-gate checkpoints are checked before review. | Primary, only when reusing an earlier run or checkpoint |
+| Policy parsing | Invocation provenance, parsed policy and option precedence stay inline. | Primary, when a valid line opts into a conditional procedure |
+| CLI and baseline startup | Missing helpers use their existing degraded path. A present baseline fence must retain its write-point evidence. | Primary, during baseline collection, then a separate read for a later-cycle recovery |
+| Cycle stop and continuation | Keep the draft unready. A continuation needs the live stopped record, policy, allowance and verified claim. | Primary, when publishing a new cycle-stop receipt |
+| Manual testing | Pending user checks pause the draft. A failed comment post preserves the hold. | Primary, only for the pause receipt or a manual-testing resume |
+| External suite | A clean, committed tree, passing preflight and persisted checkpoint precede the final pause line. Only a valid, current attestation can advance the gate. | Primary, when freezing, resuming or applying the result |
+| Docs and coverage | Required audits still run. Reuse and recorded gaps apply only under their established gates. | Primary, when a bounded documentation audit, audit reuse or recorded-gap policy applies |
+| Greptile | The core keeps duplicate prevention, evidence requirements and the decision to hold or advance. | Primary, only where Step 1 applies Greptile |
+| Delta and fix choices | Re-review needs a valid delta and every auto-choice or veto keeps its original effect. | Primary, when a delta or auto-choice is actually used |
+| Metrics and outside voices | The no-capture metrics receipt stays inline. An unavailable outside adapter is missing coverage. | Separate primary reads for span mechanics, finding attribution, and the selected Claude Code adapter |
+
 ## Preregistered behavior probes (PR A)
 
 Each probe runs in a scratch repository with no remote, given only scenario
