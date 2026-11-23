@@ -138,11 +138,11 @@ Within v1 new kinds and `INFO` keys may appear; consume the exit status, the
 | 4 | a check drifted, or an input is missing or malformed (`RESULT drift`) | report | empty |
 | 2 | usage error, decided before any work | empty | `ERROR USAGE: …` and `FIX: …` |
 | 1 | internal failure; wins over drift | empty | `ERROR INTERNAL: …`, a short trace, versions, `FIX: …` |
-| 5 | Bun missing or not absolute (launcher) | empty | `ERROR bun_missing: …` or `ERROR bun_not_absolute: …`, then `FIX: …` |
+| 5 | Bun missing, not absolute, too old, or version unknown (launcher) | empty | `ERROR bun_missing: …`, `ERROR bun_not_absolute: …`, `ERROR bun_too_old: …`, or `ERROR bun_version_unknown: …`, then `FIX: …` |
 
-A missing launcher source or a launcher symlink failure exits 1 with
-`ERROR INTERNAL`, version context (extension version `unknown` before the
-source is available), and the specific installation repair in `FIX`.
+A missing launcher source or prerequisite helper, or a launcher symlink failure,
+exits 1 with `ERROR INTERNAL`, version context and the installation repair in
+`FIX`. The launcher prints `unknown` for Bun when it has yet to verify its version.
 
 Output is buffered and written after every check finishes, so an internal
 check failure produces no report. A failure while writing the output stream

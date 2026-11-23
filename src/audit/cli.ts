@@ -681,7 +681,23 @@ function computeGitInferredFreshness(ctx: AuditCtx): number {
 
 // ─── main ─────────────────────────────────────────────────────────────
 
+const USAGE = `Usage: roadmap-audit [repo-path] [--scan-state] [--future-index] [--prompt <text>]
+       roadmap-audit --help | -h
+
+Audit a repository's roadmap, progress, spec, and supporting documents.
+
+Options:
+  [repo-path]      Repository root to audit (defaults to Git toplevel or cwd)
+  --scan-state     Print scan-state summary
+  --future-index   Print future-index summary
+  --prompt <text>  Pass prompt text for scan-state matching
+  -h, --help       Show this help and exit 0
+`;
+
 export function main(argv: string[]): { stdout: string; exitCode: number } {
+  if (argv[0] === '--help' || argv[0] === '-h') {
+    return { stdout: USAGE, exitCode: 0 };
+  }
   const args = parseArgs(argv);
   let repoRoot = args.repoRoot;
   if (repoRoot === null) {

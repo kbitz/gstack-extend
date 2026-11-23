@@ -298,6 +298,7 @@ describe('setup --host flags', () => {
       mkdirSync(home, { recursive: true });
       copyFileSync(SETUP, join(fixture, 'setup'));
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      copyFileSync(join(ROOT, 'bin/lib/bun-prereq.sh'), join(fixture, 'bin/lib/bun-prereq.sh'));
       copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(fixture, 'bin/lib/preamble.sh'));
       for (const skill of SKILLS) {
         writeFileSync(join(fixture, 'skills', `${skill}.md`),
@@ -333,6 +334,7 @@ describe('setup --host flags', () => {
       mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
       copyFileSync(SETUP, join(fixture, 'setup'));
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      copyFileSync(join(ROOT, 'bin/lib/bun-prereq.sh'), join(fixture, 'bin/lib/bun-prereq.sh'));
       copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(fixture, 'bin/lib/preamble.sh'));
       const source = (skill: string) => `---\nname: ${skill}\ndescription: Fixture\nallowed-tools:\n  - Bash\n---\nBODY\n`;
       for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), source(skill));
@@ -365,6 +367,7 @@ describe('setup --host flags', () => {
       mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
       copyFileSync(SETUP, join(fixture, 'setup'));
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      copyFileSync(join(ROOT, 'bin/lib/bun-prereq.sh'), join(fixture, 'bin/lib/bun-prereq.sh'));
       copyFileSync(join(ROOT, 'bin/lib/preamble.sh'), join(fixture, 'bin/lib/preamble.sh'));
       for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), `---\nname: ${skill}\ndescription: F\n---\nNEW\n`);
       const dir = join(hostDir(home, host), 'pair-review');
@@ -1490,6 +1493,7 @@ exec /usr/bin/mktemp "$@"
     chmodSync(join(other, 'setup'), 0o755);
     mkdirSync(join(other, 'bin', 'lib'), { recursive: true });
     copyFileSync(join(ROOT, 'bin', 'lib', 'install-safety.sh'), join(other, 'bin', 'lib', 'install-safety.sh'));
+    copyFileSync(join(ROOT, 'bin', 'lib', 'bun-prereq.sh'), join(other, 'bin', 'lib', 'bun-prereq.sh'));
     copyFileSync(join(ROOT, 'bin', 'lib', 'preamble.sh'), join(other, 'bin', 'lib', 'preamble.sh'));
     copyFileSync(join(ROOT, 'bin', 'update-check'), join(other, 'bin', 'update-check'));
     chmodSync(join(other, 'bin', 'update-check'), 0o755);
@@ -1688,6 +1692,7 @@ exec /usr/bin/mktemp "$@"
     copyFileSync(SETUP, join(other, 'setup'));
     chmodSync(join(other, 'setup'), 0o755);
     copyFileSync(join(ROOT, 'bin', 'lib', 'install-safety.sh'), join(other, 'bin', 'lib', 'install-safety.sh'));
+    copyFileSync(join(ROOT, 'bin', 'lib', 'bun-prereq.sh'), join(other, 'bin', 'lib', 'bun-prereq.sh'));
     copyFileSync(join(ROOT, 'bin', 'lib', 'preamble.sh'), join(other, 'bin', 'lib', 'preamble.sh'));
     writeFileSync(join(other, 'VERSION'), '1.0.0~dev\n');
     mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
@@ -2786,7 +2791,7 @@ describe('preamble start-command install (Track 92A)', () => {
       writeFileSync(join(altCheckout, f), readFileSync(join(ROOT, f)));
     }
     chmodSync(join(altCheckout, 'setup'), 0o755);
-    for (const f of ['install-safety.sh', 'telemetry-call.sh']) {
+    for (const f of ['install-safety.sh', 'bun-prereq.sh', 'telemetry-call.sh']) {
       writeFileSync(join(altCheckout, 'bin', 'lib', f), readFileSync(join(ROOT, 'bin', 'lib', f)));
     }
     const altPreamble = readFileSync(source, 'utf8') + '\n# alt-checkout-marker\n';

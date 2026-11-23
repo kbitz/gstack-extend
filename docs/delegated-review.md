@@ -275,6 +275,8 @@ that same branch-scoped calls directory, mode 0600, written via a temporary file
 renamed into place and reused unchanged on resume/continuation) into every named
 part's prompt and call id.
 
+`bin/review-delegate` checks the [Bun prerequisite](installation.md#requirements) before starting either command. A launcher refusal writes its diagnostic to stderr and exits 1.
+
 `check` validates without any call. Exit 0 prints
 `{"v":1,"status":"ok","config_sha256":...,"parts":[{"part","provider","model"}]}`
 (adding `"access":"tools"` on parts whose provider configures tools mode).

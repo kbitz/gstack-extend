@@ -94,7 +94,7 @@ Exit codes:
   2: usage error (ERROR usage: / FIX:, no STATUS)
   3: needs-authorization, nothing written (plan or apply)
   4: partial after a mutation attempt, or incomplete after the post-apply check
-  5: launcher error (ERROR bun_missing|bun_not_absolute|source_missing|symlink_loop: / FIX:)
+  5: launcher error (ERROR bun_missing|bun_not_absolute|bun_too_old|bun_version_unknown|source_missing|symlink_loop: / FIX:)
 A run with no STATUS line (launcher error, Bun crash or signal) leaves the tree
 in an unknown state: run plan before anything else.
 

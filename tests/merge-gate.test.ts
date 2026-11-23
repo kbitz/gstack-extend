@@ -1241,6 +1241,8 @@ describe('errors end to end (CEO-S4)', () => {
     { code: 'store_refused', exit: 1, run: () => { const s = tmp('state-'); symlinkSync(tmp('real-'), join(s, 'merge-gate')); return run(['check', '--base', 'HEAD~1', '--json'], { cwd: change(), state: s }); } },
     { code: 'test_env_refused', exit: 1, run: () => run(['--version', '--json'], { env: { GSTACK_EXTEND_MERGE_GATE_NOW: NOW } }) },
     { code: 'bun_missing', exit: 1, run: () => run(['--version', '--json'], { path: '/nonexistent' }) },
+    { code: 'bun_too_old', exit: 1, run: () => { const d = tmp('oldbun-'); writeExec(join(d, 'bun'), '#!/bin/sh\necho 1.2.0\n'); return run(['--version', '--json'], { path: d }); } },
+    { code: 'bun_version_unknown', exit: 1, run: () => { const d = tmp('badbun-'); writeExec(join(d, 'bun'), '#!/bin/sh\nexit 1\n'); return run(['--version', '--json'], { path: d }); } },
     { code: 'git_failed', exit: 1, run: () => run(['check', '--base', 'HEAD~1', '--json', '--no-record'], { cwd: change(), path: shimDir({ git: `#!/bin/sh\nfor a in "$@"; do [ "$a" = --raw ] && { echo 'fatal: boom' >&2; exit 128; }; done\nexec '${REAL_GIT}' "$@"\n` }) }) },
   ];
 

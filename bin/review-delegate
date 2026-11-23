@@ -1,3 +1,14 @@
 #!/bin/sh
-# Internal review-and-prep delegate runner. Upstream gstack remains unmodified.
-exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/review-delegate/cli.ts" "$@"
+# gstack-extend review-delegate — delegated review runner, run via bun.
+_dir=${0%/*}
+[ "$_dir" != "$0" ] || _dir=.
+if [ ! -f "$_dir/lib/bun-prereq.sh" ] || [ ! -r "$_dir/lib/bun-prereq.sh" ]; then
+  printf '%s\n' 'review-delegate: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+  exit 1
+fi
+. "$_dir/lib/bun-prereq.sh"
+if ! bun_prereq_probe; then
+  bun_prereq_print_shared 'review-delegate' >&2
+  exit 1
+fi
+exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "$_dir/../src/review-delegate/cli.ts" "$@"

@@ -122,7 +122,7 @@ describe('self-registration (D4.A)', () => {
     );
     expect(entry).toBeDefined();
     expect(entry.name).toBe('gstack-extend');
-    expect(entry.version_scheme).toBe('4-digit');
+    expect(entry.version_scheme).toBe('3-digit');
     expect(existsSync(join(s.state, 'projects.json'))).toBe(false);
   });
 
@@ -279,6 +279,7 @@ function copyInstall(dest: string) {
     'bin/gstack-extend',
     'bin/gstack-extend-telemetry',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/lib/projects-registry.sh',
   ]) {

@@ -87,7 +87,7 @@ Writes use a temporary file beside the resolved policy and rename it into place 
 ### Exit codes
 
 - `0`: Written, unchanged, or current (`--check`).
-- `1`: Stale map (`--check` only).
+- `1`: Stale map in `--check` mode, or the launcher refused a [Bun prerequisite](installation.md#requirements).
 - `2`: Usage error or refusal (nothing written).
 
 ## Limits and base-branch behavior

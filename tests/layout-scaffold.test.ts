@@ -95,7 +95,7 @@ describe('Process: hardened launchers', () => {
       expect(existsSync(join(root, 'preload-marker'))).toBe(false);
       const launcher = readFileSync(join(EXTEND_ROOT, 'bin', row.bin), 'utf8');
       expect(launcher.split('\n').filter(line => line.startsWith('exec '))).toEqual([
-        expect.stringContaining('exec bun --no-env-file --no-install --config=/dev/null '),
+        expect.stringContaining('exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null '),
       ]);
     }
     expect(readFileSync(join(root, 'docs/ROADMAP.md'), 'utf8')).toBe(DRAFT);
@@ -857,8 +857,11 @@ describe('Process: entry-point Git safety and launcher failures', () => {
   });
   test('source missing, relative symlinked launcher, and symlink-loop resolution', () => {
     const copied = join(temp, 'copy/bin/layout-scaffold'); mkdirSync(resolve(copied, '..'), { recursive: true }); copyFileSync(join(EXTEND_ROOT, 'bin/layout-scaffold'), copied); chmodSync(copied, 0o755);
+    const helper = join(temp, 'copy/bin/lib/bun-prereq.sh');
+    mkdirSync(resolve(helper, '..'), { recursive: true });
+    copyFileSync(join(EXTEND_ROOT, 'bin/lib/bun-prereq.sh'), helper);
     const missing = spawnSync(copied, ['plan', '--root', root], { env: testEnv, cwd: root, input: '', encoding: 'utf8' });
-    expect(missing.status).toBe(5); expect(missing.stderr).toContain('ERROR source_missing:'); expect(missing.stdout).toBe('');
+    expect(missing.status).toBe(5); expect(missing.stderr).toContain('ERROR source_missing: layout-scaffold source missing'); expect(missing.stdout).toBe('');
     const link = join(temp, 'linked'); symlinkSync(join(EXTEND_ROOT, 'bin/layout-scaffold'), join(temp, 'target')); symlinkSync('target', link);
     const linked = spawnSync(link, ['--version'], { env: testEnv, input: '', encoding: 'utf8' }); expect(linked.status).toBe(0); expect(linked.stdout).toContain('layout-scaffold'); expect(linked.stderr).toBe('');
     symlinkSync('loop', join(temp, 'loop'));
