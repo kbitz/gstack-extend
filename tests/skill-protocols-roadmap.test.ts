@@ -528,5 +528,9 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
       '"$_EXTEND_ROOT/bin/roadmap-renumber" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --map old=new,old=new --dry-run',
     );
     expect(renumberingFence?.body).toContain("# or: --map-file '<PROPOSAL_DIR>/renames.txt'");
+
+    const proposal = roadmap.slice(roadmap.indexOf('### Structured proposal artifact'));
+    expect(proposal).toContain('create a directory for this run under `~/scratch/`');
+    expect(proposal).toContain('Substitute the resolved absolute path for each `<PROPOSAL_DIR>` placeholder');
   });
 });

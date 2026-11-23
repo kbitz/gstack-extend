@@ -887,7 +887,7 @@ Group assignment is **the packer's job**, not a theme judgment.
    # First paste both resolved root assignments from Common path.
    "$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from '<PROPOSAL_DIR>/draft-tracks.md'
    ```
-   Here `<PROPOSAL_DIR>` is the proposal directory resolved in [Structured proposal artifact](#structured-proposal-artifact) (or `~/scratch/` as the fallback, never a host-private directory). Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH` + `FOLDER_ONLY`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
+   Before invoking `--from`, substitute the absolute directory from [Structured proposal artifact](#structured-proposal-artifact) for `<PROPOSAL_DIR>` and confirm `draft-tracks.md` exists there and is nonempty. Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH` + `FOLDER_ONLY`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
    On the first regen after the v3 cutover, also run `--materialize` and write any implicit previous-Group edges the author still wants. After that, unspecified = none. Group-level `_Depends on:` is **output**, not packer input — do not expect writing those lines to change the bins.
 3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
 4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
@@ -965,7 +965,7 @@ When the regenerated plan includes 2+ sequential Groups that together deliver on
 
 ### Structured proposal artifact
 
-Before the AskUserQuestion, write the entire proposed `## In Progress` + `## Current Plan` + `## Future` block to **`<PROPOSAL_DIR>/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target. Resolve `PROPOSAL_DIR` via the session-paths helper:
+Before the AskUserQuestion, write the entire proposed `## In Progress` + `## Current Plan` + `## Future` block to **`<PROPOSAL_DIR>/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target. Resolve `PROPOSAL_DIR` via the session-paths helper before the first step that needs it:
 
 ```bash
 # Start with the _EXTEND_ROOT=… line the preamble printed.
@@ -975,7 +975,7 @@ PROPOSAL_DIR=$(session_dir roadmap-proposals)
 mkdir -p "$PROPOSAL_DIR"
 ```
 
-This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival. When that directory is unavailable, use `~/scratch/` (for example `~/scratch/roadmap-proposals/`) as the fallback, never a host-private directory.
+This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival. When that directory is unavailable, create a directory for this run under `~/scratch/`. Keep the same directory for all scratch files and the proposal. Substitute the resolved absolute path for each `<PROPOSAL_DIR>` placeholder, including inside quotes.
 
 Format:
 
