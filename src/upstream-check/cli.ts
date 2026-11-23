@@ -937,7 +937,8 @@ Output (stdout; a report without a final RESULT line is incomplete, treat it as 
 Kinds: root, inventory, anchor, export, classifier.
 
 Exit: 0 every check OK; 4 any check drifted or an input is missing or malformed; 2 usage error;
-      1 internal failure; 5 Bun missing. Errors go to stderr as "ERROR <CODE>: ..." and "FIX: ...".
+      1 internal failure; 5 Bun missing, non-absolute, too old, or version unknown.
+Errors go to stderr as "ERROR <CODE>: ..." and "FIX: ...".
 No network, model dispatch, pin, hold, upgrade or file write. OK means only that the listed checks matched.
 Docs: ${DOCS}
 `;

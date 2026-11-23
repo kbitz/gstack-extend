@@ -436,7 +436,7 @@ retired_copy_owner() {
     [ "$(lex_abs "$checkout")" = "$checkout" ] || return 0
     # Shell file tests cannot distinguish a missing path from denied access.
     # A final dangling symlink also stays unknown rather than orphaned.
-    if bun --no-env-file --config=/dev/null -e '
+    if "$BUN_PREREQ_RAW_PATH" --no-env-file --config=/dev/null -e '
       const { lstatSync } = require("node:fs");
       try { lstatSync(process.argv[1]); }
       catch (error) { process.exit(error.code === "ENOENT" ? 0 : 1); }
@@ -1610,7 +1610,7 @@ if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
   # Check every component and symlink hop, not only the final physical path.
   # Ancestors may be owned by this user or root, but never world-writable.
   # Bun is required at setup entry, including for uninstall.
-  bun --no-env-file --config=/dev/null -e '
+  "$BUN_PREREQ_RAW_PATH" --no-env-file --config=/dev/null -e '
     const fs = require("node:fs"), path = require("node:path");
     const home = fs.realpathSync(process.argv[1]), uid = Number(process.argv[2]);
     let at = path.parse(home).root, hops = 0;

@@ -19,10 +19,15 @@
 
 | Entry points | Channel and format | Exit | Error codes / causes |
 |---|---|---|---|
-| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `review-delegate` | Single line on stderr (`setup` also prints a checksum-verified install snippet when Bun is missing; `gstack-extend init --dry-run` warns on stderr and writes nothing) | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
-| `layout-scaffold`, `docs-ship`, `upstream-check` | Two lines on stderr: `ERROR <code>: <TOKEN> ...` and `FIX: ...` | 5 | `bun_missing`, `bun_not_absolute`, `bun_too_old`, `bun_version_unknown`, `source_missing` |
+| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `review-delegate` | Single line on stderr. For missing Bun, `setup` also prints download and checksum instructions. Dry-run init warns on stderr and keeps its preview exit behavior. | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
+| `layout-scaffold`, `docs-ship`, `upstream-check` | Two lines on stderr with `ERROR <code>:` and `FIX:`. | 5 | `bun_missing`, `bun_not_absolute`, `bun_too_old`, `bun_version_unknown` |
+| `layout-scaffold`, `docs-ship` | Two lines on stderr with `ERROR <code>:` and `FIX:` for an incomplete installation or broken launcher link. | 5 | `source_missing`, `symlink_loop` |
+| `upstream-check` | Three lines on stderr with `ERROR INTERNAL:`, version context and `FIX:` for an incomplete installation or broken launcher link. | 1 | `source_missing`, `symlink_loop` |
 | `merge-gate` | `ERROR <code>:` / `FIX:` on stderr, or canonical JSON object on stdout when `--json` / `--jsonl` is passed | 1 | `bun_missing`, `bun_too_old`, `bun_version_unknown`, `internal_error` |
 | `review-state` | Canonical `internal-error` JSON envelope on stdout plus `ERROR INTERNAL_ERROR:` / `FIX:` on stderr | 5 | `runtime-missing`, `runtime-too-old`, `runtime-version-unknown` |
+
+If setup refuses Bun during an update, fix Bun and resume the
+[update procedure](#update-checks) so the updater can finish migrations.
 
 Clone and run setup:
 
@@ -327,19 +332,27 @@ last four-part tag from its release history (on the default remote this is
 git fetch --tags origin
 git status --short
 # Stop and preserve any local changes before continuing.
-LAST_FOUR_PART=$(git tag --list 'v*.*.*.*' --sort=-v:refname | head -n 1)
-echo "Rolling back to: $LAST_FOUR_PART"   # e.g. v0.47.0.0
-./bin/config set update_check false
-git checkout --detach "$LAST_FOUR_PART"
-./setup --host auto --quiet
+LAST_FOUR_PART=$(git tag --list 'v*.*.*.*' --sort=-v:refname |
+  awk '/^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')
+if [ -z "$LAST_FOUR_PART" ]; then
+  echo 'No four-part release tag found. Check the remote and fetch its tags.'
+else
+  echo "Rolling back to: $LAST_FOUR_PART"   # e.g. v0.47.0.0
+  git diff --name-status --diff-filter=A "$LAST_FOUR_PART"..HEAD -- skills/
+  ./bin/config set update_check false &&
+    git checkout --detach "$LAST_FOUR_PART" &&
+    ./setup --host auto --quiet
+fi
 ```
 
 Pause update checks first: the restored checker still offers the newer release,
 and accepting it (or `auto_upgrade=true`) makes `bin/update-run` fast-forward the
 detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
-This leaves detached HEAD. It refreshes only the skills that tag's setup knows;
-every skill added after that tag (check `git diff --name-status "$LAST_FOUR_PART"..HEAD -- skills/`, for example `plan-track` after `v0.47.0.0`) stays installed as a dangling link or stale copy and may fail until you resume
-upgrades. It does not undo install migrations or rewrite saved telemetry/ledgers. Retain readers capable of every
+This leaves detached HEAD. The diff before checkout lists skills that the older
+setup cannot refresh. Every skill added after that tag (for example, `plan-track`
+after `v0.47.0.0`) stays installed as a dangling link or stale copy and may fail
+until you resume upgrades. Rollback preserves install migrations and saved
+telemetry and ledgers. Retain readers capable of every
 emitted schema (including stage-runs v2, v3 and v4), reading both the legacy
 `analytics/stage-runs.jsonl` and per-host `analytics/stage-runs/*.jsonl` files.
 An older writer resumes appending to the legacy path; retain the per-host files

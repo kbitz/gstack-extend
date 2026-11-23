@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { BUN_FLOOR as LAYOUT_FLOOR, help as layoutHelp } from '../src/layout-scaffold/cli.ts';
@@ -22,7 +22,7 @@ for (const tool of [
 ]) {
   const found = spawnSync('/bin/sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' });
   const target = found.stdout.trim();
-  if (found.status === 0 && target && target.startsWith('/') && !existsSync(join(NO_BUN_PATH, tool))) {
+  if (found.status === 0 && target.startsWith('/') && !existsSync(join(NO_BUN_PATH, tool))) {
     symlinkSync(target, join(NO_BUN_PATH, tool));
   }
 }
@@ -194,9 +194,15 @@ const ALL_LAUNCHERS: LauncherSpec[] = [
 
 describe('all 13 gated bin/ launchers', () => {
   const oldBunDir = freshDir('old-bun');
-  makeShim(oldBunDir, '#!/bin/sh\necho 1.2.0\n');
+  makeDelegatingShim(oldBunDir, '1.2.0');
   const badBunDir = freshDir('bad-bun');
-  makeShim(badBunDir, '#!/bin/sh\nprintf \'hostile"\\n\\toutput\'\n');
+  makeShim(badBunDir, `#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+  printf 'hostile"\\000\\n\\toutput'
+  exit 0
+fi
+exec '${REAL_BUN}' "$@"
+`);
   const floorBunDir = freshDir('floor-bun');
   makeDelegatingShim(floorBunDir, '1.3.3');
 
@@ -231,11 +237,13 @@ describe('all 13 gated bin/ launchers', () => {
         } else if (spec.family === 'hardened') {
           expect(r.status).toBe(5);
           expect(r.stdout).toBe('');
+          expect(r.stderr.trim().split('\n')).toHaveLength(2);
           expect(r.stderr).toContain(`ERROR ${expectedCode}: ${expectedToken}`);
           expect(r.stderr).toContain('FIX:');
           expect(r.stderr).toContain('docs/installation.md#requirements');
         } else if (spec.family === 'merge-gate') {
           expect(r.status).toBe(1);
+          expect(r.stderr).toBe('');
           const parsed = JSON.parse(r.stdout.trim());
           expect(parsed.error.code).toBe(expectedCode);
           expect(parsed.error.message).toContain(expectedToken);
@@ -247,6 +255,7 @@ describe('all 13 gated bin/ launchers', () => {
           expect(parsed.detail.cause).toBe(expectedCause);
           expect(parsed.detail.message).toContain(expectedToken);
           expect(r.stderr).toContain(`ERROR INTERNAL_ERROR: ${expectedToken}`);
+          expect(r.stderr.trim().split('\n')).toHaveLength(2);
         }
       };
 
@@ -256,8 +265,9 @@ describe('all 13 gated bin/ launchers', () => {
 
       // Helper missing fails closed
       rmSync(join(mirrorLib, 'bun-prereq.sh'));
-      const hm = spawnSync('/bin/sh', [launcher, ...args], { env: { PATH: `${floorBunDir}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 15_000 });
+      const hm = spawnSync('/bin/sh', [launcher, ...args], { env: { PATH: `${badBunDir}:${NO_BUN_PATH}` }, encoding: 'utf8', timeout: 15_000 });
       expect(existsSync(sentinelHit)).toBe(false);
+      expect(hm.stderr).not.toContain('hostile');
       if (spec.family === 'bare') {
         expect(hm.status).toBe(1);
         expect(hm.stderr).toContain('PREREQ_HELPER_MISSING');
@@ -266,7 +276,9 @@ describe('all 13 gated bin/ launchers', () => {
         expect(hm.stderr).toContain('source_missing:');
       } else if (spec.family === 'merge-gate') {
         expect(hm.status).toBe(1);
-        expect(JSON.parse(hm.stdout.trim()).error.code).toBe('internal_error');
+        const response = JSON.parse(hm.stdout.trim());
+        expect(response.error.code).toBe('internal_error');
+        expect(response.error.message).toContain('PREREQ_HELPER_MISSING');
       } else {
         expect(hm.status).toBe(5);
         expect(JSON.parse(hm.stdout.trim()).detail.message).toContain('PREREQ_HELPER_MISSING');
@@ -293,8 +305,6 @@ describe('setup prerequisite gate and install hint', () => {
   test('missing Bun prints checksum hint that passes bun-v<ver> as first argument to installer', () => {
     const home = freshDir('setup-missing-home');
     const before = snapshotTree(home);
-    const noBunDir = freshDir('no-bun-bin');
-    // Provide basic POSIX tools (dirname, mktemp, etc.) without bun
     const r = spawnSync('/bin/bash', [join(REPO_ROOT, 'setup'), '--host', 'claude'], {
       env: { HOME: home, PATH: NO_BUN_PATH },
       encoding: 'utf8',
@@ -378,6 +388,26 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
     }
   });
 
+  // Value: protects=init can audit using the Bun it checked before writing; fails_when=the audit resolves a different Bun after changing directory; why_new=absolute PATH fixtures cannot catch a relative PATH disappearing across chdir; seam=none
+  test('init keeps a relative PATH Bun available to the post-render audit', () => {
+    const caller = freshDir('init-caller');
+    const relativeBin = join(caller, 'tools');
+    mkdirSync(relativeBin);
+    symlinkSync(REAL_BUN, join(relativeBin, 'bun'));
+    const state = freshDir('init-relative-state');
+    const target = join(freshDir('init-relative-parent'), 'consumer');
+    const result = spawnSync('/bin/bash', [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--no-prompt', target], {
+      cwd: caller,
+      env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, PATH: `tools:${NO_BUN_PATH}` },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(result.stderr).not.toContain('PREREQ_BUN_MISSING');
+    expect(result.status).toBe(0);
+    expect(existsSync(join(target, 'CLAUDE.md'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8')).projects).toHaveLength(1);
+  });
+
   test('init --dry-run warns on stderr under missing/old Bun and writes nothing; init --help exits 0', () => {
     const state = freshDir('init-dry-state');
     const parent = freshDir('init-dry-parent');
@@ -406,15 +436,25 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
   test('self-registration prints and stores 3-digit while consumer projects keep 4-digit', () => {
     const state = freshDir('scheme-state');
     const gstackState = freshDir('scheme-gstack');
+    const install = freshDir('scheme-install');
+    mkdirSync(join(install, 'bin', 'lib'), { recursive: true });
+    for (const path of ['bin/gstack-extend', 'bin/lib/bun-prereq.sh', 'bin/lib/install-safety.sh', 'bin/lib/projects-registry.sh']) {
+      copyFileSync(join(REPO_ROOT, path), join(install, path));
+    }
+    cpSync(join(REPO_ROOT, 'scripts', 'init-templates'), join(install, 'scripts', 'init-templates'), { recursive: true });
+    // Registration is the behavior under test. Audit runs separately against real source in the other init cases.
+    writeFileSync(join(install, 'bin', 'roadmap-audit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const installedInit = join(install, 'bin', 'gstack-extend');
     const selfRun = spawnSync(
       '/bin/bash',
-      [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--migrate', '--no-prompt', '--name', 'gstack-extend', REPO_ROOT],
+      [installedInit, 'init', '--migrate', '--no-prompt', '--name', 'gstack-extend', install],
       {
-        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:/usr/bin:/bin` },
+        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:${NO_BUN_PATH}` },
         encoding: 'utf8',
         timeout: 30_000,
       },
     );
+    expect(selfRun.status).toBe(0);
     expect(selfRun.stdout).toContain('version_scheme: 3-digit');
     const reg1 = JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8'));
     const selfEntry = reg1.projects.find((p: { name: string }) => p.name === 'gstack-extend');
@@ -423,13 +463,14 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
     const consumerDir = freshDir('consumer-proj');
     const consumerRun = spawnSync(
       '/bin/bash',
-      [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--no-prompt', '--name', 'demo-consumer', consumerDir],
+      [installedInit, 'init', '--no-prompt', '--name', 'demo-consumer', consumerDir],
       {
-        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:/usr/bin:/bin` },
+        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:${NO_BUN_PATH}` },
         encoding: 'utf8',
         timeout: 30_000,
       },
     );
+    expect(consumerRun.status).toBe(0);
     expect(consumerRun.stdout).toContain('version_scheme: 4-digit');
     const reg2 = JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8'));
     const consumerEntry = reg2.projects.find((p: { name: string }) => p.name === 'demo-consumer');
@@ -460,25 +501,48 @@ describe('--help and -h for roadmap-audit, roadmap-pack, and outside-review', ()
 });
 
 describe('floor agreement and launcher code registration', () => {
-  test('every live Bun floor declaration matches BUN_PREREQ_MIN and every launcher code is registered', () => {
+  test('finds Bun launchers and live floor declarations in the checkout', () => {
     const helperText = readFileSync(HELPER, 'utf8');
-    const floor = helperText.match(/^BUN_PREREQ_MIN='([0-9]+\.[0-9]+\.[0-9]+)'$/m)?.[1];
-    expect(floor).toBe('1.3.3');
+    const floor = helperText.match(/^BUN_PREREQ_MIN='([0-9]+\.[0-9]+\.[0-9]+)'$/m)?.[1] ?? '';
+    expect(floor).toMatch(/^\d+\.\d+\.\d+$/);
 
     const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
     expect(pkg.engines.bun).toBe(`>=${floor}`);
     expect(LAYOUT_FLOOR).toBe(floor);
     expect(DOCS_SHIP_FLOOR).toBe(floor);
 
-    for (const docPath of ['README.md', 'docs/installation.md', 'CLAUDE.md']) {
-      expect(readFileSync(join(REPO_ROOT, docPath), 'utf8')).toContain(floor!);
+    const docs = ['README.md', 'docs/installation.md', 'CLAUDE.md'];
+    const glob = new Bun.Glob('**/*');
+    const sourcePaths = ['bin', 'src'].flatMap((dir) =>
+      [...glob.scanSync({ cwd: join(REPO_ROOT, dir), onlyFiles: true })].map((file) => `${dir}/${file}`),
+    );
+    // Feature-introduction versions and failing examples are outside the supported floor.
+    const alternateVersions: Record<string, string[]> = {
+      'CLAUDE.md': ['0.3.0', '1.0.0', '1.2.0', '1.3.2'],
+      'docs/installation.md': ['1.2.0', '1.3.2'],
+    };
+    const mismatches: string[] = [];
+    const bunLaunchers: string[] = [];
+    const foundFloor = new Set<string>();
+    for (const file of [...sourcePaths, ...docs]) {
+      const body = readFileSync(join(REPO_ROOT, file), 'utf8');
+      if (file.startsWith('bin/') && /^\s*exec\s+(?:bun\s|"\$BUN_PREREQ_RAW_PATH")/m.test(body)) {
+        bunLaunchers.push(file);
+      }
+      for (const line of body.split('\n')) {
+        if (!/\bBun\b|\bBUN_(FLOOR|PREREQ_MIN)\b/i.test(line)) continue;
+        for (const [, version] of line.matchAll(/(?<![.\d])(\d+\.\d+\.\d+)(?![.\d])/g)) {
+          if (version === floor) foundFloor.add(file);
+          else if (!alternateVersions[file]?.includes(version!)) mismatches.push(`${file}: ${version}`);
+        }
+      }
     }
+    expect(mismatches).toEqual([]);
+    expect(docs.every((file) => foundFloor.has(file))).toBe(true);
+    expect(bunLaunchers.sort()).toEqual(ALL_LAUNCHERS.map(({ name }) => `bin/${name}`).sort());
+  });
 
-    for (const hardened of ['bin/layout-scaffold', 'bin/docs-ship', 'bin/upstream-check']) {
-      expect(readFileSync(join(REPO_ROOT, hardened), 'utf8')).toContain(`Bun >= ${floor}`);
-    }
-
-    // Every launcher-emittable Bun code is registered in merge-gate registry and hardened CLI help text.
+  test('registers all Bun runtime errors in the merge-gate registry and hardened CLI help', () => {
     for (const code of ['bun_missing', 'bun_too_old', 'bun_version_unknown'] as const) {
       expect(MERGE_GATE_ERROR_CODES).toContain(code);
       expect(layoutHelp()).toContain(code);

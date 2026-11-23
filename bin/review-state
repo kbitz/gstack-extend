@@ -17,9 +17,10 @@ if ! bun_prereq_probe; then
     unknown) _cause='runtime-version-unknown' ;;
     *) _cause='runtime-missing' ;;
   esac
-  _fix="${BUN_PREREQ_FIX}; if it fails again, continue inline (D1)."
-  printf '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"%s","message":"%s","trace":null},"fix":"%s","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}\n' "$_cause" "$BUN_PREREQ_MSG" "$_fix"
-  printf 'ERROR INTERNAL_ERROR: %s\nFIX: %s\n' "$BUN_PREREQ_MSG" "$_fix" >&2
+  _msg="$BUN_PREREQ_TOKEN review-state: $BUN_PREREQ_WHAT"
+  _fix="$BUN_PREREQ_REMEDY, then rerun the identical command once; if it still refuses, report this line verbatim and continue inline (D1). No changes were made. See docs/installation.md#requirements."
+  printf '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"%s","message":"%s","trace":null},"fix":"%s","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}\n' "$_cause" "$_msg" "$_fix"
+  printf 'ERROR INTERNAL_ERROR: %s\nFIX: %s\n' "$_msg" "$_fix" >&2
   exit 5
 fi
 exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "${_dir}/../src/review-state/cli.ts" "$@"

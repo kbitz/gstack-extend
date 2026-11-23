@@ -105,8 +105,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/upstream-check',
     'bin/merge-gate',
     'bin/review-state',
+    'src/**', // The floor-agreement test scans live Bun declarations across src/.
     'setup',
     'bin/gstack-extend',
+    'scripts/init-templates/**',
     'README.md',
     'docs/installation.md',
     'CLAUDE.md',

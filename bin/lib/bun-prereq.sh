@@ -20,14 +20,13 @@ _bun_prereq_sanitize() {
   BUN_PREREQ_S_IN=${BUN_PREREQ_S_IN%%"$BUN_PREREQ_S_NL"*}
   BUN_PREREQ_S_CR=$(printf '\r')
   BUN_PREREQ_S_IN=${BUN_PREREQ_S_IN%%"$BUN_PREREQ_S_CR"*}
-  while [ -n "$BUN_PREREQ_S_IN" ] && [ "${#BUN_PREREQ_SAN}" -lt 64 ]; do
+  while [ "${#BUN_PREREQ_SAN}" -lt 64 ]; do
+    # Skip an entire run of discarded characters before copying the next one.
+    BUN_PREREQ_S_PREFIX=${BUN_PREREQ_S_IN%%[0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+/_-]*}
+    BUN_PREREQ_S_IN=${BUN_PREREQ_S_IN#"$BUN_PREREQ_S_PREFIX"}
+    [ -n "$BUN_PREREQ_S_IN" ] || break
     BUN_PREREQ_S_REST=${BUN_PREREQ_S_IN#?}
-    BUN_PREREQ_S_CH=${BUN_PREREQ_S_IN%"$BUN_PREREQ_S_REST"}
-    case "$BUN_PREREQ_S_CH" in
-      [0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+/_-])
-        BUN_PREREQ_SAN="${BUN_PREREQ_SAN}${BUN_PREREQ_S_CH}"
-        ;;
-    esac
+    BUN_PREREQ_SAN="${BUN_PREREQ_SAN}${BUN_PREREQ_S_IN%"$BUN_PREREQ_S_REST"}"
     BUN_PREREQ_S_IN=$BUN_PREREQ_S_REST
   done
 }
@@ -77,6 +76,16 @@ _bun_prereq_parse_core() {
   return 0
 }
 
+_bun_prereq_refuse() {
+  BUN_PREREQ_CLASS=$1
+  BUN_PREREQ_TOKEN=$2
+  BUN_PREREQ_ERROR_CODE=$3
+  BUN_PREREQ_WHAT=$4
+  BUN_PREREQ_REMEDY=$5
+  BUN_PREREQ_FIX="$BUN_PREREQ_REMEDY, then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements"
+  BUN_PREREQ_MSG="$BUN_PREREQ_TOKEN $BUN_PREREQ_WHAT"
+}
+
 # bun_prereq_probe [resolved_bun_path]
 # Sets:
 #   BUN_PREREQ_CLASS       ok | missing | too_old | unknown
@@ -86,6 +95,7 @@ _bun_prereq_parse_core() {
 #   BUN_PREREQ_PATH        sanitized resolved path or 'not on PATH'
 #   BUN_PREREQ_RAW_PATH    unsanitized resolved path for exec on ok (or '')
 #   BUN_PREREQ_WHAT        short sanitized description (without entry point)
+#   BUN_PREREQ_REMEDY      install, upgrade or reinstall instructions
 #   BUN_PREREQ_FIX         actionable fix + recovery + docs pointer
 #   BUN_PREREQ_MSG         "<TOKEN> <WHAT>" for ERROR/FIX and JSON families
 # Returns 0 when ok, 1 otherwise.
@@ -97,29 +107,37 @@ bun_prereq_probe() {
   BUN_PREREQ_PATH='not on PATH'
   BUN_PREREQ_RAW_PATH=''
   BUN_PREREQ_WHAT=''
+  BUN_PREREQ_REMEDY=''
   BUN_PREREQ_FIX=''
   BUN_PREREQ_MSG=''
 
   if [ "${1+set}" = set ] && [ -n "$1" ]; then
     BUN_PREREQ_RAW_PATH=$1
   else
-    if [ -n "${PATH-}" ] && BUN_PREREQ_RAW_PATH=$(command -v bun 2>/dev/null) && [ -n "$BUN_PREREQ_RAW_PATH" ]; then
+    # The lookup must name a file, not a shell function or alias named bun.
+    if [ -n "${PATH-}" ] && BUN_PREREQ_RAW_PATH=$(command -v bun 2>/dev/null) &&
+       [ "${BUN_PREREQ_RAW_PATH#*/}" != "$BUN_PREREQ_RAW_PATH" ]; then
       :
     else
-      BUN_PREREQ_CLASS='missing'
-      BUN_PREREQ_TOKEN='PREREQ_BUN_MISSING'
-      BUN_PREREQ_ERROR_CODE='bun_missing'
       BUN_PREREQ_RAW_PATH=''
-      BUN_PREREQ_PATH='not on PATH'
-      BUN_PREREQ_WHAT="Bun >= ${BUN_PREREQ_MIN} is required (not on PATH)"
-      BUN_PREREQ_FIX="install Bun >= ${BUN_PREREQ_MIN} (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements"
-      BUN_PREREQ_MSG="${BUN_PREREQ_TOKEN} ${BUN_PREREQ_WHAT}"
+      _bun_prereq_refuse missing PREREQ_BUN_MISSING bun_missing \
+        "Bun >= $BUN_PREREQ_MIN is required (not on PATH)" \
+        "install Bun >= $BUN_PREREQ_MIN (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH)"
       return 1
     fi
   fi
 
+  case "$BUN_PREREQ_RAW_PATH" in
+    /*) ;;
+    *)
+      if BUN_PREREQ_CWD=$(pwd -P 2>/dev/null); then
+        BUN_PREREQ_RAW_PATH="${BUN_PREREQ_CWD%/}/$BUN_PREREQ_RAW_PATH"
+      fi
+      ;;
+  esac
   BUN_PREREQ_OUT=''
-  if BUN_PREREQ_OUT=$("$BUN_PREREQ_RAW_PATH" --version 2>/dev/null); then
+  # Redirect the whole substitution, including diagnostics from the shell itself.
+  if { BUN_PREREQ_OUT=$("$BUN_PREREQ_RAW_PATH" --version); } 2>/dev/null; then
     BUN_PREREQ_RC=0
   else
     BUN_PREREQ_RC=$?
@@ -161,12 +179,9 @@ bun_prereq_probe() {
       fi
       _bun_prereq_sanitize "$BUN_PREREQ_RAW_PATH"
       BUN_PREREQ_PATH=${BUN_PREREQ_SAN:-bun}
-      BUN_PREREQ_CLASS='too_old'
-      BUN_PREREQ_TOKEN='PREREQ_BUN_TOO_OLD'
-      BUN_PREREQ_ERROR_CODE='bun_too_old'
-      BUN_PREREQ_WHAT="Bun >= ${BUN_PREREQ_MIN} is required (found ${BUN_PREREQ_FOUND} at ${BUN_PREREQ_PATH})"
-      BUN_PREREQ_FIX="upgrade Bun to >= ${BUN_PREREQ_MIN} (bun upgrade, or upgrade via your package manager), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements"
-      BUN_PREREQ_MSG="${BUN_PREREQ_TOKEN} ${BUN_PREREQ_WHAT}"
+      _bun_prereq_refuse too_old PREREQ_BUN_TOO_OLD bun_too_old \
+        "Bun >= $BUN_PREREQ_MIN is required (found $BUN_PREREQ_FOUND at $BUN_PREREQ_PATH)" \
+        "upgrade Bun to >= $BUN_PREREQ_MIN (bun upgrade, or upgrade via your package manager)"
       return 1
     fi
   fi
@@ -181,12 +196,9 @@ bun_prereq_probe() {
     _bun_prereq_sanitize "$BUN_PREREQ_OUT"
     BUN_PREREQ_FOUND=${BUN_PREREQ_SAN:-unparseable}
   fi
-  BUN_PREREQ_CLASS='unknown'
-  BUN_PREREQ_TOKEN='PREREQ_BUN_VERSION_UNKNOWN'
-  BUN_PREREQ_ERROR_CODE='bun_version_unknown'
-  BUN_PREREQ_WHAT="Bun >= ${BUN_PREREQ_MIN} is required (could not determine version at ${BUN_PREREQ_PATH}; saw ${BUN_PREREQ_FOUND})"
-  BUN_PREREQ_FIX="upgrade or reinstall Bun >= ${BUN_PREREQ_MIN} (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements"
-  BUN_PREREQ_MSG="${BUN_PREREQ_TOKEN} ${BUN_PREREQ_WHAT}"
+  _bun_prereq_refuse unknown PREREQ_BUN_VERSION_UNKNOWN bun_version_unknown \
+    "Bun >= $BUN_PREREQ_MIN is required (could not determine version at $BUN_PREREQ_PATH; saw $BUN_PREREQ_FOUND)" \
+    "upgrade or reinstall Bun >= $BUN_PREREQ_MIN (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell)"
   return 1
 }
 

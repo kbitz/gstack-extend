@@ -2691,7 +2691,10 @@ describe('legacy four-part install to three-part candidate', () => {
     expect(section.indexOf('./bin/config set update_check true')).toBeGreaterThan(section.indexOf('git checkout main'));
     expect(section).toContain('v0.47.0.0');
     expect(section).toContain("git tag --list 'v*.*.*.*'");
-    expect(section).toContain('every skill added after that tag');
+    expect(section).toContain('Every skill added after that tag');
+    const inventory = section.indexOf('git diff --name-status --diff-filter=A');
+    expect(inventory).toBeGreaterThanOrEqual(0);
+    expect(inventory).toBeLessThan(section.indexOf('git checkout --detach'));
   });
   test('real update-check offers multi-digit three- and four-part releases', () => {
     const repo = createFixtureRepo('candidate-positive');

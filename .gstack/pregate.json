@@ -362,6 +362,7 @@
       "tests/full-suite-script.test.ts"
     ],
     "scripts/init-templates/**": [
+      "tests/bun-prereq.test.ts",
       "tests/init-bin.test.ts",
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
@@ -450,6 +451,7 @@
       "tests/workflow-metrics.test.ts"
     ],
     "src/**": [
+      "tests/bun-prereq.test.ts",
       "tests/upstream-check.test.ts"
     ],
     "src/audit/**": [

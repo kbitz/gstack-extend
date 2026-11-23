@@ -15,10 +15,10 @@ while :; do
   case "$_remaining" in *:*) _remaining=${_remaining#*:} ;; *) break ;; esac
 done
 _missing_fix='install Bun >= 1.3.3 (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements'
-[ -n "$_clean_path" ] || _fail bun_missing 'PREREQ_BUN_MISSING bun is not on an absolute PATH entry' "$_missing_fix"
+[ -n "$_clean_path" ] || _fail bun_missing 'PREREQ_BUN_MISSING docs-ship: bun is not on an absolute PATH entry' "$_missing_fix"
 PATH=$_clean_path
 export PATH
-_bun=$(command -v bun) || _fail bun_missing 'PREREQ_BUN_MISSING bun is not on PATH' "$_missing_fix"
+_bun=$(command -v bun) || _fail bun_missing 'PREREQ_BUN_MISSING docs-ship: bun is not on PATH' "$_missing_fix"
 case "$_bun" in
   /*) ;;
   *) _fail bun_not_absolute 'bun must resolve to an absolute path' 'use an absolute PATH entry; see docs/installation.md#requirements' ;;
@@ -40,7 +40,7 @@ _helper=${_bindir}/lib/bun-prereq.sh
 [ -f "$_helper" ] || _fail source_missing 'docs-ship prerequisite helper missing' 're-run ./setup; see docs/installation.md#requirements'
 . "$_helper"
 if ! bun_prereq_probe "$_bun"; then
-  _fail "$BUN_PREREQ_ERROR_CODE" "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX"
+  _fail "$BUN_PREREQ_ERROR_CODE" "$BUN_PREREQ_TOKEN docs-ship: $BUN_PREREQ_WHAT" "$BUN_PREREQ_FIX"
 fi
 _root=${_bindir%/*}
 _cli=${_root}/src/docs-ship/cli.ts
