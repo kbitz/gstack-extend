@@ -28,7 +28,7 @@ Host identification uses the generic label `host B`, matching [hand-use-telemetr
 
 Executed `2026-11-23 04:40–04:44 UTC` in an isolated scratch `HOME` (`env -i HOME=<scratch-home>` with minimal `PATH` and no orchestration or session variables) against a fresh clone of `https://github.com/kbitz/gstack-extend.git`.
 
-### Fresh install (README steps)
+### Fresh install (README steps and CLI wiring check)
 
 | # | Command | Exit | Trimmed output |
 |---|---|---|---|
@@ -36,7 +36,7 @@ Executed `2026-11-23 04:40–04:44 UTC` in an isolated scratch `HOME` (`env -i H
 | 2 | `~/.claude/skills/gstack-extend/setup --host auto` | `0` | `Installed preamble → <scratch-home>/.gstack-extend/bin/preamble`; `Installed 11 skills into <scratch-home>/.claude/skills`; `Tip: ~/.local/bin doesn't exist…` (printed twice); `Installed telemetry-call`; `Self-registered gstack-extend in <scratch-home>/.gstack-extend/projects.json` |
 | 3 | `~/.gstack-extend/bin/preamble plan-track --root` | `0` | `EXTEND_ROOT: <checkout>` and `_EXTEND_ROOT=<checkout>` |
 | 4 | `~/.claude/skills/gstack-extend/setup --host codex` | `0` | `Installed 11 skills into <scratch-home>/.codex/skills` |
-| 5 | `mkdir -p ~/.local/bin && ~/.claude/skills/gstack-extend/setup --host auto` | `0` | Refreshed both Claude and Codex; `Wired gstack-extend → ~/.local/bin/gstack-extend`; `Wired gstack-extend-telemetry` |
+| 5 (operator follow-up) | `mkdir -p ~/.local/bin && ~/.claude/skills/gstack-extend/setup --host auto` | `0` | Refreshed both Claude and Codex; `Wired gstack-extend → ~/.local/bin/gstack-extend`; `Wired gstack-extend-telemetry` |
 
 Observed install layout and state:
 - `--host auto` with no `~/.codex` installed Claude only; once `~/.codex` existed, `--host auto` refreshed both hosts.
@@ -113,7 +113,7 @@ Running the documented `/gstack-extend-upgrade` path (`~/.gstack-extend/bin/prea
 
 Observed preservation and refresh:
 - **User-owned files:** `config` (`8dc7a522…`, `review_default=light`) and `projects.json` (`1d421cc6…`) kept identical SHA-256 digests before and after. `install-status` was rewritten by setup as designed.
-- **Refreshed copies:** Codex regular copies were refreshed (mtime matched `update-run`), `~/.gstack-extend/bin/preamble` matched the new `bin/lib/preamble.sh`, and Claude symlinks resolved into the updated checkout.
+- **Refreshed copies:** Codex regular copies were refreshed (mtime matched `update-run`), `~/.gstack-extend/bin/preamble` matched the new `bin/lib/preamble.sh`, and Claude symlinks resolved into the updated checkout. Loaded skill content in the harnesses remains unverified.
 - **Stale-copy reporting detail:** `bin/update-run` printed setup's one-line `Warning:`; the structured `INSTALL_WARN` line was emitted by `bin/update-check`.
 
 ## Working recovery paths (`docs/installation.md`, `v0.111.0`)
@@ -127,7 +127,7 @@ Ran the documented [shared-directory migration / per-file recovery](../installat
 
 ### Rollback to `v0.47.0.0` (`3654619`) and resume to `main` (`54fd6df`)
 
-Followed [docs/installation.md#version-numbers](../installation.md#version-numbers) using the actual last four-part tag `v0.47.0.0` (`3654619`):
+Followed the `v0.111.0` rollback procedure with one substitution. The operator used the last four-part tag, `v0.47.0.0` (`3654619`), in place of the then-documented example `v0.46.0.0`. The updated [rollback procedure](../installation.md#version-numbers) was checked in source at `v0.112.2`.
 
 1. `git fetch --tags origin`, `git status --short` (clean), `./bin/config set update_check false`, `git checkout --detach v0.47.0.0`, `./setup --host auto --quiet` — all exited `0`.
 2. **State after rollback:** detached `HEAD` at `3654619` (`VERSION 0.47.0.0`); `config` kept `review_default=light` and `update_check=false`; `projects.json` SHA-256 unchanged. Claude had 11 readable skills plus dangling `plan-track` (added after `v0.47.0.0`, as disclosed) and restored retired `autoplan-lean`; Codex kept 12 readable copies; `preamble plan-track --root` still resolved.
@@ -147,7 +147,7 @@ Candidate or `file://`-remote proof in [Release compatibility qualification](rel
 The live `host B` checkout's git reflog and stage-runs ledgers supply partial historical observations (recorded here as non-passing context only):
 - **Initial install:** Cloned `https://github.com/kbitz/gstack-extend.git` on `2026-10-24T13:32:17Z` at `42eacc7` (tag `v0.46.0.0`, four-part); `~/.gstack-extend/` and `projects.json` entry (`version_scheme: "4-digit"`) were created at `2026-10-24T13:32:17Z`.
 - **Default-remote upgrade:** Reflog `2026-11-06T14:27:10Z` records `pull --ff-only origin main`, moving `42eacc7` → `f4f79ab` (41 commits crossed, including `v0.47.0.0` at `3654619` and `v0.48.0` at `3cd166c`). Installed commit `f4f79ab` carried `VERSION 0.68.0` and was **untagged** (one commit ahead of tag `v0.68.0` at `8c514a9`), demonstrating main-tracking behavior in real use.
-- **Post-upgrade reader compatibility:** Live `gstack-extend-telemetry report --by-host --json` read legacy `analytics/stage-runs.jsonl` (61 rows, producer `0.68.0`–`0.70.0`, schema v2/v3) alongside per-host v4 files: `5` files read, `0` unreadable, `1,305` rows counted, `0` malformed/invalid/unsupported.
+- **Post-upgrade reader compatibility:** Live `gstack-extend-telemetry report --by-host --json` read legacy `analytics/stage-runs.jsonl` (61 rows, all from three-part producers `0.68.0`–`0.70.0`, schema v2/v3) alongside per-host v4 files: `5` files read, `0` unreadable, `1,305` rows counted, `0` malformed/invalid/unsupported. Reading a row produced by a four-part install still needs evidence.
 
 **Why Task 2 stays open (missing evidence):**
 1. The legacy checker's `UPGRADE_AVAILABLE` offer text and `UPGRADE_OK` result line from `2026-11-06` were not retained (`just-upgraded-from` was overwritten by subsequent upgrades).
@@ -158,13 +158,11 @@ The live `host B` checkout's git reflog and stage-runs ledgers supply partial hi
 
 ### Owner runbook to close Task 2
 
-To close Task 2, the owner must either:
-1. **Run a controlled legacy four-part upgrade through the default remote** on an owner machine (without mutating the live install):
-   - Seed a clean install at `v0.46.0.0` (`42eacc7`) or `v0.47.0.0` (`3654619`) pointing at `https://github.com/kbitz/gstack-extend.git` with realistic user state (`config`, `projects.json`, and a legacy `stage-runs.jsonl` sample).
-   - Snapshot pre-upgrade `HEAD`, `VERSION`, `config`/`projects.json` SHA-256 digests, and host skill listings.
-   - Run the legacy checkout's `bin/update-check --force` and `bin/update-run` against the default remote and retain the exact `UPGRADE_AVAILABLE`, `UPGRADE_OK`, `JUST_UPGRADED`, `SETUP_SKIPPED_HOSTS`, and `INSTALL_WARN` lines.
-   - Record offered `VERSION` vs actual installed commit SHA and tag status, verify before/after user-state hashes, verify `gstack-extend-telemetry report --by-host --json` reads legacy + v4 rows cleanly, and confirm recovery works if needed.
-2. **Or supply the missing historical provenance** for the `2026-10-24` → `2026-11-06` `host B` upgrade (confirming install provenance, supplying the retained `2026-11-06` `UPGRADE_AVAILABLE`/`UPGRADE_OK` lines, and explicitly accepting any remaining snapshot/recovery gaps as owner-waived).
+1. **Isolate the run on an owner machine.** Use a disposable HOME and checkout separate from the live install. Start with `env -i`, setting `HOME`, `PATH` to trusted tool directories, `LANG`, `TERM` and an isolated `TMPDIR`. Leave Git and gstack-extend state and remote overrides unset. Before setup, verify that `HOME`, the checkout and both host skill directories resolve inside the isolated area. Record live install HEAD and state metadata before and after.
+2. **Install the actual legacy release.** Make a full clone of `https://github.com/kbitz/gstack-extend.git` into the isolated checkout and verify `origin`. Use `git switch -C main v0.47.0.0` only in that new clone to put its clean local `main` at `3654619`. Run the release's `./setup` for the selected hosts. Seed representative disposable consumer state and capture a known nonempty v2 ledger sample from the legacy writer, with its producer version and row count. Snapshot `HEAD`, `VERSION`, state and ledger digests, and the selected hosts' skill listings, including installer-owned `autoplan-lean` if present.
+3. **Capture the offer and upgrade.** From the legacy checkout run `./bin/update-check --force`. Require a real `UPGRADE_AVAILABLE` line before proceeding. Record the offered `VERSION` and a separate sample of `origin/main` at offer time, since the offer carries no commit or tag. Run `./bin/update-run "$PWD"`, then the installed `./bin/update-check --force` to capture `JUST_UPGRADED` after a successful upgrade. Retain exits, stderr and exact protocol lines privately, including any `UPGRADE_FAILED`, `SETUP_SKIPPED_HOSTS`, `INSTALL_WARN` and `MIGRATION_WARN`, and record which warnings were absent. A failed migration stays open even when the checkout emits `UPGRADE_OK`.
+4. **Verify installed identity and state.** Confirm the checkout remains on `main` and record the landed `HEAD` and exact tag status. Compare the landed `VERSION` with `UPGRADE_OK`. Confirm preserved `config` and consumer entries using before/after hashes and entry comparisons. Account separately for setup's self-registration, which may change the `projects.json` digest when the tool's own scheme changes to `3-digit`. Check refreshed skills and removal of installer-owned `autoplan-lean` on the selected hosts. Keep the legacy ledger bytes unchanged, add a known v4 row through the upgraded writer, and use the upgraded checkout's `./bin/gstack-extend-telemetry report --by-host --json` in the isolated HOME. Require the expected legacy and v4 row counts with zero unreadable files and zero bad rows. Validate the four-part producer row against the [stage-runs schema](../telemetry.md#schema-validation). Verify a documented [recovery path](../installation.md#version-numbers) in the isolated install.
+5. **Publish a sanitized summary.** Record the outcome and any unresolved gaps with short excerpts, generic host labels and path placeholders. If using the historical `host B` route, supply the legacy install provenance and retained offer and result, plus evidence for preservation, reader compatibility and recovery. If the owner waives a gap, record the waiver and remaining gap explicitly. The waiver supplies no passing evidence.
 
 ## Candidate defects (1–9) and `v0.112.2` (`39c2b0c`) disposition
 
@@ -172,23 +170,24 @@ To close Task 2, the owner must either:
 |---|---|---|---|
 | 1 | Documented Bun `1.3.3` floor did not match runtime behavior (`1.3.2` and `1.2.0` ran `roadmap-audit` and `init` with exit `0`). | **Fixed** | Live T1 re-check: `setup`, `roadmap-audit`, and `gstack-extend init --no-prompt` all exit `1` with `PREREQ_BUN_TOO_OLD` under both `1.3.2` and `1.2.0`; `docs/installation.md#requirements` explains `--no-env-file` (`1.3.3+`). |
 | 2 | Bun-less launchers failed with unguarded `exec: bun: not found` (exit `127`), and `init` scaffolded/registered before failing the post-render audit. | **Fixed** | Live T1 re-check: all refusal families (`setup`, single-line launchers, two-line exit-5 launchers, `merge-gate`, `review-state`) and `init --no-prompt` refuse with structured `PREREQ_BUN_MISSING` before writing anything; `init --dry-run` warns and exits `0`. |
-| 3 | `setup`'s Bun install hint set `BUN_VERSION="1.3.10"` as an env var, which `bun.sh/install` ignores. | **Fixed** | Live T1 re-check: `./setup --host auto` without Bun prints `bash "$tmpfile" "bun-v$BUN_VERSION" && rm "$tmpfile"` (positional version argument, `BUN_VERSION="1.4.3"`). |
+| 3 | `setup`'s Bun install hint set `BUN_VERSION="1.3.10"` as an env var, which `bun.sh/install` ignores. | **Fixed** | Live T1 re-check: `./setup --host auto` without Bun prints `bash "$tmpfile" "bun-v$BUN_VERSION" && rm "$tmpfile"` (positional version argument, `BUN_VERSION="1.4.3"`). Evidence covers the printed hint. |
 | 4 | `setup` under Bun `1.2.0` crashed with a raw `[eval]` stack trace and a misleading permissions `Fix:` line. | **Fixed** | Live T1 re-check: `./setup --host auto` under Bun `1.2.0` exits `1` cleanly with `setup: PREREQ_BUN_TOO_OLD … (found 1.2.0 at <path>)`, no stack trace, no misleading `Fix:`, and writes nothing. |
 | 5 | `bin/roadmap-audit --help`, `bin/roadmap-pack --help`, and `bin/outside-review --help` did not print usage help. | **Fixed** | Live T1 re-check under Bun `1.4.3`: all three exit `0` and print `Usage:` help text. |
 | 6 | `setup` self-registered `gstack-extend` in `projects.json` with `"version_scheme": "4-digit"` despite its three-part `VERSION`. | **Fixed** | Live T1 re-check: `./setup --host auto` writes `"version_scheme": "3-digit"` for `kbitz-gstack-extend`, while `gstack-extend init` keeps `"4-digit"` for new consumer projects. |
 | 7 | Same-version `JUST_UPGRADED 0.111.0 0.111.0` after a no-op resume (`UPGRADE_OK 0.111.0 0.111.0`). | **Open** | Source check at `39c2b0c`: `bin/update-run:186` writes `just-upgraded-from` unconditionally and `bin/update-check:443` emits `JUST_UPGRADED $OLD $LOCAL` even when `OLD == LOCAL`. |
 | 8 | Rollback docs (`docs/installation.md`) showed `v0.46.0.0` as example tag instead of actual last four-part tag `v0.47.0.0` and only noted later skills "may fail". | **Fixed** | Source check at `39c2b0c`: `docs/installation.md#version-numbers` names `v0.47.0.0`, computes `LAST_FOUR_PART`, diffs added `skills/`, and discloses `plan-track` as a dangling link or stale copy. |
-| 9 | When `~/.local/bin` is absent, `setup` prints the same `Tip: ~/.local/bin doesn't exist…` twice, and README does not mention creating `~/.local/bin` before wiring CLI commands. | **Open (minor)** | Live T1 re-check: `./setup --host auto` with `~/.local/bin` absent still prints the `Tip:` twice (once for `gstack-extend`, once for `gstack-extend-telemetry`). |
+| 9 | When `~/.local/bin` is absent, `setup` prints the same `Tip: ~/.local/bin doesn't exist…` twice, and README does not mention creating `~/.local/bin` before wiring CLI commands. | **Open (minor)** | Live T1 re-check: `./setup --host auto` with `~/.local/bin` absent still prints the `Tip:` twice. The README at `39c2b0c` still describes CLI wiring as conditional and gives the direct invocation. |
 
 ## Acceptance criteria status and open holds
 
 | Criterion | Status | Evidence | Remaining owner action |
 |---|---|---|---|
 | Fresh install and project onboarding on owner's machine (OS, host, harnesses, versions, dated) | **Partial** | `v0.111.0` scratch run (`host B`, Omarchy Linux, Claude + Codex layouts, `init` dry-run and `--no-prompt`) + `v0.112.2` `init` re-check. | Run first skill invocation (`/project-spec` / `/roadmap`) in an authenticated harness session with upstream `gstack` installed, or confirm scratch coverage suffices. |
-| Actionable failures for a missing prerequisite | **Covered on Linux `host B`** (at `v0.112.2`) | Live `v0.112.2` (`39c2b0c`) T1 re-check across missing Bun (all refusal families + `init`) and older Bun (`1.3.2`, `1.2.0`). | Confirm Linux `host B` coverage (macOS untested). |
+| Actionable failures for missing or older Bun | **Covered on Linux `host B`** (at `v0.112.2`) | Live `v0.112.2` (`39c2b0c`) T1 re-check across missing Bun (all refusal families + `init`) and older Bun (`1.3.2`, `1.2.0`). | Confirm Linux `host B` coverage (macOS untested). |
 | Upgrade with user-owned files preserved and stale copies reported | **Covered** (one-release hop) | `v0.110.1` → `v0.111.0` scratch upgrade: unchanged `config` and `projects.json` SHA-256 digests, `INSTALL_WARN` (`preserved_regular`), refreshed Codex copies and `preamble`. | Confirm one-release hop suffices alongside Task 2. |
-| Working recovery path | **Covered** | Per-file `pair-review` recovery (`RECOVERY_MIGRATED`, cleared `INSTALL_WARN`) and rollback to `v0.47.0.0` (`3654619`) + resume to `main` (`54fd6df`) with retired `autoplan-lean` cleanup. | Confirm recovery evidence; note open minor defect 7 (same-version `JUST_UPGRADED` after no-op resume). |
-| Real legacy four-part install upgraded through default remote (offered/installed identity, reader compatibility, unchanged user state) | **Open failure** | Not run as a controlled qualification. Non-passing `host B` `2026-10-24` → `2026-11-06` reflog (`42eacc7` → untagged `f4f79ab`) and v2/v3+v4 reader check (`1,305` rows, `0` bad) recorded as context only. | Execute the Task 2 owner runbook above (or supply missing provenance and explicit waiver). |
+| Working recovery path | **Covered in the `v0.111.0` scratch run** | Per-file `pair-review` recovery (`RECOVERY_MIGRATED`, cleared `INSTALL_WARN`); rollback with the tag substitution above and resume to `main` (`54fd6df`) with retired `autoplan-lean` cleanup. | Confirm recovery evidence. The same-version `JUST_UPGRADED` report remains open (defect 7). |
+| Installed version matches the skills loaded by each exercised harness (O1.2) | **Unverified** | Scratch checks observed installed files and start-command resolution. | Invoke a skill in each exercised harness after upgrade and verify it resolves and loads the skill from the recorded installed revision. |
+| Real legacy four-part install upgraded through default remote (offered/installed identity, reader compatibility, unchanged user state) | **Open failure** | Non-passing `host B` `2026-10-24` → `2026-11-06` reflog (`42eacc7` → untagged `f4f79ab`) and v2/v3+v4 reader check (`1,305` rows, `0` bad). | Run the Task 2 owner procedure above or supply the missing historical evidence. Record any explicit owner waiver as a waiver. |
 | Actual installed commit recorded; main-tracking offer behavior disclosed | **Covered** | `54fd6df` (`v0.111.0`), `39c2b0c` (`v0.112.2`), and historical `f4f79ab` (untagged ahead of `v0.68.0` `8c514a9`) recorded; `main/VERSION` vs `pull --ff-only origin main` disclosed. | Track 96C will later append stable-channel upgrade evidence. |
 | Failures stay open; owner confirms before O1 counts | **Pending** | Task 2 and defects 7 & 9 remain open; [PROGRESS acceptance](../PROGRESS.md#acceptance) untouched. | Owner closes or explicitly waives open items and records O1 confirmation in `docs/PROGRESS.md`. |
 
@@ -196,7 +195,7 @@ To close Task 2, the owner must either:
 
 - **Single platform/host:** Linux `host B` (Omarchy) only; no macOS fresh install, upgrade, or recovery run is recorded here.
 - **No authenticated harness or upstream `gstack` in scratch `HOME`:** `~/.gstack-extend/bin/preamble` stood in for skill start; upstream `gstack`, `gh`, and real skill telemetry (`doctor` reported `tier: unavailable` / gstack helper unresolvable) were not exercised in scratch `HOME`.
-- **Older-Bun sample:** Limited to Linux x64 `Bun 1.3.2` and `1.2.0`; other versions and macOS binaries were not tested.
+- **Prerequisite sample:** Refusal checks covered Bun only. The older versions tested were Linux x64 `Bun 1.3.2` and `1.2.0`.
 - **Upgrade span:** Controlled scratch upgrade covered a one-release hop (`v0.110.1` → `v0.111.0`); Codex refresh was verified by mtime and `install-status` rather than a full 11-skill content diff.
 - **Published legacy four-part upgrade (Task 2):** Still open; historical `host B` reflog observations do not replace a controlled end-to-end capture.
 - **Compatibility catalog reference:** See [compatibility.md](../compatibility.md) for the stable-surface inventory and [release-compatibility.md](release-compatibility.md) for local candidate-only three-part release checks.
