@@ -3025,6 +3025,10 @@ reuse these records.
    `doc-audit-gap=auto`, a blocked or failed re-audit, including the extra
    attempt, takes that section's fallback before blocked recovery's retry
    or owner decision.
+   Under active `doc-audit-gap=auto`, verify the Prepare binding before Parent
+   processing uses it. After validating child edits, use the verified-base cap
+   check below in place of upstream's origin-based cap lookup for every audit
+   acceptance, including the initial audit, ordinary re-audit and extra attempt.
 4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause
    for an external full-suite gate** below; this item's own steps run only on
    an accepted pass. Before the full pregate run, make every declared
@@ -3237,7 +3241,7 @@ Upstream's remaining re-audit attempt
 stays unspent, and a later change that fails classification uses that attempt
 before any extra attempt or owner stop. On pre-attempt reuse,
 when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase
-`documentation` with a fresh `step_id` and no interval.
+`documentation` with reason `matching-evidence`, a fresh `step_id` and no interval.
 
 **Single classification rule and decision table (`doc-audit-gap=auto`).**
 For blocked or failed re-audit fallback, first execute blocked recovery step 1
@@ -3258,7 +3262,8 @@ security checks to the current inputs and available child artifacts before retai
 their content. Missing child output can take fallback when independent evidence
 establishes the required safety checks. Unreadable required evidence fails
 closed. Verify any substantive documentation discrepancy the child reported.
-An unresolved discrepancy is doubt under the classification rule. Stop under
+A confirmed or unresolved discrepancy declines reuse for the whole walk,
+including an empty walk. Stop under
 blocked recovery if any check fails or cannot be verified, including an
 unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or
 security gate failure, or `docs-caps` failure. Record `classify-not-applied`
@@ -3312,8 +3317,19 @@ as evidence only.
 | `a blocked re-audit` | Upstream attempt 2 or the extra attempt returned `blocked`. Verify the stopped child and all fallback prerequisites first. | Apply the same rule to `S..HEAD`. A qualifying unchanged walk reuses `S` with no question and no extra attempt. On decline, take the eligible extra attempt or existing stop. A non-waivable failure stops recovery. | `post-audit: active` and `doc-audit-gap: active; reuse=applied` on reuse, with `Post-audit change:` rows for any commits, `carried-audit=<S>` and `blocked-re-audit` in `reason=`. Keep the attempt's actual result, `audit_id` and child-stop proof in the full `Ship gates` detail and evidence. On decline record `reuse=not-applied` and `Doc-audit extra:` if evaluated. |
 | `a failed re-audit` | Upstream attempt 2 or the extra attempt failed to complete or validate. Includes timeout, missing output, `DOCS_RESULT_INVALID` after any allowed format repair, exit 3 refusal, or failed validation or freshness. Verify the stopped child and all fallback prerequisites first. | Apply the same rule to `S..HEAD`. A qualifying unchanged walk reuses `S` with no question and no extra attempt. On decline, take the eligible extra attempt or existing stop. A non-waivable failure stops recovery. | `post-audit: active` and `doc-audit-gap: active; reuse=applied` on reuse, with `Post-audit change:` rows for any commits, `carried-audit=<S>` and `failed-re-audit` in `reason=`. Keep the attempt's actual failure code, `audit_id` and child-stop proof in the full `Ship gates` detail and evidence. On decline record `reuse=not-applied` and `Doc-audit extra:` if evaluated. |
 
-Let `S` be the accepted audit's post-child snapshot HEAD (which already records
-any documentation edits that audit made). A verified empty walk on fallback
+Let `S` be the commit representing the accepted audit's content. For a clean
+`current` audit, use its verified post-child snapshot HEAD. For `updated`, the
+upstream post-child snapshot still names Prepare's HEAD and records the child's
+accepted content separately. Keep that snapshot and its section intact. Commit
+only the verified audit edits before unrelated work, and bind `S` to that commit
+only after confirming its sole parent is Prepare's HEAD, its diff contains
+exactly the verified audit edits, and its committed content matches the
+post-child snapshot's recorded path hashes. Retain this binding with the audit
+ID, base and snapshot hash. If any proof is missing, decline reuse. The table's
+`carried-audit=<S>` means the existing `<audit_id> <section-sha256>` of the audit
+bound to `S`.
+
+A verified empty walk on fallback
 has no `Post-audit change:` rows. Record the carried audit, child-stop proof
 and actual failure in the documentation detail. The walk reaches `S` only
 when `S` appears as a whole line of `git rev-list --first-parent HEAD`
@@ -3479,7 +3495,8 @@ there, and any unexpected command or script failure is `command-failed`.
    existing exact-bound audit keeps its own compact status. At each trigger,
    record `post-audit: active` and one `Post-audit change:` line per classified
    commit, or `post-audit: not applied — <reason>` when classification cannot
-   proceed. Name the trigger phase and decision reason in `reason=`. Write
+   proceed. Name the trigger phase (`pre-attempt`, `blocked-re-audit`,
+   `failed-re-audit` or `post-exhaustion`) and decision reason in `reason=`. Write
    one status line beside the documentation section (never inside it), using
    the latest trigger's reuse decision:
    - when a trigger is reached with both companions present:

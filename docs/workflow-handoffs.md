@@ -1161,13 +1161,23 @@ classification rule at three entry points:
    only when reuse is declined and all existing retry and safety checks pass.
 
 Every reuse requires passing the current tree's `docs-caps` check against the
-verified fetched base SHA, including after a qualifying base merge. Confirm
-policy absence or read the exact policy at that commit, including for forks.
+verified fetched base SHA, including after a qualifying base merge. The same
+verified policy applies to audit acceptance after any authorized child edits.
+Confirm policy absence or read the exact policy at that commit, including for forks.
 A measured cap violation can still take the ordinary pre-attempt re-audit,
 which must pass caps before acceptance. Unverifiable policy evidence or a
 cap violation during failed re-audit recovery or exhaustion stops dispatch.
 An interrupted extra attempt checks its Prepare snapshot binding before
-Parent processing can accept it.
+Parent processing can accept it. An unresolved documentation discrepancy
+declines reuse for the whole walk, including an empty walk.
+
+`S` means the commit whose content the accepted audit verified. When an
+`updated` audit's approved edits are committed, that commit can serve as `S`
+only with proof that its sole parent was Prepare's head, that its diff holds
+exactly those edits, and that its content matches the accepted post-child
+snapshot. The table's `carried-audit=<S>` uses the audit ID and section hash
+bound to `S`. The existing `reason=` field names the phase as `pre-attempt`,
+`blocked-re-audit`, `failed-re-audit` or `post-exhaustion`.
 
 Use only the decisions verified for the current audit, head and fetched
 base. Every classified commit has its own `Post-audit change:` row. An empty

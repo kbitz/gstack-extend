@@ -778,7 +778,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'Use this entry whenever evaluating that failed attempt, including on resume and after exhaustion.',
     '**Post-exhaustion:** At a stale freshness check when upstream\'s attempt budget is exhausted.',
     'Upstream\'s remaining re-audit attempt stays unspent, and a later change that fails classification uses that attempt before any extra attempt or owner stop.',
-    'when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase `documentation` with a fresh `step_id` and no interval.',
+    'when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase `documentation` with reason `matching-evidence`, a fresh `step_id` and no interval.',
     'An initially blocked or failed audit cannot enter fallback.',
     'A missing accepted audit or unverifiable evidence declines reuse.',
     'first execute blocked recovery step 1 (**confirm the child stopped**). If dispatch was refused before any child started, retain proof that no child launched.',
@@ -792,7 +792,7 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'copy its exact bytes from that commit to private evidence, and run upstream\'s `gstack-ship-receipt docs-caps --policy <file>`.',
     'A pre-attempt visit can still take the ordinary upstream re-audit, which must pass the cap gate before acceptance. In failed re-audit recovery or after exhaustion, a cap violation stops before dispatch.',
     'Apply existing redaction and security checks to the current inputs and available child artifacts before retaining or citing their content.',
-    'An unresolved discrepancy is doubt under the classification rule.',
+    'A confirmed or unresolved discrepancy declines reuse for the whole walk, including an empty walk.',
     'Stop under blocked recovery if any check fails or cannot be verified, including an unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, or `docs-caps` failure.',
     'In fallback a dirty tree stops recovery before any retry, staging or commit. Preserve partial child edits.',
     'A blocked or failed re-audit disclosed alongside a reused audit keeps its actual result in the full documentation detail and evidence while that audit is carried.',
@@ -805,6 +805,9 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'never while upstream\'s re-audit attempt remains or when reuse applied',
     '`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` (non-empty is `dirty-tree`, including pending changes inside submodules)',
     'A verified empty walk on fallback has no `Post-audit change:` rows.',
+    'Commit only the verified audit edits before unrelated work, and bind `S` to that commit only after confirming its sole parent is Prepare\'s HEAD, its diff contains exactly the verified audit edits, and its committed content matches the post-child snapshot\'s recorded path hashes.',
+    'The table\'s `carried-audit=<S>` means the existing `<audit_id> <section-sha256>` of the audit bound to `S`.',
+    'Name the trigger phase (`pre-attempt`, `blocked-re-audit`, `failed-re-audit` or `post-exhaustion`) and decision reason in `reason=`.',
     'The walk reaches `S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD` (otherwise the result is `walk-missed-snapshot`)',
     'the post-audit changes are the commits on `git rev-list --first-parent S..HEAD`',
     'write stdout, stderr and the exit status to files in the evidence directory; `evidence=` locators point there, and any unexpected command or script failure is `command-failed`',
@@ -855,6 +858,10 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'The offered options are continue on the carried audit, run the extra audit, stop for repair, accept a named risk.',
   ]) {
     if (!under.includes(required)) violations.push(`Under doc-audit-gap=auto missing: ${required}`);
+  }
+  const documentationGate = skillSection(text, '### Prove /ship\'s release gates on this head').replace(/\s+/g, ' ');
+  if (!documentationGate.includes('use the verified-base cap check below in place of upstream\'s origin-based cap lookup for every audit acceptance')) {
+    violations.push('active policy must verify base caps before accepting any audit');
   }
 
   // E6: every git diff and git log command guards against filtering and formatting from config.
