@@ -1529,7 +1529,8 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=every producer stop-table row maps by meaning to its consumer model Cycle1 input(s) and outcome; fails_when=a stop-table row is added, renamed or retargeted, or rowFor disagrees with any row's eligible/unavailable outcome; why_new=Track 91A T3 (criterion 5) direct producer-to-consumer eligibility map; seam=skills/review-and-prep.md stop table; no_claim=installed-agent execution
   test('each skill stop-table row maps directly to its model inputs and outcome', () => {
-    const tableLines = stopSection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
+    const capSubsection = stopSection.split('\n### ')[0]!;
+    const tableLines = capSubsection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
     const tableCells = tableLines.map((l) => l.trim().slice(1, -1).split('|').map((c) => c.trim()));
     const stopTableMap: ReadonlyArray<{ conditions: string; inputs: ReadonlyArray<Cycle1 | null> }> = [
       {
@@ -3585,17 +3586,60 @@ describe('(R) doc-audit-gap=auto', () => {
       'send `doc-audit-gap=auto` only when all three pass, keeping the other keys otherwise',
       '`doc-audit-gap=<value>: its only value is auto`',
       "while a repeated `doc-audit-gap` key keeps today's repeated-key reason",
-      'The value needs `full-suite=external` and `post-audit=classify` on the same line and is otherwise independent',
+      'The value needs `full-suite=external` and `post-audit=classify` on the same line and is otherwise independent; it stays opt-in behind `doc-audit-gap=auto` (preserving today\'s default for runs with no policy line and preserving `/ship-and-land`\'s release-only path on by-hand runs)',
       '`auto` turns on all three additions together',
       'later values may narrow them, so a caller matches the exact value, not the key',
+      '(1) **pre-attempt**, before spending a re-audit attempt whenever an earlier accepted (`current` or `updated`) audit `S` exists in the invocation — reusing `S` with no question and leaving upstream\'s remaining re-audit attempt unspent when no audited document and no user-visible text changed (and recording a `REUSE` decision for phase `documentation` when `GX_CAPTURE=1`)',
+      '(2) **blocked or failed re-audit fallback**, after confirming the child stopped, verifying a clean working tree (`dirty-tree` absent; never auto-resetting partial edits), and confirming no non-waivable failure (unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, `docs-caps` failure, or no earlier accepted audit `S`) — reusing `S` with no question and without upgrading the blocked or failed attempt when unchanged',
       'The extra-audit allowance belongs to one invocation and its resumes (the counter file `doc-audit-extra.txt` in its evidence directory); a continuation (`/review-and-prep continue`) runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream\'s fresh budget and its own allowance.',
       'A base merge qualifies only where Git supports `--remerge-diff` (2.36 or later), so with an older Git any base merge after the audit leaves classify not applied (`git-too-old`)',
       "A reuse writes no new `record audit`, so the compact receipt's `- documentation:` line renders `not-run` for the final head",
       '`Post-audit change:` `class=` gains `undocumented-internal` and `base-merge` only under `doc-audit-gap=auto`',
       '| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present |',
       '<a id="doc-audit-gap-reasons"></a>',
+      '<a id="doc-audit-gap-classification"></a>',
     ]) {
       expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
+    }
+
+    // Track 94A: 6-case classification table in docs/workflow-handoffs.md
+    const classAt = DOC.indexOf('<a id="doc-audit-gap-classification"></a>');
+    expect(classAt).toBeGreaterThan(-1);
+    const classAfter = DOC.slice(classAt);
+    const classTableStart = classAfter.indexOf('\n|');
+    const classTableEnd = classAfter.indexOf('\n\n', classTableStart + 1);
+    const classRows = classAfter
+      .slice(classTableStart + 1, classTableEnd > -1 ? classTableEnd : undefined)
+      .split('\n')
+      .filter((l) => l.startsWith('|'))
+      .slice(2)
+      .map((l) =>
+        l
+          .trim()
+          .slice(1, -1)
+          .split('|')
+          .map((c) => c.trim()),
+      );
+    expect(classRows.map((r) => r[0]!.replace(/^`|`$/g, ''))).toEqual([
+      'documents unchanged',
+      'an audited document changed',
+      'user-visible text changed',
+      'a base merge',
+      'a blocked re-audit',
+      'a failed re-audit',
+    ]);
+    for (const [caseName, expectedFragments] of [
+      ['documents unchanged', ['Reuse earlier accepted audit `S` with no question', '`post-audit: active`', '`Post-audit change:`', '`carried-audit=<S>`', '`doc-audit-gap: active; reuse=applied`', '`- documentation: not-run`']],
+      ['an audited document changed', ['Do not reuse pre-attempt or on blocked/failed fallback', 'spend upstream\'s remaining re-audit attempt', '`doc-audit-gap: active; reuse=not-applied classify-not-applied', '`Doc-audit extra:`']],
+      ['user-visible text changed', ['Do not reuse (`documented-behavior`, `owner=needed`', 'spend upstream\'s remaining re-audit attempt', '`Post-audit change:`', '`doc-audit-gap: active; reuse=not-applied classify-not-applied']],
+      ['a base merge', ['Reuse `S` with no question when qualifying', '`class=base-merge; owner=not-needed; carried-audit=<S>`', '`doc-audit-gap: active; reuse=applied`', '`doc-audit-gap: active; reuse=not-applied <token>']],
+      ['a blocked re-audit', ['without upgrading the blocked attempt when unchanged', 'never ask the developer when unchanged', '`blocked-re-audit`', '`doc-audit-gap: active; reuse=applied`']],
+      ['a failed re-audit', ['without upgrading the failed attempt when unchanged', 'never ask the developer when unchanged', '`failed-re-audit`', '`doc-audit-gap: active; reuse=applied`']],
+    ] as const) {
+      const row = classRows.find((r) => r[0]!.replace(/^`|`$/g, '') === caseName)?.join(' ') ?? '';
+      for (const frag of expectedFragments) {
+        expect(row, `${caseName} missing ${frag}`).toContain(frag);
+      }
     }
 
     // X10: quickstart example policy line parses with parsePolicy and each example receipt line matches the skill's template

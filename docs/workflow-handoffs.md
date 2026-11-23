@@ -1121,12 +1121,29 @@ the line at a supporting install, the reason reads
 `doc-audit-gap=<value>: its only value is auto` (diagnostic values redacted),
 while a repeated `doc-audit-gap` key keeps today's repeated-key reason. The
 value needs `full-suite=external` and `post-audit=classify` on the same line and
-is otherwise independent; it is never set by the light review default, waives no
+is otherwise independent; it stays opt-in behind `doc-audit-gap=auto` (preserving
+today's default for runs with no policy line and preserving `/ship-and-land`'s
+release-only path on by-hand runs), is never set by the light review default, waives no
 other gate, never narrows or replaces the external full suite, and never
 authorizes a continuation. `auto` turns on all three additions together — the
 `undocumented-internal` class, qualifying clean base merges and one extra
 documentation audit attempt when the pull request edits no SPEC — and later
-values may narrow them, so a caller matches the exact value, not the key. The
+values may narrow them, so a caller matches the exact value, not the key.
+Under active `doc-audit-gap=auto`, `/review-and-prep` applies one single
+classification rule at three entry points: (1) **pre-attempt**, before spending
+a re-audit attempt whenever an earlier accepted (`current` or `updated`) audit
+`S` exists in the invocation — reusing `S` with no question and leaving
+upstream's remaining re-audit attempt unspent when no audited document and no
+user-visible text changed (and recording a `REUSE` decision for phase
+`documentation` when `GX_CAPTURE=1`); (2) **blocked or failed re-audit
+fallback**, after confirming the child stopped, verifying a clean working tree
+(`dirty-tree` absent; never auto-resetting partial edits), and confirming no
+non-waivable failure (unconfirmed writer, ownership violation, unauthorized Git
+mutation, redaction or security gate failure, `docs-caps` failure, or no earlier
+accepted audit `S`) — reusing `S` with no question and without upgrading the
+blocked or failed attempt when unchanged, or taking the eligible extra attempt
+or existing owner stop otherwise; and (3) **post-exhaustion**, when upstream's
+attempt budget is exhausted. The
 extra-audit allowance belongs to one invocation and its resumes (the counter
 file `doc-audit-extra.txt` in its evidence directory); a continuation
 (`/review-and-prep continue`) runs none; an ordinary new `/review-and-prep` run
@@ -1180,7 +1197,7 @@ doc-audit-gap: active; reuse=not-applied git-too-old git version 2.35.1 (needs G
 |---|---|---|---|
 | `full-suite-absent` | `doc-audit-gap: not applied — full-suite-absent <context>; evidence=<evidence locator>` | `full-suite=external` is absent from the `Review policy:` line, including when both companions are missing. Context lists every missing companion. | Add the named companions to the `Review policy:` line |
 | `post-audit-absent` | `doc-audit-gap: not applied — post-audit-absent <context>; evidence=<evidence locator>` | `post-audit=classify` is absent from the `Review policy:` line | Add `post-audit=classify` to the `Review policy:` line |
-| `no-trigger` | `doc-audit-gap: not applied — no-trigger no exhausted-audit freshness check reached; evidence=<evidence locator>` | No documentation freshness check with an exhausted audit budget was reached | None needed; the audit was not stale at its attempt limit |
+| `no-trigger` | `doc-audit-gap: not applied — no-trigger no post-audit freshness check or re-audit failure reached; evidence=<evidence locator>` | No post-audit freshness check or blocked/failed re-audit trigger was reached | None needed; the audit was not stale or failed after an accepted audit |
 | `walk-missed-snapshot` | `doc-audit-gap: active; reuse=not-applied walk-missed-snapshot <context>; evidence=<evidence locator>` | The accepted audit's snapshot HEAD `S` does not appear as a whole line of `git rev-list --first-parent HEAD` | Keep `S` on the first-parent chain (merge the base into the feature branch) or let the extra audit or owner stop handle the gap |
 | `dirty-tree` | `doc-audit-gap: active; reuse=not-applied dirty-tree <context>; evidence=<evidence locator>` | `git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` found pending changes at the trigger | Commit or clean pending working-tree changes before the freshness check |
 | `base-fetch-failed` | `doc-audit-gap: active; reuse=not-applied base-fetch-failed <context>; evidence=<evidence locator>` | Fetching the verified base remote's tip failed at the trigger (also prevents the extra audit) | Restore remote access or repository fetch state and rerun |
@@ -1189,7 +1206,20 @@ doc-audit-gap: active; reuse=not-applied git-too-old git version 2.35.1 (needs G
 | `git-too-old` | `doc-audit-gap: active; reuse=not-applied git-too-old <context>; evidence=<evidence locator>` | `git log --remerge-diff` failed because Git is older than 2.36 (context names `git --version` and `needs Git 2.36+`) | Upgrade Git on the worker machine to 2.36 or later |
 | `docs-roots-unreadable` | `doc-audit-gap: active; reuse=not-applied docs-roots-unreadable <context>; evidence=<evidence locator>` | `doc-roots-<audit_id>.txt` or the accepted audit's snapshot `docs` list is missing or unreadable | Let Prepare record the roots in a fresh audit or let the extra audit or owner stop handle the gap |
 | `command-failed` | `doc-audit-gap: active; reuse=not-applied command-failed <context>; evidence=<evidence locator>` | A git command or the NUL-split script failed unexpectedly (context names the command and exit status, with no stderr text or remote URL) | Inspect the referenced evidence file in the invocation's evidence directory and fix the command error |
-| `classify-not-applied` | `doc-audit-gap: active; reuse=not-applied classify-not-applied <context>; evidence=<evidence locator>` | Classify did not continue on a carried audit. Context gives its reason, such as a failed precondition or an `owner=needed` change. | Address the stated reason or let the extra audit or owner stop handle the gap |
+| `classify-not-applied` | `doc-audit-gap: active; reuse=not-applied classify-not-applied <context>; evidence=<evidence locator>` | Classify did not continue on a carried audit. Context gives its reason, such as a failed precondition, a non-waivable re-audit failure, no earlier accepted audit, or an `owner=needed` change. | Address the stated reason or let the remaining re-audit, eligible extra audit, or owner stop handle the gap |
+
+<a id="doc-audit-gap-classification"></a>
+
+**Documentation-audit reuse classification table (`doc-audit-gap=auto` with `full-suite=external` and `post-audit=classify`).**
+
+| Case | Reuse decision | Attempt / stop outcome | Receipt fields |
+|---|---|---|---|
+| `documents unchanged` | Reuse earlier accepted audit `S` with no question (no 1(a) protected path except `todos-only` and no 1(c) user-visible text changed) | Pre-attempt: no child dispatched, upstream's remaining re-audit attempt stays unspent (`REUSE` decision when `GX_CAPTURE=1`). Post-exhaustion: continue on `S`. | `post-audit: active`, `Post-audit change:` naming class and `carried-audit=<S>` (`reason=` names trigger phase), `doc-audit-gap: active; reuse=applied`, compact `- documentation: not-run`. |
+| `an audited document changed` | Do not reuse pre-attempt or on blocked/failed fallback (including `mechanical-correction`); post-exhaustion keeps `mechanical-correction` as `owner=not-needed` when last attempt was not blocked/failed | Pre-attempt: spend upstream's remaining re-audit attempt. Post-exhaustion/fallback: single eligible extra attempt or blocked recovery's existing owner stop. | Pre-attempt: normal re-audit receipt. Post-exhaustion/fallback without reuse: `doc-audit-gap: active; reuse=not-applied classify-not-applied <reason>; evidence=<evidence locator>`, plus `Doc-audit extra:` if evaluated. |
+| `user-visible text changed` | Do not reuse (`documented-behavior`, `owner=needed`; includes doubt or unreadable diff under 1(c)) | Pre-attempt: spend upstream's remaining re-audit attempt. Post-exhaustion/fallback: single eligible extra attempt or blocked recovery's existing owner stop. | Pre-attempt: normal re-audit receipt. Post-exhaustion/fallback without reuse: `Post-audit change:` (`class=documented-behavior; owner=needed`), `doc-audit-gap: active; reuse=not-applied classify-not-applied <reason>; evidence=<evidence locator>`, plus `Doc-audit extra:` if evaluated. |
+| `a base merge` | Reuse `S` with no question when qualifying (two-parent merge, second parent ancestor of fetched base tip, empty `--remerge-diff` on Git 2.36+, two-way merge guard passing); non-qualifying or precondition failure does not reuse | Qualifying: no attempt spent. Non-qualifying/precondition failure: pre-attempt spends remaining re-audit attempt (except `base-fetch-failed`, which fails closed); post-exhaustion takes eligible extra attempt (except `base-fetch-failed`) or owner stop. | Qualifying: `post-audit: active`, `Post-audit change:` (`class=base-merge; owner=not-needed; carried-audit=<S>`), `doc-audit-gap: active; reuse=applied`, compact `- documentation: not-run`. Non-qualifying: `doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`. |
+| `a blocked re-audit` | After confirming child stopped, clean tree, earlier accepted audit `S`, and no non-waivable failure, apply the single classification rule to `S..HEAD`: reuse `S` without upgrading the blocked attempt when unchanged; never ask the developer when unchanged | Unchanged: continue on `S` with no extra attempt. Audited doc/user-visible changed or non-waivable failure (unconfirmed writer, ownership violation, unauthorized Git mutation, redaction/security failure, `docs-caps` failure, `dirty-tree`, or no earlier accepted audit): eligible extra attempt (if waivable and unused) or blocked recovery's existing owner stop. | Unchanged fallback: `post-audit: active`, `Post-audit change:` (`carried-audit=<S>`, `reason=` names `blocked-re-audit` fallback), `doc-audit-gap: active; reuse=applied`, plus blocked attempt `audit_id`, failure mode and child-stop confirmation in full receipt `Ship gates` detail. Otherwise: `reuse=not-applied` + stop or `Doc-audit extra:`. |
+| `a failed re-audit` | After confirming child stopped, clean tree, earlier accepted audit `S`, and no non-waivable failure, apply the single classification rule to `S..HEAD`: reuse `S` without upgrading the failed attempt when unchanged; never ask the developer when unchanged | Unchanged: continue on `S` with no extra attempt. Audited doc/user-visible changed or non-waivable failure: eligible extra attempt (if waivable and unused) or blocked recovery's existing owner stop. | Unchanged fallback: `post-audit: active`, `Post-audit change:` (`carried-audit=<S>`, `reason=` names `failed-re-audit` fallback), `doc-audit-gap: active; reuse=applied`, plus failed attempt `audit_id`, failure mode/code and child-stop confirmation in full receipt `Ship gates` detail. Otherwise: `reuse=not-applied` + stop or `Doc-audit extra:`. |
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1692,7 +1722,7 @@ Release note: This fenced copy is not a disclosure.
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 | `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |
 | `post-audit:` status and `Post-audit change:` lines | receipt-present | published in the full receipt under `post-audit=classify`, one line per post-audit change naming why it did or did not need the owner; the documentation status they accompany stays the accepted audit's own and a blocked audit is never upgraded; the lines never authorize a stage or merge |
-| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present | with `doc-audit-gap=auto`, the full receipt reports the latest reuse decision or why the value was inactive. The extra-audit lines and the two new classes require both companions. The change line names the reused audit on `carried-audit=`. A reuse writes no new `record audit` and leaves the compact receipt's `- documentation:` line `not-run`. The lines never authorize a stage or merge. |
+| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present | with `doc-audit-gap=auto`, the full receipt reports the latest reuse decision (pre-attempt reuse, blocked/failed re-audit fallback without upgrading the blocked/failed attempt, or post-exhaustion) or why the value was inactive. The extra-audit lines and the two new classes require both companions. The change line names the reused audit on `carried-audit=`. A reuse writes no new `record audit` and leaves the compact receipt's `- documentation:` line `not-run`. The lines never authorize a stage or merge. |
 | `Review overlap:` line | receipt-present | published in the receipt under `first-cycle=overlap`; never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
