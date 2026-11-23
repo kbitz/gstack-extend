@@ -165,6 +165,7 @@ The by-hand budget counts unique bytes for a successful first cycle on Codex
 with metrics active, the selected Claude Code outside pass, no findings to
 handle and no Greptile.
 It includes the workflow metrics, outside adapter and cycle-baseline references.
+An outside reply that needs the recovery or annotation procedure adds 1,629 bytes.
 The span guide is read once per initialized segment. A later resume or
 compaction can require another read. The first finding-attribution path adds
 2,627 bytes. A fix-scope auto-choice adds another 1,602 bytes when taken.
@@ -262,6 +263,12 @@ first continuation candidate found the documentation and coverage instructions
 by following later sections. Its baseline replay treated an ordinary missing
 record as an I/O failure. The repaired core directs each action at its entry
 point.
+
+On the repaired core, a repeated middle-line elision probe fetched the
+missing line and reached the external checkpoint. With persistent elision it
+still blocked. With the cycle-cap reference absent, a successful simulated
+stop-comment post preserved the hold and took the reference-failure telemetry
+exit. The optional metrics probe again reached Step 2.
 
 ## Open verification
 
