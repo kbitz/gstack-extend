@@ -5,6 +5,10 @@ keeps everything needed on every run; conditional detail lives in **reference
 files** under `skills/references/<skill>/` and is fetched on demand through the
 start command (`~/.gstack-extend/bin/preamble`).
 
+See the [Track 94I acceptance record](acceptance/skill-references.md) for the
+`/review-and-prep` measurements and
+[installation troubleshooting](installation.md#skill-references) for read failures.
+
 ## Why references live under the checkout root
 
 References stay in `skills/references/<skill>/<file>.md` inside the
