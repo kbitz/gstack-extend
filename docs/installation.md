@@ -8,13 +8,13 @@
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/) **1.3.3 or newer** (verified runtime and development floor). Every Bun-backed launcher passes `--no-env-file --no-install --config=/dev/null`; `--no-env-file` was introduced in Bun 1.3.3, and earlier builds (such as 1.2.0 and 1.3.2) silently ignore it and still load `.env`.
 
-`setup`, `gstack-extend init`, and all 13 Bun-backed `bin/` launchers enforce Bun >= 1.3.3 before writing or executing. If Bun is missing, older than 1.3.3, or returns no parseable numeric version, they stop with no side effects and print one of these refusal templates:
+`setup`, `gstack-extend init`, and all 13 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
 
 ```text
 <entry>: PREREQ_BUN_MISSING Bun >= 1.3.3 is required (not on PATH); run: install Bun >= 1.3.3 (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
 <entry>: PREREQ_BUN_TOO_OLD Bun >= 1.3.3 is required (found <found> at <path>); run: upgrade Bun to >= 1.3.3 (bun upgrade, or upgrade via your package manager), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
 <entry>: PREREQ_BUN_VERSION_UNKNOWN Bun >= 1.3.3 is required (could not determine version at <path>; saw <detail>); run: upgrade or reinstall Bun >= 1.3.3 (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
-<entry>: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. No changes were made. See docs/installation.md#requirements.
+<entry>: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.
 ```
 
 | Entry points | Channel and format | Exit | Error codes / causes |
@@ -25,6 +25,8 @@
 | `upstream-check` | Three lines on stderr with `ERROR INTERNAL:`, version context and `FIX:` for an incomplete installation or broken launcher link. | 1 | `source_missing`, `symlink_loop` |
 | `merge-gate` | `ERROR <code>:` / `FIX:` on stderr, or canonical JSON object on stdout when `--json` / `--jsonl` is passed | 1 | `bun_missing`, `bun_too_old`, `bun_version_unknown`, `internal_error` |
 | `review-state` | Canonical `internal-error` JSON envelope on stdout plus `ERROR INTERNAL_ERROR:` / `FIX:` on stderr | 5 | `runtime-missing`, `runtime-too-old`, `runtime-version-unknown` |
+
+The helper refusal carries the `PREREQ_HELPER_MISSING` token in the message. For `merge-gate` and `review-state`, that includes the JSON error.
 
 A build reporting exactly Bun 1.3.3 must list `--no-env-file` in its help.
 Early canaries reported that version before the flag existed. If the check

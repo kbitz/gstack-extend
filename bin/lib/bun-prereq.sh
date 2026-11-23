@@ -87,7 +87,7 @@ _bun_prereq_refuse() {
 }
 
 _bun_prereq_floor_has_flag() {
-  if ! { BUN_PREREQ_HELP=$(NO_COLOR=1 FORCE_COLOR=0 "$BUN_PREREQ_RAW_PATH" --help); } 2>/dev/null; then
+  if ! { BUN_PREREQ_HELP=$(NO_COLOR=1 FORCE_COLOR=0 "$BUN_PREREQ_RAW_PATH" --help </dev/null); } 2>/dev/null; then
     return 1
   fi
   while IFS= read -r BUN_PREREQ_HELP_LINE; do
@@ -151,8 +151,8 @@ bun_prereq_probe() {
       ;;
   esac
   BUN_PREREQ_OUT=''
-  # Redirect the whole substitution, including diagnostics from the shell itself.
-  if { BUN_PREREQ_OUT=$("$BUN_PREREQ_RAW_PATH" --version); } 2>/dev/null; then
+  # Preserve the command's input and suppress diagnostics from the shell itself.
+  if { BUN_PREREQ_OUT=$("$BUN_PREREQ_RAW_PATH" --version </dev/null); } 2>/dev/null; then
     BUN_PREREQ_RC=0
   else
     BUN_PREREQ_RC=$?

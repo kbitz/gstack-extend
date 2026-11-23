@@ -62,9 +62,11 @@ TEMPLATES_DIR="$REPO_ROOT/scripts/init-templates"
 . "$SCRIPT_DIR/lib/install-safety.sh"
 # shellcheck source=bin/lib/projects-registry.sh
 . "$SCRIPT_DIR/lib/projects-registry.sh"
-if [ -f "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
+_bun_prereq_loaded=0
+if [ -f "$SCRIPT_DIR/lib/bun-prereq.sh" ] && [ -r "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
   # shellcheck source=bin/lib/bun-prereq.sh
   . "$SCRIPT_DIR/lib/bun-prereq.sh"
+  _bun_prereq_loaded=1
 fi
 
 # ERR trap — make set -e exits visible (line + code + call stack) rather
@@ -639,8 +641,8 @@ require_jq() {
 # require_bun
 # Mutating init needs a supported Bun before any scaffold or registry write.
 require_bun() {
-  if [ ! -f "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
-    printf '%s\n' 'gstack-extend init: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+  if [ "$_bun_prereq_loaded" -eq 0 ]; then
+    printf '%s\n' 'gstack-extend init: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
     return 1
   fi
   if ! bun_prereq_probe; then
@@ -683,8 +685,8 @@ warn_dry_run_state() {
   if [ -n "$why" ]; then
     echo "gstack-extend init: warning: registry and onboarded-state detection is unavailable because $why. Dry-run writes nothing." >&2
   fi
-  if [ ! -f "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
-    echo "gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements." >&2
+  if [ "$_bun_prereq_loaded" -eq 0 ]; then
+    echo "gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements." >&2
   elif ! bun_prereq_probe; then
     printf 'gstack-extend init: warning: %s; run: %s. Dry-run writes nothing.\n' "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX" >&2
   fi

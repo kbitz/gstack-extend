@@ -13,8 +13,8 @@ set -euo pipefail
 _SETUP_DIR=${0%/*}
 [ "$_SETUP_DIR" != "$0" ] || _SETUP_DIR=.
 _SETUP_PREREQ_HELPER="$_SETUP_DIR/bin/lib/bun-prereq.sh"
-if [ ! -f "$_SETUP_PREREQ_HELPER" ]; then
-  printf '%s\n' 'setup: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.' >&2
+if [ ! -f "$_SETUP_PREREQ_HELPER" ] || [ ! -r "$_SETUP_PREREQ_HELPER" ]; then
+  printf '%s\n' 'setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.' >&2
   exit 1
 fi
 # shellcheck source=bin/lib/bun-prereq.sh

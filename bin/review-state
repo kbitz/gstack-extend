@@ -3,8 +3,8 @@
 _dir=${0%/*}
 [ "$_dir" != "$0" ] || _dir=.
 _helper="${_dir}/lib/bun-prereq.sh"
-if [ ! -f "$_helper" ]; then
-  _msg="PREREQ_HELPER_MISSING review-state prerequisite helper missing"
+if [ ! -f "$_helper" ] || [ ! -r "$_helper" ]; then
+  _msg="PREREQ_HELPER_MISSING review-state prerequisite helper missing or unreadable"
   _fix="re-run ./setup, then rerun the identical command once; if it fails again, continue inline (D1). No changes were made. See docs/installation.md#requirements"
   printf '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"runtime-missing","message":"%s","trace":null},"fix":"%s","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}\n' "$_msg" "$_fix"
   printf 'ERROR INTERNAL_ERROR: %s\nFIX: %s\n' "$_msg" "$_fix" >&2

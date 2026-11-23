@@ -47,11 +47,11 @@ _bindir=${_src%/*}
 _root=${_bindir%/*}
 _cli=${_root}/src/merge-gate/cli.ts
 _helper=${_bindir}/lib/bun-prereq.sh
-if [ ! -f "$_helper" ]; then
+if [ ! -f "$_helper" ] || [ ! -r "$_helper" ]; then
   if [ ! -f "$_cli" ]; then
     _fail internal_error "merge-gate source missing" "re-run ~/.claude/skills/gstack-extend/setup"
   fi
-  _fail internal_error 'PREREQ_HELPER_MISSING merge-gate prerequisite helper missing' 're-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.'
+  _fail internal_error 'PREREQ_HELPER_MISSING merge-gate prerequisite helper missing or unreadable' 're-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.'
 fi
 . "$_helper"
 if ! bun_prereq_probe; then

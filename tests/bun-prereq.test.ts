@@ -220,7 +220,8 @@ exec '${REAL_BUN}' "$@"
       mkdirSync(dirname(sentinelSrc), { recursive: true });
       copyFileSync(join(REPO_ROOT, 'bin', spec.name), join(mirrorBin, spec.name));
       chmodSync(join(mirrorBin, spec.name), 0o755);
-      copyFileSync(HELPER, join(mirrorLib, 'bun-prereq.sh'));
+      const helper = join(mirrorLib, 'bun-prereq.sh');
+      copyFileSync(HELPER, helper);
       writeFileSync(sentinelSrc, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(sentinelHit)}, 'ran');\n`);
 
       const launcher = join(mirrorBin, spec.name);
@@ -265,26 +266,48 @@ exec '${REAL_BUN}' "$@"
       checkRefusal(`${oldBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_TOO_OLD', 'bun_too_old', 'runtime-too-old');
       checkRefusal(`${badBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_VERSION_UNKNOWN', 'bun_version_unknown', 'runtime-version-unknown');
 
-      // Helper missing fails closed
-      rmSync(join(mirrorLib, 'bun-prereq.sh'));
-      const hm = spawnSync('/bin/sh', [launcher, ...args], { env: { PATH: `${badBunDir}:${NO_BUN_PATH}` }, encoding: 'utf8', timeout: 15_000 });
-      expect(existsSync(sentinelHit)).toBe(false);
-      expect(hm.stderr).not.toContain('hostile');
-      if (spec.family === 'bare') {
-        expect(hm.status).toBe(1);
-        expect(hm.stderr).toContain('PREREQ_HELPER_MISSING');
-      } else if (spec.family === 'hardened') {
-        expect(hm.status).toBe(spec.name === 'upstream-check' ? 1 : 5);
-        expect(hm.stderr).toContain('source_missing:');
-      } else if (spec.family === 'merge-gate') {
-        expect(hm.status).toBe(1);
-        const response = JSON.parse(hm.stdout.trim());
-        expect(response.error.code).toBe('internal_error');
-        expect(response.error.message).toContain('PREREQ_HELPER_MISSING');
-      } else {
-        expect(hm.status).toBe(5);
-        expect(JSON.parse(hm.stdout.trim()).detail.message).toContain('PREREQ_HELPER_MISSING');
+      const checkUnavailableHelper = () => {
+        const result = spawnSync('/bin/sh', [launcher, ...args], {
+          env: { PATH: `${badBunDir}:${NO_BUN_PATH}` },
+          encoding: 'utf8',
+          timeout: 15_000,
+        });
+        expect(existsSync(sentinelHit)).toBe(false);
+        if (spec.family === 'merge-gate') {
+          expect(result.status).toBe(1);
+          expect(result.stderr).toBe('');
+          const response = JSON.parse(result.stdout.trim());
+          expect(response.error.code).toBe('internal_error');
+          expect(response.error.message).toContain('PREREQ_HELPER_MISSING');
+          expect(response.error.fix).toContain('No changes were made.');
+        } else {
+          expect(result.stderr).toContain('PREREQ_HELPER_MISSING');
+          expect(result.stderr).toContain('No changes were made.');
+          expect(result.stderr).not.toContain('hostile');
+          if (spec.family === 'review-state') {
+            expect(result.status).toBe(5);
+            expect(JSON.parse(result.stdout.trim()).detail.message).toContain('PREREQ_HELPER_MISSING');
+            expect(result.stderr.trim().split('\n')).toHaveLength(2);
+          } else if (spec.family === 'hardened') {
+            const upstream = spec.name === 'upstream-check';
+            expect(result.status).toBe(upstream ? 1 : 5);
+            expect(result.stdout).toBe('');
+            expect(result.stderr.trim().split('\n')).toHaveLength(upstream ? 3 : 2);
+            expect(result.stderr).toContain('source_missing: PREREQ_HELPER_MISSING');
+          } else {
+            expect(result.status).toBe(1);
+            expect(result.stdout).toBe('');
+            expect(result.stderr.trim().split('\n')).toHaveLength(1);
+          }
+        }
+      };
+      // Root can still read a file whose mode is 000.
+      if (process.geteuid?.() !== 0) {
+        chmodSync(helper, 0o000);
+        checkUnavailableHelper();
       }
+      rmSync(helper);
+      checkUnavailableHelper();
 
       // At-floor delegating shim passes the gate on the real launcher
       const okRun = spawnSync('/bin/sh', [join(REPO_ROOT, 'bin', spec.name), ...spec.okArgs], {
@@ -301,6 +324,32 @@ exec '${REAL_BUN}' "$@"
       }
     });
   }
+});
+
+test('roadmap-pack --stdin passes its draft through the version and floor help probes', () => {
+  const repo = freshDir('pack-stdin');
+  const shimDir = freshDir('stdin-shim');
+  makeShim(shimDir, [
+    '#!/bin/sh',
+    'case "$1" in',
+    '  --version|--help) if IFS= read -r line; then exit 99; fi ;;',
+    'esac',
+    'case "$1" in',
+    '  --version) printf "%s\\n" 1.3.3 ;;',
+    '  --help) printf "%s\\n" "  --no-env-file  Disable automatic loading" ;;',
+    '  *) exec "$TEST_REAL_BUN" "$@" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  const result = spawnSync('/bin/sh', [join(REPO_ROOT, 'bin/roadmap-pack'), '--stdin', repo], {
+    env: { PATH: `${shimDir}:${NO_BUN_PATH}`, TEST_REAL_BUN: REAL_BUN },
+    input: '## Current Plan\n##### Track 1A: Draft from stdin\n_touches: src/a.ts_\n- **Do a** -- body (S)\n',
+    encoding: 'utf8',
+    timeout: 15_000,
+  });
+  expect(result.stderr).toBe('');
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('CRITICAL_PATH: 1 waves through 1A');
 });
 
 describe('setup prerequisite gate and install hint', () => {
@@ -339,10 +388,11 @@ describe('setup prerequisite gate and install hint', () => {
       .map((l) => l.trim())
       .join('\n');
     const execHint = spawnSync('/bin/bash', ['-euo', 'pipefail', '-c', hintLines], {
-      env: { HOME: home, PATH: `${mockBin}:/usr/bin:/bin` },
+      env: { HOME: home, PATH: `${mockBin}:/usr/bin:/bin`, TMPDIR: home },
       encoding: 'utf8',
       timeout: 15_000,
     });
+    expect(execHint.stderr).toBe('');
     expect(execHint.status).toBe(0);
     expect(readFileSync(recordedArgv, 'utf8').trim()).toBe(`bun-v${hintVersion}`);
   });

@@ -44,7 +44,10 @@ done
 case "$_src" in /*) ;; *) _src=${PWD}/${_src} ;; esac
 _bindir=$(cd -P -- "${_src%/*}" && pwd -P)
 _helper=${_bindir}/lib/bun-prereq.sh
-[ -f "$_helper" ] || _fail source_missing 'upstream-check prerequisite helper missing' 're-run ./setup; see docs/installation.md#requirements'
+if [ ! -f "$_helper" ] || [ ! -r "$_helper" ]; then
+  _fail source_missing 'PREREQ_HELPER_MISSING upstream-check prerequisite helper missing or unreadable' \
+    're-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.'
+fi
 . "$_helper"
 if ! bun_prereq_probe "$_bun"; then
   _fail "$BUN_PREREQ_ERROR_CODE" "$BUN_PREREQ_TOKEN upstream-check: $BUN_PREREQ_WHAT" "$BUN_PREREQ_FIX"
