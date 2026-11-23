@@ -2,6 +2,42 @@
 
 ## Unprocessed
 
+### [review:files=src/review-state/render.ts|tests/handoff-contract.test.ts] Test gap: Reject an overlong completed Greptile SHA
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The malformed-input cases cover short SHAs. They leave removal of the right-hand SHA boundary untested.
+- **Hypothesis (untested):** Add a completed value with 41 contiguous lowercase hex digits and assert refusal. Check the actual accepted boundary first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/render.ts:102`
+- **Evidence:** The Track 94G coverage audit found the boundary in the renderer and the short-SHA case in the passing targeted suite.
+- **Context:** Track 94G review at `bc7ed59` (2026-11-23).
+- **Revisit when:** A Track changes Greptile value parsing or its handoff tests.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=src/review-state/render.ts|tests/review-state.test.ts] Test gap: Replay paused Greptile receipt recovery in the CLI suite
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The suite tests the refusal and lifecycle commands separately. The full corrected-gate sequence was verified with an isolated CLI replay during review.
+- **Hypothesis (untested):** Extend the refusal case to resume, record a corrected gate, checkpoint the pause again, and assert that the paused receipt uses the new gate.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/review-state.test.ts:1925`
+- **Evidence:** The complete pause recovery replay passed at `bc7ed59`.
+- **Context:** Track 94G review at `bc7ed59` (2026-11-23).
+- **Revisit when:** A Track changes paused receipt rendering or review-state recovery.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=docs/review-run-state-calls.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Pin the pre-ready Greptile receipt reuse check
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The final renderer's receipt mismatch test protects the byte check after finish. No test pins the caller's check for changed Greptile wording before reusing an older posted receipt.
+- **Hypothesis (untested):** Extend the resume protocol test to assert the current-renderer check before comment reuse.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `docs/review-run-state-calls.md:102`
+- **Evidence:** The coverage audit confirmed the caller instruction and the existing renderer guard.
+- **Context:** Track 94G review at `bc7ed59` (2026-11-23).
+- **Revisit when:** A Track changes ready-resume receipt reuse or its protocol tests.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: Require a nonempty draft before packing
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.

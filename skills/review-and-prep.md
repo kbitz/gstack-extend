@@ -4393,8 +4393,9 @@ pending user checks under open checks, and every line this section says to
 record goes to the full receipt (`full-receipt-<n>.md`). While the run state
 is recorded, render the full receipt and paused comment, then the PR body and
 final handoff at the calls document's **Fixed points**
-(`"<extend-root>/bin/review-state" render --help`). Use the inline fallback
-when recording is unavailable or a render is refused. The paused comment
+(`"<extend-root>/bin/review-state" render --help`). Follow that table's pause
+recovery for `greptile-value-unrecognized`. Use the inline fallback when
+recording is unavailable or another render refusal occurs. The paused comment
 carries `<!-- review-and-prep:paused:<full-sha> -->`,
 `Resume with /review-and-prep resume; do not run /ship on this draft.` and
 `Full receipt: <evidence locator>; sha256: <64 hex>`. Before posting the
@@ -5035,7 +5036,8 @@ is recorded, run `checkpoint ready`, render `full-receipt` from sections files
 holding the content below, and render `comment` for the `--body-file` post.
 After the post, render `body` with the comment permalink
 (`"<extend-root>/bin/review-state" render --help`, calls doc **Fixed points**).
-Use the inline fallback when recording is unavailable or a render is refused.
+Re-record the gate and render again on `greptile-value-unrecognized` per
+**Fixed points**. Use the inline fallback for other refusals or unavailable recording.
 Splice the one `## Review and prep` section into the PR body, preserving the
 rest of the description. Record the body's last-edited time and editor,
 re-read the body immediately before each edit, apply the receipt to that fresh
@@ -5265,8 +5267,16 @@ prompt names the PR, the review-handoff marker and the few facts the wrapper
 cannot discover, including the PR's Greptile-once limit. Replace every placeholder with actual values,
 keep exactly one Greptile alternative, and omit the `Save before shipping:` line
 when Step 6 identified no preserved unrelated changes. Do not add a pending
-alternative. The exits record only `unverified` or `skipped — user policy
-decision` outcomes, and the alternatives below already carry both:
+alternative. Written inline, copy the chosen Greptile alternative's fixed text
+exactly and fill only the reviewed SHA, the recorded reason and an E4 decision
+reference, never rewording the rest. While the run state is recorded, `render`
+writes this value and the receipt's `Greptile:` line itself from the last
+`greptile` record's status form; on a `greptile-value-unrecognized` refusal,
+record the `greptile` gate again with a published form and render again instead
+of writing the line inline. For inline E4, insert the published decision
+parenthetical after `10 minutes` (workflow handoffs **Grammar H-B**). The exits
+record only `unverified` or `skipped — user policy decision` outcomes, and the
+alternatives below carry both:
 
 ```text
 Run /ship-and-land for this prepared PR.
