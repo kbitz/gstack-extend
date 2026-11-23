@@ -1,3 +1,14 @@
 #!/bin/sh
-# Python source-root import-graph dependency map generator/checker. Source: src/pregate-deps/cli.ts
-exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/pregate-deps/cli.ts" "$@"
+# gstack-extend pregate-deps — Python pregate dependency generator, run via bun.
+_dir=${0%/*}
+[ "$_dir" != "$0" ] || _dir=.
+if [ ! -f "$_dir/lib/bun-prereq.sh" ]; then
+  printf '%s\n' 'pregate-deps: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+  exit 1
+fi
+. "$_dir/lib/bun-prereq.sh"
+if ! bun_prereq_probe; then
+  bun_prereq_print_shared 'pregate-deps' >&2
+  exit 1
+fi
+exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "$_dir/../src/pregate-deps/cli.ts" "$@"

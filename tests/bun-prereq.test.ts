@@ -1,0 +1,488 @@
+import { afterAll, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { BUN_FLOOR as LAYOUT_FLOOR, help as layoutHelp } from '../src/layout-scaffold/cli.ts';
+import { BUN_FLOOR as DOCS_SHIP_FLOOR, help as docsShipHelp } from '../src/docs-ship/cli.ts';
+import { ERROR_CODES as MERGE_GATE_ERROR_CODES } from '../src/merge-gate/registry.ts';
+
+const REPO_ROOT = resolve(import.meta.dir, '..');
+const HELPER = join(REPO_ROOT, 'bin/lib/bun-prereq.sh');
+const REAL_BUN = process.execPath;
+const BASE_TMP = mkdtempSync(join(tmpdir(), 'bun-prereq-test-'));
+
+// Build a clean PATH directory containing standard POSIX tools (jq, git, dirname, etc.)
+// but NEVER `bun`, so missing-Bun tests work even when `bun` lives in `/usr/bin/bun`.
+const NO_BUN_PATH = mkdtempSync(join(BASE_TMP, 'no-bun-path-'));
+for (const tool of [
+  'dirname', 'basename', 'mktemp', 'jq', 'git', 'cat', 'mv', 'rm', 'cp', 'mkdir',
+  'chmod', 'date', 'uname', 'env', 'awk', 'sed', 'grep', 'head', 'tail', 'tr',
+  'wc', 'sort', 'cut', 'readlink', 'sh', 'bash', 'id', 'ln', 'touch', 'sleep', 'test', 'printf',
+]) {
+  const found = spawnSync('/bin/sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' });
+  const target = found.stdout.trim();
+  if (found.status === 0 && target && target.startsWith('/') && !existsSync(join(NO_BUN_PATH, tool))) {
+    symlinkSync(target, join(NO_BUN_PATH, tool));
+  }
+}
+
+afterAll(() => {
+  rmSync(BASE_TMP, { recursive: true, force: true });
+});
+
+function freshDir(prefix: string): string {
+  return mkdtempSync(join(BASE_TMP, `${prefix}-`));
+}
+
+function makeShim(dir: string, script: string): string {
+  const path = join(dir, 'bun');
+  writeFileSync(path, script, { mode: 0o755 });
+  chmodSync(path, 0o755);
+  return path;
+}
+
+function makeDelegatingShim(dir: string, reportedVersion: string): string {
+  return makeShim(
+    dir,
+    `#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then\n  printf '%s\\n' '${reportedVersion}'\n  exit 0\nfi\nexec '${REAL_BUN}' "$@"\n`,
+  );
+}
+
+function snapshotTree(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const out: string[] = [];
+  const walk = (dir: string, rel: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const nextRel = rel ? `${rel}/${entry.name}` : entry.name;
+      out.push(`${entry.isDirectory() ? 'd' : entry.isSymbolicLink() ? 'l' : 'f'}:${nextRel}`);
+      if (entry.isDirectory()) walk(join(dir, entry.name), nextRel);
+    }
+  };
+  walk(root, '');
+  return out.sort();
+}
+
+function runProbe(shell: string, env: Record<string, string | undefined>, probeArg?: string) {
+  const script = `
+set -eu
+_bun='sentinel-bun'
+IFS=':'
+. "$1"
+if bun_prereq_probe ${probeArg ? '"$2"' : ''}; then
+  rc=0
+else
+  rc=$?
+fi
+printf 'RC=%s\\nCLASS=%s\\nTOKEN=%s\\nCODE=%s\\nFOUND=%s\\nPATH=%s\\nIFS_OK=%s\\nBUN_OK=%s\\n' \
+  "$rc" "$BUN_PREREQ_CLASS" "$BUN_PREREQ_TOKEN" "$BUN_PREREQ_ERROR_CODE" "$BUN_PREREQ_FOUND" "$BUN_PREREQ_PATH" \
+  "$([ "$IFS" = ":" ] && echo yes || echo no)" \
+  "$([ "$_bun" = "sentinel-bun" ] && echo yes || echo no)"
+`;
+  const args = ['-c', script, 'probe', HELPER, ...(probeArg ? [probeArg] : [])];
+  const r = spawnSync(shell, args, { env, encoding: 'utf8', timeout: 15_000 });
+  const map: Record<string, string> = {};
+  for (const line of r.stdout.trim().split('\n')) {
+    const idx = line.indexOf('=');
+    if (idx > 0) map[line.slice(0, idx)] = line.slice(idx + 1);
+  }
+  return { status: r.status, stderr: r.stderr, stdout: r.stdout, map };
+}
+
+const SHELLS = ['/bin/sh'];
+const dashCheck = spawnSync('/bin/sh', ['-c', 'command -v dash'], { encoding: 'utf8' });
+if (dashCheck.status === 0 && dashCheck.stdout.trim()) {
+  SHELLS.push(dashCheck.stdout.trim());
+}
+
+describe('bin/lib/bun-prereq.sh probe unit matrix', () => {
+  for (const shell of SHELLS) {
+    test(`(${shell}) missing PATH (empty, unset, nonexistent) returns missing and preserves IFS/_bun`, () => {
+      for (const env of [{ PATH: '' }, { PATH: '/nonexistent-dir-94h' }]) {
+        const r = runProbe(shell, env);
+        expect(r.status).toBe(0);
+        expect(r.stderr).toBe('');
+        expect(r.map.RC).toBe('1');
+        expect(r.map.CLASS).toBe('missing');
+        expect(r.map.TOKEN).toBe('PREREQ_BUN_MISSING');
+        expect(r.map.CODE).toBe('bun_missing');
+        expect(r.map.PATH).toBe('not on PATH');
+        expect(r.map.IFS_OK).toBe('yes');
+        expect(r.map.BUN_OK).toBe('yes');
+      }
+      // Explicitly unset PATH inside the shell so /bin/sh does not seed a default PATH.
+      const unsetRun = spawnSync(
+        shell,
+        ['-c', 'set -eu; unset PATH; . "$1"; if bun_prereq_probe; then echo OK; else printf "CLASS=%s TOKEN=%s\\n" "$BUN_PREREQ_CLASS" "$BUN_PREREQ_TOKEN"; fi', 'unset-probe', HELPER],
+        { env: { PATH: '' }, encoding: 'utf8', timeout: 15_000 },
+      );
+      expect(unsetRun.status).toBe(0);
+      expect(unsetRun.stderr).toBe('');
+      expect(unsetRun.stdout.trim()).toBe('CLASS=missing TOKEN=PREREQ_BUN_MISSING');
+    });
+
+    test(`(${shell}) version boundary matrix (too_old, at-floor, newer, suffixed, unknown)`, () => {
+      const cases: Array<{ label: string; script: string; expectedClass: string; expectedToken: string }> = [
+        { label: '1.2.0', script: '#!/bin/sh\necho 1.2.0\n', expectedClass: 'too_old', expectedToken: 'PREREQ_BUN_TOO_OLD' },
+        { label: '1.3.2', script: '#!/bin/sh\necho 1.3.2\n', expectedClass: 'too_old', expectedToken: 'PREREQ_BUN_TOO_OLD' },
+        { label: '1.3.2-canary.1', script: '#!/bin/sh\necho 1.3.2-canary.1\n', expectedClass: 'too_old', expectedToken: 'PREREQ_BUN_TOO_OLD' },
+        { label: '01.03.02', script: '#!/bin/sh\necho 01.03.02\n', expectedClass: 'too_old', expectedToken: 'PREREQ_BUN_TOO_OLD' },
+        { label: '1.3', script: '#!/bin/sh\necho 1.3\n', expectedClass: 'too_old', expectedToken: 'PREREQ_BUN_TOO_OLD' },
+        { label: '1.3.3', script: '#!/bin/sh\necho 1.3.3\n', expectedClass: 'ok', expectedToken: '' },
+        { label: 'v1.3.3', script: '#!/bin/sh\necho v1.3.3\n', expectedClass: 'ok', expectedToken: '' },
+        { label: '1.3.3-canary.1', script: '#!/bin/sh\necho 1.3.3-canary.1\n', expectedClass: 'ok', expectedToken: '' },
+        { label: '1.3.3+build.9', script: '#!/bin/sh\necho 1.3.3+build.9\n', expectedClass: 'ok', expectedToken: '' },
+        { label: '01.03.03', script: '#!/bin/sh\necho 01.03.03\n', expectedClass: 'ok', expectedToken: '' },
+        { label: '1.3.3.0', script: '#!/bin/sh\necho 1.3.3.0\n', expectedClass: 'ok', expectedToken: '' },
+        { label: '1.4.3', script: '#!/bin/sh\necho 1.4.3\n', expectedClass: 'ok', expectedToken: '' },
+        { label: '2.0', script: '#!/bin/sh\necho 2.0\n', expectedClass: 'ok', expectedToken: '' },
+        { label: 'exit-nonzero', script: '#!/bin/sh\nexit 42\n', expectedClass: 'unknown', expectedToken: 'PREREQ_BUN_VERSION_UNKNOWN' },
+        { label: 'empty-output', script: '#!/bin/sh\nexit 0\n', expectedClass: 'unknown', expectedToken: 'PREREQ_BUN_VERSION_UNKNOWN' },
+        { label: 'single-component', script: '#!/bin/sh\necho 1\n', expectedClass: 'unknown', expectedToken: 'PREREQ_BUN_VERSION_UNKNOWN' },
+        { label: 'five-components', script: '#!/bin/sh\necho 1.2.3.4.5\n', expectedClass: 'unknown', expectedToken: 'PREREQ_BUN_VERSION_UNKNOWN' },
+        { label: 'ten-digit-component', script: '#!/bin/sh\necho 1.1234567890.0\n', expectedClass: 'unknown', expectedToken: 'PREREQ_BUN_VERSION_UNKNOWN' },
+        { label: 'non-numeric', script: '#!/bin/sh\necho bogus-version\n', expectedClass: 'unknown', expectedToken: 'PREREQ_BUN_VERSION_UNKNOWN' },
+      ];
+      for (const c of cases) {
+        const dir = freshDir('shim');
+        const shim = makeShim(dir, c.script);
+        const r = runProbe(shell, { PATH: `${dir}:/usr/bin:/bin` }, shim);
+        expect(r.status).toBe(0);
+        expect(r.stderr).toBe('');
+        expect(r.map.CLASS).toBe(c.expectedClass);
+        expect(r.map.TOKEN).toBe(c.expectedToken);
+        expect(r.map.IFS_OK).toBe('yes');
+        expect(r.map.BUN_OK).toBe('yes');
+      }
+    });
+
+    test(`(${shell}) hostile probe output is sanitized to [0-9A-Za-z.+/_-] truncated at 64 chars`, () => {
+      const dir = freshDir('hostile');
+      const longJunk = `bad"quote\\slash$env\`cmd\`${'A'.repeat(100)}\nSECOND_LINE`;
+      const shim = makeShim(dir, `#!/bin/sh\nprintf '%s' '${longJunk.replace(/'/g, "'\\''")}'\n`);
+      const r = runProbe(shell, { PATH: `${dir}:/usr/bin:/bin` }, shim);
+      expect(r.map.CLASS).toBe('unknown');
+      expect(r.map.FOUND.length).toBeLessThanOrEqual(64);
+      expect(r.map.FOUND).toMatch(/^[0-9A-Za-z.+/_-]+$/);
+      expect(r.map.FOUND).not.toContain('SECOND_LINE');
+    });
+  }
+});
+
+type LauncherSpec = {
+  name: string;
+  family: 'bare' | 'hardened' | 'merge-gate' | 'review-state';
+  srcRel: string;
+  okArgs: string[];
+};
+
+const ALL_LAUNCHERS: LauncherSpec[] = [
+  { name: 'roadmap-audit', family: 'bare', srcRel: 'src/audit/cli.ts', okArgs: ['--help'] },
+  { name: 'roadmap-pack', family: 'bare', srcRel: 'src/audit/pack-cli.ts', okArgs: ['--help'] },
+  { name: 'roadmap-touches', family: 'bare', srcRel: 'src/audit/touches-cli.ts', okArgs: [] },
+  { name: 'roadmap-renumber', family: 'bare', srcRel: 'src/audit/renumber-cli.ts', okArgs: [] },
+  { name: 'outside-review', family: 'bare', srcRel: 'src/outside-review/cli.ts', okArgs: ['--help'] },
+  { name: 'secret-dispositions', family: 'bare', srcRel: 'src/secret-dispositions/cli.ts', okArgs: ['--help'] },
+  { name: 'pregate-deps', family: 'bare', srcRel: 'src/pregate-deps/cli.ts', okArgs: ['--help'] },
+  { name: 'review-delegate', family: 'bare', srcRel: 'src/review-delegate/cli.ts', okArgs: ['--help'] },
+  { name: 'layout-scaffold', family: 'hardened', srcRel: 'src/layout-scaffold/cli.ts', okArgs: ['--help'] },
+  { name: 'docs-ship', family: 'hardened', srcRel: 'src/docs-ship/cli.ts', okArgs: ['--help'] },
+  { name: 'upstream-check', family: 'hardened', srcRel: 'src/upstream-check/cli.ts', okArgs: ['--help'] },
+  { name: 'merge-gate', family: 'merge-gate', srcRel: 'src/merge-gate/cli.ts', okArgs: ['--version', '--json'] },
+  { name: 'review-state', family: 'review-state', srcRel: 'src/review-state/cli.ts', okArgs: ['--help'] },
+];
+
+describe('all 13 gated bin/ launchers', () => {
+  const oldBunDir = freshDir('old-bun');
+  makeShim(oldBunDir, '#!/bin/sh\necho 1.2.0\n');
+  const badBunDir = freshDir('bad-bun');
+  makeShim(badBunDir, '#!/bin/sh\nprintf \'hostile"\\n\\toutput\'\n');
+  const floorBunDir = freshDir('floor-bun');
+  makeDelegatingShim(floorBunDir, '1.3.3');
+
+  for (const spec of ALL_LAUNCHERS) {
+    test(`${spec.name}: missing, too_old, unknown, helper-missing refuse without executing TS; at-floor passes`, () => {
+      // Build a scratch mirror of bin/<name> + sentinel TS target to prove TS never runs on refusal.
+      const mirror = freshDir(`mirror-${spec.name}`);
+      const mirrorBin = join(mirror, 'bin');
+      const mirrorLib = join(mirrorBin, 'lib');
+      const sentinelSrc = join(mirror, spec.srcRel);
+      const sentinelHit = join(mirror, 'ts-ran.marker');
+      mkdirSync(mirrorLib, { recursive: true });
+      mkdirSync(dirname(sentinelSrc), { recursive: true });
+      copyFileSync(join(REPO_ROOT, 'bin', spec.name), join(mirrorBin, spec.name));
+      chmodSync(join(mirrorBin, spec.name), 0o755);
+      copyFileSync(HELPER, join(mirrorLib, 'bun-prereq.sh'));
+      writeFileSync(sentinelSrc, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(sentinelHit)}, 'ran');\n`);
+
+      const launcher = join(mirrorBin, spec.name);
+      const args = spec.family === 'merge-gate' ? ['--version', '--json'] : ['--help'];
+
+      const checkRefusal = (pathEnv: string, expectedToken: string, expectedCode: string, expectedCause: string) => {
+        const r = spawnSync('/bin/sh', [launcher, ...args], { env: { PATH: pathEnv }, encoding: 'utf8', timeout: 15_000 });
+        expect(existsSync(sentinelHit)).toBe(false);
+        if (spec.family === 'bare') {
+          expect(r.status).toBe(1);
+          expect(r.stdout).toBe('');
+          expect(r.stderr.trim().split('\n')).toHaveLength(1);
+          expect(r.stderr).toContain(`${spec.name}: ${expectedToken}`);
+          expect(r.stderr).toContain('No changes were made.');
+          expect(r.stderr).toContain('docs/installation.md#requirements');
+        } else if (spec.family === 'hardened') {
+          expect(r.status).toBe(5);
+          expect(r.stdout).toBe('');
+          expect(r.stderr).toContain(`ERROR ${expectedCode}: ${expectedToken}`);
+          expect(r.stderr).toContain('FIX:');
+          expect(r.stderr).toContain('docs/installation.md#requirements');
+        } else if (spec.family === 'merge-gate') {
+          expect(r.status).toBe(1);
+          const parsed = JSON.parse(r.stdout.trim());
+          expect(parsed.error.code).toBe(expectedCode);
+          expect(parsed.error.message).toContain(expectedToken);
+          expect(parsed.error.fix).toContain('docs/installation.md#requirements');
+        } else {
+          expect(r.status).toBe(5);
+          const parsed = JSON.parse(r.stdout.trim());
+          expect(parsed.reason).toBe('internal-error');
+          expect(parsed.detail.cause).toBe(expectedCause);
+          expect(parsed.detail.message).toContain(expectedToken);
+          expect(r.stderr).toContain(`ERROR INTERNAL_ERROR: ${expectedToken}`);
+        }
+      };
+
+      checkRefusal(NO_BUN_PATH, 'PREREQ_BUN_MISSING', 'bun_missing', 'runtime-missing');
+      checkRefusal(`${oldBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_TOO_OLD', 'bun_too_old', 'runtime-too-old');
+      checkRefusal(`${badBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_VERSION_UNKNOWN', 'bun_version_unknown', 'runtime-version-unknown');
+
+      // Helper missing fails closed
+      rmSync(join(mirrorLib, 'bun-prereq.sh'));
+      const hm = spawnSync('/bin/sh', [launcher, ...args], { env: { PATH: `${floorBunDir}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 15_000 });
+      expect(existsSync(sentinelHit)).toBe(false);
+      if (spec.family === 'bare') {
+        expect(hm.status).toBe(1);
+        expect(hm.stderr).toContain('PREREQ_HELPER_MISSING');
+      } else if (spec.family === 'hardened') {
+        expect(hm.status).toBe(spec.name === 'upstream-check' ? 1 : 5);
+        expect(hm.stderr).toContain('source_missing:');
+      } else if (spec.family === 'merge-gate') {
+        expect(hm.status).toBe(1);
+        expect(JSON.parse(hm.stdout.trim()).error.code).toBe('internal_error');
+      } else {
+        expect(hm.status).toBe(5);
+        expect(JSON.parse(hm.stdout.trim()).detail.message).toContain('PREREQ_HELPER_MISSING');
+      }
+
+      // At-floor delegating shim passes the gate on the real launcher
+      const okRun = spawnSync('/bin/sh', [join(REPO_ROOT, 'bin', spec.name), ...spec.okArgs], {
+        env: { PATH: `${floorBunDir}:${NO_BUN_PATH}`, HOME: freshDir(`ok-home-${spec.name}`) },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+      // roadmap-touches / roadmap-renumber exit 1 on empty args with usage text (confirming TS ran, not prereq gate)
+      expect(okRun.stderr).not.toContain('PREREQ_BUN_');
+      if (spec.okArgs.length > 0) {
+        expect(okRun.status).toBe(0);
+      } else {
+        expect(okRun.stdout + okRun.stderr).toContain('usage:');
+      }
+    });
+  }
+});
+
+describe('setup prerequisite gate and install hint', () => {
+  test('missing Bun prints checksum hint that passes bun-v<ver> as first argument to installer', () => {
+    const home = freshDir('setup-missing-home');
+    const before = snapshotTree(home);
+    const noBunDir = freshDir('no-bun-bin');
+    // Provide basic POSIX tools (dirname, mktemp, etc.) without bun
+    const r = spawnSync('/bin/bash', [join(REPO_ROOT, 'setup'), '--host', 'claude'], {
+      env: { HOME: home, PATH: NO_BUN_PATH },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('setup: PREREQ_BUN_MISSING');
+    expect(r.stderr).toContain('shasum -a 256');
+    expect(snapshotTree(home)).toEqual(before);
+
+    // Execute the printed hint offline against a mock curl that writes a mock installer recording its argv.
+    const versionMatch = r.stderr.match(/BUN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"/);
+    expect(versionMatch).not.toBeNull();
+    const hintVersion = versionMatch![1]!;
+    const [maj, min, pat] = hintVersion.split('.').map(Number);
+    expect(maj! > 1 || (maj === 1 && (min! > 3 || (min === 3 && pat! >= 3)))).toBe(true);
+
+    const mockBin = freshDir('mock-curl-bin');
+    const recordedArgv = join(mockBin, 'installer-argv.txt');
+    writeFileSync(
+      join(mockBin, 'curl'),
+      `#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "-o" ]; then out="$2"; shift 2; else shift; fi\ndone\ncat > "$out" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' "$@" > '${recordedArgv}'\nEOF\n`,
+      { mode: 0o755 },
+    );
+    chmodSync(join(mockBin, 'curl'), 0o755);
+
+    const hintLines = r.stderr
+      .split('\n')
+      .filter((l) => l.startsWith('  '))
+      .map((l) => l.trim())
+      .join('\n');
+    const execHint = spawnSync('/bin/bash', ['-euo', 'pipefail', '-c', hintLines], {
+      env: { HOME: home, PATH: `${mockBin}:/usr/bin:/bin` },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(execHint.status).toBe(0);
+    expect(readFileSync(recordedArgv, 'utf8').trim()).toBe(`bun-v${hintVersion}`);
+  });
+
+  test('old Bun refuses cleanly with PREREQ_BUN_TOO_OLD, no stack trace, and zero filesystem writes', () => {
+    const home = freshDir('setup-old-home');
+    const before = snapshotTree(home);
+    const oldBun = freshDir('setup-old-bun');
+    makeShim(oldBun, '#!/bin/sh\necho 1.2.0\n');
+    const r = spawnSync('/bin/bash', [join(REPO_ROOT, 'setup'), '--host', 'claude'], {
+      env: { HOME: home, PATH: `${oldBun}:/usr/bin:/bin` },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('setup: PREREQ_BUN_TOO_OLD');
+    expect(r.stderr).toContain('found 1.2.0');
+    expect(r.stderr).not.toContain('correct the path or permissions');
+    expect(r.stderr).not.toContain('SyntaxError');
+    expect(snapshotTree(home)).toEqual(before);
+  });
+});
+
+describe('gstack-extend init prerequisite gate, dry-run, --help, and self-registration scheme', () => {
+  test('mutating init refuses on missing or old Bun without creating target dir or registry', () => {
+    const oldBun = freshDir('init-old-bun');
+    makeShim(oldBun, '#!/bin/sh\necho 1.2.0\n');
+
+    for (const [label, pathEnv, token] of [
+      ['missing', NO_BUN_PATH, 'PREREQ_BUN_MISSING'],
+      ['too_old', `${oldBun}:${NO_BUN_PATH}`, 'PREREQ_BUN_TOO_OLD'],
+    ] as const) {
+      const state = freshDir(`init-state-${label}`);
+      const parent = freshDir(`init-parent-${label}`);
+      const target = join(parent, 'brand-new-project');
+      const r = spawnSync('/bin/bash', [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--no-prompt', target], {
+        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, PATH: pathEnv },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(`gstack-extend init: ${token}`);
+      expect(existsSync(target)).toBe(false);
+      expect(existsSync(join(state, 'projects.json'))).toBe(false);
+    }
+  });
+
+  test('init --dry-run warns on stderr under missing/old Bun and writes nothing; init --help exits 0', () => {
+    const state = freshDir('init-dry-state');
+    const parent = freshDir('init-dry-parent');
+    const target = join(parent, 'dry-proj');
+
+    const help = spawnSync('/bin/bash', [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--help'], {
+      env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, PATH: NO_BUN_PATH },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('Usage:');
+
+    const dry = spawnSync('/bin/bash', [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--dry-run', target], {
+      env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, PATH: NO_BUN_PATH },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(dry.status).toBe(0);
+    expect(dry.stderr).toContain('PREREQ_BUN_MISSING');
+    expect(dry.stderr).toContain('Dry-run writes nothing');
+    expect(existsSync(target)).toBe(false);
+    expect(existsSync(join(state, 'projects.json'))).toBe(false);
+  });
+
+  test('self-registration prints and stores 3-digit while consumer projects keep 4-digit', () => {
+    const state = freshDir('scheme-state');
+    const gstackState = freshDir('scheme-gstack');
+    const selfRun = spawnSync(
+      '/bin/bash',
+      [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--migrate', '--no-prompt', '--name', 'gstack-extend', REPO_ROOT],
+      {
+        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:/usr/bin:/bin` },
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    expect(selfRun.stdout).toContain('version_scheme: 3-digit');
+    const reg1 = JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8'));
+    const selfEntry = reg1.projects.find((p: { name: string }) => p.name === 'gstack-extend');
+    expect(selfEntry?.version_scheme).toBe('3-digit');
+
+    const consumerDir = freshDir('consumer-proj');
+    const consumerRun = spawnSync(
+      '/bin/bash',
+      [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--no-prompt', '--name', 'demo-consumer', consumerDir],
+      {
+        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:/usr/bin:/bin` },
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    expect(consumerRun.stdout).toContain('version_scheme: 4-digit');
+    const reg2 = JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8'));
+    const consumerEntry = reg2.projects.find((p: { name: string }) => p.name === 'demo-consumer');
+    expect(consumerEntry?.version_scheme).toBe('4-digit');
+  });
+});
+
+describe('--help and -h for roadmap-audit, roadmap-pack, and outside-review', () => {
+  for (const binName of ['roadmap-audit', 'roadmap-pack', 'outside-review']) {
+    for (const flag of ['--help', '-h']) {
+      test(`${binName} ${flag} prints usage on stdout, exits 0, and writes nothing`, () => {
+        const scratch = freshDir(`help-${binName}`);
+        const helpHome = freshDir(`help-home-${binName}`);
+        const before = snapshotTree(scratch);
+        const r = spawnSync('/bin/sh', [join(REPO_ROOT, 'bin', binName), flag], {
+          cwd: scratch,
+          env: { PATH: `${dirname(REAL_BUN)}:${NO_BUN_PATH}`, HOME: helpHome },
+          encoding: 'utf8',
+          timeout: 15_000,
+        });
+        expect(r.status).toBe(0);
+        expect(r.stderr).toBe('');
+        expect(r.stdout).toContain(`Usage: ${binName}`);
+        expect(snapshotTree(scratch)).toEqual(before);
+      });
+    }
+  }
+});
+
+describe('floor agreement and launcher code registration', () => {
+  test('every live Bun floor declaration matches BUN_PREREQ_MIN and every launcher code is registered', () => {
+    const helperText = readFileSync(HELPER, 'utf8');
+    const floor = helperText.match(/^BUN_PREREQ_MIN='([0-9]+\.[0-9]+\.[0-9]+)'$/m)?.[1];
+    expect(floor).toBe('1.3.3');
+
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+    expect(pkg.engines.bun).toBe(`>=${floor}`);
+    expect(LAYOUT_FLOOR).toBe(floor);
+    expect(DOCS_SHIP_FLOOR).toBe(floor);
+
+    for (const docPath of ['README.md', 'docs/installation.md', 'CLAUDE.md']) {
+      expect(readFileSync(join(REPO_ROOT, docPath), 'utf8')).toContain(floor!);
+    }
+
+    for (const hardened of ['bin/layout-scaffold', 'bin/docs-ship', 'bin/upstream-check']) {
+      expect(readFileSync(join(REPO_ROOT, hardened), 'utf8')).toContain(`Bun >= ${floor}`);
+    }
+
+    // Every launcher-emittable Bun code is registered in merge-gate registry and hardened CLI help text.
+    for (const code of ['bun_missing', 'bun_too_old', 'bun_version_unknown'] as const) {
+      expect(MERGE_GATE_ERROR_CODES).toContain(code);
+      expect(layoutHelp()).toContain(code);
+      expect(docsShipHelp()).toContain(code);
+    }
+  });
+});

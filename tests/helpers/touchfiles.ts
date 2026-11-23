@@ -90,6 +90,28 @@ function skill(name: string): string {
  * selection and `bun run test` read the same edges.
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
+  'tests/bun-prereq.test.ts': [
+    'bin/lib/bun-prereq.sh',
+    'bin/roadmap-audit',
+    'bin/roadmap-pack',
+    'bin/roadmap-touches',
+    'bin/roadmap-renumber',
+    'bin/outside-review',
+    'bin/secret-dispositions',
+    'bin/pregate-deps',
+    'bin/review-delegate',
+    'bin/layout-scaffold',
+    'bin/docs-ship',
+    'bin/upstream-check',
+    'bin/merge-gate',
+    'bin/review-state',
+    'setup',
+    'bin/gstack-extend',
+    'README.md',
+    'docs/installation.md',
+    'CLAUDE.md',
+    'package.json',
+  ],
   'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', '.gstack/secret-dispositions.json', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
   'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
   'tests/review-state.test.ts': ['bin/review-state', 'bin/lib/workflow_metrics.py', 'docs/designs/review-run-state.md', 'docs/review-run-state-calls.md'],
@@ -261,6 +283,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('full-review'),
     'setup',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     // Track 92A: update-run fixtures and resolver probes run the start command.
     'bin/lib/preamble.sh',
     // Track 28A locks the rollback block's update-check pause.
@@ -273,6 +296,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -285,6 +309,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -294,6 +319,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -304,6 +330,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/setup-hosts.test.ts': [
     'setup',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     // Track 49A: setup copies this helper to the fixed path the blocks call.
     'bin/lib/telemetry-call.sh',
     // Track 92A: setup copies the start command before publishing skills.
@@ -321,6 +348,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -346,6 +374,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     // bin/gstack-extend sources these at startup; the round-trip test runs its doctor subcommand.
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
     'bin/lib/workflow_metrics.py',
@@ -367,6 +396,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'skills/**',
     'setup',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/telemetry-call.sh',
     'bin/lib/preamble.sh',
     'bin/gstack-extend',
@@ -386,6 +416,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'docs/workflow-metrics.schema.json',
     // The v1 quota-reader fixture runs `gstack-extend quota runs`.
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/quota-cli.py',
     'bin/lib/quota/**',
@@ -400,6 +431,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/gstack-extend-telemetry',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry-call.sh',
     'bin/lib/telemetry*.py',

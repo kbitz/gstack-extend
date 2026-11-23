@@ -1865,7 +1865,7 @@ describe('launcher', () => {
     const r = spawnSync('/bin/sh', [LAUNCHER, '--help'], { encoding: 'utf8', timeout: 20000, env: { PATH: '/nonexistent:relative' } });
     expect(r.status).toBe(5);
     expect(r.stdout).toBe('');
-    expect(r.stderr).toMatch(/^ERROR bun_missing: .+\nFIX: install Bun >= 1\.3\.3; see upstream-check --help\n$/);
+    expect(r.stderr).toMatch(/^ERROR bun_missing: PREREQ_BUN_MISSING .+\nFIX: install Bun >= 1\.3\.3 .+docs\/installation\.md#requirements\n$/);
   }, 30000);
 
   test('a copied tree with a reworded in-cap paragraph reports DRIFT inventory and exits 4', () => {
@@ -1873,6 +1873,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(HEADING, "**`/review`'s repeat cycles (`in-cap=delta`).**"));
@@ -1891,6 +1892,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(FIX_FIRST_HEADING, '**Activation of the repair value.**'));
@@ -1910,6 +1912,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(TEST_GAP_HEADING, '**Activation of the gap value.**'));
@@ -1929,6 +1932,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(PREGATE_NARROW_HEADING, '**Activation of the narrowing.**'));
@@ -1947,6 +1951,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(DELEGATE_HEADING, '**Activation of delegation.**'));
@@ -1966,6 +1971,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(FOLD_HEADING, '**Activation of the fold.**'));
@@ -1985,6 +1991,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     mkdirSync(join(copy, 'bin'));
     cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
     put(join(copy, 'skills', 'review-and-prep.md'),
       readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(OVERLAP_HEADING, '**Activation of overlap.**'));
@@ -2002,6 +2009,7 @@ describe('launcher', () => {
     const copy = fresh('missing-local-module');
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     put(join(copy, 'VERSION'), '9.9.9\n');
     rmSync(join(copy, 'src', 'secret-dispositions', 'evaluate.ts'));
     for (const args of [[], ['--bogus']]) {
@@ -2024,6 +2032,7 @@ describe('launcher', () => {
   test('a missing launcher source is an internal installation failure, not missing Bun', () => {
     const copy = fresh('missing-launcher-source');
     put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     const r = launch(['--help'], {}, cwd, join(copy, 'bin', 'upstream-check'));
     expect(r.status).toBe(1);
     expect(r.stdout).toBe('');
@@ -2037,6 +2046,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
     put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     put(join(copy, 'VERSION'), '9.9.9\n');
     const probePath = join(copy, 'src', 'upstream-check', 'probe.ts');
     const source = readFileSync(probePath, 'utf8');
@@ -2059,6 +2069,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
     put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     put(join(copy, 'VERSION'), '9.9.9\n');
     const probe = join(copy, 'src', 'upstream-check', 'probe.ts');
     const source = readFileSync(probe, 'utf8');
@@ -2077,6 +2088,7 @@ describe('launcher', () => {
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
     cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
     put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
     put(join(copy, 'VERSION'), '9.9.9\n');
     const cli = join(copy, 'src', 'upstream-check', 'cli.ts');
     const source = readFileSync(cli, 'utf8');

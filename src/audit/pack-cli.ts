@@ -49,7 +49,23 @@ function repoRootFromArgv(argv: string[]): string {
   return rest[0] ?? process.cwd();
 }
 
+const USAGE = `Usage: roadmap-pack [repo-path] [--from <path> | --stdin] [--materialize]
+       roadmap-pack --help | -h
+
+Pack unshipped roadmap Tracks into dependency-aware parallel bins.
+
+Options:
+  [repo-path]    Repository root containing ROADMAP.md (defaults to cwd)
+  --from <path>  Pack a draft roadmap file instead of the live ROADMAP.md
+  --stdin        Read a draft roadmap from stdin
+  --materialize  Print implicit previous-Group edges and packed bins
+  -h, --help     Show this help and exit 0
+`;
+
 export function runPackCli(argv: string[], stdinText?: string): string {
+  if (argv[0] === '--help' || argv[0] === '-h') {
+    return USAGE;
+  }
   const repoRoot = repoRootFromArgv(argv);
   const materialize = argv.includes('--materialize');
   const fromPath = takeFlagValue(argv, '--from');

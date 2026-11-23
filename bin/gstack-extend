@@ -62,6 +62,10 @@ TEMPLATES_DIR="$REPO_ROOT/scripts/init-templates"
 . "$SCRIPT_DIR/lib/install-safety.sh"
 # shellcheck source=bin/lib/projects-registry.sh
 . "$SCRIPT_DIR/lib/projects-registry.sh"
+if [ -f "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
+  # shellcheck source=bin/lib/bun-prereq.sh
+  . "$SCRIPT_DIR/lib/bun-prereq.sh"
+fi
 
 # ERR trap — make set -e exits visible (line + code + call stack) rather
 # than silent. Shared helper from install-safety.sh; existing bins adopt
@@ -631,6 +635,20 @@ require_jq() {
   return 1
 }
 
+# require_bun
+# Mutating init needs a supported Bun before any scaffold or registry write.
+require_bun() {
+  if [ ! -f "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
+    printf '%s\n' 'gstack-extend init: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+    return 1
+  fi
+  if ! bun_prereq_probe; then
+    bun_prereq_print_shared 'gstack-extend init' >&2
+    return 1
+  fi
+  return 0
+}
+
 # preflight_existing_registry
 # Validate a registry that already exists. Do not create an absent one.
 preflight_existing_registry() {
@@ -644,7 +662,7 @@ preflight_existing_registry() {
 
 # warn_dry_run_state
 # Dry-run still writes nothing. Say when registry or onboarded-state
-# detection cannot be checked.
+# detection cannot be checked, or when Bun does not meet the runtime floor.
 warn_dry_run_state() {
   local why="" path
   if ! command -v jq >/dev/null 2>&1; then
@@ -657,6 +675,11 @@ warn_dry_run_state() {
   fi
   if [ -n "$why" ]; then
     echo "gstack-extend init: warning: registry and onboarded-state detection is unavailable because $why. Dry-run writes nothing." >&2
+  fi
+  if [ ! -f "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
+    echo "gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements." >&2
+  elif ! bun_prereq_probe; then
+    echo "gstack-extend init: warning: $(bun_prereq_print_shared 'gstack-extend init') Dry-run writes nothing." >&2
   fi
 }
 
@@ -786,6 +809,7 @@ cmd_init() {
     warn_dry_run_state
   else
     require_jq || return 1
+    require_bun || return 1
     preflight_existing_registry || return 1
   fi
 
@@ -841,6 +865,11 @@ cmd_init() {
   if [ "$dry_run" = "1" ]; then
     echo "gstack-extend init: DRY RUN — no files will be written."
   fi
+  local version_scheme="4-digit"
+  if [ "$target_abs" = "$REPO_ROOT" ]; then
+    version_scheme="3-digit"
+  fi
+
   local migrate_label=""
   [ "$migrate" = "1" ] && migrate_label=" (--migrate)"
   cat <<EOF
@@ -850,7 +879,7 @@ gstack-extend init: $target_abs
   language:       $lang
   base_branch:    $base_branch
   remote_url:     ${remote:-(none)}
-  version_scheme: 4-digit
+  version_scheme: $version_scheme
   state:          ${state}${migrate_label}
 
 EOF
@@ -889,7 +918,7 @@ EOF
   # replaces a stale entry at this path or one with a colliding slug.
   local created_policy=fresh
   [ "$migrate" = "1" ] && created_policy=keep
-  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at" "$created_policy"; then
+  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "$version_scheme" "$created_at" "$created_policy"; then
     echo "gstack-extend init: registry write failed (files were rendered)" >&2
     return 1
   fi

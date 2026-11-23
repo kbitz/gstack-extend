@@ -10,14 +10,25 @@
 #   ./setup --quiet
 set -euo pipefail
 
-if ! command -v bun >/dev/null 2>&1; then
-  echo "Error: bun is required but not installed." >&2
-  echo "Install with checksum verification:" >&2
-  echo '  BUN_VERSION="1.3.10"' >&2
-  echo '  tmpfile=$(mktemp)' >&2
-  echo '  curl -fsSL "https://bun.sh/install" -o "$tmpfile"' >&2
-  echo '  echo "Verify checksum before running: shasum -a 256 $tmpfile"' >&2
-  echo '  BUN_VERSION="$BUN_VERSION" bash "$tmpfile" && rm "$tmpfile"' >&2
+_SETUP_DIR=${0%/*}
+[ "$_SETUP_DIR" != "$0" ] || _SETUP_DIR=.
+_SETUP_PREREQ_HELPER="$_SETUP_DIR/bin/lib/bun-prereq.sh"
+if [ ! -f "$_SETUP_PREREQ_HELPER" ]; then
+  printf '%s\n' 'setup: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.' >&2
+  exit 1
+fi
+# shellcheck source=bin/lib/bun-prereq.sh
+. "$_SETUP_PREREQ_HELPER"
+if ! bun_prereq_probe; then
+  bun_prereq_print_shared 'setup' >&2
+  if [ "$BUN_PREREQ_CLASS" = "missing" ]; then
+    echo "Install with checksum verification:" >&2
+    echo '  BUN_VERSION="1.4.3"' >&2
+    echo '  tmpfile=$(mktemp)' >&2
+    echo '  curl -fsSL "https://bun.sh/install" -o "$tmpfile"' >&2
+    echo '  echo "Verify checksum before running: shasum -a 256 $tmpfile"' >&2
+    echo '  bash "$tmpfile" "bun-v$BUN_VERSION" && rm "$tmpfile"' >&2
+  fi
   exit 1
 fi
 

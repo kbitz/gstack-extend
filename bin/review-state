@@ -1,8 +1,25 @@
 #!/bin/sh
 # Internal review-and-prep run-state helper. Upstream gstack remains unmodified.
-if ! command -v bun >/dev/null 2>&1; then
-  printf '%s\n' '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"runtime-missing","message":"bun not found on PATH","trace":null},"fix":"Rerun the identical command once (replay makes a rerun safe); if it fails again, continue inline (D1) and keep the trace file named in detail.trace.","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}'
-  printf '%s\n' 'ERROR INTERNAL_ERROR: bun not found on PATH' 'FIX: Rerun the identical command once (replay makes a rerun safe); if it fails again, continue inline (D1) and keep the trace file named in detail.trace.' >&2
+_dir=${0%/*}
+[ "$_dir" != "$0" ] || _dir=.
+_helper="${_dir}/lib/bun-prereq.sh"
+if [ ! -f "$_helper" ]; then
+  _msg="PREREQ_HELPER_MISSING review-state prerequisite helper missing"
+  _fix="re-run ./setup, then rerun the identical command once; if it fails again, continue inline (D1). No changes were made. See docs/installation.md#requirements"
+  printf '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"runtime-missing","message":"%s","trace":null},"fix":"%s","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}\n' "$_msg" "$_fix"
+  printf 'ERROR INTERNAL_ERROR: %s\nFIX: %s\n' "$_msg" "$_fix" >&2
   exit 5
 fi
-exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/review-state/cli.ts" "$@"
+. "$_helper"
+if ! bun_prereq_probe; then
+  case "$BUN_PREREQ_CLASS" in
+    too_old) _cause='runtime-too-old' ;;
+    unknown) _cause='runtime-version-unknown' ;;
+    *) _cause='runtime-missing' ;;
+  esac
+  _fix="${BUN_PREREQ_FIX}; if it fails again, continue inline (D1)."
+  printf '{"v":1,"command":"unknown","status":"error","reason":"internal-error","detail":{"cause":"%s","message":"%s","trace":null},"fix":"%s","state_path":null,"rev":null,"helper_version":null,"side_effects":"none","retry":"same-input","retry_after_ms":null}\n' "$_cause" "$BUN_PREREQ_MSG" "$_fix"
+  printf 'ERROR INTERNAL_ERROR: %s\nFIX: %s\n' "$BUN_PREREQ_MSG" "$_fix" >&2
+  exit 5
+fi
+exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "${_dir}/../src/review-state/cli.ts" "$@"

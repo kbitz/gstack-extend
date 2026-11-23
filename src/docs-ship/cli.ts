@@ -63,7 +63,7 @@ receipt   Insert or replace the receipt block from --receipt in the body and
 
 Output is KEY: value lines; list fields are separated by " | ". Errors print
 "ERROR <CODE>: ..." and "FIX: ..." on stderr. Exit codes: 0 ok · 1 stop or
-findings · 2 usage · 3 refused (including internal errors). Launcher exit 5 means unavailable runtime.
+findings · 2 usage · 3 refused (including internal errors). Launcher exit 5 means unavailable runtime (ERROR bun_missing|bun_not_absolute|bun_too_old|bun_version_unknown|source_missing|symlink_loop: / FIX:).
 `;
 }
 

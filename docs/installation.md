@@ -4,13 +4,25 @@
 
 ## Installation
 
-**Requirements** include [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/). The commands
-that start Bun with `--no-env-file --no-install --config=/dev/null` (the
-`/roadmap` audit tools, `gstack-extend init`, the merge gate, `bin/layout-scaffold`,
-`bin/outside-review`, `bin/secret-dispositions`, `bin/pregate-deps` and
-`bin/docs-ship`) need Bun v1.3.3 or newer. Setup checks for the binary and
-prints installation instructions if it is missing.
+### Requirements
+
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/) **1.3.3 or newer** (verified runtime and development floor). Every Bun-backed launcher passes `--no-env-file --no-install --config=/dev/null`; `--no-env-file` was introduced in Bun 1.3.3, and earlier builds (such as 1.2.0 and 1.3.2) silently ignore it and still load `.env`.
+
+`setup`, `gstack-extend init`, and all 13 Bun-backed `bin/` launchers enforce Bun >= 1.3.3 before writing or executing. If Bun is missing, older than 1.3.3, or returns no parseable numeric version, they stop with no side effects and print one of these refusal templates:
+
+```text
+<entry>: PREREQ_BUN_MISSING Bun >= 1.3.3 is required (not on PATH); run: install Bun >= 1.3.3 (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
+<entry>: PREREQ_BUN_TOO_OLD Bun >= 1.3.3 is required (found <found> at <path>); run: upgrade Bun to >= 1.3.3 (bun upgrade, or upgrade via your package manager), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
+<entry>: PREREQ_BUN_VERSION_UNKNOWN Bun >= 1.3.3 is required (could not determine version at <path>; saw <detail>); run: upgrade or reinstall Bun >= 1.3.3 (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
+<entry>: PREREQ_HELPER_MISSING prerequisite helper missing; re-run ./setup. No changes were made. See docs/installation.md#requirements.
+```
+
+| Entry points | Channel and format | Exit | Error codes / causes |
+|---|---|---|---|
+| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `review-delegate` | Single line on stderr (`setup` also prints a checksum-verified install snippet when Bun is missing; `gstack-extend init --dry-run` warns on stderr and writes nothing) | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
+| `layout-scaffold`, `docs-ship`, `upstream-check` | Two lines on stderr: `ERROR <code>: <TOKEN> ...` and `FIX: ...` | 5 | `bun_missing`, `bun_not_absolute`, `bun_too_old`, `bun_version_unknown`, `source_missing` |
+| `merge-gate` | `ERROR <code>:` / `FIX:` on stderr, or canonical JSON object on stdout when `--json` / `--jsonl` is passed | 1 | `bun_missing`, `bun_too_old`, `bun_version_unknown`, `internal_error` |
+| `review-state` | Canonical `internal-error` JSON envelope on stdout plus `ERROR INTERNAL_ERROR:` / `FIX:` on stderr | 5 | `runtime-missing`, `runtime-too-old`, `runtime-version-unknown` |
 
 Clone and run setup:
 
@@ -308,23 +320,25 @@ proof and the pending real published-tag upgrade. See the
 cover.
 
 To roll back an otherwise clean install, first save user work and identify the
-last four-part tag from its release history. Replace the example below with
-that actual tag; do this in the installation checkout, never a project worktree:
+last four-part tag from its release history (on the default remote this is
+`v0.47.0.0`). Do this in the installation checkout, never a project worktree:
 
 ```sh
 git fetch --tags origin
 git status --short
 # Stop and preserve any local changes before continuing.
+LAST_FOUR_PART=$(git tag --list 'v*.*.*.*' --sort=-v:refname | head -n 1)
+echo "Rolling back to: $LAST_FOUR_PART"   # e.g. v0.47.0.0
 ./bin/config set update_check false
-git checkout --detach v0.46.0.0
+git checkout --detach "$LAST_FOUR_PART"
 ./setup --host auto --quiet
 ```
 
 Pause update checks first: the restored checker still offers the newer release,
 and accepting it (or `auto_upgrade=true`) makes `bin/update-run` fast-forward the
 detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
-This leaves detached HEAD. It refreshes the skills that tag's setup knows; a
-skill added after that tag stays installed and may fail until you resume
+This leaves detached HEAD. It refreshes only the skills that tag's setup knows;
+every skill added after that tag (check `git diff --name-status "$LAST_FOUR_PART"..HEAD -- skills/`, for example `plan-track` after `v0.47.0.0`) stays installed as a dangling link or stale copy and may fail until you resume
 upgrades. It does not undo install migrations or rewrite saved telemetry/ledgers. Retain readers capable of every
 emitted schema (including stage-runs v2, v3 and v4), reading both the legacy
 `analytics/stage-runs.jsonl` and per-host `analytics/stage-runs/*.jsonl` files.

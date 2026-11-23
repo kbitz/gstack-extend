@@ -19,12 +19,14 @@
       "tests/release-manifest.test.ts"
     ],
     "CLAUDE.md": [
+      "tests/bun-prereq.test.ts",
       "tests/full-suite-script.test.ts",
       "tests/release-manifest.test.ts",
       "tests/skill-protocols-plan-track.test.ts",
       "tests/skill-protocols-review-and-prep.test.ts"
     ],
     "README.md": [
+      "tests/bun-prereq.test.ts",
       "tests/handoff-contract.test.ts",
       "tests/skill-protocols-plan-track.test.ts"
     ],
@@ -40,9 +42,11 @@
       "tests/update.test.ts"
     ],
     "bin/docs-ship": [
+      "tests/bun-prereq.test.ts",
       "tests/docs-ship.test.ts"
     ],
     "bin/gstack-extend": [
+      "tests/bun-prereq.test.ts",
       "tests/init-bin.test.ts",
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
@@ -61,7 +65,21 @@
       "tests/workflow-metrics.test.ts"
     ],
     "bin/layout-scaffold": [
+      "tests/bun-prereq.test.ts",
       "tests/layout-scaffold.test.ts"
+    ],
+    "bin/lib/bun-prereq.sh": [
+      "tests/bun-prereq.test.ts",
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/setup-hosts.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/skill-content.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/update.test.ts"
     ],
     "bin/lib/install-safety.sh": [
       "tests/init-bin.test.ts",
@@ -167,18 +185,23 @@
       "tests/workflow-metrics.test.ts"
     ],
     "bin/merge-gate": [
+      "tests/bun-prereq.test.ts",
       "tests/merge-gate.test.ts"
     ],
     "bin/outside-review": [
+      "tests/bun-prereq.test.ts",
       "tests/outside-review.test.ts"
     ],
     "bin/pregate-deps": [
+      "tests/bun-prereq.test.ts",
       "tests/pregate-deps.test.ts"
     ],
     "bin/review-delegate": [
+      "tests/bun-prereq.test.ts",
       "tests/review-delegate.test.ts"
     ],
     "bin/review-state": [
+      "tests/bun-prereq.test.ts",
       "tests/review-state.test.ts",
       "tests/telemetry.test.ts",
       "tests/workflow-metrics.test.ts"
@@ -186,6 +209,7 @@
     "bin/roadmap-audit": [
       "tests/audit-cli-contract.test.ts",
       "tests/audit-snapshots.test.ts",
+      "tests/bun-prereq.test.ts",
       "tests/init-bin.test.ts",
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
@@ -194,10 +218,12 @@
     ],
     "bin/roadmap-pack": [
       "tests/audit-snapshots.test.ts",
+      "tests/bun-prereq.test.ts",
       "tests/layout-scaffold.test.ts"
     ],
     "bin/roadmap-renumber": [
       "tests/audit-snapshots.test.ts",
+      "tests/bun-prereq.test.ts",
       "tests/layout-scaffold.test.ts",
       "tests/renumber-cli.test.ts"
     ],
@@ -207,9 +233,11 @@
     ],
     "bin/roadmap-touches": [
       "tests/audit-snapshots.test.ts",
+      "tests/bun-prereq.test.ts",
       "tests/layout-scaffold.test.ts"
     ],
     "bin/secret-dispositions": [
+      "tests/bun-prereq.test.ts",
       "tests/secret-dispositions.test.ts"
     ],
     "bin/update-check": [
@@ -220,6 +248,7 @@
       "tests/update.test.ts"
     ],
     "bin/upstream-check": [
+      "tests/bun-prereq.test.ts",
       "tests/upstream-check.test.ts"
     ],
     "docs/ROADMAP.md": [
@@ -261,6 +290,7 @@
       "tests/docs-ship.test.ts"
     ],
     "docs/installation.md": [
+      "tests/bun-prereq.test.ts",
       "tests/setup-hosts.test.ts",
       "tests/skill-protocols-plan-track.test.ts",
       "tests/update.test.ts"
@@ -322,6 +352,7 @@
       "tests/update.test.ts"
     ],
     "package.json": [
+      "tests/bun-prereq.test.ts",
       "tests/release-manifest.test.ts"
     ],
     "scripts/extract-changelog-section.sh": [
@@ -344,6 +375,7 @@
     ],
     "setup": [
       "tests/audit-compliance.test.ts",
+      "tests/bun-prereq.test.ts",
       "tests/setup-hosts.test.ts",
       "tests/setup-init-wire.test.ts",
       "tests/skill-content.test.ts",

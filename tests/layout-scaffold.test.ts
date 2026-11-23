@@ -95,7 +95,7 @@ describe('Process: hardened launchers', () => {
       expect(existsSync(join(root, 'preload-marker'))).toBe(false);
       const launcher = readFileSync(join(EXTEND_ROOT, 'bin', row.bin), 'utf8');
       expect(launcher.split('\n').filter(line => line.startsWith('exec '))).toEqual([
-        expect.stringContaining('exec bun --no-env-file --no-install --config=/dev/null '),
+        expect.stringContaining('exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null '),
       ]);
     }
     expect(readFileSync(join(root, 'docs/ROADMAP.md'), 'utf8')).toBe(DRAFT);
