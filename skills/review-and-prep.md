@@ -3210,9 +3210,10 @@ policy carries `doc-audit-gap=auto` with `full-suite=external` and
 to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt`
 in the evidence directory; D3(a) below reads that file for the accepted audit,
 every path in that audit's snapshot `docs` list is also protected, and a missing
-or unreadable roots file is `docs-roots-unreadable`. Hash the roots file at
-Prepare. On acceptance, retain that hash alongside the saved post-child snapshot
-and section hashes.
+or unreadable roots file is `docs-roots-unreadable`. Before dispatch, hash
+the roots file and original Prepare snapshot. Keep both hashes in parent-held
+evidence bound to the invocation and audit ID. On acceptance, retain them
+alongside the saved post-child snapshot and section hashes.
 
 Apply the single classification rule below at three entry points:
 
@@ -3242,16 +3243,18 @@ when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase
 For blocked or failed re-audit fallback, first execute blocked recovery step 1
 (**confirm the child stopped**). If dispatch was refused before any child
 started, retain proof that no child launched. At initial reconciliation,
-require the clean-tree check below before any write and compare against the
-attempt's original Prepare snapshot to verify HEAD, index and ownership even
-without valid child output. Save the stop and ownership proof bound to that
+require the clean-tree check below before any write and verify the original
+Prepare snapshot against its pre-dispatch hash, invocation and audit ID.
+If that verification fails or cannot run, stop before trusting the snapshot.
+Only then compare it to verify HEAD, index and ownership even without valid
+child output. Save the stop and ownership proof bound to that
 attempt and snapshot. On a later trigger, validate that saved reconciliation
 and account for any intervening authorized changes before using it. Compare the
 failed child's Prepare snapshot to the state at its stop, before later writes.
 
-For each fallback decision, require the current clean tree and run base-policy
-`docs-caps` against it. Apply existing redaction and security checks to the
-current inputs and available child artifacts before retaining or citing
+For each fallback decision, require the current clean tree and pass the
+base-policy cap check below before reuse or retry. Apply existing redaction and
+security checks to the current inputs and available child artifacts before retaining or citing
 their content. Missing child output can take fallback when independent evidence
 establishes the required safety checks. Unreadable required evidence fails
 closed. Verify any substantive documentation discrepancy the child reported.
@@ -3277,6 +3280,10 @@ failed-child recovery, commit intended pending work first. Require an empty
 In fallback a dirty tree stops recovery before any retry, staging or commit.
 Preserve partial child edits. A missing or unreadable `doc-roots-<audit_id>.txt`
 or snapshot `docs` list is `docs-roots-unreadable`.
+Before granting reuse at any entry point, run upstream's `gstack-ship-receipt
+docs-caps --base <base>` against the current clean tree and verified fetched
+base, even after a qualifying base merge. A cap failure or unverifiable result
+takes blocked recovery's non-waivable stop before reuse or another dispatch.
 
 Judge the whole walk. Reuse requires every commit to qualify for an
 `owner=not-needed` class for this entry point. Apply 1(a) and 1(c) to existing

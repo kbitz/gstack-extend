@@ -1142,9 +1142,11 @@ classification rule at three entry points:
    audit that still matches the current inputs keeps its original binding.
 2. **Blocked or failed re-audit fallback.** This covers upstream attempt 2
    and the extra attempt. Confirm the child stopped or verify dispatch never
-   started a child. At reconciliation, check the clean tree and verify HEAD,
-   index and ownership against the child's original Prepare snapshot before
-   any writes. Retain that proof. On a later trigger, verify it and account
+   started a child. At reconciliation, check the clean tree and verify the
+   original Prepare snapshot against its parent-held pre-dispatch hash,
+   invocation and audit ID. Before any writes, compare that snapshot to
+   verify HEAD, index and ownership. Retain that proof. On a later trigger,
+   verify it and account
    for intervening authorized changes. Check the current clean tree, redaction,
    security and `docs-caps`, and assess any reported documentation discrepancy
    before reuse. An unconfirmed writer, ownership violation, unauthorized
@@ -1157,6 +1159,9 @@ classification rule at three entry points:
 3. **Post-exhaustion.** When upstream's budget is exhausted, run the same
    rule under its post-exhaustion eligibility. An extra attempt is available
    only when reuse is declined and all existing retry and safety checks pass.
+
+Every reuse requires passing the current tree's `docs-caps` check against the
+verified fetched base, including after a qualifying base merge.
 
 Use only the decisions verified for the current audit, head and fetched
 base. Every classified commit has its own `Post-audit change:` row. An empty
