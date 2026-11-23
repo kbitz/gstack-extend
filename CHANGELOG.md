@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.111.0] - 2026-11-22
+
+### Added
+
+- In interactive sessions, `/plan-track` resolves an unambiguous roadmap Track selector from active roadmap sections without `CARD_FILE`, and names default plans from multi-card files using the Track ID and title slug while keeping strict `NAME: value` inputs when `GSTACK_SESSION_KIND` is `spawned` or `unattended`.
+- Interactive `/plan-track` accepts a Track selector from the active roadmap.
+
+### Changed
+
+- Default plan filenames for multi-card files include the Track ID and title.
+
+### Upgrade notes
+
+- When `GSTACK_SESSION_KIND` is `spawned` or `unattended`, `/plan-track` still requires strict `NAME: value` inputs, and the roadmap Track selector is resolved only in interactive sessions.
+
 ## [0.110.1] - 2026-11-22
 
 ### Fixed
