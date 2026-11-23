@@ -271,25 +271,37 @@ describe('plan-track interactive Track selector and session-kind gate', () => {
   // Value: protects=criteria 1 and 2, interactive Track <ID> resolution from active roadmap sections and strict NAME: value enforcement in spawned/unattended sessions; fails_when=active-section bounds, roadmap ambiguity stops, selector rejection, CARD_FILE non-selector rule, or Done when support drift; why_new=Track 94C adds interactive selector resolution without relaxing orchestrated inputs; seam=none; no_claim=live agent compliance
   test('locks interactive Track <ID> resolution, active-section bounds, Done when support, and spawned/unattended rejection', () => {
     expect(inputsN).toContain('Absolute path to the approved card, never a selector.');
-    expect(inputsN).toContain('Interactive sessions only may omit `CARD_FILE` and pass an unambiguous `Track <ID>` selector instead; spawned and unattended sessions require `CARD_FILE`.');
-    expect(inputsN).toContain('On `TRACK_SELECTOR: reject` (`GSTACK_SESSION_KIND` is `spawned` or `unattended`): keep the strict `NAME: value` input rule, reject any `Track <ID>` selector without `CARD_FILE` (never resolve it), write no plan, and stop with `needs-context`.');
+    expect(inputsN).toContain('`CARD_FILE` | yes in spawned and unattended sessions');
+    expect(inputsN).toContain('Interactive sessions may omit `CARD_FILE` and pass an unambiguous `Track <ID>` selector.');
+    expect(inputsN).toContain('On `TRACK_SELECTOR: reject` (`GSTACK_SESSION_KIND` is `spawned` or `unattended`), keep the strict `NAME: value` input rule and require a single-card `CARD_FILE`.');
+    expect(inputsN).toContain('Never resolve a selector in these sessions, even when a card path is supplied.');
     expect(inputsN).toContain('On `TRACK_SELECTOR: allow`');
     expect(inputsN).toContain('<digits><letter>');
     expect(inputsN).toContain('.<digits>');
     expect(inputsN).toContain('whole-ID match');
-    expect(inputsN).toContain('An absent selector, a malformed selector, or multiple distinct selectors writes no plan and stops with `needs-context`.');
-    expect(inputsN).toContain('repository-root `ROADMAP.md` or `docs/ROADMAP.md`; when neither exists or both exist, write no plan and stop with `needs-context`.');
+    expect(inputsN).toContain('A malformed selector, multiple distinct selectors, or a missing selector when `CARD_FILE` is absent writes no plan and stops with `needs-context`.');
+    expect(inputsN).toContain('repository-root `ROADMAP.md` or `docs/ROADMAP.md`. When neither exists or both exist, write no plan and stop with `needs-context`.');
     expect(inputsN).toContain('`## In Progress` and `## Current Plan`');
     expect(inputsN).toContain('excluding `## Future`, `## Shipped`, external archive files, and any Track heading carrying an inline `✓ Shipped` or `✓ Complete` suffix');
     expect(inputsN).toContain('`###`, `####`, or `##### Track <ID>: <title>`');
-    expect(inputsN).toContain('Zero matches (unknown ID) or more than one match across active sections (ambiguous or duplicate ID) writes no plan and stops with `needs-context`.');
+    expect(inputsN).toContain('Zero matches (unknown ID) or more than one match (ambiguous or duplicate ID) writes no plan and stops with `needs-context`.');
     expect(inputsN).toContain('`**Done when:**` or `**Acceptance:**`');
-    expect(inputsN).toContain('record the resolution under `## Auto-decisions`');
+    expect(inputsN).toContain('Record a selector\'s resolution under `## Auto-decisions`');
 
-    expect(methodN).toContain('When `CARD_FILE` is absent, run the `## Inputs` session-kind check and selector resolution first');
+    expect(methodN).toContain('Apply the `## Inputs` session-kind check and card selection before choosing a plan path');
     expect(methodN).toContain('`**Acceptance:**` or `**Done when:**`');
     expect(skillN).toContain('A missing, unreadable, unresolved or rejected card or selector, a card without acceptance criteria');
     expect(skill).not.toContain('gstack-session-kind');
+  });
+
+  // Value: protects=explicit selector boundaries, strict direct-file handling, and exact roadmap card extraction; fails_when=field values can select Tracks, an explicit path bypasses the gate, or the card includes a following section; why_new=the original rules left these cases open; seam=none; no_claim=live agent compliance
+  test('keeps selector parsing, card selection, and plan naming in order', () => {
+    expect(inputsN).toContain('Field values and incidental Track mentions in prose never supply a selector.');
+    expect(inputsN).toContain('when `CARD_FILE` is absent, a standalone selector is supplied, or `CARD_FILE` contains multiple cards');
+    expect(inputsN).toContain('A selector or a multi-card `CARD_FILE` writes no plan and stops with `needs-context`.');
+    expect(inputsN).toContain('For a direct multi-card `CARD_FILE` in an interactive session, select the card from that file before choosing the plan path.');
+    expect(inputsN).toContain('or any other Markdown heading at the same or higher level');
+    expect(inputsN).toContain('including one followed by a version annotation such as `(v1.2.3)`');
   });
 
   // Value: protects=criterion 2, the GSTACK_SESSION_KIND bash fence rejects spawned/unattended and allows interactive/unset across agent shells while ignoring CI/GSTACK_HEADLESS/RUN_MODE; fails_when=the bash gate changes or mishandles env values; why_new=verifies the executable gate in ## Inputs directly; seam=none; no_claim=live agent obedience to the printed token
@@ -329,8 +341,8 @@ describe('plan-track Track-scoped default plan file naming for multi-card files'
     expect(inputsN).toContain('ASCII alphanumerics');
     expect(inputsN).toContain('capping at 60 characters with any trailing `-` trimmed after capping');
     expect(inputsN).toContain('when the title produces an empty slug, omit the trailing dash and use `track-<track-id>`');
-    expect(inputsN).toContain('When `CARD_FILE` points directly to a multi-card file');
-    expect(inputsN).toContain('a multi-card file whose selected card has no Track ID stops with `needs-context` rather than colliding on `<card-stem>`');
+    expect(inputsN).toContain('For a direct multi-card `CARD_FILE` in an interactive session');
+    expect(inputsN).toContain('A multi-card file whose selected card has no Track ID requires an explicit `PLAN_FILE`. Without it, write no plan and stop with `needs-context`.');
     expect(inputsN).toContain('A default target that already exists with different bytes is not overwritten: write no plan and stop with `needs-context`.');
     expect(inputsN).toContain('This no-overwrite rule applies to both single-card and Track-scoped default targets.');
   });
