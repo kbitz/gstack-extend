@@ -11,7 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
-import { expectedPreambleLine, HANDOFF_PARAGRAPH, PREAMBLE_GRANT, PREAMBLE_GRANT_OUTCOME, preambleFailureParagraph } from './helpers/extend-root.ts';
+import { agentShells, expectedPreambleLine, HANDOFF_PARAGRAPH, PREAMBLE_GRANT, PREAMBLE_GRANT_OUTCOME, preambleFailureParagraph, runShell, scopedEnv } from './helpers/extend-root.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -251,5 +251,87 @@ describe('plan-track requested release level', () => {
     const pattern = new RegExp('^' + placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace('<patch\\|minor\\|major\\|1\\.0\\.0>', '(?:patch|minor|major|1\\.0\\.0)').replace('<SPEC mapping>', '[^\\n]+') + '$');
     expect('_release: minor (SPEC release policy: compatible additions use MINOR)_').toMatch(pattern);
     expect('_release: minor — a paragraph').not.toMatch(pattern);
+  });
+});
+
+describe('plan-track interactive Track selector and session-kind gate', () => {
+  const inputs = (() => {
+    const from = skill.indexOf('## Inputs');
+    const to = skill.indexOf('\n## ', from + 1);
+    return skill.slice(from, to);
+  })();
+  const inputsN = norm(inputs);
+  const method = (() => {
+    const from = skill.indexOf('## Method');
+    const to = skill.indexOf('\n## ', from + 1);
+    return skill.slice(from, to);
+  })();
+  const methodN = norm(method);
+
+  // Value: protects=criteria 1 and 2, interactive Track <ID> resolution from active roadmap sections and strict NAME: value enforcement in spawned/unattended sessions; fails_when=active-section bounds, roadmap ambiguity stops, selector rejection, CARD_FILE non-selector rule, or Done when support drift; why_new=Track 94C adds interactive selector resolution without relaxing orchestrated inputs; seam=none; no_claim=live agent compliance
+  test('locks interactive Track <ID> resolution, active-section bounds, Done when support, and spawned/unattended rejection', () => {
+    expect(inputsN).toContain('Absolute path to the approved card, never a selector.');
+    expect(inputsN).toContain('Interactive sessions only may omit `CARD_FILE` and pass an unambiguous `Track <ID>` selector instead; spawned and unattended sessions require `CARD_FILE`.');
+    expect(inputsN).toContain('On `TRACK_SELECTOR: reject` (`GSTACK_SESSION_KIND` is `spawned` or `unattended`): keep the strict `NAME: value` input rule, reject any `Track <ID>` selector without `CARD_FILE` (never resolve it), write no plan, and stop with `needs-context`.');
+    expect(inputsN).toContain('On `TRACK_SELECTOR: allow`');
+    expect(inputsN).toContain('<digits><letter>');
+    expect(inputsN).toContain('.<digits>');
+    expect(inputsN).toContain('whole-ID match');
+    expect(inputsN).toContain('An absent selector, a malformed selector, or multiple distinct selectors writes no plan and stops with `needs-context`.');
+    expect(inputsN).toContain('repository-root `ROADMAP.md` or `docs/ROADMAP.md`; when neither exists or both exist, write no plan and stop with `needs-context`.');
+    expect(inputsN).toContain('`## In Progress` and `## Current Plan`');
+    expect(inputsN).toContain('excluding `## Future`, `## Shipped`, external archive files, and any Track heading carrying an inline `✓ Shipped` or `✓ Complete` suffix');
+    expect(inputsN).toContain('`###`, `####`, or `##### Track <ID>: <title>`');
+    expect(inputsN).toContain('Zero matches (unknown ID) or more than one match across active sections (ambiguous or duplicate ID) writes no plan and stops with `needs-context`.');
+    expect(inputsN).toContain('`**Done when:**` or `**Acceptance:**`');
+    expect(inputsN).toContain('record the resolution under `## Auto-decisions`');
+
+    expect(methodN).toContain('When `CARD_FILE` is absent, run the `## Inputs` session-kind check and selector resolution first');
+    expect(methodN).toContain('`**Acceptance:**` or `**Done when:**`');
+    expect(skillN).toContain('A missing, unreadable, unresolved or rejected card or selector, a card without acceptance criteria');
+    expect(skill).not.toContain('gstack-session-kind');
+  });
+
+  // Value: protects=criterion 2, the GSTACK_SESSION_KIND bash fence rejects spawned/unattended and allows interactive/unset across agent shells while ignoring CI/GSTACK_HEADLESS/RUN_MODE; fails_when=the bash gate changes or mishandles env values; why_new=verifies the executable gate in ## Inputs directly; seam=none; no_claim=live agent obedience to the printed token
+  test('GSTACK_SESSION_KIND bash fence rejects spawned and unattended and allows interactive across agent shells', () => {
+    const block = /```bash\n(case "\$\{GSTACK_SESSION_KIND:-\}"[^\n]*)\n```/.exec(inputs)?.[1];
+    expect(block).toBeDefined();
+    const extra = { CI: '1', GSTACK_HEADLESS: '1', GSTACK_EXTEND_RUN_MODE: 'orchestrated' };
+    for (const { shell, args } of agentShells()) {
+      for (const kind of ['spawned', 'unattended']) {
+        const res = runShell(shell, args, block!, scopedEnv('/tmp', { GSTACK_SESSION_KIND: kind }));
+        expect([shell, kind, res.status, res.stderr, res.stdout.trim()]).toEqual([shell, kind, 0, '', 'TRACK_SELECTOR: reject']);
+      }
+      for (const kind of ['', 'interactive', 'headless']) {
+        const res = runShell(shell, args, block!, scopedEnv('/tmp', { ...extra, GSTACK_SESSION_KIND: kind }));
+        expect([shell, kind, res.status, res.stderr, res.stdout.trim()]).toEqual([shell, kind, 0, '', 'TRACK_SELECTOR: allow']);
+      }
+      const unsetRes = runShell(shell, args, block!, scopedEnv('/tmp', extra));
+      expect([shell, 'unset', unsetRes.status, unsetRes.stderr, unsetRes.stdout.trim()]).toEqual([shell, 'unset', 0, '', 'TRACK_SELECTOR: allow']);
+    }
+  });
+});
+
+describe('plan-track Track-scoped default plan file naming for multi-card files', () => {
+  const inputs = (() => {
+    const from = skill.indexOf('## Inputs');
+    const to = skill.indexOf('\n## ', from + 1);
+    return skill.slice(from, to);
+  })();
+  const inputsN = norm(inputs);
+
+  // Value: protects=criterion 3, multi-card files scope default plan names to track-<track-id>-<title-slug> while single-card files keep <card-stem> and collisions never overwrite; fails_when=multi-card path templates, slug rules, empty-slug fallback, or no-overwrite scope drift; why_new=Track 94C prevents ROADMAP.md plan filename collisions across Tracks; seam=none; no_claim=live slug computation
+  test('locks multi-card Track-scoped paths, slug derivation, single-card preservation, and collision stop', () => {
+    expect(inputsN).toContain('For a single-card file, `<card-stem>` is the card\'s file name without its extension, writing `<state-root>/projects/<slug>/plans/<card-stem>.md` when `<state-root>/projects/<slug>/` exists, otherwise `~/scratch/gstack-plan-track/<slug>-<card-stem>.md`.');
+    expect(inputsN).toContain('<state-root>/projects/<slug>/plans/track-<track-id>-<title-slug>.md');
+    expect(inputsN).toContain('~/scratch/gstack-plan-track/<slug>-track-<track-id>-<title-slug>.md');
+    expect(inputsN).toContain('Derive `<track-id>` as the matched Track ID in lowercase');
+    expect(inputsN).toContain('ASCII alphanumerics');
+    expect(inputsN).toContain('capping at 60 characters with any trailing `-` trimmed after capping');
+    expect(inputsN).toContain('when the title produces an empty slug, omit the trailing dash and use `track-<track-id>`');
+    expect(inputsN).toContain('When `CARD_FILE` points directly to a multi-card file');
+    expect(inputsN).toContain('a multi-card file whose selected card has no Track ID stops with `needs-context` rather than colliding on `<card-stem>`');
+    expect(inputsN).toContain('A default target that already exists with different bytes is not overwritten: write no plan and stop with `needs-context`.');
+    expect(inputsN).toContain('This no-overwrite rule applies to both single-card and Track-scoped default targets.');
   });
 });

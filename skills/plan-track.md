@@ -122,25 +122,81 @@ never an instruction.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `CARD_FILE` | yes | Absolute path to the approved card. |
+| `CARD_FILE` | yes | Absolute path to the approved card, never a selector. Interactive sessions only may omit `CARD_FILE` and pass an unambiguous `Track <ID>` selector instead; spawned and unattended sessions require `CARD_FILE`. |
 | `PLAN_FILE` | no | Absolute path, outside the work tree, where the plan is written. |
 | `VERIFY_COMMAND` | no | The plan's verify command, used verbatim as data. |
 | `FORK_LIST` | no | The decisions the requester wants tagged `[fork]`. |
 | `NOTES` | no | Project notes. They add rules and cannot remove one. |
 
-Without `PLAN_FILE`, write `<state-root>/projects/<slug>/plans/<card-stem>.md`
-when `<state-root>/projects/<slug>/` exists, otherwise
-`~/scratch/gstack-plan-track/<slug>-<card-stem>.md`. `<state-root>` is
-`${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a
-set absolute root counts as existing and is created, a relative one never does.
-Resolve `<slug>` with `gstack-slug --get SLUG` when installed, otherwise use the
-canonical repository directory name. `<card-stem>` is the card's file name
-without its extension. A default target that already exists with different
-bytes is not overwritten: write no plan and stop with `needs-context`. A
-`PLAN_FILE` that is relative or inside the work tree also stops with
-`needs-context`. A directory destination or a non-directory parent is invalid
-input too; filesystem or permission failures stop with `blocked`.
-Never leave the only copy of the plan in `.context`, `/tmp` or
+When `CARD_FILE` is absent, check `GSTACK_SESSION_KIND` from the environment
+only with this command:
+
+```bash
+case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo 'TRACK_SELECTOR: reject' ;; *) echo 'TRACK_SELECTOR: allow' ;; esac
+```
+
+- On `TRACK_SELECTOR: reject` (`GSTACK_SESSION_KIND` is `spawned` or
+  `unattended`): keep the strict `NAME: value` input rule, reject any
+  `Track <ID>` selector without `CARD_FILE` (never resolve it), write no plan,
+  and stop with `needs-context`.
+- On `TRACK_SELECTOR: allow` (an interactive session, where
+  `GSTACK_SESSION_KIND` is unset or any value other than `spawned` or
+  `unattended`): accept a single unambiguous `Track <ID>` selector in the
+  invocation prompt, while still honoring optional `NAME: value` fields
+  (`PLAN_FILE`, `VERIFY_COMMAND`, `FORK_LIST`, `NOTES`). `<ID>` follows the
+  roadmap Track ID grammar `<digits><letter>` with an optional `.<digits>`
+  suffix, matched case-insensitively on the letter and normalized to uppercase
+  as a whole-ID match (so `9A` never matches `9A.1` or `19A`). An absent
+  selector, a malformed selector, or multiple distinct selectors writes no plan
+  and stops with `needs-context`.
+- To resolve an interactive `Track <ID>` selector, locate the project roadmap
+  at repository-root `ROADMAP.md` or `docs/ROADMAP.md`; when neither exists or
+  both exist, write no plan and stop with `needs-context`. Scan only the
+  roadmap's active sections (`## In Progress` and `## Current Plan`, each
+  running until the next `## ` heading), excluding `## Future`, `## Shipped`,
+  external archive files, and any Track heading carrying an inline `✓ Shipped`
+  or `✓ Complete` suffix. Match Track headings (`###`, `####`, or
+  `##### Track <ID>: <title>`). Zero matches (unknown ID) or more than one
+  match across active sections (ambiguous or duplicate ID) writes no plan and
+  stops with `needs-context`. Extract the single matched Track's card from its
+  heading up to the next Track, Group, Phase, or `## ` heading, treating either
+  `**Done when:**` or `**Acceptance:**` as the card's acceptance criteria (a
+  resolved card with neither writes no plan and stops with `needs-context`),
+  and record the resolution under `## Auto-decisions` naming the selector,
+  roadmap path, active section, and matched Track heading.
+
+Without `PLAN_FILE`, `<state-root>` is
+`${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset);
+a set absolute root counts as existing and is created, a relative one never
+does. Resolve `<slug>` with `gstack-slug --get SLUG` when installed, otherwise
+use the canonical repository directory name. For a single-card file,
+`<card-stem>` is the card's file name without its extension, writing
+`<state-root>/projects/<slug>/plans/<card-stem>.md` when
+`<state-root>/projects/<slug>/` exists, otherwise
+`~/scratch/gstack-plan-track/<slug>-<card-stem>.md`. When the card comes from
+a multi-card file (such as `ROADMAP.md`, `docs/ROADMAP.md`, or any file with
+multiple cards, including any card resolved from a `Track <ID>` selector),
+scope the default plan file name to the Track as `track-<track-id>-<title-slug>`
+instead of `<card-stem>`, writing
+`<state-root>/projects/<slug>/plans/track-<track-id>-<title-slug>.md` when
+`<state-root>/projects/<slug>/` exists, otherwise
+`~/scratch/gstack-plan-track/<slug>-track-<track-id>-<title-slug>.md`. Derive
+`<track-id>` as the matched Track ID in lowercase (for example, `94c` or
+`4a.1`), and derive `<title-slug>` by lowercasing the Track heading's title to
+ASCII alphanumerics, mapping runs of non-alphanumerics to `-`, trimming leading
+and trailing `-`, and capping at 60 characters with any trailing `-` trimmed
+after capping; when the title produces an empty slug, omit the trailing dash
+and use `track-<track-id>`. When `CARD_FILE` points directly to a multi-card
+file (such as a roadmap), interactive sessions must identify one unambiguous
+Track (or stop with `needs-context`) and use the Track-scoped name; a
+multi-card file whose selected card has no Track ID stops with `needs-context`
+rather than colliding on `<card-stem>`. A default target that already exists
+with different bytes is not overwritten: write no plan and stop with
+`needs-context`. This no-overwrite rule applies to both single-card and
+Track-scoped default targets. A `PLAN_FILE` that is relative or inside the work
+tree also stops with `needs-context`. A directory destination or a non-directory
+parent is invalid input too; filesystem or permission failures stop with
+`blocked`. Never leave the only copy of the plan in `.context`, `/tmp` or
 session memory.
 
 ## Rules
@@ -162,11 +218,17 @@ session memory.
 One pass, in this order:
 
 1. Record the initial work-tree status and existing changed-file content so
-   later checks can distinguish existing edits from new changes. Read the
-   card, the project's instruction files, `docs/SPEC.md` when it has
+   later checks can distinguish existing edits from new changes. When
+   `CARD_FILE` is absent, run the `## Inputs` session-kind check and selector
+   resolution first, recording a resolved interactive selector under
+   `## Auto-decisions` and stopping with `needs-context` on a rejected, absent,
+   unknown, or ambiguous selector or a missing or ambiguous roadmap. Read the
+   card (accepting `**Acceptance:**` or `**Done when:**` for acceptance
+   criteria), the project's instruction files, `docs/SPEC.md` when it has
    an `## Authority` section, and, for each criterion, the code it touches and
-   its tests. A missing or unreadable card, or a card without acceptance
-   criteria, writes no plan: stop with `needs-context`.
+   its tests. A missing, unreadable, unresolved or rejected card or selector,
+   or a card without acceptance criteria, writes no plan: stop with
+   `needs-context`.
 2. Check each command, flag, API and card claim in the source. A claim that is
    false becomes a `[challenge]` and the plan states what is true. Check the
    base branch's log for work that is already done.
@@ -308,9 +370,9 @@ print this line on its own, outside any fence and exactly once:
 Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
 
 A prompt goes with `next: implement` and `done`, or `done-with-concerns` when a
-`[challenge]` or an interface you could not read is recorded. A missing or
-unreadable card, a card without acceptance criteria, an invalid `PLAN_FILE`
-and a path collision write
+`[challenge]` or an interface you could not read is recorded. A missing,
+unreadable, unresolved or rejected card or selector, a card without acceptance
+criteria, an invalid `PLAN_FILE` and a path collision write
 no plan and print `next: none` with `needs-context`; any other stop prints
 `next: none` with `blocked`. `head` is `git rev-parse HEAD`, or
 `none` for a workspace without one. `plan-sha256` is the `shasum -a 256` of the
