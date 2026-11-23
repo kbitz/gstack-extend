@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.112.0] - 2026-11-23
+
+### Added
+
+- Under `doc-audit-gap=auto` with `full-suite=external` and `post-audit=classify`, `/review-and-prep` now classifies changes since an accepted documentation audit before spending a re-audit attempt and reuses the earlier audit without asking when no audited document and no user-visible text changed.
+
+### Changed
+
+- /review-and-prep can reuse a current documentation audit before spending the remaining re-audit when the opt-in policy is active and the audited documents and user-visible behavior still match.
+- When early reuse preserves the remaining re-audit, review preparation records the reuse reason in the receipt and a documentation REUSE decision when metrics capture is active.
+
+### Fixed
+
+- A blocked or failed documentation re-audit takes the existing stop when any re-audit in the run recorded an open or confirmed documentation discrepancy.
+
+### Upgrade notes
+
+- Under that same opt-in policy, a blocked or failed documentation re-audit now falls back to that classification and reuses the earlier accepted audit without asking when nothing audited and no user-visible text changed, while runs without `doc-audit-gap=auto` keep their existing behavior.
+
 ## [0.111.0] - 2026-11-22
 
 ### Added
