@@ -2761,6 +2761,9 @@ describe('review-and-prep run-state=record', () => {
     const greptileRow = callsRaw.split('\n').find((l) => l.includes('`## 4. Trigger once and await Greptile`') && l.includes('`record gate` (`greptile`)')) ?? '';
     expect(greptileRow).toContain('`greptile-value-unrecognized`');
     expect(greptileRow).toContain('record the `greptile` gate again with a published form and render again instead of writing the line inline');
+    const pauseRow = callsRaw.split('\n').find((l) => l.startsWith('| `### Manual testing checkpoint and resume`')) ?? '';
+    expect(pauseRow).toContain('follow **Resume** to open a new segment before recording the corrected gate');
+    expect(pauseRow).toContain('then checkpoint the pause again before rendering');
   });
 
   // Value: protects=Step 1's ### Evidence directory heading and D2/skill heading resolution; fails_when=### Evidence directory moves out of Step 1 or fails to resolve from D2; why_new=Track 83A T4 reduced per Track 86B T4; seam=none
