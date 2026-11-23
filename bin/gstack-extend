@@ -918,8 +918,11 @@ cmd_init() {
   if [ "$dry_run" = "1" ]; then
     echo "gstack-extend init: DRY RUN — no files will be written."
   fi
+  # Compare directory identity, not spelling: REPO_ROOT keeps bash's pwd
+  # spelling (a leading //, or the case typed on a case-insensitive volume)
+  # while target_abs comes from /bin/pwd -P.
   local version_scheme="4-digit"
-  if [ "$target_abs" = "$REPO_ROOT" ]; then
+  if [ "$target_abs" -ef "$REPO_ROOT" ]; then
     version_scheme="3-digit"
   fi
 

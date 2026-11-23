@@ -636,6 +636,35 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
     expect(existsSync(join(state, 'projects.json'))).toBe(false);
   });
 
+  // Value: protects=criterion 6 when init reaches its own checkout through an equivalent path spelling; fails_when=the scheme check compares path strings built by different pwd implementations; why_new=the existing case invokes init through the canonical path only; seam=none
+  test('self-registration stores 3-digit when init is invoked through an equivalent path spelling', () => {
+    const state = freshDir('scheme-alias-state');
+    const gstackState = freshDir('scheme-alias-gstack');
+    const install = freshDir('scheme-alias-install');
+    mkdirSync(join(install, 'bin', 'lib'), { recursive: true });
+    for (const path of ['bin/gstack-extend', 'bin/lib/bun-prereq.sh', 'bin/lib/install-safety.sh', 'bin/lib/projects-registry.sh']) {
+      copyFileSync(join(REPO_ROOT, path), join(install, path));
+    }
+    cpSync(join(REPO_ROOT, 'scripts', 'init-templates'), join(install, 'scripts', 'init-templates'), { recursive: true });
+    // Registration is the behavior under test. Audit runs separately against real source in the other init cases.
+    writeFileSync(join(install, 'bin', 'roadmap-audit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    // A leading // names the same directory, but bash's pwd keeps it while /bin/pwd -P drops it.
+    const aliasedInit = `/${join(install, 'bin', 'gstack-extend')}`;
+    const result = spawnSync(
+      '/bin/bash',
+      [aliasedInit, 'init', '--migrate', '--no-prompt', '--name', 'gstack-extend', install],
+      {
+        env: { HOME: state, GSTACK_EXTEND_STATE_DIR: state, GSTACK_STATE_ROOT: gstackState, PATH: `${dirname(REAL_BUN)}:${NO_BUN_PATH}` },
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('version_scheme: 3-digit');
+    const registry = JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8'));
+    expect(registry.projects.find((p: { name: string }) => p.name === 'gstack-extend')?.version_scheme).toBe('3-digit');
+  });
+
   test('self-registration prints and stores 3-digit while consumer projects keep 4-digit', () => {
     const state = freshDir('scheme-state');
     const gstackState = freshDir('scheme-gstack');
