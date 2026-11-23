@@ -290,7 +290,8 @@ describe('plan-track interactive Track selector and session-kind gate', () => {
 
     expect(methodN).toContain('Apply the `## Inputs` session-kind check and card selection before choosing a plan path');
     expect(methodN).toContain('`**Acceptance:**` or `**Done when:**`');
-    expect(skillN).toContain('A missing, unreadable, unresolved or rejected card or selector, a card without acceptance criteria');
+    expect(methodN).toContain('Use its stop conditions when a card cannot be selected.');
+    expect(skillN).toContain('A missing, unreadable, unresolved or rejected card, a selector error under `## Inputs`, a card without acceptance criteria');
     expect(skill).not.toContain('gstack-session-kind');
   });
 
@@ -300,7 +301,8 @@ describe('plan-track interactive Track selector and session-kind gate', () => {
     expect(inputsN).toContain('when `CARD_FILE` is absent, a standalone selector is supplied, or `CARD_FILE` contains multiple cards');
     expect(inputsN).toContain('A selector or a multi-card `CARD_FILE` writes no plan and stops with `needs-context`.');
     expect(inputsN).toContain('For a direct multi-card `CARD_FILE` in an interactive session, select the card from that file before choosing the plan path.');
-    expect(inputsN).toContain('or any other Markdown heading at the same or higher level');
+    expect(inputsN).toContain('When resolving a selector, match the whole ID in Track headings');
+    expect(inputsN).toContain('heading and body up to the next Track, Group, Phase, or `## ` heading, or any other Markdown heading at the same or higher level');
     expect(inputsN).toContain('including one followed by a version annotation such as `(v1.2.3)`');
   });
 

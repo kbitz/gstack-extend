@@ -167,10 +167,11 @@ case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo 'TRACK_SELECTOR: rej
   external archive files, and any Track heading carrying an inline `✓ Shipped`
   or `✓ Complete` suffix, including one followed by a version annotation such
   as `(v1.2.3)`.
-- Match the whole ID in Track headings (`###`, `####`, or
+- When resolving a selector, match the whole ID in Track headings (`###`, `####`, or
   `##### Track <ID>: <title>`). Zero matches (unknown ID) or more than one
   match (ambiguous or duplicate ID) writes no plan and stops with
-  `needs-context`. For a card selected from a multi-card file, extract its
+  `needs-context`.
+- For a card selected from a multi-card file, extract its
   heading and body up to the next Track, Group, Phase, or `## ` heading, or any
   other Markdown heading at the same or higher level. Treat either
   `**Done when:**` or `**Acceptance:**` as the acceptance criteria. A selected
@@ -231,15 +232,13 @@ One pass, in this order:
 1. Record the initial work-tree status and existing changed-file content so
    later checks can distinguish existing edits from new changes. Apply the
    `## Inputs` session-kind check and card selection before choosing a plan
-   path, recording a resolved interactive selector under
-   `## Auto-decisions` and stopping with `needs-context` on a rejected, absent,
-   unknown, or ambiguous selector or a missing or ambiguous roadmap. Read the
+   path. Use its stop conditions when a card cannot be selected. Record a
+   resolved interactive selector under `## Auto-decisions`. Read the selected
    card (accepting `**Acceptance:**` or `**Done when:**` for acceptance
    criteria), the project's instruction files, `docs/SPEC.md` when it has
    an `## Authority` section, and, for each criterion, the code it touches and
-   its tests. A missing, unreadable, unresolved or rejected card or selector,
-   or a card without acceptance criteria, writes no plan: stop with
-   `needs-context`.
+   its tests. A missing or unreadable card or a card without acceptance criteria
+   writes no plan: stop with `needs-context`.
 2. Check each command, flag, API and card claim in the source. A claim that is
    false becomes a `[challenge]` and the plan states what is true. Check the
    base branch's log for work that is already done.
@@ -382,8 +381,8 @@ Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <d
 
 A prompt goes with `next: implement` and `done`, or `done-with-concerns` when a
 `[challenge]` or an interface you could not read is recorded. A missing,
-unreadable, unresolved or rejected card or selector, a card without acceptance
-criteria, an invalid `PLAN_FILE` and a path collision write
+unreadable, unresolved or rejected card, a selector error under `## Inputs`,
+a card without acceptance criteria, an invalid `PLAN_FILE` and a path collision write
 no plan and print `next: none` with `needs-context`; any other stop prints
 `next: none` with `blocked`. `head` is `git rev-parse HEAD`, or
 `none` for a workspace without one. `plan-sha256` is the `shasum -a 256` of the
