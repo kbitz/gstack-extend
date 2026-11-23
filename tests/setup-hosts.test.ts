@@ -7,6 +7,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   existsSync,
   linkSync,
   lstatSync,
@@ -2791,9 +2792,7 @@ describe('preamble start-command install (Track 92A)', () => {
     const altPreamble = readFileSync(source, 'utf8') + '\n# alt-checkout-marker\n';
     writeFileSync(join(altCheckout, 'bin', 'lib', 'preamble.sh'), altPreamble);
     chmodSync(join(altCheckout, 'bin', 'lib', 'preamble.sh'), 0o755);
-    for (const entry of readdirSync(join(ROOT, 'skills'))) {
-      writeFileSync(join(altCheckout, 'skills', entry), readFileSync(join(ROOT, 'skills', entry)));
-    }
+    cpSync(join(ROOT, 'skills'), join(altCheckout, 'skills'), { recursive: true });
     const r2 = spawnSync(join(altCheckout, 'setup'), ['--host', 'claude', '--quiet'], {
       env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' },
       encoding: 'utf8',

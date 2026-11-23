@@ -72,6 +72,10 @@ function skill(name: string): string {
   return `skills/${name}.md`;
 }
 
+function skillRefs(name: string): string {
+  return `skills/references/${name}/**`;
+}
+
 /**
  * Manual non-TS dependencies — keyed by test path (relative to repo root).
  *
@@ -91,7 +95,7 @@ function skill(name: string): string {
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', '.gstack/secret-dispositions.json', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
-  'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
+  'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), skillRefs('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
   'tests/review-state.test.ts': ['bin/review-state', 'bin/lib/workflow_metrics.py', 'docs/designs/review-run-state.md', 'docs/review-run-state-calls.md'],
   // The runner reads the skill's delegate anchor paragraph at run time and its docs example is validated.
   'tests/review-delegate.test.ts': [
@@ -188,6 +192,15 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/preamble.test.ts': [
     'bin/lib/preamble.sh',
   ],
+  'tests/skill-references.test.ts': [
+    'skills/**',
+    'setup',
+    'bin/lib/preamble.sh',
+    'bin/lib/install-safety.sh',
+    'bin/lib/telemetry-call.sh',
+    'scripts/skill-references.ts',
+    'docs/**',
+  ],
   // One suite per skill. Each lists every skill file it reads, and
   // tests/touchfiles.test.ts checks the list against the skill paths the suite
   // names, so a skill change selects exactly the suites that read it.
@@ -212,6 +225,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/skill-protocols-review-and-prep.test.ts': [
     skill('review-and-prep'),
+    skillRefs('review-and-prep'),
     // Producer-side locks for the ship-and-land handoff read the consumer too.
     skill('ship-and-land'),
     'docs/telemetry.md',
@@ -234,6 +248,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'docs/orchestration-contract.md',
     skill('implement'),
     skill('review-and-prep'),
+    skillRefs('review-and-prep'),
     skill('pair-review'),
     skill('ship-and-land'),
     // The stage line: these producers print it too, and docs-ship uses its own result line.
@@ -422,6 +437,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'docs/workflow-metrics.schema.json',
     'docs/telemetry.md',
     skill('review-and-prep'),
+    skillRefs('review-and-prep'),
     skill('ship-and-land'),
   ],
   // The selection suite checks the pregate copy of this map and each split

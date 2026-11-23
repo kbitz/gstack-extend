@@ -4,7 +4,7 @@
 # and starts telemetry. See docs/installation.md#start-command.
 
 _usage() {
-  echo "preamble: usage: preamble <skill> [--force] [--require <helper>] [--root | --resume]" >&2
+  echo "preamble: usage: preamble <skill> [--force] [--require <helper>] [--root | --resume | --ref <file> --expect <digest> [--lines <a>-<b>]]" >&2
 }
 
 _fail_usage() {
@@ -13,19 +13,53 @@ _fail_usage() {
   exit 2
 }
 
+_fail_ref_usage() {
+  echo "SKILL_REFERENCE_USAGE: /${_ER_SKILL:-unknown} ref ${_REF_FILE:-none} (cause: usage; detail: $1) Fix: run ~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest> [--lines <a>-<b>]. See docs/installation.md#skill-references" >&2
+  exit 2
+}
+
 _print_help() {
   cat <<'EOF'
-Usage: preamble <skill> [--force] [--require <helper>] [--root | --resume]
+Usage: preamble <skill> [--force] [--require <helper>] [--root | --resume | --ref <file> --expect <digest> [--lines <a>-<b>]]
 
 Resolve the gstack-extend install for <skill>, run update-check, and start telemetry.
+With --ref, fetch a skill reference file from the verified checkout, verify its digest,
+and print numbered lines followed by a REFERENCE_END trailer.
 
 Options:
   --force             pass --force to bin/update-check
   --require <helper>  require a verified install and executable bin/<helper> (exit 1 on ERROR)
   --root              print only the root lines
   --resume            start a new telemetry segment
+  --ref <file>        fetch skills/references/<skill>/<file>.md from the verified checkout
+  --expect <digest>   expected 16-hex SHA-256 content digest (required with --ref)
+  --lines <a>-<b>     optional 1-based inclusive line range for --ref
   -h, --help          show this help and exit 0
 EOF
+}
+
+_sha256_16() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print substr($1, 1, 16)}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print substr($1, 1, 16)}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{print substr($NF, 1, 16)}'
+  else
+    return 1
+  fi
+}
+
+_is_valid_digest() {
+  case "$1" in
+    ????????????????)
+      case "$1" in
+        *[!0123456789abcdef]*) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 _is_valid_name() {
@@ -64,6 +98,10 @@ _FORCE=0
 _REQUIRE=""
 _MODE_ROOT=0
 _MODE_RESUME=0
+_REF_FILE=""
+_REF_EXPECT=""
+_REF_LINES=""
+_HAS_REF=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -89,11 +127,73 @@ while [ "$#" -gt 0 ]; do
       _MODE_RESUME=1
       shift
       ;;
+    --ref)
+      _HAS_REF=1
+      if [ "$#" -lt 2 ]; then
+        _fail_ref_usage "--ref requires a <file> value"
+      fi
+      _REF_FILE="$2"
+      if ! _is_valid_name "$_REF_FILE"; then
+        _fail_ref_usage "invalid reference name: $_REF_FILE"
+      fi
+      shift 2
+      ;;
+    --expect)
+      if [ "$#" -lt 2 ]; then
+        _fail_ref_usage "--expect requires a <digest> value"
+      fi
+      _REF_EXPECT="$2"
+      if ! _is_valid_digest "$_REF_EXPECT"; then
+        _fail_ref_usage "invalid digest for --expect: $_REF_EXPECT (expected 16 lowercase hex characters)"
+      fi
+      shift 2
+      ;;
+    --lines)
+      if [ "$#" -lt 2 ]; then
+        _fail_ref_usage "--lines requires an <a>-<b> range"
+      fi
+      _REF_LINES="$2"
+      shift 2
+      ;;
     *)
+      if [ "$_HAS_REF" -eq 1 ]; then
+        _fail_ref_usage "unknown argument: $1"
+      fi
       _fail_usage "unknown argument: $1"
       ;;
   esac
 done
+
+if [ "$_HAS_REF" -eq 1 ] || [ -n "$_REF_EXPECT" ] || [ -n "$_REF_LINES" ]; then
+  if [ "$_HAS_REF" -eq 0 ]; then
+    _fail_ref_usage "--expect and --lines require --ref"
+  fi
+  if [ -z "$_REF_EXPECT" ]; then
+    _fail_ref_usage "--ref requires --expect <digest>"
+  fi
+  if [ "$_FORCE" -eq 1 ] || [ -n "$_REQUIRE" ] || [ "$_MODE_ROOT" -eq 1 ] || [ "$_MODE_RESUME" -eq 1 ]; then
+    _fail_ref_usage "--ref cannot be combined with --force, --require, --root, or --resume"
+  fi
+  if [ -n "$_REF_LINES" ]; then
+    case "$_REF_LINES" in
+      *-*)
+        _REF_LINE_START="${_REF_LINES%%-*}"
+        _REF_LINE_END="${_REF_LINES#*-}"
+        case "$_REF_LINE_START:$_REF_LINE_END" in
+          ''|:*|*:|*:*[!0-9]*|*[!0-9]*:*)
+            _fail_ref_usage "invalid --lines range: $_REF_LINES"
+            ;;
+        esac
+        if [ "$_REF_LINE_START" -lt 1 ] || [ "$_REF_LINE_END" -lt "$_REF_LINE_START" ]; then
+          _fail_ref_usage "invalid --lines range: $_REF_LINES (expected 1 <= a <= b)"
+        fi
+        ;;
+      *)
+        _fail_ref_usage "invalid --lines range: $_REF_LINES (expected <a>-<b>)"
+        ;;
+    esac
+  fi
+fi
 
 if [ "$_MODE_ROOT" -eq 1 ] && [ "$_MODE_RESUME" -eq 1 ]; then
   _fail_usage "--root and --resume cannot be used together"
@@ -136,6 +236,48 @@ if [ -z "$_EXTEND_ROOT" ] && [ -n "$_ER_SEEN" ]; then
         else _ER_UNVERIFIED="$_ER lacks the line '# extend-root-protocol: v1' (checkout older than this skill, or not gstack-extend). Fix: git -C \"$_ER_SEEN\" pull --ff-only, then run \"$_ER_SEEN/setup\" --host auto"; fi ;;
     *) _ER_UNVERIFIED="an install pointer names a non-absolute path ($_ER_SEEN). Fix: run setup --host auto from your gstack-extend checkout" ;;
   esac
+fi
+
+if [ "$_HAS_REF" -eq 1 ]; then
+  if [ -z "$_EXTEND_ROOT" ]; then
+    echo "SKILL_REFERENCE_MISSING: /$_ER_SKILL ref $_REF_FILE (cause: no-root; root none; VERSION unknown) Fix: ${_ER_UNVERIFIED:-No gstack-extend install found under ~/.claude or ~/.codex. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).} See docs/installation.md#skill-references"
+    exit 1
+  fi
+  _REF_VER="unknown"
+  if [ -f "$_EXTEND_ROOT/VERSION" ] && [ -r "$_EXTEND_ROOT/VERSION" ]; then
+    IFS= read -r _REF_VER < "$_EXTEND_ROOT/VERSION" || true
+    [ -n "$_REF_VER" ] || _REF_VER="unknown"
+  fi
+  _REF_PATH="$_EXTEND_ROOT/skills/references/$_ER_SKILL/$_REF_FILE.md"
+  if [ ! -e "$_REF_PATH" ]; then
+    if [ -f "$_EXTEND_ROOT/.git" ]; then
+      _REF_FIX="\"$_EXTEND_ROOT\" is a linked worktree (bin/update-run refuses linked worktrees); run setup --host auto from your stable gstack-extend checkout."
+    else
+      _REF_FIX="run \"$_EXTEND_ROOT/bin/update-run\" \"$_EXTEND_ROOT\" (or git -C \"$_EXTEND_ROOT\" status -- skills/references if the checkout has local changes)."
+    fi
+    echo "SKILL_REFERENCE_MISSING: /$_ER_SKILL ref $_REF_FILE (cause: absent; path $_REF_PATH; root $_EXTEND_ROOT; VERSION $_REF_VER) Fix: $_REF_FIX See docs/installation.md#skill-references"
+    exit 1
+  fi
+  if [ ! -f "$_REF_PATH" ] || [ ! -r "$_REF_PATH" ]; then
+    echo "SKILL_REFERENCE_MISSING: /$_ER_SKILL ref $_REF_FILE (cause: unreadable; path $_REF_PATH; root $_EXTEND_ROOT; VERSION $_REF_VER) Fix: check file permissions on \"$_REF_PATH\" (chmod u+r) or restore with git -C \"$_EXTEND_ROOT\" checkout -- skills/references/$_ER_SKILL/$_REF_FILE.md. See docs/installation.md#skill-references"
+    exit 1
+  fi
+  _REF_ACTUAL=$(_sha256_16 "$_REF_PATH") || {
+    echo "SKILL_REFERENCE_MISSING: /$_ER_SKILL ref $_REF_FILE (cause: unreadable; path $_REF_PATH; root $_EXTEND_ROOT; VERSION $_REF_VER) Fix: sha256sum, shasum, or openssl is required to verify reference digests. See docs/installation.md#skill-references"
+    exit 1
+  }
+  if [ "$_REF_ACTUAL" != "$_REF_EXPECT" ]; then
+    echo "SKILL_REFERENCE_STALE: /$_ER_SKILL ref $_REF_FILE (cause: digest-mismatch; expected $_REF_EXPECT; actual $_REF_ACTUAL; path $_REF_PATH; root $_EXTEND_ROOT; VERSION $_REF_VER) Fix: restart /$_ER_SKILL so the loaded skill matches checkout VERSION $_REF_VER; if it still differs, run \"$_EXTEND_ROOT/setup\" --host auto from the checkout this host should use. See docs/installation.md#skill-references"
+    exit 1
+  fi
+  _REF_TOTAL=$(awk 'END { print NR + 0 }' "$_REF_PATH")
+  if [ -n "$_REF_LINES" ]; then
+    awk -v a="$_REF_LINE_START" -v b="$_REF_LINE_END" 'NR >= a && NR <= b { printf "%d: %s\n", NR, $0 }' "$_REF_PATH"
+  else
+    awk '{ printf "%d: %s\n", NR, $0 }' "$_REF_PATH"
+  fi
+  echo "REFERENCE_END $_ER_SKILL/$_REF_FILE lines=$_REF_TOTAL digest=$_REF_ACTUAL"
+  exit 0
 fi
 
 if [ -n "$_REQUIRE" ]; then

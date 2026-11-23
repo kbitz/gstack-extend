@@ -83,19 +83,39 @@ function hostDir(home: string, host: 'claude' | 'codex'): string {
   return join(home, '.codex', 'skills');
 }
 
+function listSkillReferenceFiles(): string[] {
+  const refsRoot = join(ROOT, 'skills', 'references');
+  if (!existsSync(refsRoot)) return [];
+  const out: string[] = [];
+  for (const skillDir of readdirSync(refsRoot).sort()) {
+    const fullDir = join(refsRoot, skillDir);
+    if (!lstatSync(fullDir).isDirectory()) continue;
+    for (const file of readdirSync(fullDir).sort()) {
+      if (file.endsWith('.md')) out.push(join(fullDir, file));
+    }
+  }
+  return out;
+}
+
 describe('skill sources', () => {
   // Generated copies keep source paths verbatim, so a Claude-only sibling path would ship to every host.
   test('skill sources never hardcode a ~/.claude/skills/ path', () => {
     for (const skill of SKILLS) {
       expect(readFileSync(skillPath(skill), 'utf8')).not.toContain('~/.claude/skills/');
     }
+    for (const refFile of listSkillReferenceFiles()) {
+      expect(readFileSync(refFile, 'utf8'), relative(ROOT, refFile)).not.toContain('~/.claude/skills/');
+    }
   });
 
-  // Value: protects=criterion 2, no live skill file names the retired /autoplan-lean skill; fails_when=any skills/*.md file contains autoplan-lean; why_new=retirement lock across every skill source; seam=none
+  // Value: protects=criterion 2, no live skill file names the retired /autoplan-lean skill; fails_when=any skills/*.md or skills/references/**/*.md file contains autoplan-lean; why_new=retirement lock across every skill source; seam=none
   test('no skill source names the retired autoplan-lean skill', () => {
     for (const file of readdirSync(join(ROOT, 'skills'))) {
       if (!file.endsWith('.md')) continue;
       expect(readFileSync(join(ROOT, 'skills', file), 'utf8'), file).not.toContain('autoplan-lean');
+    }
+    for (const refFile of listSkillReferenceFiles()) {
+      expect(readFileSync(refFile, 'utf8'), relative(ROOT, refFile)).not.toContain('autoplan-lean');
     }
   });
 

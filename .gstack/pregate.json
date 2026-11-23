@@ -71,6 +71,7 @@
       "tests/setup-hosts.test.ts",
       "tests/setup-init-wire.test.ts",
       "tests/skill-content.test.ts",
+      "tests/skill-references.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts",
@@ -85,6 +86,7 @@
       "tests/setup-init-wire.test.ts",
       "tests/skill-content.test.ts",
       "tests/skill-protocols.test.ts",
+      "tests/skill-references.test.ts",
       "tests/telemetry.test.ts",
       "tests/update.test.ts"
     ],
@@ -147,6 +149,7 @@
       "tests/setup-hosts.test.ts",
       "tests/skill-content.test.ts",
       "tests/skill-protocols.test.ts",
+      "tests/skill-references.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts"
     ],
@@ -221,6 +224,9 @@
     ],
     "bin/upstream-check": [
       "tests/upstream-check.test.ts"
+    ],
+    "docs/**": [
+      "tests/skill-references.test.ts"
     ],
     "docs/ROADMAP.md": [
       "tests/parsers-phases.test.ts",
@@ -342,6 +348,9 @@
     "scripts/scrub-quota-fixture.ts": [
       "tests/quota.test.ts"
     ],
+    "scripts/skill-references.ts": [
+      "tests/skill-references.test.ts"
+    ],
     "setup": [
       "tests/audit-compliance.test.ts",
       "tests/setup-hosts.test.ts",
@@ -349,6 +358,7 @@
       "tests/skill-content.test.ts",
       "tests/skill-protocols-plan-track.test.ts",
       "tests/skill-protocols.test.ts",
+      "tests/skill-references.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts",
@@ -358,6 +368,7 @@
       "tests/audit-compliance.test.ts",
       "tests/skill-content.test.ts",
       "tests/skill-protocols.test.ts",
+      "tests/skill-references.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/upstream-check.test.ts"
     ],
@@ -392,6 +403,12 @@
       "tests/docs-ship.test.ts",
       "tests/handoff-contract.test.ts",
       "tests/skill-protocols-project-spec.test.ts"
+    ],
+    "skills/references/review-and-prep/**": [
+      "tests/handoff-contract.test.ts",
+      "tests/outside-review.test.ts",
+      "tests/skill-protocols-review-and-prep.test.ts",
+      "tests/workflow-metrics.test.ts"
     ],
     "skills/review-and-prep.md": [
       "tests/handoff-contract.test.ts",

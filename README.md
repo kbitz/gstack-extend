@@ -234,7 +234,10 @@ See the [skill-edit selection measurements](docs/acceptance/skill-test-selection
 for the before/after file lists, timings, and limits.
 
 Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
-install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
+install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions,
+and [the skill core-versus-reference rule](docs/skill-references.md) governs
+when conditional skill text lives in `skills/references/` and how size budgets
+and digests are maintained.
 [`VERSION`](VERSION) is the version source of truth. Starting with the first
 release cut from a base containing this policy, gstack-extend uses SemVer core
 `MAJOR.MINOR.PATCH`, without prefixes or suffixes. The first cutover is a 0.x

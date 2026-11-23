@@ -21,7 +21,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { REGISTERED_SOURCES, routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
@@ -60,6 +60,20 @@ const SKILL_FILES = readdirSync(SKILLS_DIR)
   .filter((f) => f.endsWith('.md'))
   .sort();
 
+const SKILL_REFERENCE_FILES: string[] = (() => {
+  const refsRoot = join(SKILLS_DIR, 'references');
+  if (!existsSync(refsRoot)) return [];
+  const out: string[] = [];
+  for (const skillDir of readdirSync(refsRoot).sort()) {
+    const fullDir = join(refsRoot, skillDir);
+    if (!statSync(fullDir).isDirectory()) continue;
+    for (const file of readdirSync(fullDir).sort()) {
+      if (file.endsWith('.md')) out.push(join('references', skillDir, file));
+    }
+  }
+  return out;
+})();
+
 function assertNoSkillArgumentTokens(content: string, file: string): void {
   const hits = content.split('\n').flatMap((line, index) => {
     const tokens = line.match(/\$[0-9]|\$ARGUMENTS|\$\{CLAUDE_/g);
@@ -71,7 +85,7 @@ function assertNoSkillArgumentTokens(content: string, file: string): void {
 }
 
 describe('(E) skill argument substitution safety', () => {
-  for (const file of SKILL_FILES) {
+  for (const file of [...SKILL_FILES, ...SKILL_REFERENCE_FILES]) {
     test(`${file} contains no host argument placeholders, including frontmatter`, () => {
       assertNoSkillArgumentTokens(readFileSync(join(SKILLS_DIR, file), 'utf8'), file);
     });

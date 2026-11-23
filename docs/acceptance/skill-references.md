@@ -81,3 +81,35 @@ grading key below is never shown to the probed agent.
 | P6 | Invoked at a verified three-cycle cap stop | `conditional-cycle-cap` | Stops with `Full-review evidence:` line and continuation handoff |
 | P7 | Resumed session (`/review-and-prep resume`) after manual testing pause | `resume-manual-testing` | Re-fetches `resume-manual-testing` on step entry and reconciles item-level results |
 | P8 | Missing reference (`preamble --ref` returns `SKILL_REFERENCE_MISSING` exit 1) | `conditional-doc-audit-and-gates` (absent) | Relays `SKILL_REFERENCE_MISSING`, stops with blocked stage line, runs telemetry finish `--outcome error`, never continues from memory |
+
+## Before / after sizes (PR A)
+
+Measured on branch `mmm/c69c8c30` over base `6293d8c3d27cb8ef25cce6ba52b60e14adad4011`:
+
+| Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated default path (B) |
+|---|---:|---:|---:|---:|---:|---:|
+| `review-and-prep` | 366,223 | 188,556 | 196,608 | 187,497 (12 files) | 188,556 | 240,377 |
+
+- Codex rendering of slimmed `skills/review-and-prep.md`: `188,404` bytes (down from `366,071` bytes; `73,740` bytes below Muse Code 1.4.25's `262,144`-byte limit).
+- Conservation check (`bun scripts/skill-references.ts check --base HEAD`): `CONSERVATION review-and-prep: ok=true blocks=21 dropped=0 base=366223B core=188556B`.
+- Paid diet eval: `eval: not run (no spend authorized by docs/SPEC.md)`.
+- Per-run model usage savings: `unknown` until recorded runs measure it.
+- Downstream Tracks note: Tracks 96A and 97A, which also edit `skills/review-and-prep.md`, must widen their `_touches` to the matching `skills/references/review-and-prep/*.md` files when touching moved sections.
+- Remaining Track 94I scope (PR B, from a fresh base after PR A merges): slimming `skills/roadmap.md`, `skills/ship-and-land.md`, and `skills/pair-review.md` with their reader maps, probes, budgets, and load-check rows.
+
+## Pre-merge load-check results (PR A, five nonces on scratch copies)
+
+Scratch copies only; no step modified `$HOME` or installed skills. Five unique nonces inserted at start, 25%, 50%, 75%, and end of the slimmed `skills/review-and-prep.md` (and its Codex rendering):
+
+| Exercised combination | Harness version | Base rev | Result |
+|---|---|---|---|
+| Claude-format scratch copy in Claude Code | Claude Code 2.1.330 | `6293d8c` + working tree | **PASS** — 5/5 nonces reported (`status=0`) |
+| Codex-format scratch copy in Codex | `codex-cli 0.171.0` | `6293d8c` + working tree | **PASS** — 5/5 nonces reported (`status=0`) |
+| Scratch copy in Grok | `grok 1.0.92` (`b06756fd6256`) | `6293d8c` + working tree | **PASS** — 5/5 nonces reported (`status=0`) |
+| Codex-format scratch package in Muse (`muse skills validate`) | Muse Code 1.4.25 (`1.4.25-R9361.1`) | `6293d8c` + working tree | **PASS** — `valid: true`, `result: compatible`, `diagnostics: []` (`188,404` B vs `262,144` B limit) |
+
+## Base-versus-candidate behavior probe results (PR A)
+
+| Probe ID | Harnesses | Status | Notes |
+|---|---|---|---|
+| P1–P8 | Claude Code 2.1.330, Codex 0.171.0, Muse Code 1.4.25 | **Unproven** (pending live base-vs-candidate probe execution in `/review-and-prep` / post-merge) | Preregistered probe set and grading key committed above; deterministic disposable-HOME install + `preamble --ref` fetch tests pass for Claude and Codex in `tests/skill-references.test.ts` and `tests/preamble.test.ts`. |

@@ -155,7 +155,9 @@ foreign install pointers, and unrelated files are preserved.
 `setup` manages Claude Code and Codex from the table above. Another agent that reads
 `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
-`~/.gemini/config/skills/` is one such directory.
+`~/.gemini/config/skills/` is one such directory. The Codex install of the slimmed
+`/review-and-prep` validates in Muse Code 1.4.25 (under its 262,144-byte `SKILL.md`
+limit; see `docs/acceptance/skill-references.md`).
 
 With a managed Claude install, link the directory `setup` already maintains, so
 the link follows later refreshes. For Codex, use `~/.codex/skills`:
@@ -684,6 +686,20 @@ files. Uninstall leaves the helper directory available for a waiting setup.
 If a run times out waiting for the lock, wait for the other setup to finish
 and retry. If an interrupted setup left the lock behind, confirm no setup is
 running before removing the empty `~/.gstack-extend/bin/.setup.lock` directory.
+
+### Skill references
+
+Slimmed skills fetch conditional instructions from `skills/references/<skill>/<file>.md` in the verified checkout through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`. When a fetch fails, `preamble` prints one coded line and exits non-zero; work completed before that step stands and rerunning the skill re-binds to the existing PR or uses its resume form.
+
+| Error line / cause | Meaning | Fix |
+|---|---|---|
+| `SKILL_REFERENCE_MISSING` (`cause: absent`) on a normal checkout | The reference file is missing from the checkout (for example, an older checkout or local deletion) | Run `"<root>/bin/update-run" "<root>"`, or inspect with `git -C "<root>" status -- skills/references` if the checkout has local changes |
+| `SKILL_REFERENCE_MISSING` (`cause: absent`) on a linked worktree | The verified root is a linked worktree (`bin/update-run` refuses linked worktrees) | Run `setup --host auto` from your stable gstack-extend checkout |
+| `SKILL_REFERENCE_MISSING` (`cause: unreadable`) | The reference path exists but is not a readable regular file | Fix permissions (`chmod u+r "<path>"`) or restore with `git -C "<root>" checkout -- skills/references/<skill>/<file>.md` |
+| `SKILL_REFERENCE_MISSING` (`cause: no-root`) | No verified gstack-extend checkout was found under `~/.claude` or `~/.codex` | Run `setup --host auto` from your gstack-extend checkout (see Installation) |
+| `SKILL_REFERENCE_STALE` (`cause: digest-mismatch`) | The loaded skill copy and the checkout's reference file are different versions (for example, after a manual `git pull` without rerunning `setup`, or after a mid-run upgrade) | Restart `/<skill>` so the loaded copy matches the checkout; if it still differs, run `"<root>/setup" --host auto` from the checkout this host should use |
+| `SKILL_REFERENCE_USAGE` (`cause: usage`) | Bad arguments passed to `preamble ... --ref` (exit 2) | Re-run the exact command from the skill's read instruction (`preamble <skill> --ref <file> --expect <digest> [--lines <a>-<b>]`) |
+| `PREAMBLE_USAGE` (exit 2) on `--ref` | The shared `~/.gstack-extend/bin/preamble` predates `--ref` support | Run `./setup --host auto` from your updated gstack-extend checkout |
 
 ### Unsafe skills directory
 
