@@ -227,30 +227,34 @@ exec '${REAL_BUN}' "$@"
       const launcher = join(mirrorBin, spec.name);
       const args = spec.family === 'merge-gate' ? ['--version', '--json'] : ['--help'];
 
-      const checkRefusal = (pathEnv: string, expectedToken: string, expectedCode: string, expectedCause: string) => {
+      const checkRefusal = (
+        pathEnv: string,
+        expectedToken: string,
+        expectedCode: string,
+        expectedCause: string,
+        fragments: string[],
+      ) => {
         const r = spawnSync('/bin/sh', [launcher, ...args], { env: { PATH: pathEnv }, encoding: 'utf8', timeout: 15_000 });
         expect(existsSync(sentinelHit)).toBe(false);
+        let diagnostic = r.stderr;
         if (spec.family === 'bare') {
           expect(r.status).toBe(1);
           expect(r.stdout).toBe('');
           expect(r.stderr.trim().split('\n')).toHaveLength(1);
           expect(r.stderr).toContain(`${spec.name}: ${expectedToken}`);
-          expect(r.stderr).toContain('No changes were made.');
-          expect(r.stderr).toContain('docs/installation.md#requirements');
         } else if (spec.family === 'hardened') {
           expect(r.status).toBe(5);
           expect(r.stdout).toBe('');
           expect(r.stderr.trim().split('\n')).toHaveLength(2);
           expect(r.stderr).toContain(`ERROR ${expectedCode}: ${expectedToken}`);
           expect(r.stderr).toContain('FIX:');
-          expect(r.stderr).toContain('docs/installation.md#requirements');
         } else if (spec.family === 'merge-gate') {
           expect(r.status).toBe(1);
           expect(r.stderr).toBe('');
           const parsed = JSON.parse(r.stdout.trim());
           expect(parsed.error.code).toBe(expectedCode);
           expect(parsed.error.message).toContain(expectedToken);
-          expect(parsed.error.fix).toContain('docs/installation.md#requirements');
+          diagnostic = parsed.error.message + '\n' + parsed.error.fix;
         } else {
           expect(r.status).toBe(5);
           const parsed = JSON.parse(r.stdout.trim());
@@ -259,12 +263,28 @@ exec '${REAL_BUN}' "$@"
           expect(parsed.detail.message).toContain(expectedToken);
           expect(r.stderr).toContain(`ERROR INTERNAL_ERROR: ${expectedToken}`);
           expect(r.stderr.trim().split('\n')).toHaveLength(2);
+          diagnostic = parsed.detail.message + '\n' + parsed.fix;
         }
+        expect(diagnostic).toContain(spec.name);
+        expect(diagnostic).toContain('1.3.3');
+        expect(diagnostic).toContain('No changes were made.');
+        expect(diagnostic).toContain('docs/installation.md#requirements');
+        expect(diagnostic).toContain(spec.family === 'review-state'
+          ? 'then rerun the identical command once'
+          : 'then rerun the same command once');
+        expect(diagnostic).toContain('if it still refuses, report this line verbatim');
+        for (const fragment of fragments) expect(diagnostic).toContain(fragment);
       };
 
-      checkRefusal(NO_BUN_PATH, 'PREREQ_BUN_MISSING', 'bun_missing', 'runtime-missing');
-      checkRefusal(`${oldBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_TOO_OLD', 'bun_too_old', 'runtime-too-old');
-      checkRefusal(`${badBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_VERSION_UNKNOWN', 'bun_version_unknown', 'runtime-version-unknown');
+      checkRefusal(NO_BUN_PATH, 'PREREQ_BUN_MISSING', 'bun_missing', 'runtime-missing', [
+        'not on', 'curl -fsSL https://bun.sh/install | bash', 'reload your shell or add ~/.bun/bin to PATH',
+      ]);
+      checkRefusal(`${oldBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_TOO_OLD', 'bun_too_old', 'runtime-too-old', [
+        'found 1.2.0 at ', 'bun upgrade', 'upgrade via your package manager',
+      ]);
+      checkRefusal(`${badBunDir}:${NO_BUN_PATH}`, 'PREREQ_BUN_VERSION_UNKNOWN', 'bun_version_unknown', 'runtime-version-unknown', [
+        'could not determine version at ', 'saw hostile', 'upgrade or reinstall Bun',
+      ]);
 
       const checkUnavailableHelper = () => {
         const result = spawnSync('/bin/sh', [launcher, ...args], {
@@ -279,9 +299,11 @@ exec '${REAL_BUN}' "$@"
           const response = JSON.parse(result.stdout.trim());
           expect(response.error.code).toBe('internal_error');
           expect(response.error.message).toContain('PREREQ_HELPER_MISSING');
+          expect(response.error.fix).toContain('./setup');
           expect(response.error.fix).toContain('No changes were made.');
         } else {
           expect(result.stderr).toContain('PREREQ_HELPER_MISSING');
+          expect(result.stderr).toContain('./setup');
           expect(result.stderr).toContain('No changes were made.');
           expect(result.stderr).not.toContain('hostile');
           if (spec.family === 'review-state') {
@@ -458,6 +480,40 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
     expect(result.status).toBe(0);
     expect(existsSync(join(target, 'CLAUDE.md'))).toBe(true);
     expect(JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8')).projects).toHaveLength(1);
+  });
+
+  test('init preserves Git selection when Bun already resolves in the audit directory', () => {
+    const home = freshDir('init-git-home');
+    const target = freshDir('init-git-repo');
+    const preferred = freshDir('init-preferred-tools');
+    const runtime = freshDir('init-runtime-bin');
+    const alternateGitMarker = join(home, 'runtime-git-was-used');
+    const git = join(NO_BUN_PATH, 'git');
+    symlinkSync(git, join(preferred, 'git'));
+    makeDelegatingShim(runtime, '1.3.3');
+    writeFileSync(join(runtime, 'git'), [
+      '#!/bin/sh',
+      ': > "$TEST_ALTERNATE_GIT_MARKER"',
+      'exec "$TEST_REAL_GIT" "$@"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    const env = {
+      HOME: home,
+      PATH: `${preferred}:${runtime}:${NO_BUN_PATH}`,
+      GSTACK_EXTEND_STATE_DIR: join(home, 'state'),
+      TEST_ALTERNATE_GIT_MARKER: alternateGitMarker,
+      TEST_REAL_GIT: git,
+    };
+    const initialized = spawnSync(git, ['init', '--quiet', target], { env, encoding: 'utf8', timeout: 15_000 });
+    expect(initialized.status).toBe(0);
+    const r = spawnSync('/bin/bash', [join(REPO_ROOT, 'bin/gstack-extend'), 'init', target, '--no-prompt'], {
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Running post-render audit');
+    expect(existsSync(alternateGitMarker)).toBe(false);
   });
 
   test('init --dry-run warns on stderr under missing/old Bun and writes nothing; init --help exits 0', () => {

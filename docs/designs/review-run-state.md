@@ -136,7 +136,7 @@ Run-state commands: `build <command> --dir DIR [flags]` (builds the canonical JS
 | <a id="reason-busy"></a>`busy` | `busy` | 4 | `none` / `same-input` | `{holder: {pid, host, started_at, unknown}}` (`retry_after_ms` = `lockWaitMs`); a same-host lock whose process has exited is reclaimed automatically; this holder is alive, on another host, or unverifiable. Confirm no `review-state` process runs as the recorded `pid` on the recorded `host`, delete `review-run-state.json.lock`, and rerun the identical command. |
 | <a id="reason-internal-error"></a>`internal-error` | `error` | 5 | `none` / `same-input` | `{cause: "git-execution"\|"uncaught"\|"runtime-missing"\|"runtime-too-old"\|"runtime-version-unknown", message, trace, git?, errno?, signal?}`. Rerun the identical command once (replay makes a rerun safe); if it fails again, continue inline (D1) and keep the trace file named in detail.trace. |
 
-For a launcher-only prerequisite refusal, `fix` includes an install, upgrade, or reinstall instruction before the retry. The launcher cannot supply a trace and sets `detail.trace` to `null`.
+For a launcher-only prerequisite refusal, `fix` includes an install, upgrade, or reinstall instruction before the retry. The launcher cannot supply a trace and sets `detail.trace` to `null`. An unavailable prerequisite helper uses `runtime-missing` with `PREREQ_HELPER_MISSING` in `detail.message` and a reinstall instruction.
 
 ## D9. Derivation map
 

@@ -155,12 +155,13 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/merge-gate.test.ts': ['bin/merge-gate', 'bin/lib/bun-prereq.sh', 'src/merge-gate/**', 'docs/merge-gate.md'],
   'tests/quota.test.ts': [
-    'bin/gstack-extend', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
+    'bin/gstack-extend', 'bin/lib/bun-prereq.sh', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
     'bin/lib/telemetry*.py', 'tests/quota_cases.py', 'tests/fixtures/quota/**',
     'docs/quota-ledger.md',
     'scripts/scrub-quota-fixture.ts',
   ],
   'tests/audit-snapshots.test.ts': [
+    'bin/lib/bun-prereq.sh',
     'bin/roadmap-audit',
     'bin/roadmap-pack',
     'bin/roadmap-touches',
@@ -172,6 +173,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-renumber',
   ],
   'tests/audit-cli-contract.test.ts': [
+    'bin/lib/bun-prereq.sh',
     'bin/roadmap-audit',
     'src/audit/**',
   ],
@@ -451,6 +453,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/quota/common.py',
     'bin/lib/quota/usage.py',
     'bin/review-state',
+    'bin/lib/bun-prereq.sh',
     'src/review-state/**',
     'tests/fixtures/run-usage/**',
     'docs/workflow-metrics.schema.json',

@@ -72,6 +72,8 @@
       "tests/layout-scaffold.test.ts"
     ],
     "bin/lib/bun-prereq.sh": [
+      "tests/audit-cli-contract.test.ts",
+      "tests/audit-snapshots.test.ts",
       "tests/bun-prereq.test.ts",
       "tests/docs-ship.test.ts",
       "tests/init-bin.test.ts",
@@ -81,6 +83,7 @@
       "tests/merge-gate.test.ts",
       "tests/outside-review.test.ts",
       "tests/pregate-deps.test.ts",
+      "tests/quota.test.ts",
       "tests/review-delegate.test.ts",
       "tests/review-state.test.ts",
       "tests/secret-dispositions.test.ts",
@@ -91,7 +94,8 @@
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts",
       "tests/update.test.ts",
-      "tests/upstream-check.test.ts"
+      "tests/upstream-check.test.ts",
+      "tests/workflow-metrics.test.ts"
     ],
     "bin/lib/install-safety.sh": [
       "tests/init-bin.test.ts",

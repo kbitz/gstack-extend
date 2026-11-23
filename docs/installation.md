@@ -15,6 +15,7 @@
 <entry>: PREREQ_BUN_TOO_OLD Bun >= 1.3.3 is required (found <found> at <path>); run: upgrade Bun to >= 1.3.3 (bun upgrade, or upgrade via your package manager), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
 <entry>: PREREQ_BUN_VERSION_UNKNOWN Bun >= 1.3.3 is required (could not determine version at <path>; saw <detail>); run: upgrade or reinstall Bun >= 1.3.3 (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
 <entry>: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.
+setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.
 ```
 
 | Entry points | Channel and format | Exit | Error codes / causes |
@@ -26,7 +27,7 @@
 | `merge-gate` | `ERROR <code>:` / `FIX:` on stderr, or canonical JSON object on stdout when `--json` / `--jsonl` is passed | 1 | `bun_missing`, `bun_too_old`, `bun_version_unknown`, `internal_error` |
 | `review-state` | Canonical `internal-error` JSON envelope on stdout plus `ERROR INTERNAL_ERROR:` / `FIX:` on stderr | 5 | `runtime-missing`, `runtime-too-old`, `runtime-version-unknown` |
 
-The helper refusal carries the `PREREQ_HELPER_MISSING` token in the message. For `merge-gate` and `review-state`, that includes the JSON error.
+The helper refusal carries the `PREREQ_HELPER_MISSING` token in the message. For `merge-gate` and `review-state`, that includes the JSON error. `review-state` reports the unavailable helper with cause `runtime-missing`.
 
 A build reporting exactly Bun 1.3.3 must list `--no-env-file` in its help.
 Early canaries reported that version before the flag existed. If the check
