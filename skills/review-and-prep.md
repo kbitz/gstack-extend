@@ -42,10 +42,10 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 
 ### Reference files and mid-run upgrades
 
-Some conditional steps keep their detailed instructions in reference files under the verified gstack-extend checkout. Each read point names the exact `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command to run.
+Read conditional instructions from the verified gstack-extend checkout with the named `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command.
 
-- **On step entry.** Run the named command on every entry, even with a prior reply or compaction summary. Check the `REFERENCE_END` digest and contiguous numbered lines from 1 through its `lines=<N>`. Retry any elision with bounded `--lines <a>-<b>` chunks. If you still cannot verify the full range, report `SKILL_REFERENCE_INCOMPLETE` with the step, reference, harness and version and take the failure exit.
-- **On failure.** Relay `SKILL_REFERENCE_*` verbatim. For `PREAMBLE_USAGE` or a missing launcher use the start-command recovery above. Preserve inline holds. Record only the cause and repository-relative reference path in receipts and PR bodies. Finish telemetry with `--outcome error` for this step. Where applicable end with `Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Resume the existing work. Never continue a moved step from memory.
+- **On step entry.** Run the command on every entry, even after compaction or a prior read. Verify the `REFERENCE_END` digest and contiguous numbered lines 1 through `lines=<N>`. Retry elision in bounded `--lines <a>-<b>` chunks. If verification still fails, report `SKILL_REFERENCE_INCOMPLETE` with step, reference, harness and version and take the failure exit.
+- **On failure.** Relay `SKILL_REFERENCE_*` verbatim; for `PREAMBLE_USAGE` or a missing launcher relay the start-command fix. Never use moved instructions from memory. Record only the cause and repository-relative reference path in receipts and PR bodies. Use the core's explicit fallback for optional reads. Otherwise preserve inline holds and finish telemetry with `--outcome error`. Where applicable end with `Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Resume the existing work.
 - **Host subagents.** Fetch each needed reference and start the reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed `UPGRADE_OK` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.
 
@@ -149,7 +149,7 @@ that omits the skew recovery, keep recording state if `derive` returns
 binding fields above. Set `GX_CAPTURE=0` and use `derive-missing` as the
 metrics receipt's unavailable reason.
 
-Capture changes no gate, finding or readiness. When capture or the receipt read is unavailable, keep the actual outcome and write `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).` with the actual status and reason. When there is no session ID, use that line in place of the read.
+Capture changes no gate, finding or readiness. Both metrics reads below are optional. If either fails, set `GX_CAPTURE=0` for this segment, skip metrics wrappers and continue the workflow. Record `capture=partial (reference-unavailable)`. For unavailable capture, no session ID or a failed receipt read, write `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).` with the actual status and reason.
 
 - derive writes the run `begin`. In the call that runs the first derive of a
   segment, resolve the launcher through the telemetry helper and
@@ -164,7 +164,7 @@ Capture changes no gate, finding or readiness. When capture or the receipt read 
   An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
   unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
   or missing-span)` in the receipt and continue the workflow.
-Enter this metrics step once per segment after derive binds capture. Re-enter after compaction when the procedure is absent. Spans within the same initialized step use that read.
+Load once per segment after derive binds capture. Re-enter after compaction when the instructions are absent. Reuse that read for spans in the same step.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-workflow-metrics --expect d4873708fbe08216` before the first span, decision or receipt read when `GX_CAPTURE=1` for this workflow segment.
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-metrics-findings --expect 9653c005b647175e` before attributing a finding or recording a correction or fix batch when `GX_CAPTURE=1`.

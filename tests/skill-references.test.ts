@@ -176,6 +176,19 @@ describe('pointer integrity and reference structure (Track 94I)', () => {
     expect(core.indexOf(instructions[0]!.line)).toBeGreaterThan(core.indexOf('print the library path to retain as `GX_LIB`'));
   });
 
+  test('unavailable metrics references disable capture without blocking review', () => {
+    const core = readFileSync(skillPath('review-and-prep'), 'utf8');
+    const failureRule = core.split('**On failure.**')[1]!.split('**Host subagents.**')[0]!;
+    expect(failureRule).toContain("Use the core's explicit fallback for optional reads. Otherwise preserve inline holds and finish telemetry with `--outcome error`");
+
+    const metrics = core.split('### Workflow metrics (optional, local)\n')[1]!.split('Own the interval')[0]!;
+    const reads = parseReadInstructions(metrics);
+    expect(reads.map(({ ref }) => ref)).toEqual(['conditional-workflow-metrics', 'conditional-metrics-findings']);
+    const beforeReads = metrics.slice(0, metrics.indexOf(reads[0]!.line));
+    expect(beforeReads).toMatch(/Both metrics reads below are optional\. If either fails, set `GX_CAPTURE=0` for this segment, skip metrics wrappers and continue the workflow\./);
+    expect(beforeReads).toContain('capture=partial (reference-unavailable)');
+  });
+
   test('a reference failure at a cycle cap preserves a durable hold and cannot create a continuation', () => {
     const core = readFileSync(skillPath('review-and-prep'), 'utf8');
     const stop = core.split('### When /review stops at its cycle cap\n')[1]!;

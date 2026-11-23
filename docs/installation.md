@@ -724,7 +724,7 @@ running before removing the empty `~/.gstack-extend/bin/.setup.lock` directory.
 
 ### Skill references
 
-Slimmed skills fetch conditional instructions from `skills/references/<skill>/<file>.md` in the verified checkout through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`. Pass the file stem without `.md`. On a reference read failure, the skill stops at that step and preserves existing holds. After fixing the cause, resume the existing work.
+Slimmed skills fetch conditional instructions from `skills/references/<skill>/<file>.md` in the verified checkout through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`. Pass the file stem without `.md`. A required read failure stops the skill at that step and preserves existing holds. After fixing the cause, resume the existing work. If an optional metrics read fails in `/review-and-prep`, the skill reports the error, records partial capture and continues preparation.
 
 | Error line / cause | Meaning | Fix |
 |---|---|---|

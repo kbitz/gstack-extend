@@ -39,6 +39,8 @@ gstack-extend checkout rather than beside each host's installed `SKILL.md`:
     `src/review-delegate/cli.ts`).
   - Any heading linked by `#anchor` from `docs/` or `tests/`.
 - All **no-root and degraded-mode fallbacks** and their output templates.
+  Keep any optional-read fallback inline. A failed metrics read in
+  `/review-and-prep` disables capture for that segment and preparation continues.
 
 ### May move to a reference (`skills/references/<skill>/<prefix>-<topic>.md`)
 
