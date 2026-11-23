@@ -320,6 +320,72 @@
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 2b90a30 (2026-11-23).
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test gap: Reject a reference line range past EOF
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The fixtures verify a valid subset and malformed ranges. No test pins the output when the range is well formed and ends after the reference.
+- **Hypothesis (untested):** Request one line beyond EOF and check for exit 2, the usage diagnostic and empty stdout.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/preamble.sh`.
+- **Evidence:** Preamble reference range tests and the bounds check were inspected. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test gap: Verify digest provider fallbacks
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The shell selects between sha256sum, shasum and openssl. The existing fixtures inherit the host hash programs.
+- **Hypothesis (untested):** Run the launcher with each fallback exposed in turn and verify the same digest. Then remove all providers and check the missing-reference result without body bytes.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/preamble.sh`.
+- **Evidence:** The normal SHA-256 path and stale digest fixtures passed. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Reject ambiguous manifest move entries
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Conservation fixtures cover missing navigation text and reordered blocks. They lack overlapping ranges, repeated navigation text and a heading lookalike inside a fence.
+- **Hypothesis (untested):** Add those manifest inputs to the existing fixture and verify that invalid moves never produce a changed core.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `scripts/skill-references.ts`.
+- **Evidence:** The manifest checks and conservation cases were inspected. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Exercise the maintainer reference CLI in a fixture
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The reviewed branch ran apply, check and digests in place. Automated coverage exercises the exported transformation rather than the CLI selection and write gates.
+- **Hypothesis (untested):** Use a small fixture repository to show that digests defaults to a read-only check and that --write refreshes only the selected pointers.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `scripts/skill-references.ts`.
+- **Evidence:** The real apply, check and digest commands returned exit 0 on the current candidate. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|tests/helpers/skill-budgets.ts] Test gap: Measure the complete default review read sequence
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The cumulative budget uses references selected by the reader map. The default scratch probe stops at Step 2 before review and receipt assembly.
+- **Hypothesis (untested):** Compare the fetched reference set from a complete successful by-hand run with the representative budget after rollout.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md`.
+- **Evidence:** The early default gate passed and the static path budget is 196,467 bytes. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|skills/references/review-and-prep/conditional-greptile-run.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Exercise the Greptile once hold through resume
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The protocol locks cover the reservation, statuses and fallback. The scratch gate set does not walk a consumed request that remains incomplete across resume.
+- **Hypothesis (untested):** Use a disposable scenario with a recorded request and unverifiable completion. Check that resume holds the draft and submits no new request.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md`.
+- **Evidence:** The applicable guard and published shapes were inspected. The item repository has no root Greptile configuration. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
