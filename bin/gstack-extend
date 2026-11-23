@@ -644,6 +644,21 @@ require_jq() {
   return 1
 }
 
+check_bun_audit_path() {
+  case "$BUN_PREREQ_RAW_PATH" in
+    *:*|[!/]*)
+      local prefix='' effect='No changes were made.'
+      if [ "${1:-}" = 'preview' ]; then
+        prefix='warning: '
+        effect='Dry-run writes nothing.'
+      fi
+      printf 'gstack-extend init: %sPREREQ_BUN_MISSING Bun is not on a PATH entry usable from the audit directory; add an absolute PATH entry without a colon and rerun. %s See docs/installation.md#requirements.\n' "$prefix" "$effect" >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 # require_bun
 # Mutating init needs a supported Bun before any scaffold or registry write.
 require_bun() {
@@ -655,13 +670,7 @@ require_bun() {
     bun_prereq_print_shared 'gstack-extend init' >&2
     return 1
   fi
-  case "$BUN_PREREQ_RAW_PATH" in
-    *:*|[!/]*)
-      printf '%s\n' 'gstack-extend init: PREREQ_BUN_MISSING Bun is not on a PATH entry usable from the audit directory; add an absolute PATH entry without a colon and rerun. No changes were made. See docs/installation.md#requirements.' >&2
-      return 1
-      ;;
-  esac
-  return 0
+  check_bun_audit_path
 }
 
 # preflight_existing_registry
@@ -695,6 +704,8 @@ warn_dry_run_state() {
     echo "gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements." >&2
   elif ! bun_prereq_probe; then
     printf 'gstack-extend init: warning: %s; run: %s. Dry-run writes nothing.\n' "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX" >&2
+  else
+    check_bun_audit_path preview || true
   fi
 }
 

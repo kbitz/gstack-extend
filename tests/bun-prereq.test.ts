@@ -482,6 +482,37 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
     expect(JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8')).projects).toHaveLength(1);
   });
 
+  test('init warns in preview and refuses mutation when the Bun path cannot survive chdir', () => {
+    const home = freshDir('init-unusable-bun-home');
+    const parent = freshDir('init-unusable-bun');
+    const caller = join(parent, 'caller:project');
+    const runtime = join(caller, 'relative-bin');
+    const target = join(parent, 'consumer');
+    mkdirSync(runtime, { recursive: true });
+    makeDelegatingShim(runtime, '1.3.3');
+    const env = {
+      HOME: home,
+      PATH: `relative-bin:${NO_BUN_PATH}`,
+      GSTACK_EXTEND_STATE_DIR: join(home, 'state'),
+    };
+    const args = [join(REPO_ROOT, 'bin/gstack-extend'), 'init', target, '--no-prompt'];
+    const options = { cwd: caller, env, encoding: 'utf8' as const, timeout: 15_000 };
+    const preview = spawnSync('/bin/bash', [...args, '--dry-run'], options);
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain('DRY RUN');
+    expect(preview.stderr).toContain('warning: PREREQ_BUN_MISSING');
+    expect(preview.stderr).toContain('add an absolute PATH entry without a colon and rerun');
+    expect(snapshotTree(home)).toEqual([]);
+    expect(existsSync(target)).toBe(false);
+
+    const result = spawnSync('/bin/bash', args, options);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('init: PREREQ_BUN_MISSING');
+    expect(result.stderr).toContain('add an absolute PATH entry without a colon and rerun');
+    expect(snapshotTree(home)).toEqual([]);
+    expect(existsSync(target)).toBe(false);
+  });
+
   test('init preserves Git selection when Bun already resolves in the audit directory', () => {
     const home = freshDir('init-git-home');
     const target = freshDir('init-git-repo');

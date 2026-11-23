@@ -107,8 +107,8 @@ EOF
 #   BUN_PREREQ_TOKEN       '' | PREREQ_BUN_MISSING | PREREQ_BUN_TOO_OLD | PREREQ_BUN_VERSION_UNKNOWN
 #   BUN_PREREQ_ERROR_CODE  '' | bun_missing | bun_too_old | bun_version_unknown
 #   BUN_PREREQ_FOUND       numeric core (on ok/too_old) or sanitized detail (on unknown) or ''
-#   BUN_PREREQ_PATH        sanitized resolved path or 'not on PATH'
-#   BUN_PREREQ_RAW_PATH    unsanitized resolved path for exec on ok (or '')
+#   BUN_PREREQ_PATH        resolved path, sanitized on refusal, or 'not on PATH'
+#   BUN_PREREQ_RAW_PATH    raw path when resolved, otherwise ''. Exec only on ok.
 #   BUN_PREREQ_WHAT        short sanitized description (without entry point)
 #   BUN_PREREQ_REMEDY      install, upgrade or reinstall instructions
 #   BUN_PREREQ_FIX         actionable fix + recovery + docs pointer
