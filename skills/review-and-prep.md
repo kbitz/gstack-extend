@@ -3247,14 +3247,21 @@ when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase
 For blocked or failed re-audit fallback, first execute blocked recovery step 1
 (**confirm the child stopped**). If dispatch was refused before any child
 started, retain proof that no child launched. At initial reconciliation,
-require the clean-tree check below before any write and verify the original
+make no checkout writes and verify the original
 Prepare snapshot against its pre-dispatch hash, invocation and audit ID.
 If that verification fails or cannot run, stop before trusting the snapshot.
 Only then compare it to verify HEAD, index and ownership even without valid
-child output. Save the stop and ownership proof bound to that
-attempt and snapshot. On a later trigger, validate that saved reconciliation
-and account for any intervening authorized changes before using it. Compare the
-failed child's Prepare snapshot to the state at its stop, before later writes.
+child output. Capture the clean-tree result and run the read-only
+comparison even when the tree is dirty. Save the outcome, including any
+non-waivable failure, in parent-held evidence bound to the invocation, attempt
+and Prepare snapshot before stopping or proceeding.
+
+On resume or a later trigger, verify the saved reconciliation and account for
+intervening authorized changes. A recorded non-waivable failure keeps
+that attempt stopped even if the tree is now clean or HEAD or the index were
+restored. If first reconciliation was interrupted, require independent evidence
+that the checkout still reflects the state at the child's stop before comparing
+it. Otherwise stop.
 
 For each fallback decision, require the current clean tree and pass the
 base-policy cap check below before reuse or retry. Apply existing redaction and
@@ -3267,7 +3274,8 @@ including an empty walk. Stop under
 blocked recovery if any check fails or cannot be verified, including an
 unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or
 security gate failure, or `docs-caps` failure. Record `classify-not-applied`
-with the reason. An initially blocked or failed audit cannot enter fallback.
+with the reason and retain any non-waivable failure for that attempt in the
+same bound evidence. An initially blocked or failed audit cannot enter fallback.
 A blocked or failed re-audit disclosed alongside a reused audit keeps its actual
 result in the full documentation detail and evidence while that audit is carried.
 Write no `record audit` for reuse or for the rejected attempt on this fallback
@@ -3474,9 +3482,11 @@ there, and any unexpected command or script failure is `command-failed`.
    interrupted extra launch: the parent first runs blocked recovery step 1
    (confirm the child stopped), then verifies the original Prepare snapshot's
    pre-dispatch hash, invocation and audit ID before Parent processing. Missing
-   or mismatched proof takes the non-waivable stop. With verified proof, validate
-   the saved output through upstream's Parent processing (collect, check output,
-   check ownership, check freshness and run the verified-base cap check above).
+   or mismatched proof takes the non-waivable stop. Before Parent processing,
+   enforce any saved non-waivable failure for that attempt. With verified proof,
+   validate the saved output through upstream's Parent processing (collect,
+   check output, check ownership, check freshness and run the verified-base cap
+   check above).
    Record `result=accepted` only when it passes. Otherwise record
    `result=interrupted` with the failure code in evidence.
    For any blocked or failed result, including a refusal or

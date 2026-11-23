@@ -1142,14 +1142,19 @@ classification rule at three entry points:
    audit that still matches the current inputs keeps its original binding.
 2. **Blocked or failed re-audit fallback.** This covers upstream attempt 2
    and the extra attempt. Confirm the child stopped or verify dispatch never
-   started a child. At reconciliation, check the clean tree and verify the
+   started a child. At reconciliation, make no checkout writes and verify the
    original Prepare snapshot against its parent-held pre-dispatch hash,
-   invocation and audit ID. Before any writes, compare that snapshot to
-   verify HEAD, index and ownership. Retain that proof. On a later trigger,
-   verify it and account
-   for intervening authorized changes. Check the current clean tree, redaction,
-   security and `docs-caps`, and assess any reported documentation discrepancy
-   before reuse. An unconfirmed writer, ownership violation, unauthorized
+   invocation and audit ID. Record the clean-tree result and compare that
+   snapshot to verify HEAD, index and ownership even when the tree is dirty.
+   Retain the outcome, including any non-waivable failure, bound to the
+   invocation, attempt and snapshot. On resume or a later trigger, verify that
+   evidence and account for intervening authorized changes. A recorded
+   non-waivable failure keeps the attempt stopped even after cleanup. If the
+   first reconciliation was interrupted, proceed only with independent proof
+   that the checkout still reflects the state at the child's stop. Check the
+   current clean tree, redaction, security and `docs-caps`, and assess any
+   reported documentation discrepancy before reuse. An unconfirmed writer,
+   ownership violation, unauthorized
    Git mutation, redaction or security gate failure, `docs-caps` failure,
    unverifiable safety check or partial edits (`dirty-tree`) stops recovery
    before another child can run. Preserve partial edits. Reuse requires an
@@ -1167,9 +1172,10 @@ Confirm policy absence or read the exact policy at that commit, including for fo
 A measured cap violation can still take the ordinary pre-attempt re-audit,
 which must pass caps before acceptance. Unverifiable policy evidence or a
 cap violation during failed re-audit recovery or exhaustion stops dispatch.
-An interrupted extra attempt checks its Prepare snapshot binding before
-Parent processing can accept it. An unresolved documentation discrepancy
-declines reuse for the whole walk, including an empty walk.
+An interrupted extra attempt checks its Prepare snapshot binding and enforces
+any saved non-waivable failure before Parent processing can accept it. An
+unresolved documentation discrepancy declines reuse for the whole walk,
+including an empty walk.
 
 `S` means the commit whose content the accepted audit verified. Either accepted
 status can cover authorized pending content, such as reviewed coverage tests or
