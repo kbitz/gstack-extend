@@ -2,6 +2,28 @@
 
 ## Unprocessed
 
+### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: Require a nonempty draft before packing
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The roadmap protocol test pins the `--from` arguments. It does not assert the instruction to check that the draft exists and is nonempty before packing.
+- **Hypothesis (untested):** Extend the grouping assertion to cover the draft check. Re-verify the packer's behavior for a missing or empty draft first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/roadmap.md:890`
+- **Evidence:** The coverage audit found the instruction in the skill and populated drafts in the passing protocol and CLI checks.
+- **Context:** Track 94B review of `193eb39` (2026-11-22). Revisit when a Track next changes draft packing or its protocol tests.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: Pin the prohibition on host-private roadmap scratch paths
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The Step 1b assertion checks for the phrase `host-private directory`. Reversing the instruction could leave the phrase intact.
+- **Hypothesis (untested):** Strengthen the Step 1b assertion to check the prohibition. Re-verify the shared workspace-agnostic checks first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/skill-protocols-roadmap.test.ts:504`
+- **Evidence:** The coverage audit confirmed the current skill prohibits host-private scratch paths and the current test checks phrase presence.
+- **Context:** Track 94B review of `193eb39` (2026-11-22). Revisit when a Track next changes roadmap storage or its protocol tests.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
