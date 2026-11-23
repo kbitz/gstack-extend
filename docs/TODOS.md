@@ -2,6 +2,50 @@
 
 ## Unprocessed
 
+### [review:files=setup|bin/gstack-extend|tests/bun-prereq.test.ts] Test gap: Cover additional setup and init refusals
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The launcher matrix covers an unavailable helper and an unparseable Bun. Setup and init have their own refusal paths.
+- **Hypothesis (untested):** Extend disposable setup, uninstall, mutating init, and preview fixtures to cover an unavailable helper and an unparseable Bun version.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** setup and bin/gstack-extend.
+- **Evidence:** Disposable setup, uninstall, and mutating init refused before writes in both cases. Preview still succeeded with a warning when the helper was unreadable.
+- **Context:** Track 94H coverage audit at `aaf05a0` (2026-11-23). Revisit when a Track next touches these files.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/docs-ship|bin/merge-gate|tests/docs-ship.test.ts|tests/merge-gate.test.ts] Test gap: Cover missing CLI after Bun passes preflight
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The launcher suite covers a missing prerequisite helper. The docs-ship and merge-gate guards for missing CLI source can take different branches when the helper is present.
+- **Hypothesis (untested):** Copy the launcher and real helper into the existing installation fixture and omit only the CLI source.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/docs-ship and bin/merge-gate.
+- **Evidence:** Layout-scaffold and upstream-check exercise this distinction. The equivalent guards were verified by source inspection.
+- **Context:** Track 94H coverage audit at `aaf05a0` (2026-11-23). Revisit when a Track next touches these files.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/update-run|setup|tests/update.test.ts] Test gap: Cover retrying an update after a Bun refusal
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The updater test suite covers generic setup failure and same-version retry. It lacks a combined run with the new Bun prerequisite check and real setup.
+- **Hypothesis (untested):** Use a disposable remote and two local Bun fixtures to verify that retry with a supported version completes pending migrations once.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/update-run.
+- **Evidence:** Setup refused old Bun before its own writes, and the existing updater recovery tests passed.
+- **Context:** Track 94H coverage audit at `aaf05a0` (2026-11-23). Revisit when a Track next touches these files.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/merge-gate|tests/merge-gate.test.ts] Test gap: Pin merge-gate prerequisite output modes
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The runtime error table locks the JSON error object. It lacks equivalent Bun refusal assertions in the text and JSONL modes.
+- **Hypothesis (untested):** Extend one table row to check the two-line stderr format and the canonical single-record JSONL output.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/merge-gate.
+- **Evidence:** Scratch smoke checks verified text stderr, JSONL stdout, and exit 1.
+- **Context:** Track 94H coverage audit at `aaf05a0` (2026-11-23). Revisit when a Track next touches these files.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: Require a nonempty draft before packing
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
