@@ -511,7 +511,7 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
     const groupingFence = extractFences(grouping)[0];
     expect(groupingFence?.lang).toBe('bash');
     expect(groupingFence?.body).toContain(
-      '"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from \'<PROPOSAL_DIR>/draft-tracks.md\'',
+      '"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from \'<PROPOSAL_DIR>/<run>/draft-tracks.md\'',
     );
     expect(grouping.replace(/\s+/g, ' ')).toContain(
       '"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin',
@@ -527,10 +527,11 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
     expect(renumberingFence?.body).toContain(
       '"$_EXTEND_ROOT/bin/roadmap-renumber" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --map old=new,old=new --dry-run',
     );
-    expect(renumberingFence?.body).toContain("# or: --map-file '<PROPOSAL_DIR>/renames.txt'");
+    expect(renumberingFence?.body).toContain("# or: --map-file '<PROPOSAL_DIR>/<run>/renames.txt'");
 
     const proposal = roadmap.slice(roadmap.indexOf('### Structured proposal artifact'));
     expect(proposal).toContain('create a directory for this run under `~/scratch/`');
-    expect(proposal).toContain('Substitute the resolved absolute path for each `<PROPOSAL_DIR>` placeholder');
+    expect(proposal).toContain('create a unique subdirectory of `<PROPOSAL_DIR>` for this run');
+    expect(proposal).toContain('substitute the resolved absolute file path for the full placeholder path');
   });
 });

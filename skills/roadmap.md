@@ -500,7 +500,7 @@ Each separate call must paste both printed root assignments; a missing root stop
 "$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"
 ```
 
-This first audit prints to stdout (matching `### Audit-after-apply`); when a run needs to save audit output or other scratch files (such as draft Tracks or a rename map) to disk, write them under `<PROPOSAL_DIR>` — the durable per-project state directory resolved via `session_dir roadmap-proposals` in [Structured proposal artifact](#structured-proposal-artifact) — with `~/scratch/` as the fallback and never a host-private directory or a fixed `/tmp/` path.
+This first audit prints to stdout, as in [Audit-after-apply](#audit-after-apply). To save audit output, draft Tracks, or a rename map, use this run's scratch subdirectory under `<PROPOSAL_DIR>`. Resolve the durable project directory or its `~/scratch/` fallback in [Structured proposal artifact](#structured-proposal-artifact). Never use a host-private directory or a fixed `/tmp/` path.
 
 Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and Read that output (title + source + first sentence + revisit trigger). Do **not** Read `docs/roadmap-future.md` unless promoting an item, reconciling a shipped source Track or reading flagged bullets for a selected trigger migration (see Deferred work). The index also prints each entry's inline `revisit:` trigger; check triggers there. A row without one ends `revisit: MISSING`, and the `FUTURE_TRIGGERS_MISSING:` line counts those rows. If `docs/roadmap-shipped.md` exists, load an ID+title/lineage index first, inspect raw parser diagnostics, then read candidate receipt bodies for exact identity/merge comparison; do not re-review unrelated shipped essays. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
@@ -885,9 +885,9 @@ Group assignment is **the packer's job**, not a theme judgment.
 2. Pack the **draft**, not the live file:
    ```bash
    # First paste both resolved root assignments from Common path.
-   "$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from '<PROPOSAL_DIR>/draft-tracks.md'
+   "$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from '<PROPOSAL_DIR>/<run>/draft-tracks.md'
    ```
-   Before invoking `--from`, substitute the absolute directory from [Structured proposal artifact](#structured-proposal-artifact) for `<PROPOSAL_DIR>` and confirm `draft-tracks.md` exists there and is nonempty. Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH` + `FOLDER_ONLY`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
+   Before invoking `--from`, substitute the absolute path to this run's draft from [Structured proposal artifact](#structured-proposal-artifact) and confirm the file exists and is nonempty. Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH` + `FOLDER_ONLY`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
    On the first regen after the v3 cutover, also run `--materialize` and write any implicit previous-Group edges the author still wants. After that, unspecified = none. Group-level `_Depends on:` is **output**, not packer input — do not expect writing those lines to change the bins.
 3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
 4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
@@ -944,7 +944,7 @@ that follows inspects live documents and does not transform the candidate:
 # First paste both resolved root assignments from Common path.
 bun -e 'const [extendDir, draftPath, mapArg] = process.argv.slice(1); const { applyRenames, parseMapArg } = await import(extendDir + "/src/audit/lib/renumber.ts"); process.stdout.write(applyRenames(await Bun.file(draftPath).text(), parseMapArg(mapArg)).text);' -- "$_EXTEND_ROOT" '/absolute/proposal/active-draft.md' '22B=23A,23A=23B'
 "$_EXTEND_ROOT/bin/roadmap-renumber" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --map old=new,old=new --dry-run
-# or: --map-file '<PROPOSAL_DIR>/renames.txt'
+# or: --map-file '<PROPOSAL_DIR>/<run>/renames.txt'
 ```
 
 The helper (a) applies every pair in one pass, (b) matches with digit/letter lookarounds so `Group 147_` italics work (`\b` does not — `_` is a word char), and (c) skips dated-historical mentions (absorption notes, "split from", "the retired 104C", anything next to an ISO date). Date-qualify lineage instead of remapping it to a live ID.
@@ -975,7 +975,7 @@ PROPOSAL_DIR=$(session_dir roadmap-proposals)
 mkdir -p "$PROPOSAL_DIR"
 ```
 
-This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival. When that directory is unavailable, create a directory for this run under `~/scratch/`. Keep the same directory for all scratch files and the proposal. Substitute the resolved absolute path for each `<PROPOSAL_DIR>` placeholder, including inside quotes.
+This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival. When that directory is unavailable, create a directory for this run under `~/scratch/` and use it as `<PROPOSAL_DIR>`. If you need scratch files, create a unique subdirectory of `<PROPOSAL_DIR>` for this run and reuse it for all scratch files. In the command examples, substitute the resolved absolute file path for the full placeholder path, including `<run>` where shown.
 
 Format:
 
