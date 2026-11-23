@@ -7,7 +7,7 @@
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
 - **Description:** The launcher matrix covers an unavailable helper and an unparseable Bun. Setup and init have their own refusal paths.
 - **Hypothesis (untested):** Extend disposable setup, uninstall, mutating init, and preview fixtures to cover an unavailable helper and an unparseable Bun version.
-- **Upstream severity:** INFORMATIONAL
+- **Upstream severity:** INFORMATIONAL (coverage audit); P1 (outside structured review, review cycles 2 and 3, on PR #300)
 - **Found in:** setup and bin/gstack-extend.
 - **Evidence:** Disposable setup, uninstall, and mutating init refused before writes in both cases. Preview still succeeded with a warning when the helper was unreadable.
 - **Context:** Track 94H coverage audit at `aaf05a0` (2026-11-23). Revisit when a Track next touches these files.
@@ -175,6 +175,150 @@
 - **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
 - **Revisit when:** A Track qualifies installed-agent planning with suitable fixtures.
 - **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/gstack-extend|docs/installation.md] Follow-up: Give an unusable Bun PATH entry its own refusal wording
+
+- **Follow-up:** Non-blocking review finding (P3, not shown), recorded under the developer's continuation rule for lesser findings.
+- **Description:** `check_bun_audit_path` refuses with the `PREREQ_BUN_MISSING` token after a supported Bun was found and passed the version probe. That happens only when its PATH entry cannot be used from the audit directory (a colon in the path). The documented `PREREQ_BUN_MISSING` line says "not on PATH" and gives an install fix, so a caller that keys on the token may reinstall Bun instead of fixing PATH. The message also lacks the shared "rerun the same command once" recovery text.
+- **Hypothesis (untested):** Use a distinct cause in the same family, or document this variant in the Requirements templates with the standard recovery suffix.
+- **Upstream severity:** P3
+- **Found in:** `bin/gstack-extend:654` (`check_bun_audit_path`)
+- **Revisit when:** a Track next changes init's Bun gate or the refusal templates in `docs/installation.md`.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/upstream-check|docs/upstream-check.md] Follow-up: Keep the raw Bun version in upstream-check's internal-error context
+
+- **Follow-up:** Non-blocking review finding (P3, not shown), recorded under the developer's continuation rule for lesser findings.
+- **Description:** The `ERROR INTERNAL` version context now prints the probe's numeric core. Before this change it printed the raw `bun --version` output, so diagnostics from a canary or build-tagged Bun lose the prerelease identifier.
+- **Hypothesis (untested):** Print the sanitized raw first line alongside the numeric core.
+- **Upstream severity:** P3
+- **Found in:** `bin/upstream-check:55`
+- **Revisit when:** a Track next changes upstream-check's launcher or its error contract.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=setup|tests/bun-prereq.test.ts] Test gap: Check that setup's Bun install hint names a published release
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The install-hint test checks that the pinned `BUN_VERSION` is at least the floor and reaches the installer as its first argument. Nothing checks that the pinned release exists.
+- **Hypothesis (untested):** Add an opt-in network check, or a release-time check, that resolves the pinned tag. Re-verify the plan's choice not to freeze a version string first.
+- **Upstream severity:** P3
+- **Found in:** `setup:26`
+- **Evidence:** The pinned 1.4.3 build was installed and exercised during the floor qualification. No failing case was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/roadmap.md|skills/review-and-prep.md] Base issue: Skills run Bun snippets without the launcher prerequisite and .env guard
+
+- **Base issue:** present at merge base `6293d8c`; the review flagged it as a trust-boundary gap, and the developer chose to file and defer it (decision 7699a731)
+- **Description:** `skills/roadmap.md` runs plain `bun -e` snippets with no `--no-env-file`, so Bun loads the working directory's `.env` into a snippet that spawns git. `skills/review-and-prep.md` passes `--no-env-file` directly, which Bun older than 1.3.3 silently ignores, and nothing checks the Bun version before those snippets run.
+- **Evidence:** In a scratch directory with a `.env` marker, `bun -e` printed the marker and `bun --no-env-file -e` did not (Bun 1.4.3). Neither skill file differs from the merge base.
+- **Upstream severity:** Medium (adversarial)
+- **Found in:** `skills/roadmap.md:248` (also `:260`, `:763`, `:945`, `:1130`); `skills/review-and-prep.md` (inline `bun --no-env-file` snippets)
+- **Revisit when:** a Track next edits either skill's inline Bun snippets.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/bun-prereq.sh|tests/bun-prereq.test.ts] Follow-up: Find the Bun executable when a shell function named bun is exported
+
+- **Follow-up:** Non-blocking review finding (Low, not rerun), recorded under the developer's continuation rule for lesser findings.
+- **Description:** The probe resolves Bun with `command -v bun` and requires a path. When a `bun` shell function is exported into the launcher's shell, the lookup returns the function name and the launcher refuses with `PREREQ_BUN_MISSING`, while the old `exec bun` skipped the function and ran the binary.
+- **Hypothesis (untested):** Walk PATH for an executable file named `bun` when the lookup returns no path. Re-verify which `/bin/sh` implementations import exported functions first.
+- **Upstream severity:** Low (adversarial)
+- **Found in:** `bin/lib/bun-prereq.sh:133` (`bun_prereq_probe` lookup)
+- **Revisit when:** a Track next changes the helper's lookup.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=setup|bin/lib/bun-prereq.sh] Follow-up: Setup can accept a Bun that the installed launchers will not find
+
+- **Follow-up:** Non-blocking review finding (Medium, not rerun), recorded under the developer's continuation rule for lesser findings.
+- **Description:** Setup checks the Bun that bash resolves. The installed launchers run under `/bin/sh`, which skips a literal `~` PATH entry that bash expands. With such an entry, setup can succeed while each launcher later refuses, with an actionable message, for an older Bun later on PATH.
+- **Hypothesis (untested):** Probe under `/bin/sh` in setup as init's audit check now does, or warn when the two shells resolve different Bun paths.
+- **Upstream severity:** Medium (adversarial)
+- **Found in:** `setup:22` (Bun prerequisite block)
+- **Revisit when:** a Track next changes setup's Bun check.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/gstack-extend] Follow-up: Check init's Bun only where the audit runs it
+
+- **Follow-up:** Non-blocking review finding (red team, not rerun), recorded under the developer's continuation rule for lesser findings.
+- **Description:** Init still probes Bun from the directory it was started in before probing from the project directory. Started from a directory whose version manager pins an older Bun, init refuses before writing even when the project directory selects a supported Bun.
+- **Hypothesis (untested):** Look Bun up in the starting directory but check its version only from the project directory. Keep the missing-Bun refusal and the relative-PATH audit behavior.
+- **Upstream severity:** INFORMATIONAL (red team)
+- **Found in:** `bin/gstack-extend:695` (`require_bun`)
+- **Revisit when:** a Track next changes init's Bun gate.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/bun-prereq.sh] Follow-up: Keep the tail of a long Bun path in refusal messages
+
+- **Follow-up:** Non-blocking review finding (red team, not rerun), recorded under the developer's continuation rule for lesser findings.
+- **Description:** Refusals keep the first 64 sanitized characters of the Bun path, as the approved helper safety contract requires. A long path then prints only a parent-directory prefix and drops the binary that failed, which is what a user needs when a launcher resolves a different Bun than their shell.
+- **Hypothesis (untested):** Keep the last characters instead of the first, within the same character set and length cap. This changes the approved contract, so it needs an owner decision.
+- **Upstream severity:** INFORMATIONAL (red team)
+- **Found in:** `bin/lib/bun-prereq.sh:23` (path sanitizer)
+- **Revisit when:** a Track next changes the helper's message format.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/bun-prereq.sh|tests/bun-prereq.test.ts] Test gap: Cover help-text variants at the exact Bun floor
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** A build that reports exactly the floor version passes only when its help lists `--no-env-file`. The recorded smoke used the official 1.3.3 build. Wrapped or reformatted help output is not covered.
+- **Hypothesis (untested):** Add fixtures for a wrapper that colors or reflows help text, and re-verify the check's pattern against them.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/bun-prereq.sh:89` (exact-floor help check)
+- **Evidence:** The core pass recorded this as follow-up coverage. No failing case was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at b31397b (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/bun-prereq.sh|tests/bun-prereq.test.ts] Follow-up: Avoid a here-document in the exact-floor help check
+
+- **Follow-up:** Non-blocking review finding (CRITICAL label from the delegated adversarial pass, not reproduced), recorded under the developer's continuation rule for lesser findings and the developer's decision 7699a731.
+- **Description:** `_bun_prereq_floor_has_flag` reads Bun's help text through a here-document. Bash older than 5.1, such as macOS `/bin/sh`, writes each here-document to a temporary file. If neither `TMPDIR` nor `/tmp` is writable, a build reporting exactly 1.3.3 could be refused as too old and the shell error would reach stderr.
+- **Hypothesis (untested):** Split the help text with parameter expansion instead of a here-document. Re-verify on bash 3.2 with an unwritable temporary directory first.
+- **Upstream severity:** CRITICAL (adversarial delegate)
+- **Found in:** `bin/lib/bun-prereq.sh:98` (`_bun_prereq_floor_has_flag`)
+- **Evidence:** With Bun 1.3.3 and a nonexistent `TMPDIR`, `/bin/sh` and bash 5.3 on Linux classified the build as supported. Bash 3.2 was not available.
+- **Revisit when:** a Track next changes the exact-floor check, or macOS support is exercised.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 59cb251 (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/bun-prereq.sh|tests/bun-prereq.test.ts] Follow-up: Confirm the refusal sanitizer on bash 4.2 and older
+
+- **Follow-up:** Non-blocking review finding (red team, not rerun), recorded under the developer's continuation rule for lesser findings.
+- **Description:** The sanitizer appends each kept character through a quoted pattern removal nested inside an outer double-quoted assignment. The delegated red team says bash 4.2 and older, including macOS's bash 3.2 `/bin/sh`, treat that inner pattern as an unquoted glob, so a Bun path or version string containing glob characters could pass `"`, `\` or `*` into refusal text and break the JSON that review-state and merge-gate print.
+- **Hypothesis (untested):** Assign the extracted character without outer quotes first, then append it, as the helper's other pattern removals already do. Re-verify on bash 3.2 first; no bash older than 5.3 was available here.
+- **Upstream severity:** INFORMATIONAL (red team)
+- **Found in:** `bin/lib/bun-prereq.sh:29`
+- **Revisit when:** a Track next changes the helper's sanitizer, or macOS support is exercised.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 2b90a30 (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=tests/workflow-metrics.test.ts] Base issue: The parallel metrics writer test fails under Bun 1.3.3
+
+- **Base issue:** present at merge base `6293d8c`; filed under `blocking=shown`
+- **Description:** The "parallel writers and readers" case expects at least one recorded envelope. Under Bun 1.3.3 every writer reports `unavailable`, so the case fails, while Bun 1.4.3 passes. The project states 1.3.3 as its development floor.
+- **Evidence:** `bun test tests/workflow-metrics.test.ts -t 'parallel writers and readers'` with Bun 1.3.3 failed twice at the merge base and on this branch (recorded 0, expected at least 1). The same case passed with Bun 1.4.3.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/workflow-metrics.test.ts:672`
+- **Revisit when:** a Track next changes the metrics writer lock or the development floor.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 2b90a30 (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=tests/touchfiles.test.ts] Base issue: detectBaseBranch tests read an inherited TOUCHFILES_BASE
+
+- **Base issue:** present at merge base `6293d8c`; filed under `blocking=shown`
+- **Description:** Two `detectBaseBranch` cases fail when the caller's environment sets `TOUCHFILES_BASE`, which CLAUDE.md recommends for running a release-metadata delta. The cases do not clear the variable before probing.
+- **Evidence:** `TOUCHFILES_BASE=HEAD bun test tests/touchfiles.test.ts -t detectBaseBranch` failed both cases at the merge base, and the same command without the variable passed.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `tests/touchfiles.test.ts:281`
+- **Revisit when:** a Track next changes the test selector or its tests.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 2b90a30 (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
 
 ## Completed
 
