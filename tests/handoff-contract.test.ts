@@ -1529,7 +1529,9 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=every producer stop-table row maps by meaning to its consumer model Cycle1 input(s) and outcome; fails_when=a stop-table row is added, renamed or retargeted, or rowFor disagrees with any row's eligible/unavailable outcome; why_new=Track 91A T3 (criterion 5) direct producer-to-consumer eligibility map; seam=skills/review-and-prep.md stop table; no_claim=installed-agent execution
   test('each skill stop-table row maps directly to its model inputs and outcome', () => {
-    const tableLines = stopSection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
+    // Other Step 2 subsections also contain tables. Check only the cycle-cap table.
+    const capSubsection = stopSection.split('\n### ')[0]!;
+    const tableLines = capSubsection.split('\n').filter((l) => /^\s*\|/.test(l)).slice(2);
     const tableCells = tableLines.map((l) => l.trim().slice(1, -1).split('|').map((c) => c.trim()));
     const stopTableMap: ReadonlyArray<{ conditions: string; inputs: ReadonlyArray<Cycle1 | null> }> = [
       {
@@ -3585,17 +3587,74 @@ describe('(R) doc-audit-gap=auto', () => {
       'send `doc-audit-gap=auto` only when all three pass, keeping the other keys otherwise',
       '`doc-audit-gap=<value>: its only value is auto`',
       "while a repeated `doc-audit-gap` key keeps today's repeated-key reason",
-      'The value needs `full-suite=external` and `post-audit=classify` on the same line and is otherwise independent',
+      'The value needs `full-suite=external` and `post-audit=classify` on the same line and is otherwise independent; it stays opt-in behind `doc-audit-gap=auto` (preserving today\'s default for runs with no policy line and preserving `/ship-and-land`\'s release-only path on by-hand runs)',
       '`auto` turns on all three additions together',
       'later values may narrow them, so a caller matches the exact value, not the key',
+    '**Pre-attempt.** When a freshness check would spend a re-audit attempt after an accepted (`current` or `updated`) audit `S` in this invocation, classify the full delta first.',
+    'Reuse leaves the remaining attempt unspent and records a `REUSE` decision for phase `documentation` when `GX_CAPTURE=1`.',
+    '**Blocked or failed re-audit fallback.** This covers upstream attempt 2 and the extra attempt.',
+    'Confirm the child stopped or verify dispatch never started a child.',
+    'verify HEAD, index and ownership even when the tree is dirty.',
+    'Retain the outcome, including any non-waivable failure, bound to the invocation, attempt and snapshot.',
+    'A recorded non-waivable failure keeps the attempt stopped even after cleanup.',
+    'On any resume without saved reconciliation, require independent proof that the checkout still reflects the state at the child\'s stop, even if interruption preceded reconciliation.',
+    'An unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, `docs-caps` failure, unverifiable safety check or partial edits (`dirty-tree`) stops recovery before another child can run.',
+    'Reuse requires an earlier accepted audit, with its evidence verified, and preserves that audit\'s status and the rejected attempt\'s separate failure.',
+    '`post-audit: not applied — fresh audit covers current binding` and emits zero current `Post-audit change:` rows.',
+      'original Prepare snapshot against its parent-held pre-dispatch hash, invocation and audit ID.',
+      'Every reuse requires passing the current tree\'s `docs-caps` check against the verified fetched base SHA, including after a qualifying base merge.',
+      'Every interrupted audit, including the extra attempt, verifies its Prepare snapshot binding and the stopped-state evidence under the same resume rule before Parent processing can accept it.',
+      'Blocked or failed re-audit fallback uses the [stop for recorded discrepancies](../skills/review-and-prep.md#classify-changes-after-the-documentation-audits-last-attempt) for the whole invocation.',
+      'Either accepted status can cover authorized pending content, such as reviewed coverage tests or accepted child edits.',
       'The extra-audit allowance belongs to one invocation and its resumes (the counter file `doc-audit-extra.txt` in its evidence directory); a continuation (`/review-and-prep continue`) runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream\'s fresh budget and its own allowance.',
       'A base merge qualifies only where Git supports `--remerge-diff` (2.36 or later), so with an older Git any base merge after the audit leaves classify not applied (`git-too-old`)',
-      "A reuse writes no new `record audit`, so the compact receipt's `- documentation:` line renders `not-run` for the final head",
+    'Reuse writes no new `record audit`. The compact `- documentation:` line renders `not-run` when the carried audit lacks a final binding.',
       '`Post-audit change:` `class=` gains `undocumented-internal` and `base-merge` only under `doc-audit-gap=auto`',
       '| `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present |',
       '<a id="doc-audit-gap-reasons"></a>',
+      '<a id="doc-audit-gap-classification"></a>',
     ]) {
       expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
+    }
+
+    // Track 94A: 6-case classification table in docs/workflow-handoffs.md
+    const classAt = DOC.indexOf('<a id="doc-audit-gap-classification"></a>');
+    expect(classAt).toBeGreaterThan(-1);
+    const classAfter = DOC.slice(classAt);
+    const classTableStart = classAfter.indexOf('\n|');
+    const classTableEnd = classAfter.indexOf('\n\n', classTableStart + 1);
+    const classRows = classAfter
+      .slice(classTableStart + 1, classTableEnd > -1 ? classTableEnd : undefined)
+      .split('\n')
+      .filter((l) => l.startsWith('|'))
+      .slice(2)
+      .map((l) =>
+        l
+          .trim()
+          .slice(1, -1)
+          .split('|')
+          .map((c) => c.trim()),
+      );
+    expect(classRows.map((r) => r[0]!.replace(/^`|`$/g, ''))).toEqual([
+      'documents unchanged',
+      'an audited document changed',
+      'user-visible text changed',
+      'a base merge',
+      'a blocked re-audit',
+      'a failed re-audit',
+    ]);
+    for (const [caseName, expectedFragments] of [
+      ['documents unchanged', ['Reuse `S` with no question', '`REUSE`', '`post-audit: active`', '`carried-audit=<S>`', '`- documentation: not-run`']],
+      ['an audited document changed', ['Pre-attempt: decline reuse and spend the remaining upstream re-audit', '`mechanical-correction` pre-attempt or on blocked/failed fallback', '`class=documented-behavior; owner=needed`', 'reuse=not-applied classify-not-applied', '`Doc-audit extra:`']],
+      ['user-visible text changed', ['Decline reuse', '`class=documented-behavior; owner=needed`', 'makes a documented claim false', 'reuse=not-applied classify-not-applied']],
+      ['a base merge', ['the whole walk still has to qualify', '`class=base-merge; owner=not-needed; carried-audit=<S>`', '`doc-audit-gap: active; reuse=applied`', '`doc-audit-gap: active; reuse=not-applied <token>']],
+      ['a blocked re-audit', ['reuses `S` with no question and no extra attempt', 'A non-waivable failure stops recovery', '`blocked-re-audit`', 'child-stop proof']],
+      ['a failed re-audit', ['reuses `S` with no question and no extra attempt', 'A non-waivable failure stops recovery', '`failed-re-audit`', 'actual failure code']],
+    ] as const) {
+      const row = classRows.find((r) => r[0]!.replace(/^`|`$/g, '') === caseName)?.join(' ') ?? '';
+      for (const frag of expectedFragments) {
+        expect(row, `${caseName} missing ${frag}`).toContain(frag);
+      }
     }
 
     // X10: quickstart example policy line parses with parsePolicy and each example receipt line matches the skill's template
