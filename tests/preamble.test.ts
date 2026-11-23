@@ -454,7 +454,7 @@ describe('bin/lib/preamble.sh — --ref mode (Track 94I)', () => {
   }
 
   test('present reference with matching digest prints numbered lines and REFERENCE_END trailer without telemetry or update-check', () => {
-    const { home, root } = setupRefFixture('present', { version: '0.113.0' });
+    const { home, root } = setupRefFixture('present-\\path', { version: '0.113.0' });
     const updateLog = join(home, 'update.log');
     const telemetryLog = join(home, 'telemetry.log');
     writeUpdateCheckWithOutput(root, { recordCall: true });
@@ -495,6 +495,15 @@ describe('bin/lib/preamble.sh — --ref mode (Track 94I)', () => {
     expect(r.stdout).toBe(
       `2: beta\n3: gamma\n4: delta\nREFERENCE_END review-and-prep/conditional-lines lines=5 digest=${digest}\n`,
     );
+
+    const outOfRange = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-lines', '--expect', digest, '--lines', '6-7'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(outOfRange.status, outOfRange.stderr).toBe(2);
+    expect(outOfRange.stdout).toBe('');
+    expect(outOfRange.stderr).toContain('requested line range ends after line 5');
   });
 
   test('absent reference on normal checkout prints SKILL_REFERENCE_MISSING with update-run fix and exits 1', () => {
@@ -589,16 +598,19 @@ describe('bin/lib/preamble.sh — --ref mode (Track 94I)', () => {
     const badCalls: string[][] = [
       ['review-and-prep', '--ref', 'conditional-x'], // missing --expect
       ['review-and-prep', '--expect', '0123456789abcdef'], // missing --ref
+      ['review-and-prep', '--lines', ''], // explicit empty argument cannot fall through to regular start
       ['review-and-prep', '--ref', '../escape', '--expect', '0123456789abcdef'], // traversal
       ['review-and-prep', '--ref', 'conditional-x', '--expect', 'not-hex'], // bad digest
       ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '5-2'], // reversed range
       ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '0-5'], // 0-based
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '1-9999999999999999999999'],
       ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--root'], // conflicting flag
     ];
     for (const args of badCalls) {
       const r = spawnSync(PREAMBLE_SRC, args, { env: scopedEnv(home), encoding: 'utf8' });
       expect(r.status, args.join(' ')).toBe(2);
       expect(r.stderr, args.join(' ')).toContain('SKILL_REFERENCE_USAGE:');
+      expect(r.stderr.trimEnd().split('\n'), args.join(' ')).toHaveLength(1);
       expect(r.stdout, args.join(' ')).toBe('');
     }
   });

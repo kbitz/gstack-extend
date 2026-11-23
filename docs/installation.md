@@ -695,11 +695,15 @@ Slimmed skills fetch conditional instructions from `skills/references/<skill>/<f
 |---|---|---|
 | `SKILL_REFERENCE_MISSING` (`cause: absent`) on a normal checkout | The reference file is missing from the checkout (for example, an older checkout or local deletion) | Run `"<root>/bin/update-run" "<root>"`, or inspect with `git -C "<root>" status -- skills/references` if the checkout has local changes |
 | `SKILL_REFERENCE_MISSING` (`cause: absent`) on a linked worktree | The verified root is a linked worktree (`bin/update-run` refuses linked worktrees) | Run `setup --host auto` from your stable gstack-extend checkout |
-| `SKILL_REFERENCE_MISSING` (`cause: unreadable`) | The reference path exists but is not a readable regular file | Fix permissions (`chmod u+r "<path>"`) or restore with `git -C "<root>" checkout -- skills/references/<skill>/<file>.md` |
+| `SKILL_REFERENCE_MISSING` (`cause: unreadable`) | The reference could not be read or its bytes could not be verified | Follow the fix in the error line. Check the file, temporary directory, or digest utility it names. |
 | `SKILL_REFERENCE_MISSING` (`cause: no-root`) | No verified gstack-extend checkout was found under `~/.claude` or `~/.codex` | Run `setup --host auto` from your gstack-extend checkout (see Installation) |
 | `SKILL_REFERENCE_STALE` (`cause: digest-mismatch`) | The loaded skill copy and the checkout's reference file are different versions (for example, after a manual `git pull` without rerunning `setup`, or after a mid-run upgrade) | Restart `/<skill>` so the loaded copy matches the checkout; if it still differs, run `"<root>/setup" --host auto` from the checkout this host should use |
 | `SKILL_REFERENCE_USAGE` (`cause: usage`) | Bad arguments passed to `preamble ... --ref` (exit 2) | Re-run the exact command from the skill's read instruction (`preamble <skill> --ref <file> --expect <digest> [--lines <a>-<b>]`) |
 | `PREAMBLE_USAGE` (exit 2) on `--ref` | The shared `~/.gstack-extend/bin/preamble` predates `--ref` support | Run `./setup --host auto` from your updated gstack-extend checkout |
+
+Use inclusive ranges within the file's numbered lines. After updating a
+checkout manually, rerun `./setup --host auto` from that checkout to refresh
+the managed skill copies and shared start command.
 
 ### Unsafe skills directory
 

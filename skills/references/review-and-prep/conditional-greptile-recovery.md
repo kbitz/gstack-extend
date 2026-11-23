@@ -41,7 +41,7 @@ or ask the user to research the schema.
 When the detection is positive, ask **Marking ready would start a second run.**
 (E1) from Step 4 before `/review`. When no PR exists yet, write the answer into
 the receipt when Step 3 creates the draft. Before that, reuse an available
-verified authorization for the exact repair under the resume rule above.
+verified authorization for the exact repair under the resume rule in **Establish the branch, PR, and review inputs**.
 When the detection is positive and a request or run
 already exists, readiness requires option (a) whatever other exit the user takes.
 

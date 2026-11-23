@@ -2103,7 +2103,7 @@ describe('Track 57A finding attribution', () => {
     expect(defs.finding_v2.required).toEqual([...defs.finding.required, 'found_by', 'attribution_reason']);
     expect(Object.keys(defs.finding_v2.properties).sort()).toEqual([...Object.keys(defs.finding.properties), 'found_by', 'attribution_reason'].sort());
 
-    const skill = readFileSync(join(ROOT, 'skills', 'references', 'review-and-prep', 'conditional-workflow-metrics.md'), 'utf8');
+    const skill = readFileSync(join(ROOT, 'skills', 'references', 'review-and-prep', 'conditional-metrics-findings.md'), 'utf8');
     const from = skill.indexOf('- Finding attribution (`v:2`)');
     expect(from).toBeGreaterThan(0);
     const bullet = skill.slice(from, skill.indexOf('\n- ', from + 1)).replace(/\s+/g, ' ');

@@ -1610,7 +1610,10 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(flat).toContain('capture=disabled|unavailable|partial');
       expect(flat).toContain('cannot authorize');
       expect(flat).toContain('clock-sensitive');
-      expect(flat).toContain('metrics never triggers');
+      const findingsMetrics = skill === 'review-and-prep'
+        ? referenceText('review-and-prep', 'conditional-metrics-findings').replace(/\s+/g, ' ')
+        : flat;
+      expect(findingsMetrics).toContain('metrics never triggers');
       expect(flat).toContain(`stage:"${skill}"`);
       expect(flat).toContain('Issue metrics calls one at a time from this session');
       expect(flat).toContain('emit nothing further in this invocation');
@@ -1622,8 +1625,8 @@ describe('Track 24A workflow metrics drift-locks', () => {
       } else {
         expect(flat).toContain('derive writes the run `end` after the pause checkpoint or `finish` and before Telemetry finish');
       }
-      expect(flat).toContain('kind:"fix"');
-      expect(flat).toContain('correction_kind:"finding"');
+      expect(findingsMetrics).toContain('kind:"fix"');
+      expect(findingsMetrics).toContain('correction_kind:"finding"');
       expect(flat).toContain('One governing `decision` per executed phase visit');
       expect(flat).toContain('`rc=$?`');
       // The mapping table: every left-hand anchor is a real heading (inline code stripped), every

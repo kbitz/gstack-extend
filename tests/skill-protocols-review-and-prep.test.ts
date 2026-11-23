@@ -22,6 +22,15 @@ import { EXEMPTIONS } from '../src/upstream-check/cli.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
+const REF_OUTSIDE_REVIEW = referenceText('review-and-prep', 'conditional-outside-review');
+const REF_OUTSIDE_RECOVERY = referenceText('review-and-prep', 'conditional-outside-recovery');
+const REF_BOUNDED_WAITS = referenceText('review-and-prep', 'conditional-bounded-reviewer-waits');
+const REF_GREPTILE_RUN = referenceText('review-and-prep', 'conditional-greptile-run');
+const REF_DELTA_SELECTION = referenceText('review-and-prep', 'conditional-delta-selection');
+const REF_CYCLE_FOLLOWUP = referenceText('review-and-prep', 'conditional-cycle-followup');
+const REF_POLICY_VALUES = referenceText('review-and-prep', 'conditional-policy-values');
+const REF_DOC_GATE_REUSE = referenceText('review-and-prep', 'conditional-doc-gate-reuse');
+const REF_RECEIPT_POLICY_ROWS = referenceText('review-and-prep', 'conditional-receipt-policy-rows');
 const REF_WORKFLOW_METRICS = referenceText('review-and-prep', 'conditional-workflow-metrics');
 const REF_GREPTILE_RECOVERY = referenceText('review-and-prep', 'conditional-greptile-recovery');
 const REF_DELEGATE_PARTS = referenceText('review-and-prep', 'delegate-specialist-parts');
@@ -37,8 +46,9 @@ const REF_RESUME_MANUAL = referenceText('review-and-prep', 'resume-manual-testin
 
 const REF_BY_HEADING: Record<string, string[]> = {
   '### Workflow metrics (optional, local)': [REF_WORKFLOW_METRICS],
+  '### Read an optional review policy': [REF_POLICY_VALUES],
   '### Detect whether marking ready would start a second run': [REF_GREPTILE_RECOVERY],
-  '### Bound Claude Code outside calls': [REF_DELEGATE_PARTS],
+  '### Bound Claude Code outside calls': [REF_OUTSIDE_REVIEW, REF_OUTSIDE_RECOVERY],
   '### Delegate named specialist parts': [REF_DELEGATE_PARTS],
   '### Run a red team where /review has none': [REF_RED_TEAM_FOLD],
   '### Fold specialist checklists into cycle 1': [REF_RED_TEAM_FOLD],
@@ -59,7 +69,7 @@ const REF_BY_HEADING: Record<string, string[]> = {
 };
 
 function refHeadingSection(refText: string, coreHeading: string): string {
-  const fromHeading = `## From ${coreHeading.replace(/^###\s+/, '')}`;
+  const fromHeading = `## From ${coreHeading.replace(/^#{2,3}\s+/, '')}`;
   return skillSection(refText, fromHeading);
 }
 
@@ -134,17 +144,16 @@ function checkCommentMarkersLock(text: string, cycleCapRef = REF_CYCLE_CAP): str
     MARKER_PAUSED,
     MARKER_GREPTILE,
     MARKER_RESERVATION,
+    MARKER_CONTINUATION,
     ...PAUSE_MARKERS,
   ]) {
     if (!text.includes(marker)) violations.push(`missing marker: ${marker}`);
   }
-  for (const marker of [MARKER_STOPPED, MARKER_CONTINUATION]) {
-    if (!cycleCapRef.includes(marker)) violations.push(`missing marker: ${marker}`);
-  }
+  if (!cycleCapRef.includes(MARKER_STOPPED)) violations.push(`missing marker: ${MARKER_STOPPED}`);
   return violations;
 }
 
-function checkGreptileStatusAndExitsLock(text: string, greptileRef = REF_GREPTILE_RECOVERY): string[] {
+function checkGreptileStatusAndExitsLock(text: string, greptileRef = REF_GREPTILE_RECOVERY, runRef = REF_GREPTILE_RUN): string[] {
   const violations: string[] = [];
   const normalized = text.replace(/\s+/g, ' ');
   if (!normalized.includes('`greptile.json` (file), `.greptile.json` (file), or `.greptile/` (directory)')) {
@@ -162,7 +171,7 @@ function checkGreptileStatusAndExitsLock(text: string, greptileRef = REF_GREPTIL
   for (const label of ['(E1)', '(E1(b))', '(E2)', '(E2(a))', '(E4)', '(E6)', '(E6(b))', '(E7)', '(E7(a))']) {
     if (!text.includes(label) && !greptileRef.includes(label)) violations.push(`missing exit label: ${label}`);
   }
-  const step4 = text.slice(text.indexOf('## 4. Trigger')).split(/\n## /)[0] ?? '';
+  const step4 = refHeadingSection(runRef, '## 4. Trigger once and await Greptile');
   const reservation =
     Array.from(step4.matchAll(/```text\n([\s\S]*?)```/g), (m) => m[1] ?? '').find((b) =>
       b.includes('review-and-prep:greptile-reservation:'),
@@ -598,8 +607,9 @@ function checkDelegatedPartTemplateLock(text: string, delegateRef = REF_DELEGATE
   return violations;
 }
 
-function checkExternalGateTemplatesLock(docAuditGatesRef = REF_DOC_AUDIT_GATES): string[] {
-  const pause = refHeadingSection(docAuditGatesRef, H_EXTERNAL_PAUSE).replace(/\s+/g, ' ');
+function checkExternalGateTemplatesLock(text: string, docAuditGatesRef = REF_DOC_AUDIT_GATES): string[] {
+  const pause = skillSection(text, H_EXTERNAL_PAUSE).replace(/\s+/g, ' ');
+  const attestation = refHeadingSection(docAuditGatesRef, H_EXTERNAL_PAUSE).replace(/\s+/g, ' ');
   const violations: string[] = [];
   for (const tpl of [
     '`Evidence directory: <absolute path>`',
@@ -607,13 +617,14 @@ function checkExternalGateTemplatesLock(docAuditGatesRef = REF_DOC_AUDIT_GATES):
     '`External gate result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <command>; exit: <n>; log: <reference>`',
     '`External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>`',
   ]) {
-    if (!pause.includes(tpl)) violations.push(`missing external gate template: ${tpl}`);
+    const source = tpl.startsWith('`External gate attestation:') ? attestation : pause;
+    if (!source.includes(tpl)) violations.push(`missing external gate template: ${tpl}`);
   }
   return violations;
 }
 
-function checkFullReviewEvidenceTemplatesLock(baselineRef = REF_CYCLE_BASELINE, cycleCapRef = REF_CYCLE_CAP): string[] {
-  const baselineRaw = refHeadingSection(baselineRef, H_CYCLE_1_BASELINE);
+function checkFullReviewEvidenceTemplatesLock(text: string, cycleCapRef = REF_CYCLE_CAP): string[] {
+  const baselineRaw = skillSection(text, H_CYCLE_1_BASELINE);
   const example = baselineRaw.split('```markdown\n')[1]?.split('\n```')[0]?.split('\n') ?? [];
   const matches = [...cycleCapRef.matchAll(/`Full-review evidence unavailable: <([a-z|-]+)>`/g)];
   const reasonList = matches[0]?.[1]?.split('|') ?? [];
@@ -632,12 +643,18 @@ function checkFullReviewEvidenceTemplatesLock(baselineRef = REF_CYCLE_BASELINE, 
 
 function checkUnverifiedOutsideBaselineLock(
   baselineRef = REF_CYCLE_BASELINE,
-  delegateRef = REF_DELEGATE_PARTS,
+  outsideRef = REF_OUTSIDE_REVIEW,
   cycleCapRef = REF_CYCLE_CAP,
+  core = coreText('review-and-prep'),
+  followupRef = REF_CYCLE_FOLLOWUP,
+  recoveryRef = REF_OUTSIDE_RECOVERY,
 ): string[] {
   const baseline = refHeadingSection(baselineRef, H_CYCLE_1_BASELINE).replace(/\s+/g, ' ');
-  const outside = refHeadingSection(delegateRef, '### Bound Claude Code outside calls').replace(/\s+/g, ' ');
+  const followup = refHeadingSection(followupRef, H_CYCLE_1_BASELINE).replace(/\s+/g, ' ');
+  const outside = refHeadingSection(outsideRef, '### Bound Claude Code outside calls').replace(/\s+/g, ' ');
+  const recovery = refHeadingSection(recoveryRef, '### Bound Claude Code outside calls').replace(/\s+/g, ' ');
   const stop = refHeadingSection(cycleCapRef, H_CYCLE_STOP).replace(/\s+/g, ' ');
+  const continuation = skillSection(core, H_CYCLE_STOP).replace(/\s+/g, ' ');
   const violations: string[] = [];
   if (
     !baseline.includes(
@@ -654,7 +671,7 @@ function checkUnverifiedOutsideBaselineLock(
     violations.push('missing unavailable outside voice -> reviewer-incomplete rule in baseline section');
   }
   if (
-    !baseline.includes(
+    !followup.includes(
       'Set true only when every selected reviewer completed (under the same `unverified` outside-voice missing-coverage rule as `completed` above) and every probe in the union has a result on cycle 2\'s inputs (`passed` or `reproduced`).',
     )
   ) {
@@ -671,12 +688,12 @@ function checkUnverifiedOutsideBaselineLock(
     !outside.includes(
       'A `repair-only` continuation whose corroborated full-review evidence records an outside voice as missing coverage runs that voice through `bin/outside-review` at full scope (verified merge base to its candidate snapshot), regardless of the delta, light-default or size gates.',
     ) ||
-    !stop.includes('(rerunning any outside voice recorded as missing coverage at full scope, verified merge base to its candidate snapshot, regardless of the delta, light-default and size gates: through `bin/outside-review` where **Bound Claude Code outside calls** applies, otherwise through `/review`\'s own outside block for that voice, given the full-scope diff)')
+    !continuation.includes('(rerunning any outside voice recorded as missing coverage at full scope, verified merge base to its candidate snapshot, regardless of the delta, light-default and size gates: through `bin/outside-review` where **Bound Claude Code outside calls** applies, otherwise through `/review`\'s own outside block for that voice, given the full-scope diff)')
   ) {
     violations.push('missing full-scope outside rerun rule for repair-only continuation');
   }
   if (
-    !outside.includes(
+    !recovery.includes(
       'An unresolved parse stays `outside_status: unverified`, `GATE: MISSING COVERAGE`; an execution failure stays unavailable. Neither is clean or PASS, and the native pass never substitutes for outside completion.',
     )
   ) {
@@ -765,15 +782,18 @@ function checkDocAuditGapAutoLock(
   postAuditClassRef = REF_POST_AUDIT_CLASS,
   postAuditReauditRef = REF_POST_AUDIT_REAUDIT,
   docAuditGatesRef = REF_DOC_AUDIT_GATES,
+  policyRef = REF_POLICY_VALUES,
+  auditGateRef = REF_DOC_GATE_REUSE,
 ): string[] {
   const violations: string[] = [];
-  const policy = skillSection(text, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const policyCore = skillSection(text, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const policy = refHeadingSection(policyRef, '### Read an optional review policy').replace(/\s+/g, ' ');
   const postAuditCore = skillSection(text, H_POST_AUDIT_CLASSIFY).replace(/\s+/g, ' ');
   const postAuditPart1 = refHeadingSection(postAuditClassRef, H_POST_AUDIT_CLASSIFY);
   const postAuditPart2 = refHeadingSection(postAuditReauditRef, H_POST_AUDIT_CLASSIFY);
   const postAuditRaw = `${postAuditPart1}\n\n${postAuditPart2}`;
   const postAudit = `${postAuditCore} ${postAuditRaw.replace(/\s+/g, ' ')}`;
-  const gates = skillSection(text, '### Prove /ship\'s release gates on this head').replace(/\s+/g, ' ');
+  const gates = refHeadingSection(auditGateRef, '### Prove /ship\'s release gates on this head').replace(/\s+/g, ' ');
   const bound = refHeadingSection(docAuditGatesRef, H_BOUND_DOC_AUDIT).replace(/\s+/g, ' ');
   const readiness = skillSection(text, '### Readiness').replace(/\s+/g, ' ');
   const underAt = postAuditRaw.indexOf('**Under `doc-audit-gap=auto`.**');
@@ -785,10 +805,15 @@ function checkDocAuditGapAutoLock(
     violations.push('missing or displaced D1 opening activation sentence');
   }
   for (const required of [
-    // X2 warning, X3/E14 near-miss hint and repeat rule, X13 meaning of auto, E7 precedence, Track 94A opt-in & pre-attempt
+    // X2 warning, X3/E14 near-miss hint and repeat rule stay in the core.
     '`Review policy warning: doc-audit-gap=auto needs full-suite=external and post-audit=classify on the same line; it is inert on this run (missing: <keys>)`',
     '`doc-audit-gap=<value>: its only value is auto`',
     "a repeated `doc-audit-gap` key keeps today's repeated-key reason and pairs with other keys keep today's reason",
+  ]) {
+    if (!policyCore.includes(required)) violations.push(`core policy missing: ${required}`);
+  }
+  for (const required of [
+    // X13 meaning of auto, E7 precedence, Track 94A opt-in & pre-attempt.
     'It stays opt-in behind this value rather than becoming the default for runs with no policy line, light-default runs, or `post-audit=classify`-only runs.',
     '`auto` turns on all three additions together',
     'The light review default never sets it. `auto` turns on all three additions together',
@@ -813,7 +838,7 @@ function checkDocAuditGapAutoLock(
   }
 
   // D10 invariant carve-out names only doc-audit-gap=auto, and both cross-references exist
-  const carveOutMatch = /A policy never waives a gate or changes its bound, with one exception — ([^:]+):/.exec(policy);
+  const carveOutMatch = /A policy never waives a gate or changes its bound, with one exception — ([^:]+):/.exec(policyCore);
   if (!carveOutMatch) {
     violations.push('missing D10 invariant carve-out');
   } else {
@@ -938,7 +963,7 @@ function checkDocAuditGapAutoLock(
     if (!under.includes(required)) violations.push(`Under doc-audit-gap=auto missing: ${required}`);
   }
   const documentationGate = skillSection(text, '### Prove /ship\'s release gates on this head').replace(/\s+/g, ' ');
-  if (!documentationGate.includes('use the verified-base cap check below in place of upstream\'s origin-based cap lookup for every audit acceptance')) {
+  if (!documentationGate.includes('use the verified-base cap check in place of upstream\'s origin-based cap lookup for every audit acceptance')) {
     violations.push('active policy must verify base caps before accepting any audit');
   }
 
@@ -1052,7 +1077,7 @@ function checkCompactReceiptTemplateLock(text: string): string[] {
   return JSON.stringify(labels) === JSON.stringify(expected) ? [] : [`compact receipt labels mismatch: ${labels.join(',')}`];
 }
 
-function checkExecutableFenceContractsLock(text: string, baselineRef = REF_CYCLE_BASELINE): string[] {
+function checkExecutableFenceContractsLock(text: string, baselineRef = REF_CYCLE_BASELINE, deltaRef = REF_DELTA_SELECTION): string[] {
   const violations: string[] = [];
   const delta = skillSection(text, '### Scope a re-review to its delta');
   const snapFences = extractFences(delta).filter((f) => f.body.includes('CANDIDATE_SNAPSHOT:'));
@@ -1060,7 +1085,7 @@ function checkExecutableFenceContractsLock(text: string, baselineRef = REF_CYCLE
   else if (snapFences[0]!.body.split('git -C "<workspace>"').length - 1 !== 4) {
     violations.push('CANDIDATE_SNAPSHOT fence git -C count != 4');
   }
-  if (!extractFences(delta).some((f) => f.body.includes('SCOPE_DELTA:'))) {
+  if (!extractFences(deltaRef).some((f) => f.body.includes('SCOPE_DELTA:'))) {
     violations.push('missing SCOPE_DELTA guard fence');
   }
   const baselineRaw = refHeadingSection(baselineRef, H_CYCLE_1_BASELINE);
@@ -1161,7 +1186,7 @@ describe('review-and-prep repeated-review cuts', () => {
   test('a cycle stop ends the invocation with a durable draft and an H-E prompt', () => {
     expect(checkHeFenceLock(REF_CYCLE_CAP)).toEqual([]);
     expect(stopFlat).toContain(MARKER_STOPPED);
-    expect(stopFlat).toContain(MARKER_CONTINUATION);
+    expect(skillSection(prep, H_CYCLE_STOP)).toContain(MARKER_CONTINUATION);
     expect(stopFlat).toContain(B_TREE_EXPR);
     expect(receipt).toContain('exact line `reviewRestrictionResolved: true`');
   });
@@ -1230,7 +1255,7 @@ describe('review-and-prep repeated-review cuts', () => {
 
       // Value: protects=scope selection includes reversals and removed untracked paths; fails_when=delta scope silently omits them; why_new=snapshot regressions missed by HEAD-based scope; seam=none
       test(`${sh.shell}: snapshot scope guard rejects missing paths and accepts covered deltas`, () => {
-        const guard = extractFences(delta).find((f) => f.body.includes('SCOPE_DELTA:'))?.body;
+        const guard = extractFences(REF_DELTA_SELECTION).find((f) => f.body.includes('SCOPE_DELTA:'))?.body;
         expect(guard).toBeDefined();
         const cwd = repo();
         const snap = () => {
@@ -1291,7 +1316,7 @@ describe('review-and-prep lighter ceremony', () => {
   const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
   const auto = skillSection(prep, H_AUTO_FIX_SCOPE).replace(/\s+/g, ' ');
   const clock = skillSection(prep, '### Report elapsed time and stop on provider failures').replace(/\s+/g, ' ');
-  const waits = skillSection(prep, '### Hosts with bounded subagent waits').replace(/\s+/g, ' ');
+  const waits = REF_BOUNDED_WAITS.replace(/\s+/g, ' ');
 
   // Value: protects=Review default receipt templates and light-default skip token; fails_when=a Review default template or skip token drifts; why_new=light default receipt contract; seam=none
   test('the light default receipt templates and skip token are locked', () => {
@@ -1471,7 +1496,7 @@ describe('review-and-prep final-gate repair', () => {
 
   // Value: protects=the stop's decision table has the nine rows, only three fill the row and every other row ends in a reason from the printed four-reason list; fails_when=a row is added, dropped or retargeted, or the worked example stops matching the eligible pending row; why_new=Track 32A and Track 84A paired-record eligibility; seam=none
   test('the stop table has the nine rows and fills the row only for the three eligible records', () => {
-    expect(checkFullReviewEvidenceTemplatesLock(REF_CYCLE_BASELINE, REF_CYCLE_CAP)).toEqual([]);
+    expect(checkFullReviewEvidenceTemplatesLock(prep, REF_CYCLE_CAP)).toEqual([]);
     expect(tableHeader).toEqual(['`cycle-1-baseline`', '`cycle-1-fix-review`', 'Stop row']);
     expect(tableRows).toHaveLength(9);
     for (const row of tableRows) expect(row).toHaveLength(3);
@@ -1500,7 +1525,7 @@ describe('review-and-prep final-gate repair', () => {
       [rowPendingEquals, acceptDelta, 'the row'],
       [rowPendingEquals, acceptFull, 'the row'],
     ]);
-    const example = baselineRaw.split('```markdown\n')[1]?.split('\n```')[0]?.split('\n') ?? [];
+    const example = skillSection(prep, H_CYCLE_1_BASELINE).split('```markdown\n')[1]?.split('\n```')[0]?.split('\n') ?? [];
     expect(example).toHaveLength(3);
     const [cycle1, cycle2] = example as [string, string, string];
     expect(cycle1).toContain('snapshot=<S1> (tree equals T)');
@@ -1576,12 +1601,13 @@ describe('review-and-prep final-gate repair', () => {
     }
 
     expect(baseline).toContain('not a review-state result envelope');
-    expect(baseline).toContain('"<extend-root>/bin/review-state" full-review-record --help` exits 0');
-    expect(baseline).toContain('or the help command fails');
-    expect(baseline).toContain('writes no full-review record and runs no record checkpoint');
-    expect(baseline).toContain('no record checkpoint holds a fix or a reader');
-    expect(baseline).toContain('reads both records as missing (`record-missing`)');
-    expect(checkUnverifiedOutsideBaselineLock(REF_CYCLE_BASELINE, REF_DELEGATE_PARTS, REF_CYCLE_CAP)).toEqual([]);
+    const baselineCore = skillSection(prep, H_CYCLE_1_BASELINE).replace(/\s+/g, ' ');
+    expect(baselineCore).toContain('"<extend-root>/bin/review-state" full-review-record --help` exits 0');
+    expect(baselineCore).toContain('or the help command fails');
+    expect(baselineCore).toContain('writes no full-review record and runs no record checkpoint');
+    expect(baselineCore).toContain('no record checkpoint holds a fix or a reader');
+    expect(baselineCore).toContain('reads both records as missing (`record-missing`)');
+    expect(checkUnverifiedOutsideBaselineLock()).toEqual([]);
   });
 });
 
@@ -1592,7 +1618,7 @@ describe('review-and-prep external full-suite gate and narrowed pregate', () => 
 
   // Value: protects=the three External gate templates; fails_when=the pause, result or attestation template drifts; why_new=Track 48A external gate templates; seam=none
   test('locks the External gate pause, result and attestation templates', () => {
-    expect(checkExternalGateTemplatesLock(REF_DOC_AUDIT_GATES)).toEqual([]);
+    expect(checkExternalGateTemplatesLock(prep, REF_DOC_AUDIT_GATES)).toEqual([]);
   });
 
   // Value: protects=the activation paragraph names the nine anchors in three lists; fails_when=an anchor or delimiter is dropped; why_new=narrowed pregate activation; seam=none
@@ -1638,7 +1664,6 @@ describe('review-and-prep external full-suite gate and narrowed pregate', () => 
 describe('review-and-prep behavior-changing repair review and repair-cycles=light', () => {
   const prep = coreText('review-and-prep');
   const reopenRaw = refHeadingSection(REF_REPAIR_GAPS, H_REOPEN_BEHAVIOR);
-  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
 
   // Value: protects=the activation paragraph's exact shape, which bin/upstream-check parses; fails_when=a span moves, wraps onto two lines, changes file or loses a delimiter; why_new=drift-checked gate; seam=none
   test('the activation paragraph keeps the shape the drift check parses', () => {
@@ -1661,8 +1686,9 @@ describe('review-and-prep behavior-changing repair review and repair-cycles=ligh
     );
     expect(reopenRaw).not.toContain('**Receipt.**');
     expect(REF_PREGATE_REPAIR.split('**Receipt.**').length - 1).toBe(1);
-    expect(policy).toContain('`skipped — light default repair cycle; source: repair-cycles=light`');
-    expect(policy).toContain('`repair-cycles=light: nothing skipped — in-cap=full`');
+    const policyProcedure = refHeadingSection(REF_POLICY_VALUES, '### Read an optional review policy').replace(/\s+/g, ' ');
+    expect(policyProcedure).toContain('`skipped — light default repair cycle; source: repair-cycles=light`');
+    expect(policyProcedure).toContain('`repair-cycles=light: nothing skipped — in-cap=full`');
   });
 });
 
@@ -1803,8 +1829,8 @@ describe('review-and-prep pause points finish blocked', () => {
   test('the manual-testing, cycle-stop, exit-question and external-gate pause sections each contain --outcome blocked', () => {
     expect(skillSection(prep, H_MANUAL_CHECKPOINT), H_MANUAL_CHECKPOINT).toContain('--outcome blocked');
     expect(skillSection(prep, H_GREPTILE_EXITS), H_GREPTILE_EXITS).toContain('--outcome blocked');
-    expect(refHeadingSection(REF_CYCLE_CAP, H_CYCLE_STOP), H_CYCLE_STOP).toContain('--outcome blocked');
-    expect(refHeadingSection(REF_DOC_AUDIT_GATES, H_EXTERNAL_PAUSE), H_EXTERNAL_PAUSE).toContain('--outcome blocked');
+    expect(skillSection(prep, H_CYCLE_STOP), H_CYCLE_STOP).toContain('--outcome blocked');
+    expect(skillSection(prep, H_EXTERNAL_PAUSE), H_EXTERNAL_PAUSE).toContain('--outcome blocked');
   });
 
   test('a pause ends the metrics run step paused, and a resume records its own run', () => {
@@ -2702,7 +2728,6 @@ describe('review-and-prep run-state=record', () => {
       skillText: string,
       inlineText: string,
       cycleCapRef = REF_CYCLE_CAP,
-      docAuditGatesRef = REF_DOC_AUDIT_GATES,
     ): string[] => {
       const violations: string[] = [];
       for (const rule of [
@@ -2719,7 +2744,7 @@ describe('review-and-prep run-state=record', () => {
         ['Readiness', skillSection(skillText, '### Readiness')],
         ['paused comment', skillSection(skillText, H_MANUAL_CHECKPOINT)],
         ['stopped comment', refHeadingSection(cycleCapRef, H_CYCLE_STOP)],
-        ['external gate', refHeadingSection(docAuditGatesRef, '### Pause for an external full-suite gate')],
+        ['external gate', skillSection(skillText, H_EXTERNAL_PAUSE)],
         ['Step 7', skillSection(skillText, H_STEP_7)],
       ];
       for (const [label, rawSec] of sites) {
@@ -2739,15 +2764,12 @@ describe('review-and-prep run-state=record', () => {
         prep.replaceAll('render --help', 'render'),
         inlineFlat,
         REF_CYCLE_CAP.replaceAll('render --help', 'render'),
-        REF_DOC_AUDIT_GATES.replaceAll('render --help', 'render'),
       ).length,
     ).toBe(5);
     expect(
       checkInlineAndPointers(
-        prep,
+        prep.replace('While the run state is recorded, record `checkpoint external-gate`', 'Record `checkpoint external-gate`'),
         inlineFlat,
-        REF_CYCLE_CAP,
-        REF_DOC_AUDIT_GATES.replace('While the run state is recorded, record `checkpoint external-gate`', 'Record `checkpoint external-gate`'),
       ),
     ).toContain('unguarded render at external gate');
   });
@@ -3273,22 +3295,28 @@ describe('kept contract locks fail on mutation', () => {
       delegate: REF_DELEGATE_PARTS,
       docAuditGates: REF_DOC_AUDIT_GATES,
       baseline: REF_CYCLE_BASELINE,
+      outsideReview: REF_OUTSIDE_REVIEW,
+      outsideRecovery: REF_OUTSIDE_RECOVERY,
+      followup: REF_CYCLE_FOLLOWUP,
+      deltaSelection: REF_DELTA_SELECTION,
+      policyValues: REF_POLICY_VALUES,
+      docGateReuse: REF_DOC_GATE_REUSE,
       postAuditClass: REF_POST_AUDIT_CLASS,
       postAuditReaudit: REF_POST_AUDIT_REAUDIT,
     };
     const callLock = (d: typeof docs): string[] => {
       if (lock === checkHeFenceLock) return checkHeFenceLock(d.cycleCap);
-      if (lock === checkExternalGateTemplatesLock) return checkExternalGateTemplatesLock(d.docAuditGates);
+      if (lock === checkExternalGateTemplatesLock) return checkExternalGateTemplatesLock(d.core, d.docAuditGates);
       if (lock === checkPostAuditChangeTemplateLock) return checkPostAuditChangeTemplateLock(d.postAuditClass);
-      if (lock === checkFullReviewEvidenceTemplatesLock) return checkFullReviewEvidenceTemplatesLock(d.baseline, d.cycleCap);
-      if (lock === checkUnverifiedOutsideBaselineLock) return checkUnverifiedOutsideBaselineLock(d.baseline, d.delegate, d.cycleCap);
+      if (lock === checkFullReviewEvidenceTemplatesLock) return checkFullReviewEvidenceTemplatesLock(d.core, d.cycleCap);
+      if (lock === checkUnverifiedOutsideBaselineLock) return checkUnverifiedOutsideBaselineLock(d.baseline, d.outsideReview, d.cycleCap, d.core, d.followup, d.outsideRecovery);
       if (lock === checkGreptileStatusAndExitsLock) return checkGreptileStatusAndExitsLock(d.core, d.greptile);
       if (lock === checkCommentMarkersLock) return checkCommentMarkersLock(d.core, d.cycleCap);
       if (lock === checkFullReceiptTemplateLock) return checkFullReceiptTemplateLock(d.core, d.cycleCap);
       if (lock === checkAttackerPartsAnchorsLock) return checkAttackerPartsAnchorsLock(d.core, d.delegate);
       if (lock === checkDelegatedPartTemplateLock) return checkDelegatedPartTemplateLock(d.core, d.delegate);
-      if (lock === checkExecutableFenceContractsLock) return checkExecutableFenceContractsLock(d.core, d.baseline);
-      if (lock === checkDocAuditGapAutoLock) return checkDocAuditGapAutoLock(d.core, d.postAuditClass, d.postAuditReaudit, d.docAuditGates);
+      if (lock === checkExecutableFenceContractsLock) return checkExecutableFenceContractsLock(d.core, d.baseline, d.deltaSelection);
+      if (lock === checkDocAuditGapAutoLock) return checkDocAuditGapAutoLock(d.core, d.postAuditClass, d.postAuditReaudit, d.docAuditGates, d.policyValues, d.docGateReuse);
       return lock(d.core);
     };
     expect(callLock(docs)).toEqual([]);
@@ -3299,6 +3327,12 @@ describe('kept contract locks fail on mutation', () => {
       delegate: mutate(docs.delegate),
       docAuditGates: mutate(docs.docAuditGates),
       baseline: mutate(docs.baseline),
+      outsideReview: mutate(docs.outsideReview),
+      outsideRecovery: mutate(docs.outsideRecovery),
+      followup: mutate(docs.followup),
+      deltaSelection: mutate(docs.deltaSelection),
+      policyValues: mutate(docs.policyValues),
+      docGateReuse: mutate(docs.docGateReuse),
       postAuditClass: mutate(docs.postAuditClass),
       postAuditReaudit: mutate(docs.postAuditReaudit),
     };
@@ -3329,7 +3363,8 @@ describe('Track 86B single-statement locks', () => {
     if (JSON.stringify(header) !== JSON.stringify(['Line', 'Condition', 'Final', 'Paused', 'Stopped'])) {
       violations.push(`unexpected receipt-line table header: ${header.join(',')}`);
     }
-    const rows = tableLines.slice(2).map(parseCells);
+    const conditionalRows = REF_RECEIPT_POLICY_ROWS.split('\n').filter((line) => /^\s*\|/.test(line));
+    const rows = [...tableLines.slice(2), ...conditionalRows].map(parseCells);
     if (rows.length !== 17) {
       violations.push(`expected 17 receipt-line table rows, got ${rows.length}`);
     }
@@ -3584,7 +3619,7 @@ describe('Track 86B single-statement locks', () => {
       lock === checkE6ExitTemplateLock
         ? REF_GREPTILE_RECOVERY
         : lock === checkOutsideNeedsContextHelperLock
-          ? REF_DELEGATE_PARTS
+          ? REF_OUTSIDE_RECOVERY
           : prep;
     expect(lock(target)).toEqual([]);
     const mutated = mutate(target);

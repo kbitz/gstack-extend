@@ -77,14 +77,6 @@ record implies a test run that did not happen.
 
 ## From Repair a test-only final-gate failure
 
-**Classification.** Read the classification contract from
-`<extend-root>/docs/docs-ship.md`, as the Greptile docs-only rule does, and the
-project's own docs-only rules and `docs-ship:` markers from the base tip,
-without `docs-ship:docs` opt-ins. Apply the contract's rules to each path of
-`git diff --no-renames --name-status B S`; do not run `bin/docs-ship classify`
-on that range. A missing root or contract is the fallback
-`classification-unreadable`, not a stop.
-
 - A path qualifies as tests only if its basename matches the classification's
   test-file name pattern, or it is a non-code data file (fixture, snapshot,
   golden output) under a test directory segment.

@@ -591,13 +591,16 @@ test('missing installed validator export fails before dispatch or a call claim',
 
 test('wrapper wires delta scope, both first-cycle voices and unchanged missing coverage gate', () => {
   const core = coreText('review-and-prep');
-  const ref = referenceText('review-and-prep', 'delegate-specialist-parts');
+  const ref = referenceText('review-and-prep', 'conditional-outside-review');
+  const recovery = referenceText('review-and-prep', 'conditional-outside-recovery');
   for (const marker of ['### Bound Claude Code outside calls', 'in-cap=delta', 'continuation=repair-only']) {
     expect(core).toContain(marker);
   }
-  for (const marker of ['bin/outside-review', 'Retain both distinct', 'GATE: MISSING COVERAGE', 'native pass never substitutes']) {
+  for (const marker of ['bin/outside-review', 'Retain both distinct']) {
     expect(ref).toContain(marker);
   }
+  expect(recovery).toContain('GATE: MISSING COVERAGE');
+  expect(recovery).toContain('native pass never substitutes');
 });
 
 test('prepare places SETTLED_RULE and settled context in the shared prefix for both phases', () => {

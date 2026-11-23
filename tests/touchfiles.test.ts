@@ -431,7 +431,7 @@ function declaredConsumers(file: string): string[] {
 /** The skill-path spellings a split suite may use; each names one skill. */
 const SKILL_PATH_FORMS = [
   /join\(ROOT, (['"])skills\1, (['"])(?<name>[a-z-]+)\.md\2\)/g,
-  /join\(ROOT, (['"])skills\1, (['"])references\2, (['"])(?<name>[a-z-]+)\3, (['"])[a-z0-9-]+\.md\4\)/g,
+  /join\(ROOT, (['"])skills\1, (['"])references\2, (['"])(?<name>[a-z-]+)\3, (['"])[a-z0-9-]+\.md\5\)/g,
   /(['"])skills\/(?<name>[a-z-]+)\.md\1/g,
   /(['"])skills\/references\/(?<name>[a-z-]+)\/[a-z0-9-]+\.md\1/g,
   /resolverSkillText\((['"])(?<name>[a-z-]+)\1\)/g,
@@ -440,7 +440,7 @@ const SKILL_PATH_FORMS = [
 ];
 
 const SKILL_REF_PATH_FORMS = [
-  /join\(ROOT, (['"])skills\1, (['"])references\2, (['"])(?<name>[a-z-]+)\3, (['"])(?<file>[a-z0-9-]+)\.md\4\)/g,
+  /join\(ROOT, (['"])skills\1, (['"])references\2, (['"])(?<name>[a-z-]+)\3, (['"])(?<file>[a-z0-9-]+)\.md\5\)/g,
   /(['"])skills\/references\/(?<name>[a-z-]+)\/(?<file>[a-z0-9-]+)\.md\1/g,
   /referenceText\((['"])(?<name>[a-z-]+)\1,\s*(['"])(?<file>[a-z0-9-]+)(?:\.md)?\3\)/g,
 ];
@@ -528,6 +528,20 @@ describe('per-skill selection', () => {
       'readFileSync(`skills/${name}.md`)',
       'resolverSkillText(name)',
     ]) expect([computed, computedSkillReads(computed).length]).toEqual([computed, 1]);
+  });
+
+  test('the read lint recognizes literal reference paths in every supported form', () => {
+    for (const source of [
+      "join(ROOT, 'skills', 'references', 'review-and-prep', 'conditional-workflow-metrics.md')",
+      "read('skills/references/review-and-prep/conditional-workflow-metrics.md')",
+      "referenceText('review-and-prep', 'conditional-workflow-metrics')",
+    ]) {
+      expect(namedSkills(source), source).toEqual(['review-and-prep']);
+      expect(namedSkillRefs(source), source).toEqual([
+        'skills/references/review-and-prep/conditional-workflow-metrics.md',
+      ]);
+      expect(computedSkillReads(source), source).toEqual([]);
+    }
   });
 
   test('each split suite declares exactly the skill files it names, and none reads a skill by a computed path', () => {

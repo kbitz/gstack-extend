@@ -1,7 +1,6 @@
 # Skill core-versus-reference rule
 
-Every gstack-extend skill loads on every supported harness without wasting
-context on conditional procedures. A skill's **core** (`skills/<skill>.md`)
+A skill's **core** (`skills/<skill>.md`)
 keeps everything needed on every run; conditional detail lives in **reference
 files** under `skills/references/<skill>/` and is fetched on demand through the
 start command (`~/.gstack-extend/bin/preamble`).
@@ -80,7 +79,7 @@ Core section (`skills/example.md`):
 
 Apply this step only when the caller passes `retry=bounded`.
 
-Run `~/.gstack-extend/bin/preamble example --ref conditional-retry --expect a1b2c3d4e5f60718` before retrying when `retry=bounded` is set.
+Run `~/.gstack-extend/bin/preamble example --ref conditional-retry --expect 1f67c880bf5612f0` before retrying when `retry=bounded` is set.
 ```
 
 Reference file (`skills/references/example/conditional-retry.md`):
@@ -102,7 +101,10 @@ When adding or editing a reference file:
 
 1. Add or update the manifest entry in `scripts/skill-references.ts`.
 2. Update digests in the owning core: `bun scripts/skill-references.ts digests --write`.
-3. Verify conservation against the base branch: `bun scripts/skill-references.ts check --base origin/main`.
+3. For a move, run `bun scripts/skill-references.ts check --base <pre-move-ref> --skill <skill>`.
+   Use the base revision before this skill was slimmed. After a base merge,
+   `apply` with the same flags regenerates that skill's core and references
+   from the named revision. Run it before editing the generated files.
 4. Check or update `tests/helpers/skill-budgets.ts` (raising a budget requires
    the developer's explicit approval and a `BUDGET_RAISE_LOG` entry).
 5. Add `skills/references/<skill>/**` to `MANUAL_TOUCHFILES` in

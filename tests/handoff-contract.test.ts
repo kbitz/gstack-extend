@@ -36,6 +36,8 @@ const FIXTURES = join(ROOT, 'tests', 'fixtures', 'handoffs');
 const read = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
 const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 const has = (haystack: string, needle: string): boolean => haystack.includes(needle);
+const PREP_POLICY = squash(referenceText('review-and-prep', 'conditional-policy-values'));
+const PREP_POLICY_ROWS = squash(referenceText('review-and-prep', 'conditional-receipt-policy-rows'));
 
 type Outcome = 'ADVANCE_TRUSTED' | 'FULL_CHECK_REQUIRED' | 'HOLD' | 'REFUSE';
 type Kind = 'H-A' | 'H-B' | 'H-C-pause' | 'H-C-resume' | 'H-D' | 'H-E' | 'H-F';
@@ -874,15 +876,21 @@ describe('(A) the doc is the oracle', () => {
   test('the producer word of every row appears verbatim in a producer skill', () => {
     const cycleCapRef = squash(referenceText('review-and-prep', 'conditional-cycle-cap'));
     const extGateRef = squash(referenceText('review-and-prep', 'conditional-doc-audit-and-gates'));
+    const finalRepairRef = squash(referenceText('review-and-prep', 'conditional-pregate-and-final-repair'));
+    const gapRef = squash(referenceText('review-and-prep', 'conditional-repair-and-gaps'));
+    const missing: string[] = [];
     for (const c of DOC_CASES.values()) {
       if (c.word === '—') continue;
       const needle = squash(c.word);
       const found =
         has(ALL_SKILLS, needle) ||
+        (c.code === 'B-REPAIRED-HEAD' && has(finalRepairRef, needle)) ||
+        (c.code === 'B-RECORDED-GAP-HEAD' && has(gapRef, needle)) ||
         (c.handoff === 'H-E' && has(cycleCapRef, needle)) ||
         (c.handoff === 'H-F' && has(extGateRef, needle));
-      expect(found, `${c.code}: ${c.word}`).toBe(true);
+      if (!found) missing.push(`${c.code}: ${c.word}`);
     }
+    expect(missing).toEqual([]);
   });
 
   test('each row names exactly the failing bindings its fixture reports', () => {
@@ -1193,11 +1201,12 @@ describe('(C) doc and producers agree', () => {
       'Review policy source: <caller prompt|user decision|none supplied>',
       'Full-review evidence: commit=<full SHA>; tree=<Git tree SHA>; scope=full; completed=true; source=<durable reference>',
       'Full-review evidence: unavailable',
-      'reviewRestrictionResolved: true',
     ]) {
       expect(stop).toContain(line);
       expect(contract).toContain(line);
     }
+    expect(SKILLS['review-and-prep']).toContain('reviewRestrictionResolved: true');
+    expect(contract).toContain('reviewRestrictionResolved: true');
     expect(squash(SKILLS['review-and-prep'])).toContain('A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`');
     expect(squash(stop)).toContain('dedicated full-review evidence comment');
     expect(squash(stop)).toContain('use its returned permalink as `source=`');
@@ -1839,7 +1848,7 @@ describe('(E) the external gate and lean parent reads', () => {
   test('skill and doc carry the same line templates, and a consumer without H-F holds the pause', () => {
     const extGateRef = squash(referenceText('review-and-prep', 'conditional-doc-audit-and-gates'));
     for (const t of [PAUSE_TEMPLATE, RESULT_TEMPLATE, ATTESTATION_TEMPLATE]) {
-      expect(has(extGateRef, t), `skill: ${t}`).toBe(true);
+      expect(has(t === ATTESTATION_TEMPLATE ? extGateRef : prep, t), `skill: ${t}`).toBe(true);
       expect(has(doc, t), `doc: ${t}`).toBe(true);
     }
     expect(has(doc, '`External gate attestation:` rows | receipt-present')).toBe(true);
@@ -1902,7 +1911,7 @@ describe('(E) the external gate and lean parent reads', () => {
     expect(has(doc, '`pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present')).toBe(true);
     expect(has(doc, 'the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`)')).toBe(true);
     expect(has(doc, '`B-NARROWED-PREGATE-HEAD` | H-B | `Pregate lane not run:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `pregate-narrowing:` status line and each `Pregate lane not run:` line')).toBe(true);
+    expect(has(PREP_POLICY_ROWS, 'the `pregate-narrowing:` status line and each `Pregate lane not run:` line')).toBe(true);
   });
 
   // Value: protects=the skill and the published contract say the same thing about narrowing, its decline cases, the loaded-copy check and the ship consequence; fails_when=a sentence drifts apart between the two, the check is dropped or the doc stops saying a narrowed run takes the FULL ship path; why_new=criteria 5, 7 and 9; seam=none; no_claim=installed-agent execution
@@ -1911,10 +1920,13 @@ describe('(E) the external gate and lean parent reads', () => {
     expect(has(prep, check), `skill: ${check}`).toBe(true);
     expect(has(doc, check), `doc: ${check}`).toBe(true);
     const pregateRef = squash(referenceText('review-and-prep', 'conditional-pregate-and-final-repair'));
-    for (const phrase of ['Narrow the pregate after an accepted pass', '`pregate-narrowing:`', '`Pregate lane not run:`', '`pregate-preflight`', 'exit 1 means an older installation runs the pregate as today, and the policy line stays unchanged']) {
+    for (const phrase of ['Narrow the pregate after an accepted pass', '`pregate-narrowing:`', '`Pregate lane not run:`', '`pregate-preflight`']) {
       expect(has(prep, phrase), `skill: ${phrase}`).toBe(true);
       expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
     }
+    const loadedCopyFallback = 'exit 1 means an older installation runs the pregate as today, and the policy line stays unchanged';
+    expect(has(PREP_POLICY, loadedCopyFallback)).toBe(true);
+    expect(has(doc, loadedCopyFallback)).toBe(true);
     for (const phrase of ['A matching name or hash alone does not establish coverage.']) {
       expect(has(pregateRef, phrase), `skill ref: ${phrase}`).toBe(true);
       expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
@@ -2052,7 +2064,7 @@ describe('(F) repair-review and repair-cycles', () => {
       expect(POLICY_VALUES[key]!.source).toBe(`^${value}$`);
       expect(value).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
       expect(`${key}=${value}`).not.toMatch(/routine|standard|novel/);
-      expect(has(prep, `\`${key}=${value}\` (its only value)`), key).toBe(true);
+      expect(has(PREP_POLICY, `\`${key}=${value}\` (its only value)`), key).toBe(true);
     }
   });
 
@@ -2173,7 +2185,7 @@ describe('(G) test-gaps', () => {
       '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`), `run-state` (`record`), `doc-audit-gap` (`auto`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
     expect(POLICY_VALUES['test-gaps']!.source).toBe('^record$');
     expect('test-gaps=record').not.toMatch(/routine|standard|novel/);
-    expect(has(prep, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
+    expect(has(PREP_POLICY, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
   });
 
   // Value: protects=a receipt that records a gap still hands /ship-and-land a trusted head, the fixture line has the producer template's keys and the doc row publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 5; seam=none; no_claim=installed-agent execution
@@ -2197,7 +2209,7 @@ describe('(G) test-gaps', () => {
     expect(has(doc, 'a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`)')).toBe(true);
     expect(has(doc, 'A prepared receipt that records test gaps still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-RECORDED-GAP-HEAD` | H-B | `Test gap recorded:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line')).toBe(true);
+    expect(has(PREP_POLICY_ROWS, 'the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line')).toBe(true);
   });
 
   // Value: protects=the acceptance record states the before sample's shape, the unknown after fields, the exact token and check, and that no saving is established; fails_when=a token, a check, an unknown or the limits are dropped, or a session ID or repository name is published; why_new=new acceptance record; seam=none; no_claim=installed-agent execution
@@ -2478,8 +2490,7 @@ describe('(F) the stage line', () => {
 
   test('/review-and-prep keeps the H-F pause line last and prints no stage line after it', () => {
     const rp = squash(SKILLS['review-and-prep']);
-    const extGateRef = squash(referenceText('review-and-prep', 'conditional-doc-audit-and-gates'));
-    expect(has(extGateRef, 'This pause prints no stage line: the contract freezes the `External gate:` line as the last line of the turn')).toBe(true);
+    expect(has(rp, 'This pause prints no stage line: the contract freezes the `External gate:` line as the last line of the turn')).toBe(true);
     expect(has(rp, 'End every final message except the external-gate pause with this stage line')).toBe(true);
     expect(run('F-PAUSE').outcome).toBe(FULL);
     expect(run('F-PAUSE-STAGE-LINE').outcome).toBe(HOLD);
@@ -2618,7 +2629,7 @@ describe('(H) delegate', () => {
     expect(has(doc, 'the lines never authorize a stage or merge (`B-DELEGATED-HEAD`)')).toBe(true);
     expect(has(doc, 'A prepared receipt that records delegated parts still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-DELEGATED-HEAD` | H-B | `Delegated part:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `delegation:` status line and every `Delegated part:')).toBe(true);
+    expect(has(PREP_POLICY_ROWS, 'the `delegation:` status line and every `Delegated part:')).toBe(true);
   });
 });
 
@@ -2684,7 +2695,7 @@ describe('(I) specialists=fold', () => {
       expect(has(doc, phrase), phrase).toBe(true);
     }
     expect(POLICY_VALUES.specialists!.test('fold')).toBe(true);
-    expect(has(prep, 'a line carrying both reads `Review policy: none supplied` with the reason `specialists=fold excludes delegate=`')).toBe(true);
+    expect(has(PREP_POLICY, 'a line carrying both reads `Review policy: none supplied` with the reason `specialists=fold excludes delegate=`')).toBe(true);
   });
 
   // Value: protects=a receipt that carries the fold lines still hands /ship-and-land a trusted head, the fixture lines have the skill template's keys and the doc row publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 6; seam=none; no_claim=installed-agent execution

@@ -45,7 +45,7 @@ export const BUDGET_RAISE_LOG: readonly BudgetRaiseEntry[] = [];
 
 /**
  * Budgets for every skill in setup's SKILLS list.
- * - Slimmed in PR A: review-and-prep (366,223 B -> ~183 KB; budget 196,608 B).
+ * - Slimmed in PR A: review-and-prep, with a separate cumulative path budget.
  * - Scheduled for PR B: roadmap, ship-and-land, pair-review (held at current
  *   size + <=10% rounded up to 4 KiB until PR B slims them).
  * - Unslimmed skills: current size + <=10% rounded up to 4 KiB.
@@ -92,12 +92,20 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
     defaultByHandBytes: 36_864,
   },
   'review-and-prep': {
-    coreBytes: CORE_BYTE_CAP, // 196,608 B (75% cap of Muse's 262,144 B limit)
-    defaultByHandRefs: [],
+    coreBytes: 184_320,
+    // Successful first cycle in a repo without Greptile, metrics capture active,
+    // with the selected Claude Code outside review on Codex.
+    defaultByHandRefs: [
+      'conditional-workflow-metrics',
+      'conditional-outside-review',
+      'conditional-cycle-baseline',
+    ],
     defaultByHandBytes: CORE_BYTE_CAP,
     orchestratedDefaultRefs: [
       'conditional-workflow-metrics',
+      'conditional-outside-review',
       'conditional-cycle-baseline',
+      'conditional-policy-values',
       'conditional-doc-audit-and-gates',
     ],
   },

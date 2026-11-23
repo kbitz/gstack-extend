@@ -29,7 +29,6 @@ import {
   SKILL_BUDGETS,
 } from './helpers/skill-budgets.ts';
 import { scopedEnv } from './helpers/extend-root.ts';
-import { systemPath } from './helpers/system-path.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const SKILLS_DIR = join(ROOT, 'skills');
@@ -113,7 +112,7 @@ describe('skill size budgets (Track 94I)', () => {
         const refPath = join(REFS_ROOT, skill, `${ref}.md`);
         const refContent = readFileSync(refPath, 'utf8');
         const refBytes = Buffer.byteLength(refContent, 'utf8');
-        const refLines = refContent.split('\n');
+        const refLines = refContent === '' ? [] : refContent.replace(/\n$/, '').split('\n');
         totalRefBytes += refBytes;
         if (refBytes > REFERENCE_BYTE_CAP) {
           violations.push(
@@ -160,21 +159,27 @@ describe('skill size budgets (Track 94I)', () => {
 });
 
 describe('pointer integrity and reference structure (Track 94I)', () => {
+  test('plain post-audit classification loads its rules without the doc-audit-gap opt-in', () => {
+    const core = readFileSync(skillPath('review-and-prep'), 'utf8');
+    const instruction = parseReadInstructions(core).find(({ ref }) => ref === 'conditional-post-audit-classification');
+    expect(instruction?.suffix).toEndWith('when the policy carries `post-audit=classify`');
+    expect(core).toContain('Carry the accepted audit unchanged when every change qualifies for `owner=not-needed`.');
+  });
+
   test('every slimmed core carries the exact reference rule, valid read instructions, matching digests, and valid references', () => {
     const violations: string[] = [];
     const refSkills = listRefSkills();
 
-    for (const skill of refSkills) {
-      if (!(SKILLS as readonly string[]).includes(skill)) {
-        violations.push(`skills/references/${skill}: unknown skill directory; see docs/skill-references.md.`);
-        continue;
-      }
+    for (const skill of refSkills.filter((name) => !(SKILLS as readonly string[]).includes(name))) {
+      violations.push(`skills/references/${skill}: unknown skill directory; see docs/skill-references.md.`);
+    }
+    for (const skill of SKILLS) {
       const core = readFileSync(skillPath(skill), 'utf8');
-      if (!core.includes(CORE_REFERENCE_RULE)) {
+      const instrs = parseReadInstructions(core);
+      if ((instrs.length > 0 || refSkills.includes(skill)) && !core.includes(CORE_REFERENCE_RULE)) {
         violations.push(`skills/${skill}.md: missing exact CORE_REFERENCE_RULE beside preamble root rules; see docs/skill-references.md.`);
       }
 
-      const instrs = parseReadInstructions(core);
       const referencedSet = new Set<string>();
       for (const instr of instrs) {
         if (instr.skill !== skill) {
@@ -195,13 +200,14 @@ describe('pointer integrity and reference structure (Track 94I)', () => {
         }
       }
 
-      // Check for stray mentions of skills/references/ in core outside CORE_REFERENCE_RULE.
-      const coreWithoutRule = core.split(CORE_REFERENCE_RULE).join('');
-      if (coreWithoutRule.includes('skills/references/')) {
-        violations.push(`skills/${skill}.md: names skills/references/ outside the --ref command form; see docs/skill-references.md.`);
+      const readLines = new Set(instrs.map((instruction) => instruction.line));
+      const remainder = core.replace(CORE_REFERENCE_RULE, '').split('\n').filter((line) => !readLines.has(line)).join('\n');
+      if (remainder.includes('skills/references/') || /(?:^|\s)--ref\b/.test(remainder)) {
+        violations.push(`skills/${skill}.md: names a reference outside the documented --ref command form; see docs/skill-references.md.`);
       }
 
       const dir = join(REFS_ROOT, skill);
+      if (!refSkills.includes(skill)) continue;
       const entries = readdirSync(dir).sort();
       const diskRefs = new Set<string>();
       for (const entry of entries) {
@@ -252,6 +258,19 @@ describe('pointer integrity and reference structure (Track 94I)', () => {
 
     expect(violations, violations.join('\n')).toEqual([]);
   });
+
+  test('the documented example uses a valid pointer to the example reference bytes', () => {
+    const guide = readFileSync(join(ROOT, 'docs', 'skill-references.md'), 'utf8');
+    const example = guide.split('## Worked example\n')[1]!.split('\n## Maintainer checklist')[0]!;
+    const [core, reference] = [...example.matchAll(/^```markdown\n([\s\S]*?)^```$/gm)].map((match) => match[1]!);
+    expect(core).toBeDefined();
+    expect(reference).toBeDefined();
+    const instructions = parseReadInstructions(core!);
+    expect(instructions).toHaveLength(1);
+    const [{ skill, ref, digest }] = instructions as [typeof instructions[number]];
+    expect(reference!.trimEnd().endsWith(closingMarkerFor(skill, ref))).toBe(true);
+    expect(digest).toBe(computeRefDigest(reference!));
+  });
 });
 
 describe('machine-read capability literals and inbound anchors (Track 94I)', () => {
@@ -283,7 +302,7 @@ describe('machine-read capability literals and inbound anchors (Track 94I)', () 
 
     const home = mkdtempSync(join(baseTmp, 'codex-cap-'));
     const r = spawnSync(SETUP, ['--host', 'codex', '--quiet'], {
-      env: { HOME: home, PATH: systemPath() },
+      env: scopedEnv(home),
       encoding: 'utf8',
     });
     expect(r.status, r.stderr).toBe(0);
@@ -335,7 +354,7 @@ describe('disposable-HOME install root resolution for references (Track 94I)', (
     test(`setup --host ${host} installs preamble that fetches every reference named by installed cores`, () => {
       const home = mkdtempSync(join(baseTmp, `install-${host}-`));
       const r = spawnSync(SETUP, ['--host', host, '--quiet'], {
-        env: { HOME: home, PATH: systemPath() },
+        env: scopedEnv(home),
         encoding: 'utf8',
       });
       expect(r.status, r.stderr).toBe(0);
@@ -428,6 +447,18 @@ describe('scripts/skill-references.ts conservation fixtures (Track 94I)', () => 
     expect(res.droppedLines.some((l) => l.includes('Keep this gate sentence in the core.'))).toBe(true);
   });
 
+  test('explicit navigation edits must match once and are verified in the generated reference', () => {
+    const manifest = [
+      { ...sampleManifest[0]!, navigationEdits: [['line 2', 'under Gate Alpha']] as const },
+      sampleManifest[1]!,
+    ];
+    const applied = applyManifestToSkill('sample', sampleBase, manifest);
+    expect(applied.references['conditional-sample']).toContain('Moved block A under Gate Alpha.');
+    expect(checkConservation('sample', sampleBase, applied.core, applied.references, manifest).ok).toBe(true);
+    expect(() => applyManifestToSkill('sample', sampleBase.replace('line 2.', 'another line.'), manifest))
+      .toThrow('Expected one navigation edit');
+  });
+
   test('a reordered block fails conservation check', () => {
     const applied = applyManifestToSkill('sample', sampleBase, sampleManifest);
     const swappedRef = [
@@ -453,6 +484,14 @@ describe('scripts/skill-references.ts conservation fixtures (Track 94I)', () => 
     const res = checkConservation('sample', sampleBase, missingHeadingCore, applied.references, sampleManifest);
     expect(res.ok).toBe(false);
     expect(res.errors.some((e) => e.includes('section heading moved out of core'))).toBe(true);
+  });
+
+  test('moving a valid read command away from its original gate fails conservation check', () => {
+    const applied = applyManifestToSkill('sample', sampleBase, sampleManifest);
+    const [instruction] = parseReadInstructions(applied.core);
+    const changedCore = applied.core.replace(`${instruction!.line}\n`, '') + `\n${instruction!.line}\n`;
+    const result = checkConservation('sample', sampleBase, changedCore, applied.references, sampleManifest);
+    expect(result.errors).toContain('unexpected core edits or read-instruction placement in skills/sample.md');
   });
 
   test('MOVE_MANIFEST has at least one entry for review-and-prep', () => {
