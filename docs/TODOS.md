@@ -320,17 +320,6 @@
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 2b90a30 (2026-11-23).
 - **Effort:** ? (user triages in `/roadmap`)
 
-### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test gap: Reject a reference line range past EOF
-
-- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
-- **Description:** The fixtures verify a valid subset and malformed ranges. No test pins the output when the range is well formed and ends after the reference.
-- **Hypothesis (untested):** Request one line beyond EOF and check for exit 2, the usage diagnostic and empty stdout.
-- **Upstream severity:** INFORMATIONAL
-- **Found in:** `bin/lib/preamble.sh`.
-- **Evidence:** Preamble reference range tests and the bounds check were inspected. The audit reproduced no failure.
-- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
-- **Effort:** ? (user triages in `/roadmap`)
-
 ### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test gap: Verify digest provider fallbacks
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.

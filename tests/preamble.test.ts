@@ -599,6 +599,7 @@ describe('bin/lib/preamble.sh — --ref mode (Track 94I)', () => {
       ['review-and-prep', '--ref', 'conditional-x'], // missing --expect
       ['review-and-prep', '--expect', '0123456789abcdef'], // missing --ref
       ['review-and-prep', '--lines', ''], // explicit empty argument cannot fall through to regular start
+      ['review-and-prep', '--bogus', '--ref', 'conditional-x', '--expect', '0123456789abcdef'],
       ['review-and-prep', '--ref', '../escape', '--expect', '0123456789abcdef'], // traversal
       ['review-and-prep', '--ref', 'conditional-x', '--expect', 'not-hex'], // bad digest
       ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '5-2'], // reversed range

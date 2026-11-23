@@ -168,6 +168,24 @@ describe('skill size budgets (Track 94I)', () => {
 });
 
 describe('pointer integrity and reference structure (Track 94I)', () => {
+  test('the core binds workflow metrics before its single per-segment reference read', () => {
+    const core = readFileSync(skillPath('review-and-prep'), 'utf8');
+    const instructions = parseReadInstructions(core).filter(({ ref }) => ref === 'conditional-workflow-metrics');
+    expect(instructions).toHaveLength(1);
+    expect(core).toContain('print the library path to retain as `GX_LIB`');
+    expect(core.indexOf(instructions[0]!.line)).toBeGreaterThan(core.indexOf('print the library path to retain as `GX_LIB`'));
+  });
+
+  test('a reference failure at a cycle cap preserves a durable hold and cannot create a continuation', () => {
+    const core = readFileSync(skillPath('review-and-prep'), 'utf8');
+    const stop = core.split('### When /review stops at its cycle cap\n')[1]!;
+    const guard = stop.split(' --ref conditional-cycle-cap ')[0]!;
+    expect(guard).toContain('save the cap hold at that HEAD using `checkpoint stop`');
+    expect(guard).toContain('<!-- review-and-prep:stopped:<full-sha> -->');
+    expect(guard).toContain('`Full-review evidence: unavailable` and no continuation prompt');
+    expect(core).toContain('Reconcile a recorded cap hold even when no stop comment was confirmed.');
+  });
+
   test('plain post-audit classification loads its rules without the doc-audit-gap opt-in', () => {
     const core = readFileSync(skillPath('review-and-prep'), 'utf8');
     const instruction = parseReadInstructions(core).find(({ ref }) => ref === 'conditional-post-audit-classification');

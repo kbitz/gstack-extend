@@ -514,6 +514,9 @@
     "src/secret-dispositions/**": [
       "tests/secret-dispositions.test.ts"
     ],
+    "tests/**": [
+      "tests/skill-references.test.ts"
+    ],
     "tests/fixtures/collision-vectors.json": [
       "tests/lib-pack.test.ts"
     ],

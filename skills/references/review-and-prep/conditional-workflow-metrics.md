@@ -102,19 +102,7 @@ library and both call forms are in
   in later calls; any `begin=`, `end=` or `decision=` value other than
   `recorded`, `replayed`, `match`, `pending` or `skipped` makes the receipt carry
   `capture=partial (<reason>)`.
-- derive writes the run `begin`. In the call that runs the first derive of a
-  segment, resolve the launcher through the telemetry helper and
-  print the library path to retain as `GX_LIB`:
 
-  ```bash
-  _GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
-  GX_LIB=$(if [ -n "$_GE_BIN" ]; then python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null; fi)
-  [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
-  ```
-
-  An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
-  unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
-  or missing-span)` in the receipt and continue the workflow.
 - One governing `decision` per executed phase visit, recorded under the phase of
   the work decided about: `gx_span_begin` emits it (`RUN`, reason `required`
   unless `GX_REASON` names another controlled reason) and shares its `step_id`

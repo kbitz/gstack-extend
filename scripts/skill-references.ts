@@ -32,9 +32,9 @@ export const CORE_REFERENCE_RULE = `### Reference files and mid-run upgrades
 
 Some conditional steps keep their detailed instructions in reference files under the verified gstack-extend checkout. Each read point names the exact \`~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>\` command to run.
 
-- **Always fetch on step entry.** Run the \`--ref\` command each time its step is entered; nothing already in context, including a \`REFERENCE_READ\` reply or a compaction summary, counts as having the text. Verify the trailer's digest against the read instruction and check that the numbered lines run contiguously from \`1\` to the \`REFERENCE_END\` trailer's \`lines=<N>\`. If output is truncated, retry in bounded \`--lines <a>-<b>\` chunks. If the full range still cannot be verified, report \`SKILL_REFERENCE_INCOMPLETE\` with the step, reference, harness and version and take the same stop as a failed fetch.
-- **Stop on reference failure.** Relay the command's \`SKILL_REFERENCE_*\` line verbatim. For an older shared command that returns \`PREAMBLE_USAGE\`, or a missing launcher, use the start-command recovery above. In PR bodies and receipts record only the cause and the repository-relative path \`skills/references/<skill>/<file>.md\`. Run Telemetry finish with \`--outcome error\` for the failed step. Where the skill uses a stage line, end with \`Stage handoff: stage-handoff/v1; stage: <stage token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>\`. Work completed before the step stands; rerunning the skill re-binds to the existing PR or uses the skill's resume form. Never continue a moved step from memory.
-- **Host subagents.** A host subagent that needs a reference runs the same \`--ref\` command itself and starts its reply with \`REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>\`; a reply without that header or with a different digest is recorded under the skill's existing incomplete-reviewer or missing-coverage rule, never as a clean pass. (If the host denies a headless subagent the start command, the primary fetches the reference and passes its text inline on that host only.) Helper-run delegates keep their code-built prompts.
+- **On step entry.** Run the named command on every entry, even with a prior reply or compaction summary. Check the \`REFERENCE_END\` digest and contiguous numbered lines from 1 through its \`lines=<N>\`. Retry any elision with bounded \`--lines <a>-<b>\` chunks. If you still cannot verify the full range, report \`SKILL_REFERENCE_INCOMPLETE\` with the step, reference, harness and version and take the failure exit.
+- **On failure.** Relay \`SKILL_REFERENCE_*\` verbatim. For \`PREAMBLE_USAGE\` or a missing launcher use the start-command recovery above. Preserve inline holds. Record only the cause and repository-relative reference path in receipts and PR bodies. Finish telemetry with \`--outcome error\` for this step. Where applicable end with \`Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>\`. Resume the existing work. Never continue a moved step from memory.
+- **Host subagents.** Fetch each needed reference and start the reply with \`REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>\`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed \`UPGRADE_OK\` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.`;
 
 export interface MoveEntry {
@@ -45,7 +45,7 @@ export interface MoveEntry {
   startMarker: string;
   endBeforeMarker: string | null;
   /** Text appended after the backticked preamble command in the read instruction. */
-  readInstructionSuffix: string;
+  readInstructionSuffix: string | null;
   /** Trigger and outcome kept visible at the read point. */
   coreGate?: string;
   /** Exact published capability commands stay in the core. */
@@ -61,10 +61,20 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: 'Workflow metrics capture and span wrappers',
     sectionHeading: '### Workflow metrics (optional, local)',
     startMarker: 'Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Each',
-    endBeforeMarker: '- A fix batch is a `kind:"fix"` step, counted separately from passes. Greptile is',
-    readInstructionSuffix: "before recording workflow metrics when `GX_CAPTURE=1`",
+    endBeforeMarker: '- derive writes the run `begin`. In the call that runs the first derive of a',
+    readInstructionSuffix: null,
     coreGate: "Capture changes no gate, finding or readiness. When capture or the receipt read is unavailable, keep the actual outcome and write `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).` with the actual status and reason. When there is no session ID, use that line in place of the read.",
     navigationEdits: [['the literal status line below', 'the core metrics status line']],
+  },
+  {
+    skill: 'review-and-prep',
+    ref: 'conditional-workflow-metrics',
+    refTitle: 'Workflow metrics capture and span wrappers',
+    sectionHeading: '### Workflow metrics (optional, local)',
+    startMarker: '- One governing `decision` per executed phase visit, recorded under the phase of',
+    endBeforeMarker: '- A fix batch is a `kind:"fix"` step, counted separately from passes. Greptile is',
+    readInstructionSuffix: "before the first span, decision or receipt read when `GX_CAPTURE=1` for this workflow segment",
+    coreGate: "Enter this metrics step once per segment after derive binds capture. Re-enter after compaction when the procedure is absent. Spans within the same initialized step use that read.",
   },
   {
     skill: 'review-and-prep',
@@ -74,7 +84,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: 'The ready transition starts an automatic run unless the effective trigger list',
     endBeforeMarker: null,
     readInstructionSuffix: 'before evaluating trigger settings when Greptile applies or a recorded request/run has consumed the allowance',
-    coreGate: "The effective source-branch triggers must exclude `open`. `push`, `rebase` and legacy `triggerOnUpdates: true` imply `open`. Missing, unreadable, conflicting or unknown effective configuration counts as starting a run. If marking ready would start one, take the E1 user decision before review. After a request or run exists, readiness requires E1(a).",
+    coreGate: "Treat `push`, `rebase`, legacy `triggerOnUpdates: true` and unknown effective settings as including `open`. If readiness would start a run, take E1 before review. After a request or run exists, readiness requires E1(a).",
     navigationEdits: [['the resume rule above', 'the resume rule in **Establish the branch, PR, and review inputs**']],
   },
   {
@@ -170,10 +180,10 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     ref: 'conditional-cycle-cap',
     refTitle: 'Three-cycle cap stop procedure and continuation envelope',
     sectionHeading: '### When /review stops at its cycle cap',
-    startMarker: "1. Commit the reviewed work and the cycle's fixes, run the targeted checks the",
+    startMarker: '2. Without a policy that names `continuation`, ask the user: repair-only',
     endBeforeMarker: "On `/review-and-prep continue`, refresh Step 1's live state. A later pause or",
     readInstructionSuffix: "before saving a cycle-cap receipt when `/review` stops at its three-cycle cap",
-    coreGate: "On a cycle-cap stop, keep the PR draft and request no Greptile review. Publish `STOPPED — review cycle cap` with the H-E continuation only under the recorded policy and allowance. Do not emit a `STATUS:` line. Any subsequent continuation must pass the inline hold and claim checks before dispatch. A cycle stop is a deliberate pause. Run Telemetry finish with `--outcome blocked` and retain the existing stopped-marker and stage-line contract.",
+    coreGate: "Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. Preserve the local checkpoint or stopped receipt if posting fails. Step 1 reconciles either before another review. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.",
     navigationEdits: [['`next-cycle` late write above.', "`next-cycle` late write in **Record cycle 1's full-review baseline**."]],
   },
   {
@@ -298,7 +308,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "The Step 3 manual testing checkpoint must have passed before any trigger.",
     endBeforeMarker: "### Greptile exits that need a user decision",
     readInstructionSuffix: "before inspecting, triggering or monitoring the single Greptile run when Step 1 says Greptile applies",
-    coreGate: "Require the Step 3 manual checkpoint and an integrated, pushed draft before triggering. Existing runs or submitted requests consume the allowance. Reuse only an ancestor review SHA and use E7 on a proven non-ancestor. Check effective source-branch settings, obey required labels and wait for an automatic draft review where configured. Only the earliest confirmed reservation can trigger, once, after checking all pages of trusted markers and live run history. An ambiguous request holds under E4. A known incomplete run goes to E6 at its bound and a failed or cancelled run goes to E2. The 10-minute comment fallback applies only when a confirmed comment is unanswered and no request result or observable run exists; it gives no completion credit. A later observed run supersedes the fallback. Require corroborated completion or the authorized fallback, otherwise keep the PR draft. Detect shallow history with `--is-shallow-repository` and deepen it with `git fetch --unshallow` before trusting a non-ancestor result. Post and corroborate `<!-- review-and-prep:greptile-reservation:<full-sha> -->` before submitting, and use `<!-- review-and-prep:greptile:<full-sha> -->` for the trigger comment. When the fallback applies, record `Greptile: unverified — no response after 10 minutes`.",
+    coreGate: "Require Step 3's manual checkpoint and integrated draft. Existing runs or requests consume the one allowance. Check settings and labels and wait for any configured auto-run. Verify all prior markers and runs. Only the earliest confirmed `<!-- review-and-prep:greptile-reservation:<full-sha> -->` can post the trigger `<!-- review-and-prep:greptile:<full-sha> -->`. Check `--is-shallow-repository` and deepen via `git fetch --unshallow` before E7 on non-ancestor evidence. Ambiguous requests take E4, incomplete runs take E6 and failed or cancelled runs take E2. Keep draft until corroborated completion or the fallback. A confirmed comment unanswered after 10 minutes with no observable request or run yields `Greptile: unverified — no response after 10 minutes` and no completion credit. Any later run supersedes it.",
   },
   {
     skill: "review-and-prep",
@@ -318,7 +328,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "Tell the nested `/review` its delta base B and candidate snapshot S. Every",
     endBeforeMarker: "**`/review`'s own repeat cycles (`in-cap=delta`).** Apply this only when the",
     readInstructionSuffix: "before selecting a delta reviewer scope when the current pass proposes a delta",
-    coreGate: "A delta uses frozen candidate snapshots and only a valid ancestor base. Verify that scope detection covers each changed path before using the results. Run `gstack-diff-scope \"B\"` and confirm `SCOPE_DELTA: covered`. A missing or incompatible binding, unbounded dependency, unverifiable selection or changed plan triggers full scope. A delta alone never counts as full-review coverage.",
+    coreGate: "A delta uses frozen candidates and a valid ancestor base. Run `gstack-diff-scope \"B\"` and require the reference's path guard to print `SCOPE_DELTA: covered`. Any unverified binding, dependency, selection or changed plan triggers full scope. Delta coverage is never full-review evidence.",
     navigationEdits: [['the full-review baseline specified below', "the baseline in **Record cycle 1's full-review baseline**"]],
   },
   {
@@ -334,7 +344,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
       ['the phase-status warning above', 'the phase-status warning in **Read an optional review policy**'],
       ['bounded-wait host rules above', '**Hosts with bounded subagent waits**'],
     ],
-    coreGate: "Activate only validated opt-ins. `full-suite=external` needs a recorded result. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.",
+    coreGate: "Activate only validated opt-ins. `full-suite=external` pauses until a result is recorded. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.\n\n**Published capability commands:**",
   },
   {
     skill: "review-and-prep",
@@ -344,7 +354,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "| `Final-gate repair:`, `Final-gate repair rerun:`, `Final-gate repair review:`, `Final-gate repair refusal:` | when `final-gate-repair=tests-docs` ran a repair or fallback, with the authorizing policy line (**Repair a test-only final-gate failure**) | yes | yes | no |",
     endBeforeMarker: "For each test run, include a `Test selection:` line from",
     readInstructionSuffix: "before assembling receipt rows when a policy or the settled-context step produced them",
-    coreGate: "Include every applicable policy receipt row and the authorizing policy value. Policy rows cannot remove a required user check or make an unverified gate current. Record settled status and finding lines whenever the settled-context step produced them, including on runs without a review policy.",
+    coreGate: "Persist a required pause or stop checkpoint before reading optional receipt rows. If the read fails, preserve that hold and the known compact status. Include applicable policy rows and policy values, including settled status when produced without a policy. An unverified gate stays unverified.",
   },
   {
     skill: "review-and-prep",
@@ -377,23 +387,13 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
   },
   {
     skill: "review-and-prep",
-    sectionHeading: "### Manual testing checkpoint and resume",
-    ref: "conditional-manual-pause-receipt",
-    refTitle: "Manual testing pause receipt assembly",
-    startMarker: "The PAUSED body uses Step 6's `## Review and prep` body-section shape, listing",
-    endBeforeMarker: "The PAUSED receipt, its `review-and-prep:paused:` comment and the prompt below",
-    readInstructionSuffix: "before assembling the manual testing receipt when required user checks remain pending after the draft push",
-    coreGate: "Post the distinct `review-and-prep:paused:` marker. Keep the testing hold and preparation incomplete if the comment fails to post; recheck it on resume. The body's status preserves the hold. Use `<!-- review-and-prep:paused:<full-sha> -->`, `Resume with /review-and-prep resume; do not run /ship on this draft.` and `Full receipt: <evidence locator>; sha256: <64 hex>` in the comment. While the run state is recorded, guard the paused receipt render with the calls document's **Fixed points** (`\"<extend-root>/bin/review-state\" render --help`).",
-  },
-  {
-    skill: "review-and-prep",
     sectionHeading: "## 1. Establish the branch, PR, and review inputs",
     ref: "resume-review-records",
     refTitle: "Corroboration and resumption of existing review records",
     startMarker: "While the run state is recorded, a resume or repeat invocation first runs the calls document's **Resume** procedure, which supplies the recorded checkpoint, passes and gate results that the reads below would otherwise rebuild; the corroboration and authorization rules below still apply.",
     endBeforeMarker: "Read the actual CI triggers before the first push, including any relevant",
     readInstructionSuffix: "before resuming or reusing an earlier preparation run when Step 1 finds a matching PR, prior run state, or external-gate checkpoint",
-    coreGate: "With `full-suite=external`, check **Resume entry** before scheduling review or checks even when no PR exists. On a resume, read and corroborate the newest run state or receipt for this exact repository, branch and candidate. Existing manual, configuration, Greptile or cycle-cap holds stand until separately resolved. Recency alone never clears them. Do not start a new review after a cycle-cap stop without continuation authorization. A ready PR with pending changes or unverifiable preparation cannot run preparation again. A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`. While the run state is recorded, a resume or repeat invocation first runs the calls document's **Resume** procedure. Corroborate the record by author and edit history.",
+    coreGate: "Under `full-suite=external`, check **Resume entry** before review even without a PR. A resume or repeat first runs the calls document's **Resume** procedure to check the newest run state or receipt for this repository, branch and candidate. Corroborate the record by author and edit history. Existing manual, configuration, Greptile or cycle-cap holds stand until resolved. Recency alone never clears them. Reconcile a recorded cap hold even when no stop comment was confirmed. Do not start a new review after a cycle-cap stop without continuation authorization. Hold a ready PR with pending changes or unverifiable preparation. A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`.",
   },
   {
     skill: "review-and-prep",
@@ -411,7 +411,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: "Workflow metrics capture and span wrappers",
     startMarker: "- Waits as `kind:\"wait\"` steps (`gx_span_begin_wait`) with `wait_category`",
     endBeforeMarker: "Own the interval between implementation and `/ship-and-land`:",
-    readInstructionSuffix: "before recording ordinary wait and receipt metrics when `GX_CAPTURE=1`",
+    readInstructionSuffix: null,
   },
   {
     skill: "review-and-prep",
@@ -584,9 +584,9 @@ export function extractManifestSlice(baseText: string, entry: MoveEntry): { from
   while (trimmedTo > from && lines[trimmedTo - 1] === '') trimmedTo--;
   const moved = lines.slice(from, trimmedTo);
   const kept = entry.keepCapabilityChecks
-    ? moved.filter((line) => line.includes('grep -F '))
+    ? moved.flatMap((line) => [...line.matchAll(/`grep -F [^`]+`/g)].map(([command]) => `- ${command}`))
     : [];
-  let block = moved.filter((line) => !kept.includes(line)).join('\n');
+  let block = moved.join('\n');
   for (const [source, target] of entry.navigationEdits ?? []) {
     const index = block.indexOf(source);
     if (index < 0 || index !== block.lastIndexOf(source)) {
@@ -746,8 +746,10 @@ export function applyManifestToSkill(
   const sortedDesc = [...slices].reverse();
   const outLines = [...baseLines];
   for (const s of sortedDesc) {
-    const instr = formatReadInstruction(skill, s.entry.ref, digests[s.entry.ref]!, s.entry.readInstructionSuffix);
-    const retained = s.entry.coreGate ? [s.entry.coreGate, '', ...s.kept, instr] : [...s.kept, instr];
+    const pointer = s.entry.readInstructionSuffix === null
+      ? []
+      : [formatReadInstruction(skill, s.entry.ref, digests[s.entry.ref]!, s.entry.readInstructionSuffix)];
+    const retained = s.entry.coreGate ? [s.entry.coreGate, '', ...s.kept, ...pointer] : [...s.kept, ...pointer];
     outLines.splice(s.from, s.to - s.from, ...retained);
   }
 

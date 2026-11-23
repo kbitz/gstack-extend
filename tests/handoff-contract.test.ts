@@ -2096,7 +2096,7 @@ describe('(F) repair-review and repair-cycles', () => {
     expect(has(doc, 'each skip names `source: repair-cycles=light`')).toBe(true);
     expect(has(doc, 'they never authorize a stage or merge')).toBe(true);
     const repairRef = squash(referenceText('review-and-prep', 'conditional-behavior-repairs'));
-    expect(has(repairRef, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line') || has(prep, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
+    expect(has(repairRef, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
     expect(has(doc, 'and `/review`\'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`)')).toBe(true);
   });
 

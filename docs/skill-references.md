@@ -103,10 +103,12 @@ When adding or editing a reference file:
 
 1. Add or update the manifest entry in `scripts/skill-references.ts`.
 2. Update digests in the owning core: `bun scripts/skill-references.ts digests --write`.
-3. For a move, run `bun scripts/skill-references.ts check --base <pre-move-ref> --skill <skill>`.
-   Use the base revision before this skill was slimmed. After a base merge,
-   `apply` with the same flags regenerates that skill's core and references
-   from the named revision. Run it before editing the generated files.
+3. In the slimming change, run `bun scripts/skill-references.ts check --base
+   <pre-move-ref> --skill <skill>` against the pre-move revision. This checks
+   the exact one-time transformation, so later ordinary edits use the digest
+   and pointer tests. On a clean migration branch with saved changes,
+   `apply` with the same flags overwrites that skill's core and reference
+   files with the manifest's output from the named revision.
 4. Check or update `tests/helpers/skill-budgets.ts` (raising a budget requires
    the developer's explicit approval and a `BUDGET_RAISE_LOG` entry).
 5. Add `skills/references/<skill>/**` to `MANUAL_TOUCHFILES` in

@@ -2071,6 +2071,7 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
   test('probes concrete CRITICAL attacker and outside findings before reason=not-shown with contract tokens and vocabulary alignment', () => {
     const label = '**Probe before not-shown.**';
     expect(sectionRaw.split(label).length - 1).toBe(1);
+    expect([prep, REF_REPAIR_GAPS].reduce((count, content) => count + content.split(label).length - 1, 0)).toBe(1);
     const baseOnlyAt = sectionRaw.indexOf('**Base-only.**');
     const probeAt = sectionRaw.indexOf(label);
     const notShownAt = sectionRaw.indexOf('**Not shown.**');
@@ -2640,9 +2641,11 @@ describe('review-and-prep run-state=record', () => {
 
   // Value: protects=the Workflow metrics section conditions its inline writes on recorded run state with the derive token mapping and without adding a code fence; fails_when=a token is dropped or a bash fence is added; why_new=Track 77B T2 updated for Track 89A T2; seam=none
   test('Workflow metrics conditions its inline writes on recorded run state and derive without changing its fences', () => {
+    const libraryStart = metricsRaw.indexOf('- derive writes the run `begin`.');
+    expect(libraryStart).toBeGreaterThan(metricsRaw.indexOf('Full contract:'));
     const afterContract = metricsRaw.slice(
       metricsRaw.indexOf('Full contract:'),
-      metricsRaw.indexOf('Resolve `gstack-extend-telemetry`'),
+      libraryStart,
     );
     expect(afterContract).not.toContain('```');
     const para = afterContract.replace(/\s+/g, ' ');
@@ -3297,6 +3300,7 @@ describe('kept contract locks fail on mutation', () => {
     const docs = {
       core: prep,
       greptile: REF_GREPTILE_RECOVERY,
+      greptileRun: REF_GREPTILE_RUN,
       cycleCap: REF_CYCLE_CAP,
       delegate: REF_DELEGATE_PARTS,
       docAuditGates: REF_DOC_AUDIT_GATES,
@@ -3317,7 +3321,7 @@ describe('kept contract locks fail on mutation', () => {
       if (lock === checkPostAuditChangeTemplateLock) return checkPostAuditChangeTemplateLock(d.postAuditClass);
       if (lock === checkFullReviewEvidenceTemplatesLock) return checkFullReviewEvidenceTemplatesLock(d.core, d.cycleCap);
       if (lock === checkUnverifiedOutsideBaselineLock) return checkUnverifiedOutsideBaselineLock(d.baseline, d.outsideReview, d.cycleCap, d.core, d.followup, d.outsideRecovery);
-      if (lock === checkGreptileStatusAndExitsLock) return checkGreptileStatusAndExitsLock(d.core, d.greptile);
+      if (lock === checkGreptileStatusAndExitsLock) return checkGreptileStatusAndExitsLock(d.core, d.greptile, d.greptileRun);
       if (lock === checkCommentMarkersLock) return checkCommentMarkersLock(d.core, d.cycleCap);
       if (lock === checkFullReceiptTemplateLock) return checkFullReceiptTemplateLock(d.core, d.cycleCap);
       if (lock === checkAttackerPartsAnchorsLock) return checkAttackerPartsAnchorsLock(d.core, d.delegate);
@@ -3330,6 +3334,7 @@ describe('kept contract locks fail on mutation', () => {
     const mutatedDocs = {
       core: mutate(docs.core),
       greptile: mutate(docs.greptile),
+      greptileRun: mutate(docs.greptileRun),
       cycleCap: mutate(docs.cycleCap),
       delegate: mutate(docs.delegate),
       docAuditGates: mutate(docs.docAuditGates),

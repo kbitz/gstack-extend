@@ -13,7 +13,7 @@ Measured on `mmm/c69c8c30` at base `6293d8c3d27cb8ef25cce6ba52b60e14adad4011`
 | Harness | Installed version | Hard `SKILL.md` size limit | Per-call command output cap / truncation shape | Reference serving mechanism |
 |---|---|---|---|---|
 | Claude Code | 2.1.330 | No hard rejection observed for the 366,223-byte base | Five markers visible in one 28,990-byte synthetic result | Existing preamble allow rule |
-| Codex | 0.171.0 | No hard rejection observed for the base | Five markers visible in one 28,990-byte synthetic result | Rendered copy and shared preamble |
+| Codex | 0.171.0 | No hard rejection observed for the base | Five markers visible in an initial 28,990-byte result. A replay at that size elided two markers. | Rendered copy and shared preamble |
 | Muse Code | 1.4.25 (1.4.25-R9361.1) | 262,144 bytes. The skill validator accepts this size and rejects 262,145 bytes. | Five markers visible in one 28,990-byte synthetic result | Codex-format copy and shared preamble |
 | Grok | 1.0.92 (b06756fd6256), alpha | No hard rejection measured | Five markers at 18,000 bytes and 340 lines. Middle marker omitted at 22,000 and 24,100 bytes with the same line count. | Numbered preamble output with range retry |
 
@@ -27,7 +27,7 @@ reference reader still checks contiguity and retries a truncated read in ranges.
 - **Per-reference caps.** `16,384` file bytes, `340` lines, and at most
   `2,000` characters per line. The numbered response and trailer must fit
   `17,000` bytes, with a 1,000-byte margin below the measured Grok result.
-  The final 30 references top out at 15,513 file bytes,
+  The final 29 references top out at 15,513 file bytes,
   231 lines and 16,540 output bytes.
 - **Budgets:** enforced in `tests/helpers/skill-budgets.ts` and `tests/skill-references.test.ts` for all 11 skills in `setup`'s `SKILLS` list.
 - **Root-read proof:** `setup` is unchanged; references live at `skills/references/<skill>/<prefix>-<topic>.md` under the gstack-extend checkout and are served through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`, which resolves the same verified checkout root as the start command and binds the loaded core to the checkout via a 16-hex SHA-256 content digest.
@@ -93,6 +93,47 @@ references carry the procedure used after that decision.
 | Delta and fix choices | Re-review needs a valid delta and every auto-choice or veto keeps its original effect. | Primary, when a delta or auto-choice is actually used |
 | Metrics and outside voices | The no-capture metrics receipt stays inline. An unavailable outside adapter is missing coverage. | Separate primary reads for span mechanics, finding attribution, and the selected Claude Code adapter |
 
+### Current read points
+
+The final map below names the reference stems used at each core heading.
+Conditional readers enter only at the stated policy or workflow gate.
+Delegate-prefixed files serve the parts selected at dispatch. Resume-prefixed
+files serve only resumed or repeat invocations. The core retains the manual
+hold and persists the cycle-cap hold before reading its continuation procedure.
+
+| Core heading | Reference stems |
+|---|---|
+| Workflow metrics (optional, local) | `conditional-workflow-metrics`, `conditional-metrics-findings` |
+| Detect whether marking ready would start a second run | `conditional-greptile-recovery` |
+| Bound Claude Code outside calls | `conditional-outside-review`, `conditional-outside-recovery` |
+| Delegate named specialist parts | `delegate-specialist-parts` |
+| Run a red team where /review has none | `delegate-red-team-and-fold` |
+| Fold specialist checklists into cycle 1 | `delegate-red-team-and-fold` |
+| Overlap independent first-cycle reviewers | `delegate-red-team-and-fold` |
+| Reopen review only for behavior-changing repairs | `conditional-behavior-repairs` |
+| Record unproven test gaps | `conditional-repair-and-gaps` |
+| Block readiness only on shown findings | `conditional-repair-and-gaps` |
+| Record cycle 1's full-review baseline | `conditional-cycle-baseline`, `conditional-cycle-followup` |
+| When /review stops at its cycle cap | `conditional-cycle-cap` |
+| Classify changes after the documentation audit's last attempt | `conditional-post-audit-classification`, `conditional-post-audit-reuse`, `conditional-post-audit-reaudit` |
+| Bound the documentation audit | `conditional-doc-audit-and-gates` |
+| Pause for an external full-suite gate | `conditional-doc-audit-and-gates`, `conditional-external-resume` |
+| Narrow the pregate after an accepted pass | `conditional-pregate-and-final-repair` |
+| Repair a test-only final-gate failure | `conditional-pregate-and-final-repair` |
+| Manual testing checkpoint and resume | `resume-manual-testing` |
+| Greptile exits that need a user decision | `conditional-greptile-recovery` |
+| Configuration repair | `conditional-greptile-recovery` |
+| 4. Trigger once and await Greptile | `conditional-greptile-run` |
+| 5. Triage, fix, and verify locally | `conditional-greptile-run` |
+| Scope a re-review to its delta | `conditional-delta-selection` |
+| Read an optional review policy | `conditional-policy-values` |
+| Readiness | `conditional-receipt-policy-rows` |
+| 1. Establish the branch, PR, and review inputs | `resume-review-records` |
+| Prove /ship's release gates on this head | `conditional-coverage-gap-audit`, `conditional-doc-gate-reuse` |
+| Take recommended fix-scope options without asking | `conditional-auto-choice-receipts` |
+| Hosts with bounded subagent waits | `conditional-bounded-reviewer-waits` |
+| Verify agent-checkable items before any pause | `conditional-agent-qa` |
+
 ## Preregistered behavior probes (PR A)
 
 Each probe runs in a scratch repository with no remote, given only scenario
@@ -118,18 +159,22 @@ reference set in this update.
 
 | Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|
-| `review-and-prep` | 366,223 | 167,650 | 184,320 | 226,963 (30) | 196,467 | 221,552 |
+| `review-and-prep` | 366,223 | 168,479 | 184,320 | 225,117 (29) | 196,541 | 222,771 |
 
 The by-hand budget counts unique bytes for a successful first cycle on Codex
-with metrics active, the selected Claude Code outside pass and no Greptile.
+with metrics active, the selected Claude Code outside pass, no findings to
+handle and no Greptile.
 It includes the workflow metrics, outside adapter and cycle-baseline references.
+The span guide is read once per initialized segment. A later resume or
+compaction can require another read. The first finding-attribution path adds
+2,627 bytes. A fix-scope auto-choice adds another 1,602 bytes when taken.
 The orchestrated row adds policy values and the external-gate procedure.
 These are path budgets from the reader map. Per-run usage and the complete
 by-hand read sequence remain to be measured.
 
-The Codex rendering is 167,498 bytes, 94,646 bytes below the verified Muse
+The Codex rendering is 168,327 bytes, 93,817 bytes below the verified Muse
 limit. `bun scripts/skill-references.ts check --base 39c2b0c --skill review-and-prep`
-returned `ok=true blocks=42 dropped=0 base=366223B core=167650B`.
+returned `ok=true blocks=42 dropped=0 base=366223B core=168479B`.
 
 ### Navigation edits in moved text
 
@@ -160,7 +205,7 @@ isolated installation for root resolution and left the installed copies alone.
 |---|---|---|
 | Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers |
 | Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers |
-| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers. The validator accepted the 167,498-byte package with no diagnostics. |
+| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers. The validator accepted the 168,327-byte package with no diagnostics. |
 | Codex-format scratch file | Grok 1.0.92 alpha | 5/5 load markers from a paged file read. Workspace skill discovery was unavailable in this scratch configuration. |
 
 Claude Code, Codex and Muse fetched the commanded reference and saw its digest
@@ -190,7 +235,10 @@ Claude Code and Codex also exercised two omitted-line cases while keeping the
 digest trailer intact. Both fetched bounded ranges and reached the checkpoint
 when the missing line was available on retry. Both reported
 `SKILL_REFERENCE_INCOMPLETE` and emitted the blocked stage trailer when the
-same line was missing from every read.
+same line was missing from every read. A separate cycle-cap probe withheld
+the stop procedure. Both harnesses relayed the missing-reference error, kept
+the stopped marker in the dry-run disposition and emitted a blocked trailer
+without a continuation prompt.
 
 ## Open verification
 

@@ -174,6 +174,11 @@ while [ "$#" -gt 0 ]; do
       if [ "$_HAS_REF" -eq 1 ] || [ "$_HAS_LINES" -eq 1 ] || [ -n "$_REF_EXPECT" ]; then
         _fail_ref_usage "unknown argument in reference mode"
       fi
+      for _REF_OPTION in "$@"; do
+        case "$_REF_OPTION" in
+          --ref|--expect|--lines) _fail_ref_usage "unknown argument in reference mode" ;;
+        esac
+      done
       _fail_usage "unknown argument: $1"
       ;;
   esac

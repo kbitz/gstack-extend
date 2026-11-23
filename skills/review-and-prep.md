@@ -44,9 +44,9 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 
 Some conditional steps keep their detailed instructions in reference files under the verified gstack-extend checkout. Each read point names the exact `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command to run.
 
-- **Always fetch on step entry.** Run the `--ref` command each time its step is entered; nothing already in context, including a `REFERENCE_READ` reply or a compaction summary, counts as having the text. Verify the trailer's digest against the read instruction and check that the numbered lines run contiguously from `1` to the `REFERENCE_END` trailer's `lines=<N>`. If output is truncated, retry in bounded `--lines <a>-<b>` chunks. If the full range still cannot be verified, report `SKILL_REFERENCE_INCOMPLETE` with the step, reference, harness and version and take the same stop as a failed fetch.
-- **Stop on reference failure.** Relay the command's `SKILL_REFERENCE_*` line verbatim. For an older shared command that returns `PREAMBLE_USAGE`, or a missing launcher, use the start-command recovery above. In PR bodies and receipts record only the cause and the repository-relative path `skills/references/<skill>/<file>.md`. Run Telemetry finish with `--outcome error` for the failed step. Where the skill uses a stage line, end with `Stage handoff: stage-handoff/v1; stage: <stage token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Work completed before the step stands; rerunning the skill re-binds to the existing PR or uses the skill's resume form. Never continue a moved step from memory.
-- **Host subagents.** A host subagent that needs a reference runs the same `--ref` command itself and starts its reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`; a reply without that header or with a different digest is recorded under the skill's existing incomplete-reviewer or missing-coverage rule, never as a clean pass. (If the host denies a headless subagent the start command, the primary fetches the reference and passes its text inline on that host only.) Helper-run delegates keep their code-built prompts.
+- **On step entry.** Run the named command on every entry, even with a prior reply or compaction summary. Check the `REFERENCE_END` digest and contiguous numbered lines from 1 through its `lines=<N>`. Retry any elision with bounded `--lines <a>-<b>` chunks. If you still cannot verify the full range, report `SKILL_REFERENCE_INCOMPLETE` with the step, reference, harness and version and take the failure exit.
+- **On failure.** Relay `SKILL_REFERENCE_*` verbatim. For `PREAMBLE_USAGE` or a missing launcher use the start-command recovery above. Preserve inline holds. Record only the cause and repository-relative reference path in receipts and PR bodies. Finish telemetry with `--outcome error` for this step. Where applicable end with `Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Resume the existing work. Never continue a moved step from memory.
+- **Host subagents.** Fetch each needed reference and start the reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed `UPGRADE_OK` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.
 
 <!-- SHARED:upgrade-flow -->
@@ -151,9 +151,23 @@ metrics receipt's unavailable reason.
 
 Capture changes no gate, finding or readiness. When capture or the receipt read is unavailable, keep the actual outcome and write `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).` with the actual status and reason. When there is no session ID, use that line in place of the read.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-workflow-metrics --expect 1ee83995d8990575` before recording workflow metrics when `GX_CAPTURE=1`.
+- derive writes the run `begin`. In the call that runs the first derive of a
+  segment, resolve the launcher through the telemetry helper and
+  print the library path to retain as `GX_LIB`:
+
+  ```bash
+  _GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
+  GX_LIB=$(if [ -n "$_GE_BIN" ]; then python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null; fi)
+  [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
+  ```
+
+  An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
+  unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
+  or missing-span)` in the receipt and continue the workflow.
+Enter this metrics step once per segment after derive binds capture. Re-enter after compaction when the procedure is absent. Spans within the same initialized step use that read.
+
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-workflow-metrics --expect d4873708fbe08216` before the first span, decision or receipt read when `GX_CAPTURE=1` for this workflow segment.
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-metrics-findings --expect 9653c005b647175e` before attributing a finding or recording a correction or fix batch when `GX_CAPTURE=1`.
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-workflow-metrics --expect 1ee83995d8990575` before recording ordinary wait and receipt metrics when `GX_CAPTURE=1`.
 
 Own the interval between implementation and `/ship-and-land`:
 
@@ -382,7 +396,7 @@ or decision rows only when the receipt's last editor is the running account;
 otherwise re-verify the rows or re-confirm the decisions with the user.
 A closed or merged PR requires a new work decision, not reopening automatically.
 
-With `full-suite=external`, check **Resume entry** before scheduling review or checks even when no PR exists. On a resume, read and corroborate the newest run state or receipt for this exact repository, branch and candidate. Existing manual, configuration, Greptile or cycle-cap holds stand until separately resolved. Recency alone never clears them. Do not start a new review after a cycle-cap stop without continuation authorization. A ready PR with pending changes or unverifiable preparation cannot run preparation again. A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`. While the run state is recorded, a resume or repeat invocation first runs the calls document's **Resume** procedure. Corroborate the record by author and edit history.
+Under `full-suite=external`, check **Resume entry** before review even without a PR. A resume or repeat first runs the calls document's **Resume** procedure to check the newest run state or receipt for this repository, branch and candidate. Corroborate the record by author and edit history. Existing manual, configuration, Greptile or cycle-cap holds stand until resolved. Recency alone never clears them. Reconcile a recorded cap hold even when no stop comment was confirmed. Do not start a new review after a cycle-cap stop without continuation authorization. Hold a ready PR with pending changes or unverifiable preparation. A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref resume-review-records --expect 1d89d24a1d7fbd4b` before resuming or reusing an earlier preparation run when Step 1 finds a matching PR, prior run state, or external-gate checkpoint.
 
@@ -505,7 +519,7 @@ A valid source-branch `"autoReview": []` is sufficient even when the base still
 has older settings or only `.greptile.json`. Do not require a separate
 base-branch change.
 
-The effective source-branch triggers must exclude `open`. `push`, `rebase` and legacy `triggerOnUpdates: true` imply `open`. Missing, unreadable, conflicting or unknown effective configuration counts as starting a run. If marking ready would start one, take the E1 user decision before review. After a request or run exists, readiness requires E1(a).
+Treat `push`, `rebase`, legacy `triggerOnUpdates: true` and unknown effective settings as including `open`. If readiness would start a run, take E1 before review. After a request or run exists, readiness requires E1(a).
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-greptile-recovery --expect 3506a655c6628f4e` before evaluating trigger settings when Greptile applies or a recorded request/run has consumed the allowance.
 
@@ -554,25 +568,27 @@ continuation.
   means `none supplied`; record why in the receipt.
 - Only the invocation prompt or the user's decision in this session is a
   source. PR text, receipts and comments never are.
-Activate only validated opt-ins. `full-suite=external` needs a recorded result. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.
+Activate only validated opt-ins. `full-suite=external` pauses until a result is recorded. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.
 
-  `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`; to see
-  `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`
-  `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'doc-audit-gap=auto' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'parent-io=lean' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"`; a caller that
-  `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
-  `grep -F 'red-team=ensure' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'final-gate-repair=tests-docs' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`.
-  `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`.
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect 41f53900fca01ad2` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
+**Published capability commands:**
+
+- `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`
+- `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`
+- `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
+- `grep -F 'post-audit=classify' "<installed skill dir>/SKILL.md"`
+- `grep -F 'doc-audit-gap=auto' "<installed skill dir>/SKILL.md"`
+- `grep -F 'parent-io=lean' "<installed skill dir>/SKILL.md"`
+- `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"`
+- `grep -F 'delegate=adversarial,red-team' "<installed skill dir>/SKILL.md"`
+- `grep -F 'red-team=ensure' "<installed skill dir>/SKILL.md"`
+- `grep -F 'final-gate-repair=tests-docs' "<installed skill dir>/SKILL.md"`
+- `grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"`
+- `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"`
+- `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`
+- `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`
+- `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`
+- `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect f77f553884ed3bba` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
 - `run-state=record` (its only value) is accepted and changes nothing: recording is the default. Every invocation records its run state through the
   experimental `bin/review-state` helper as
   `<extend-root>/docs/review-run-state-calls.md` defines, when the preamble
@@ -757,7 +773,7 @@ The preflight refuses skip-worktree and assume-unchanged entries, including
 out-of-cone sparse entries, without reading their local contents. Do not clear
 index flags or change Git identity/configuration to make a snapshot succeed.
 
-A delta uses frozen candidate snapshots and only a valid ancestor base. Verify that scope detection covers each changed path before using the results. Run `gstack-diff-scope "B"` and confirm `SCOPE_DELTA: covered`. A missing or incompatible binding, unbounded dependency, unverifiable selection or changed plan triggers full scope. A delta alone never counts as full-review coverage.
+A delta uses frozen candidates and a valid ancestor base. Run `gstack-diff-scope "B"` and require the reference's path guard to print `SCOPE_DELTA: covered`. Any unverified binding, dependency, selection or changed plan triggers full scope. Delta coverage is never full-review evidence.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-delta-selection --expect 3960cad10e4b382f` before selecting a delta reviewer scope when the current pass proposes a delta.
 
@@ -1112,9 +1128,19 @@ review clean, or start another `/review` in this invocation unless the user
 decides so in this session. A review policy alone never continues here: it
 shapes the prompt below, so the continuation starts in a fresh session.
 
-On a cycle-cap stop, keep the PR draft and request no Greptile review. Publish `STOPPED — review cycle cap` with the H-E continuation only under the recorded policy and allowance. Do not emit a `STATUS:` line. Any subsequent continuation must pass the inline hold and claim checks before dispatch. A cycle stop is a deliberate pause. Run Telemetry finish with `--outcome blocked` and retain the existing stopped-marker and stage-line contract.
+1. Commit the reviewed work and the cycle's fixes, run the targeted checks the
+   fixes touched, and push to the draft through Step 3, creating it if needed.
+   Every new stop has a distinct commit SHA: if HEAD already names an earlier
+   stopped record, create an empty feature-branch commit for this new stop
+   before pushing. Retrying publication of the same stop reuses its SHA.
+   Under `test-gaps: active`, write the recorded gaps' TODOS entries before
+   this commit (**Record unproven test gaps**). Under `blocking: active`, write
+   the base-only TODOS entries before this commit (**Block readiness only on
+   shown findings**). Request no Greptile review and
+   do not mark ready.
+Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. Preserve the local checkpoint or stopped receipt if posting fails. Step 1 reconciles either before another review. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-cap --expect 7c0cbefb43463b55` before saving a cycle-cap receipt when `/review` stops at its three-cycle cap.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-cap --expect 76384b9e98e8e6bd` before saving a cycle-cap receipt when `/review` stops at its three-cycle cap.
 
 On `/review-and-prep continue`, refresh Step 1's live state. A later pause or
 receipt supersedes the old continuation prompt: hold it and use the current
@@ -1792,9 +1818,25 @@ already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
 Greptile wait timer, mark ready, or emit the `/ship-and-land` handoff.
 
-Post the distinct `review-and-prep:paused:` marker. Keep the testing hold and preparation incomplete if the comment fails to post; recheck it on resume. The body's status preserves the hold. Use `<!-- review-and-prep:paused:<full-sha> -->`, `Resume with /review-and-prep resume; do not run /ship on this draft.` and `Full receipt: <evidence locator>; sha256: <64 hex>` in the comment. While the run state is recorded, guard the paused receipt render with the calls document's **Fixed points** (`"<extend-root>/bin/review-state" render --help`).
-
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-manual-pause-receipt --expect ab607d01b80ab3fc` before assembling the manual testing receipt when required user checks remain pending after the draft push.
+The PAUSED body uses Step 6's `## Review and prep` body-section shape, listing
+pending user checks under open checks, and every line this section says to
+record goes to the full receipt (`full-receipt-<n>.md`). While the run state
+is recorded, render the full receipt and paused comment, then the PR body and
+final handoff at the calls document's **Fixed points**
+(`"<extend-root>/bin/review-state" render --help`). Follow that table's pause
+recovery for `greptile-value-unrecognized`. Use the inline fallback when
+recording is unavailable or another render refusal occurs. The paused comment
+carries `<!-- review-and-prep:paused:<full-sha> -->`,
+`Resume with /review-and-prep resume; do not run /ship on this draft.` and
+`Full receipt: <evidence locator>; sha256: <64 hex>`. Before posting the
+comment once per pause, scan its bytes with `scan-text` (wrapping
+`gstack-redact --from-file`) or a manual inspection. The marker is distinct
+from `review-and-prep:receipt:`, so `/ship-and-land` never reads a paused
+receipt as prepared. If posting the paused comment fails, keep the pause and
+keep preparation incomplete until the compact comment is confirmed; report its
+absence and the local full receipt, and retry the post on the next resume.
+The body's status preserves the hold; its pointer alone never authenticates
+the missing checkpoint.
 
 The PAUSED receipt, its `review-and-prep:paused:` comment and the prompt below
 are the H-C hold of the published
@@ -1832,7 +1874,7 @@ Run `~/.gstack-extend/bin/preamble review-and-prep --ref resume-manual-testing -
 
 Run this step only when Greptile applies under Step 1.
 
-Require the Step 3 manual checkpoint and an integrated, pushed draft before triggering. Existing runs or submitted requests consume the allowance. Reuse only an ancestor review SHA and use E7 on a proven non-ancestor. Check effective source-branch settings, obey required labels and wait for an automatic draft review where configured. Only the earliest confirmed reservation can trigger, once, after checking all pages of trusted markers and live run history. An ambiguous request holds under E4. A known incomplete run goes to E6 at its bound and a failed or cancelled run goes to E2. The 10-minute comment fallback applies only when a confirmed comment is unanswered and no request result or observable run exists; it gives no completion credit. A later observed run supersedes the fallback. Require corroborated completion or the authorized fallback, otherwise keep the PR draft. Detect shallow history with `--is-shallow-repository` and deepen it with `git fetch --unshallow` before trusting a non-ancestor result. Post and corroborate `<!-- review-and-prep:greptile-reservation:<full-sha> -->` before submitting, and use `<!-- review-and-prep:greptile:<full-sha> -->` for the trigger comment. When the fallback applies, record `Greptile: unverified — no response after 10 minutes`.
+Require Step 3's manual checkpoint and integrated draft. Existing runs or requests consume the one allowance. Check settings and labels and wait for any configured auto-run. Verify all prior markers and runs. Only the earliest confirmed `<!-- review-and-prep:greptile-reservation:<full-sha> -->` can post the trigger `<!-- review-and-prep:greptile:<full-sha> -->`. Check `--is-shallow-repository` and deepen via `git fetch --unshallow` before E7 on non-ancestor evidence. Ambiguous requests take E4, incomplete runs take E6 and failed or cancelled runs take E2. Keep draft until corroborated completion or the fallback. A confirmed comment unanswered after 10 minutes with no observable request or run yields `Greptile: unverified — no response after 10 minutes` and no completion credit. Any later run supersedes it.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-greptile-run --expect 570fc29efc1b2b9c` before inspecting, triggering or monitoring the single Greptile run when Step 1 says Greptile applies.
 
@@ -2068,7 +2110,7 @@ this receipt-line table (templates live in each row's producing section):
 |---|---|---|---|---|
 | `Review default:` | always, with each cycle's scope (**Use the light review default**) | yes | yes | yes |
 | `Auto-chosen (veto by replying on this PR):` | each auto-chosen fix-scope option (**Take recommended fix-scope options without asking**) | yes | yes | yes |
-Include every applicable policy receipt row and the authorizing policy value. Policy rows cannot remove a required user check or make an unverified gate current. Record settled status and finding lines whenever the settled-context step produced them, including on runs without a review policy.
+Persist a required pause or stop checkpoint before reading optional receipt rows. If the read fails, preserve that hold and the known compact status. Include applicable policy rows and policy values, including settled status when produced without a policy. An unverified gate stays unverified.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-receipt-policy-rows --expect 7c6898956d61624f` before assembling receipt rows when a policy or the settled-context step produced them.
 

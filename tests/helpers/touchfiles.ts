@@ -220,6 +220,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/skill-references.test.ts': [
     'skills/**',
+    'tests/**',
     'setup',
     'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',

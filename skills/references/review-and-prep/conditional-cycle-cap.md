@@ -2,16 +2,6 @@
 
 ## From When /review stops at its cycle cap
 
-1. Commit the reviewed work and the cycle's fixes, run the targeted checks the
-   fixes touched, and push to the draft through Step 3, creating it if needed.
-   Every new stop has a distinct commit SHA: if HEAD already names an earlier
-   stopped record, create an empty feature-branch commit for this new stop
-   before pushing. Retrying publication of the same stop reuses its SHA.
-   Under `test-gaps: active`, write the recorded gaps' TODOS entries before
-   this commit (**Record unproven test gaps**). Under `blocking: active`, write
-   the base-only TODOS entries before this commit (**Block readiness only on
-   shown findings**). Request no Greptile review and
-   do not mark ready.
 2. Without a policy that names `continuation`, ask the user: repair-only
    (recommended when the unresolved findings are local to the fixes), full, or
    stop. Write the answer as the policy line, source `user decision`. Without a
