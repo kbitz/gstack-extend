@@ -178,6 +178,19 @@ function checkHbFenceLock(text: string): string[] {
   return violations;
 }
 
+function checkGreptileComposeAndRefusalLock(text: string): string[] {
+  const step7 = text.slice(text.indexOf(H_STEP_7));
+  const beforeFence = (step7.split('```text\n')[0] ?? '').replace(/\s+/g, ' ');
+  const violations: string[] = [];
+  for (const required of [
+    "Written inline, copy the chosen Greptile alternative's fixed text exactly and fill only the reviewed SHA, the recorded reason and an E4 decision reference, never rewording the rest.",
+    "While the run state is recorded, `render` writes this value and the receipt's `Greptile:` line itself from the last `greptile` record's status form; on a `greptile-value-unrecognized` refusal, record the `greptile` gate again with a published form and render again instead of writing the line inline.",
+  ]) {
+    if (!beforeFence.includes(required)) violations.push(`Step 7 missing: ${required}`);
+  }
+  return violations;
+}
+
 function checkHeFenceLock(text: string): string[] {
   const stop = skillSection(text, H_CYCLE_STOP);
   const prompt = stop.split('```text\n')[1]?.split('\n```')[0] ?? '';
@@ -1054,6 +1067,7 @@ describe('review-and-prep drift-locks', () => {
 
   test('ship handoff carries PR identity, review snapshot, plan, receipt, and Greptile-once', () => {
     expect(checkHbFenceLock(content)).toEqual([]);
+    expect(checkGreptileComposeAndRefusalLock(content)).toEqual([]);
   });
 
   test('no destructive git/GitHub commands and no co-authorship', () => {
@@ -2743,6 +2757,10 @@ describe('review-and-prep run-state=record', () => {
     for (const r of greptileFlags) {
       expect(resumeSection, r.flag).not.toContain(r.flag);
     }
+
+    const greptileRow = callsRaw.split('\n').find((l) => l.includes('`## 4. Trigger once and await Greptile`') && l.includes('`record gate` (`greptile`)')) ?? '';
+    expect(greptileRow).toContain('`greptile-value-unrecognized`');
+    expect(greptileRow).toContain('record the `greptile` gate again with a published form and render again instead of writing the line inline');
   });
 
   // Value: protects=Step 1's ### Evidence directory heading and D2/skill heading resolution; fails_when=### Evidence directory moves out of Step 1 or fails to resolve from D2; why_new=Track 83A T4 reduced per Track 86B T4; seam=none
@@ -3100,6 +3118,11 @@ describe('kept contract locks fail on mutation', () => {
       name: 'Greptile status strings: change em dash in skipped — docs-only PR',
       lock: checkGreptileStatusAndExitsLock,
       mutate: (t) => t.replaceAll('Greptile: skipped — docs-only PR', 'Greptile: skipped - docs-only PR'),
+    },
+    {
+      name: 'Greptile compose and refusal recovery: drop greptile-value-unrecognized re-record rule in Step 7',
+      lock: checkGreptileComposeAndRefusalLock,
+      mutate: (t) => t.replace('on a `greptile-value-unrecognized` refusal,\nrecord the `greptile` gate again with a published form and render again instead\nof writing the line inline.', 'on refusal, write the line inline.'),
     },
     {
       name: 'executable fences: remove SCOPE_DELTA guard or PR_BODY_SIZE budget (also covered by shell negative tests)',

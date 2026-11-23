@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
-import { evalGrammar, FIELD_FMT, getActiveBinding, makeCtx, renderBlock, renderComment, renderDelegationPolicyLine, renderDisclosures, renderFinal, renderStageHandoffLine } from '../src/review-state/render.ts';
+import { composeGreptileValue, evalGrammar, FIELD_FMT, getActiveBinding, makeCtx, renderBlock, renderComment, renderDelegationPolicyLine, renderDisclosures, renderFinal, renderStageHandoffLine } from '../src/review-state/render.ts';
 import { validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -3501,6 +3501,79 @@ describe('(Q) review-state render byte compatibility', () => {
       releaseNotes: [], upgradeRisks: [],
       userFacingChanges: ['`bin/roadmap-audit` accepts `--format json` to print findings as a JSON array.', '`--help` lists the new `--format` option.'],
     });
+  });
+
+  // Value: protects=Greptile receipt and H-B lines compose fixed wording for all four status forms and ignore worker paraphrases while keeping ADVANCE_TRUSTED classification; fails_when=worker prose leaks into Greptile: or any published status wording drifts; why_new=Track 94G T1; seam=none; no_claim=installed-agent execution
+  test('composes exact Greptile receipt and H-B lines from fixed tokens and ignores paraphrases', () => {
+    const runUrl = 'https://github.com/example-org/example-repo/pull/42#pullrequestreview-1';
+    const withGreptile = (value: string, run: string | null) => mustValidate({
+      gates: [rawPrepared.gates[0], { ...rawPrepared.gates[1], details: { value, run } }],
+    });
+    const hbGreptileLine = (state: ReviewRunState) =>
+      renderBlock('H-B', state, { commentUrl: COMMENT_URL }).split('\n').find((l) => l.startsWith('Greptile: '))!;
+
+    const completedExpected = `completed on ${VARS.GREP}; findings dispositioned in the receipt, so triage only newer feedback`;
+    for (const val of [
+      completedExpected,
+      `completed on ${VARS.GREP}; findings dispositioned in the receipt, so triage is complete`,
+    ]) {
+      const st = withGreptile(val, runUrl);
+      expect(FIELD_FMT.greptile(makeCtx(st)), val).toBe(`Greptile: ${completedExpected}; run: ${runUrl}`);
+      expect(hbGreptileLine(st), val).toBe(`Greptile: ${completedExpected}. Never run`);
+      const v = classify(renderFinal(st, { commentUrl: COMMENT_URL }, DIR), FIX.defaults.provenance, withVars(FIX.defaults.live.B));
+      expect({ handoff: v.handoff, mismatches: v.mismatches, outcome: v.outcome }, val).toEqual({ handoff: 'H-B', mismatches: [], outcome: TRUSTED });
+    }
+
+    const unverifiedBase = "unverified — no response after 10 minutes; that request used the PR's one run";
+    const unverifiedE4 = "unverified — no response after 10 minutes (MCP request with no observable run; user decision PR #42 comment); that request used the PR's one run";
+    for (const [val, run, want] of [
+      ['unverified — no response after 10 minutes', null, unverifiedBase],
+      ["unverified — no response after 10 minutes; that request used the PR's one run", runUrl, unverifiedBase],
+      ['unverified — no response after 10 minutes (MCP request with no observable run; user decision PR #42 comment)', null, unverifiedE4],
+      ['unverified — no response after 10 minutes (MCP request with no observable run; user decision PR #42 comment); custom tail ignored', runUrl, unverifiedE4],
+    ] as const) {
+      const st = withGreptile(val, run);
+      expect(FIELD_FMT.greptile(makeCtx(st)), val).toBe(`Greptile: ${want}; run: ${run ?? 'none'}`);
+      expect(hbGreptileLine(st), val).toBe(`Greptile: ${want}. Never run`);
+    }
+
+    for (const reason of [
+      'no root configuration',
+      'docs-only PR',
+      'user policy decision PR #42 comment',
+      'excluded by greptile.json ignorePatterns',
+      'app not installed',
+    ]) {
+      const want = `skipped — ${reason}; do not run it`;
+      for (const val of [
+        `skipped — ${reason}`,
+        `skipped — ${reason}; do not run it`,
+        `skipped — ${reason}; do not run Greptile again`,
+      ]) {
+        const st = withGreptile(val, null);
+        expect(FIELD_FMT.greptile(makeCtx(st)), val).toBe(`Greptile: ${want}; run: none`);
+        expect(hbGreptileLine(st), val).toBe(`Greptile: ${want}. Never run`);
+      }
+    }
+
+    const postponedWant = 'postponed — awaiting manual testing';
+    for (const val of [postponedWant, `${postponedWant}; resume after checks`]) {
+      const st = withGreptile(val, null);
+      expect(FIELD_FMT.greptile(makeCtx(st)), val).toBe(`Greptile: ${postponedWant}; run: none`);
+      expect(hbGreptileLine(st), val).toBe(`Greptile: ${postponedWant}. Never run`);
+    }
+
+    for (const bad of [
+      `Completed on ${VARS.GREP}`,
+      `completed on ${VARS.GREP.slice(0, 12)}`,
+      'completed; 0 open',
+      'reviewed (0 comments)',
+      'skipped — ',
+      'skipped - docs-only PR',
+      'pending review',
+    ]) {
+      expect(() => composeGreptileValue(bad), bad).toThrow('greptile-value-unrecognized');
+    }
   });
 });
 

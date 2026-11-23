@@ -5265,7 +5265,13 @@ prompt names the PR, the review-handoff marker and the few facts the wrapper
 cannot discover, including the PR's Greptile-once limit. Replace every placeholder with actual values,
 keep exactly one Greptile alternative, and omit the `Save before shipping:` line
 when Step 6 identified no preserved unrelated changes. Do not add a pending
-alternative. The exits record only `unverified` or `skipped — user policy
+alternative. Written inline, copy the chosen Greptile alternative's fixed text
+exactly and fill only the reviewed SHA, the recorded reason and an E4 decision
+reference, never rewording the rest. While the run state is recorded, `render`
+writes this value and the receipt's `Greptile:` line itself from the last
+`greptile` record's status form; on a `greptile-value-unrecognized` refusal,
+record the `greptile` gate again with a published form and render again instead
+of writing the line inline. The exits record only `unverified` or `skipped — user policy
 decision` outcomes, and the alternatives below already carry both:
 
 ```text

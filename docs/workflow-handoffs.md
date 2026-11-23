@@ -739,6 +739,16 @@ reported.
 | `skipped — <recorded reason>` | `FULL_CHECK_REQUIRED` | only `completed` supports trust; a missing reason adds `greptile-reason` |
 | anything else | `FULL_CHECK_REQUIRED` | `malformed` |
 
+Producer note: `/review-and-prep` writes each Greptile value from fixed text; only the
+reviewed SHA, the recorded skip reason (up to its first `;`) and an E4 decision reference
+come from the run. The completed value is always
+`completed on <SHA>; findings dispositioned in the receipt, so triage only newer feedback`.
+After a no-response Greptile request ends in a recorded E4 user decision, the unverified
+value keeps that decision reference and ends with the fixed tail:
+`unverified — no response after 10 minutes (MCP request with no observable run; user decision <reference>); that request used the PR's one run`.
+Labels, formats and case outcomes are unchanged, so H-B stays at version 1
+(`## Versioning and compatibility`).
+
 ### Grammar H-C pause
 
 | Label | Required | Lines | Format | Validation | On failure |
