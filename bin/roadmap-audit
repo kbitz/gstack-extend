@@ -1,7 +1,18 @@
 #!/bin/sh
 # gstack-extend roadmap-audit — TS implementation, run via bun.
-# Behavior-preserving cutover from the bash original (now retired).
-# Source of truth: src/audit/cli.ts. The legacy bash binary is preserved
-# in git history (see CHANGELOG / Track 2B); this shim is the single
-# entry point going forward.
-exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/audit/cli.ts" "$@"
+#
+# Takes optional [repo_root] plus --scan-state / --future-index / --prompt.
+# Runs with `--no-env-file --no-install --config=/dev/null` so bun ignores
+# any local bunfig.toml, .env, or auto-install attempts.
+_dir=${0%/*}
+[ "$_dir" != "$0" ] || _dir=.
+if [ ! -f "$_dir/lib/bun-prereq.sh" ] || [ ! -r "$_dir/lib/bun-prereq.sh" ]; then
+  printf '%s\n' 'roadmap-audit: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+  exit 1
+fi
+. "$_dir/lib/bun-prereq.sh"
+if ! bun_prereq_probe; then
+  bun_prereq_print_shared 'roadmap-audit' >&2
+  exit 1
+fi
+exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "$_dir/../src/audit/cli.ts" "$@"

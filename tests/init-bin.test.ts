@@ -335,7 +335,7 @@ function disposableInstall(name: string) {
   const install = join(baseTmp, name, 'install');
   mkdirSync(join(install, 'bin', 'lib'), { recursive: true });
   mkdirSync(join(install, 'scripts', 'init-templates'), { recursive: true });
-  for (const rel of ['bin/gstack-extend', 'bin/lib/install-safety.sh', 'bin/lib/projects-registry.sh']) {
+  for (const rel of ['bin/gstack-extend', 'bin/lib/install-safety.sh', 'bin/lib/projects-registry.sh', 'bin/lib/bun-prereq.sh']) {
     copyFileSync(join(ROOT, rel), join(install, rel));
   }
   chmodSync(join(install, 'bin', 'gstack-extend'), 0o755);
@@ -376,7 +376,7 @@ function pathWithout(names: string[]) {
   const dir = mkdtempSync(join(baseTmp, 'path-'));
   const skip = new Set(names);
   const commands = ['bash', 'dirname', 'readlink', 'basename', 'cat', 'grep', 'sort', 'wc', 'tr',
-    'uname', 'git', 'date', 'mkdir', 'mktemp', 'mv', 'chmod', 'rm', 'awk', 'jq'];
+    'uname', 'git', 'date', 'mkdir', 'mktemp', 'mv', 'chmod', 'rm', 'awk', 'jq', 'bun'];
   for (const command of commands) {
     if (skip.has(command)) continue;
     const resolved = spawnSync('bash', ['-c', 'command -v "$1"', 'lookup', command], { encoding: 'utf8' });

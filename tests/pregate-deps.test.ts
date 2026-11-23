@@ -479,7 +479,7 @@ describe('pregate-deps', () => {
   test('(i) launcher flags, --help, and bunfig.toml preload isolation', () => {
     const launcher = readFileSync(BIN_PATH, 'utf8');
     expect(launcher.split('\n').filter(line => line.startsWith('exec '))).toEqual([
-      expect.stringContaining('exec bun --no-env-file --no-install --config=/dev/null '),
+      expect.stringContaining('exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null '),
     ]);
 
     const repo = materializeFixtureRepo();

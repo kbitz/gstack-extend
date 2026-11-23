@@ -490,6 +490,8 @@ limitation). Budget reasons add `measured` and `limit`. Blocking reasons add
 | `internal_error` | 1 | An unexpected exception. The stack is on stderr. |
 | `test_env_refused` | 1 | A test-only override was set without the test guard. |
 | `bun_missing` | 1 | The shim could not find `bun`. |
+| `bun_too_old` | 1 | Bun reports a version below `1.3.3`, or reports the minimum version and its help does not confirm `--no-env-file`. |
+| `bun_version_unknown` | 1 | The shim could not determine a parseable numeric version from `bun --version`. |
 | `git_failed` | 1 | Ref resolution, merge-base, or the file list failed. A recorded manifest or patch failure is `evidence_incomplete` instead. |
 
 Every error, from the CLI or the shim, has the same canonical key order.

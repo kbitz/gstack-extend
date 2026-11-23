@@ -171,7 +171,7 @@ export const ERROR_CODES = [
   'gh_failed', 'gh_bad_json', 'gh_auth', 'spawn_timeout', 'forbidden_command',
   'evidence_not_found', 'evidence_corrupt', 'evidence_unsupported_version',
   'store_error', 'store_refused', 'internal_error', 'test_env_refused',
-  'bun_missing', 'git_failed',
+  'bun_missing', 'bun_too_old', 'bun_version_unknown', 'git_failed',
 ] as const;
 
 export type RegexSpec = { source: string; flags: string };

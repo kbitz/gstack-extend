@@ -373,8 +373,8 @@ describe('bin/review-state', () => {
   });
   test('launcher exec line and --help reason parity with REASON_TABLE and design anchors', () => {
     const launcher = readFileSync(BIN_PATH, 'utf8');
-    expect(launcher).toContain('if ! command -v bun >/dev/null 2>&1; then');
-    expect(launcher).toContain('exec bun --no-env-file --no-install --config=/dev/null');
+    expect(launcher).toContain('if ! bun_prereq_probe; then');
+    expect(launcher).toContain('exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null');
     const design = readFileSync(DESIGN_PATH, 'utf8');
     const anchors = [...design.matchAll(/<a id="reason-([a-z-]+)"><\/a>/g)].map((m) => m[1]);
     expect(anchors).toEqual(REASON_TABLE.map((r) => r.reason));
@@ -6976,13 +6976,13 @@ describe('bin/review-state', () => {
     expect(rLauncher.status).toBe(5);
     const stdoutLines = rLauncher.stdout.trim().split('\n');
     expect(stdoutLines).toHaveLength(1);
-    expect(JSON.parse(stdoutLines[0]!)).toEqual({
+    const parsedLauncher = JSON.parse(stdoutLines[0]!);
+    expect(parsedLauncher).toMatchObject({
       v: 1,
       command: 'unknown',
       status: 'error',
       reason: 'internal-error',
-      detail: { cause: 'runtime-missing', message: 'bun not found on PATH', trace: null },
-      fix: REASON_TABLE.find((r) => r.reason === 'internal-error')!.fix,
+      detail: { cause: 'runtime-missing', trace: null },
       state_path: null,
       rev: null,
       helper_version: null,
@@ -6990,7 +6990,10 @@ describe('bin/review-state', () => {
       retry: 'same-input',
       retry_after_ms: null,
     });
-    expect(rLauncher.stderr).toContain('ERROR INTERNAL_ERROR: bun not found on PATH\nFIX: ');
+    expect(parsedLauncher.detail.message).toContain('PREREQ_BUN_MISSING');
+    expect(parsedLauncher.fix).toContain('continue inline (D1)');
+    expect(rLauncher.stderr).toContain('ERROR INTERNAL_ERROR: PREREQ_BUN_MISSING');
+    expect(rLauncher.stderr).toContain('\nFIX: ');
   });
 
   // Value: protects=automatic stale-lock reclamation, live/other-host/pid_ns preservation, 60s unparseable grace, writer own-token recheck, and rename-verify-restore; fails_when=a live or other-host lock is broken, a dead same-host lock stays busy, or a displaced writer overwrites state; why_new=Track 88A T2; seam=CLI, child process pid, and node:fs mocks

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.112.2] - 2026-11-23
+
+### Added
+
+- `bin/roadmap-audit`, `bin/roadmap-pack` and `bin/outside-review` now accept `--help` and `-h`.
+
+### Changed
+
+- `setup`, `gstack-extend init` and every Bun-backed `bin/` launcher now refuse to run when Bun is missing or older than 1.3.3, printing one line that names the fix instead of a raw shell error.
+- `gstack-extend init` checks Bun before writing anything, so a refused init leaves no partial project and no registry entry, while `--dry-run` warns instead of refusing.
+- gstack-extend's own registry entry now records `version_scheme` as `3-digit`, while consumer projects keep `4-digit`.
+
+### Upgrade notes
+
+- Bun 1.3.3 is now the minimum for both running and developing gstack-extend, so older Bun installs must be upgraded before setup or any launcher will run.
+
 ## [0.112.1] - 2026-11-23
 
 ### Changed

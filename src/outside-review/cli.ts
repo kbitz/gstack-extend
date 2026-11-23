@@ -34,7 +34,25 @@ export function restrictedArgs(args: string[], prefixFile: string) {
   return [...result, '--system-prompt-file', prefixFile, '--no-session-persistence'];
 }
 
+const USAGE = `Usage: outside-review <request.json> <gstack-root> <private-call-directory>
+       outside-review --help | -h
+
+Run an outside review pass using installed upstream helpers.
+
+Arguments:
+  <request.json>           Path to the outside-review request JSON file
+  <gstack-root>            Path to the installed upstream gstack root
+  <private-call-directory> Private state directory for this review call
+
+Options:
+  -h, --help               Show this help and exit 0
+`;
+
 async function main(args: string[]) {
+  if (args[0] === '--help' || args[0] === '-h') {
+    process.stdout.write(USAGE);
+    return;
+  }
   if (args[0] === 'exec') {
     const config = JSON.parse(readFileSync(args[1]!, 'utf8'));
     const child = spawn(config.command, [...config.argsPrefix, ...restrictedArgs(args.slice(2), config.prefixFile)], { stdio: 'inherit' });

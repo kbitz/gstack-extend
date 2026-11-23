@@ -10,14 +10,25 @@
 #   ./setup --quiet
 set -euo pipefail
 
-if ! command -v bun >/dev/null 2>&1; then
-  echo "Error: bun is required but not installed." >&2
-  echo "Install with checksum verification:" >&2
-  echo '  BUN_VERSION="1.3.10"' >&2
-  echo '  tmpfile=$(mktemp)' >&2
-  echo '  curl -fsSL "https://bun.sh/install" -o "$tmpfile"' >&2
-  echo '  echo "Verify checksum before running: shasum -a 256 $tmpfile"' >&2
-  echo '  BUN_VERSION="$BUN_VERSION" bash "$tmpfile" && rm "$tmpfile"' >&2
+_SETUP_DIR=${0%/*}
+[ "$_SETUP_DIR" != "$0" ] || _SETUP_DIR=.
+_SETUP_PREREQ_HELPER="$_SETUP_DIR/bin/lib/bun-prereq.sh"
+if [ ! -f "$_SETUP_PREREQ_HELPER" ] || [ ! -r "$_SETUP_PREREQ_HELPER" ]; then
+  printf '%s\n' 'setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.' >&2
+  exit 1
+fi
+# shellcheck source=bin/lib/bun-prereq.sh
+. "$_SETUP_PREREQ_HELPER"
+if ! bun_prereq_probe; then
+  bun_prereq_print_shared 'setup' >&2
+  if [ "$BUN_PREREQ_CLASS" = "missing" ]; then
+    echo "Install with checksum verification:" >&2
+    echo '  BUN_VERSION="1.4.3"' >&2
+    echo '  tmpfile=$(mktemp)' >&2
+    echo '  curl -fsSL "https://bun.sh/install" -o "$tmpfile"' >&2
+    echo '  echo "Verify checksum before running: shasum -a 256 $tmpfile"' >&2
+    echo '  bash "$tmpfile" "bun-v$BUN_VERSION" && rm "$tmpfile"' >&2
+  fi
   exit 1
 fi
 
@@ -425,7 +436,7 @@ retired_copy_owner() {
     [ "$(lex_abs "$checkout")" = "$checkout" ] || return 0
     # Shell file tests cannot distinguish a missing path from denied access.
     # A final dangling symlink also stays unknown rather than orphaned.
-    if bun --no-env-file --config=/dev/null -e '
+    if "$BUN_PREREQ_RAW_PATH" --no-env-file --config=/dev/null -e '
       const { lstatSync } = require("node:fs");
       try { lstatSync(process.argv[1]); }
       catch (error) { process.exit(error.code === "ENOENT" ? 0 : 1); }
@@ -1599,7 +1610,7 @@ if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
   # Check every component and symlink hop, not only the final physical path.
   # Ancestors may be owned by this user or root, but never world-writable.
   # Bun is required at setup entry, including for uninstall.
-  bun --no-env-file --config=/dev/null -e '
+  "$BUN_PREREQ_RAW_PATH" --no-env-file --config=/dev/null -e '
     const fs = require("node:fs"), path = require("node:path");
     const home = fs.realpathSync(process.argv[1]), uid = Number(process.argv[2]);
     let at = path.parse(home).root, hops = 0;

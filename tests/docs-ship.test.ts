@@ -1173,7 +1173,7 @@ describe('command line', () => {
     const run = spawnSync(join(ROOT, 'bin', 'docs-ship'), ['classify', '--base', 'main'], { cwd: r.dir, encoding: 'utf8', env: GIT_ENV });
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('STATUS: docs');
-    expect(readFileSync(join(ROOT, 'bin', 'docs-ship'), 'utf8')).toContain('exec bun --no-env-file --no-install --config=/dev/null "$_cli" "$@"');
+    expect(readFileSync(join(ROOT, 'bin', 'docs-ship'), 'utf8')).toContain('exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "$_cli" "$@"');
   });
 });
 

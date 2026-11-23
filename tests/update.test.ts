@@ -141,6 +141,7 @@ function createFixtureRepoWithRealSetup(
   writeFileSync(join(dir, 'setup'), opts.setupText ?? readFileSync(SETUP, 'utf8'));
   chmodSync(join(dir, 'setup'), 0o755);
   writeFileSync(join(dir, 'bin', 'lib', 'install-safety.sh'), readFileSync(INSTALL_SAFETY_LIB));
+  writeFileSync(join(dir, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(ROOT, 'bin', 'lib', 'bun-prereq.sh')));
   writeFileSync(join(dir, 'bin', 'lib', 'preamble.sh'), readFileSync(PREAMBLE_LIB));
   chmodSync(join(dir, 'bin', 'lib', 'preamble.sh'), 0o755);
 
@@ -2688,6 +2689,12 @@ describe('legacy four-part install to three-part candidate', () => {
     expect(pause).toBeGreaterThanOrEqual(0);
     expect(pause).toBeLessThan(section.indexOf('git checkout --detach'));
     expect(section.indexOf('./bin/config set update_check true')).toBeGreaterThan(section.indexOf('git checkout main'));
+    expect(section).toContain('v0.47.0.0');
+    expect(section).toContain("git tag --list 'v*.*.*.*'");
+    expect(section).toContain('Every skill added after that tag');
+    const inventory = section.indexOf('git diff --name-status --diff-filter=A');
+    expect(inventory).toBeGreaterThanOrEqual(0);
+    expect(inventory).toBeLessThan(section.indexOf('git checkout --detach'));
   });
   test('real update-check offers multi-digit three- and four-part releases', () => {
     const repo = createFixtureRepo('candidate-positive');

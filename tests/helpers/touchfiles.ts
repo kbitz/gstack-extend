@@ -90,12 +90,36 @@ function skill(name: string): string {
  * selection and `bun run test` read the same edges.
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
-  'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', '.gstack/secret-dispositions.json', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
-  'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
-  'tests/review-state.test.ts': ['bin/review-state', 'bin/lib/workflow_metrics.py', 'docs/designs/review-run-state.md', 'docs/review-run-state-calls.md'],
+  'tests/bun-prereq.test.ts': [
+    'bin/lib/bun-prereq.sh',
+    'bin/roadmap-audit',
+    'bin/roadmap-pack',
+    'bin/roadmap-touches',
+    'bin/roadmap-renumber',
+    'bin/outside-review',
+    'bin/secret-dispositions',
+    'bin/pregate-deps',
+    'bin/review-delegate',
+    'bin/layout-scaffold',
+    'bin/docs-ship',
+    'bin/upstream-check',
+    'bin/merge-gate',
+    'bin/review-state',
+    'bin/**', 'src/**', // The floor-agreement test scans for new launchers and declarations.
+    'setup',
+    'bin/gstack-extend',
+    'scripts/init-templates/**',
+    'README.md',
+    'docs/installation.md',
+    'CLAUDE.md',
+    'package.json',
+  ],
+  'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'bin/lib/bun-prereq.sh', 'src/secret-dispositions/**', '.gstack/secret-dispositions.json', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
+  'tests/outside-review.test.ts': ['bin/outside-review', 'bin/lib/bun-prereq.sh', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
+  'tests/review-state.test.ts': ['bin/review-state', 'bin/lib/bun-prereq.sh', 'bin/lib/workflow_metrics.py', 'docs/designs/review-run-state.md', 'docs/review-run-state-calls.md'],
   // The runner reads the skill's delegate anchor paragraph at run time and its docs example is validated.
   'tests/review-delegate.test.ts': [
-    'bin/review-delegate',
+    'bin/review-delegate', 'bin/lib/bun-prereq.sh',
     skill('review-and-prep'),
     'docs/delegated-review.md',
     'docs/acceptance/attacker-parts.md',
@@ -103,13 +127,13 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   // The checker's completeness scan reads every skill and src file, and its
   // docs lock reads both docs; a launcher or src change reruns the suite.
-  'tests/upstream-check.test.ts': ['bin/upstream-check', 'skills/**', 'src/**', 'docs/upstream-check.md', 'docs/outside-review.md'],
+  'tests/upstream-check.test.ts': ['bin/upstream-check', 'bin/lib/bun-prereq.sh', 'skills/**', 'src/**', 'docs/upstream-check.md', 'docs/outside-review.md'],
   'tests/layout-scaffold.test.ts': [
-    'bin/layout-scaffold', 'src/layout-scaffold/**',
+    'bin/layout-scaffold', 'bin/lib/bun-prereq.sh', 'src/layout-scaffold/**',
     'bin/roadmap-audit', 'bin/roadmap-pack', 'bin/roadmap-touches', 'bin/roadmap-renumber',
   ],
   'tests/pregate-deps.test.ts': [
-    'bin/pregate-deps', 'src/pregate-deps/**', 'tests/fixtures/pregate-deps/**', 'docs/pregate-deps.md',
+    'bin/pregate-deps', 'bin/lib/bun-prereq.sh', 'src/pregate-deps/**', 'tests/fixtures/pregate-deps/**', 'docs/pregate-deps.md',
   ],
   // The release and manifest checks: what a release commit (VERSION, the
   // CHANGELOG entry and package.json's version field) can break on its own.
@@ -127,16 +151,17 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml', 'CLAUDE.md',
   ],
   'tests/docs-ship.test.ts': [
-    'bin/docs-ship', skill('docs-ship'), 'docs/docs-ship.md', skill('roadmap'), skill('project-spec'),
+    'bin/docs-ship', 'bin/lib/bun-prereq.sh', skill('docs-ship'), 'docs/docs-ship.md', skill('roadmap'), skill('project-spec'),
   ],
-  'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md'],
+  'tests/merge-gate.test.ts': ['bin/merge-gate', 'bin/lib/bun-prereq.sh', 'src/merge-gate/**', 'docs/merge-gate.md'],
   'tests/quota.test.ts': [
-    'bin/gstack-extend', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
+    'bin/gstack-extend', 'bin/lib/bun-prereq.sh', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
     'bin/lib/telemetry*.py', 'tests/quota_cases.py', 'tests/fixtures/quota/**',
     'docs/quota-ledger.md',
     'scripts/scrub-quota-fixture.ts',
   ],
   'tests/audit-snapshots.test.ts': [
+    'bin/lib/bun-prereq.sh',
     'bin/roadmap-audit',
     'bin/roadmap-pack',
     'bin/roadmap-touches',
@@ -148,6 +173,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-renumber',
   ],
   'tests/audit-cli-contract.test.ts': [
+    'bin/lib/bun-prereq.sh',
     'bin/roadmap-audit',
     'src/audit/**',
   ],
@@ -261,6 +287,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('full-review'),
     'setup',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     // Track 92A: update-run fixtures and resolver probes run the start command.
     'bin/lib/preamble.sh',
     // Track 28A locks the rollback block's update-check pause.
@@ -273,6 +300,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -285,6 +313,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -294,6 +323,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -304,6 +334,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/setup-hosts.test.ts': [
     'setup',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     // Track 49A: setup copies this helper to the fixed path the blocks call.
     'bin/lib/telemetry-call.sh',
     // Track 92A: setup copies the start command before publishing skills.
@@ -321,6 +352,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/projects-registry.sh',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/preamble.sh',
     'bin/roadmap-audit',
     'src/audit/**',
@@ -346,6 +378,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     // bin/gstack-extend sources these at startup; the round-trip test runs its doctor subcommand.
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
     'bin/lib/workflow_metrics.py',
@@ -367,6 +400,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'skills/**',
     'setup',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/telemetry-call.sh',
     'bin/lib/preamble.sh',
     'bin/gstack-extend',
@@ -386,6 +420,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'docs/workflow-metrics.schema.json',
     // The v1 quota-reader fixture runs `gstack-extend quota runs`.
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/quota-cli.py',
     'bin/lib/quota/**',
@@ -400,6 +435,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/gstack-extend-telemetry',
     'bin/lib/install-safety.sh',
+    'bin/lib/bun-prereq.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry-call.sh',
     'bin/lib/telemetry*.py',
@@ -417,6 +453,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/quota/common.py',
     'bin/lib/quota/usage.py',
     'bin/review-state',
+    'bin/lib/bun-prereq.sh',
     'src/review-state/**',
     'tests/fixtures/run-usage/**',
     'docs/workflow-metrics.schema.json',

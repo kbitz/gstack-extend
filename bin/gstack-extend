@@ -62,6 +62,12 @@ TEMPLATES_DIR="$REPO_ROOT/scripts/init-templates"
 . "$SCRIPT_DIR/lib/install-safety.sh"
 # shellcheck source=bin/lib/projects-registry.sh
 . "$SCRIPT_DIR/lib/projects-registry.sh"
+_bun_prereq_loaded=0
+if [ -f "$SCRIPT_DIR/lib/bun-prereq.sh" ] && [ -r "$SCRIPT_DIR/lib/bun-prereq.sh" ]; then
+  # shellcheck source=bin/lib/bun-prereq.sh
+  . "$SCRIPT_DIR/lib/bun-prereq.sh"
+  _bun_prereq_loaded=1
+fi
 
 # ERR trap — make set -e exits visible (line + code + call stack) rather
 # than silent. Shared helper from install-safety.sh; existing bins adopt
@@ -544,13 +550,27 @@ layout_refusal() {
   echo "  init writes only inside $1 and never through a link. Fix that path (ask before changing a link someone set up on purpose), then re-run." >&2
 }
 
-# run_audit <target>
-# Spawns bin/roadmap-audit with the target as cwd and as the positional
-# repo root (so a nested project is not audited at its parent git toplevel).
-# Captures stdout only. Stderr flows to the caller and is not merged.
+# with_audit_bun <dir> <checked_bun> <command> [args...]
+# Run a command from <dir> with the PATH the post-render audit gets, so the
+# pre-write check and the audit use the same Bun. bin/roadmap-audit runs
+# under /bin/sh, which can resolve bun differently from bash (bash expands a
+# literal ~ PATH entry; /bin/sh skips it), so ask /bin/sh. When it would not
+# find the checked Bun there, put that Bun's directory first.
+with_audit_bun() (
+  local cwd="$1" checked_bun="$2" bun_dir="${2%/*}"
+  shift 2
+  cd "$cwd" || return $?
+  if [ "$(/bin/sh -c 'command -v bun' 2>/dev/null)" != "$checked_bun" ]; then
+    export PATH="${bun_dir:-/}${PATH:+:$PATH}"
+  fi
+  "$@"
+)
+
+# run_audit <target> <checked_bun>
+# Pass the target as cwd and as the positional repo root so a nested project
+# is audited on its own. Captures stdout only. Stderr flows to the caller.
 run_audit() {
-  local target="$1"
-  ( cd "$target" && "$REPO_ROOT/bin/roadmap-audit" "$target" ) || return $?
+  with_audit_bun "$1" "$2" "$REPO_ROOT/bin/roadmap-audit" "$1"
 }
 
 # filter_fresh_audit_stdout <raw>
@@ -631,6 +651,61 @@ require_jq() {
   return 1
 }
 
+check_bun_audit_path() {
+  case "$BUN_PREREQ_RAW_PATH" in
+    *:*|[!/]*)
+      local prefix='' effect='No changes were made.'
+      if [ "${1:-}" = 'preview' ]; then
+        prefix='warning: '
+        effect='Dry-run writes nothing.'
+      fi
+      printf 'gstack-extend init: %sPREREQ_BUN_MISSING Bun is not on a PATH entry usable from the audit directory; add an absolute PATH entry without a colon and rerun. %s See docs/installation.md#requirements.\n' "$prefix" "$effect" >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+probe_init_bun() {
+  local mode="$1"
+  shift
+  if bun_prereq_probe "$@"; then
+    return 0
+  fi
+  if [ "$mode" = 'preview' ]; then
+    printf 'gstack-extend init: warning: %s; run: %s. Dry-run writes nothing.\n' "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX" >&2
+  else
+    bun_prereq_print_shared 'gstack-extend init' >&2
+  fi
+  return 1
+}
+
+# require_bun <target> [preview]
+# Mutating init needs a supported Bun before any scaffold or registry write.
+require_bun() {
+  local target="$1" mode="${2:-}" audit_dir="$1"
+  if [ "$_bun_prereq_loaded" -eq 0 ]; then
+    if [ "$mode" = 'preview' ]; then
+      printf '%s\n' 'gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements.' >&2
+    else
+      printf '%s\n' 'gstack-extend init: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+    fi
+    return 1
+  fi
+  probe_init_bun "$mode" || return 1
+  check_bun_audit_path "$mode" || return 1
+
+  # The audit runs the checked Bun from the target directory, where a version
+  # manager's shim can select another version at the same path. A new target
+  # inherits its existing parent's settings.
+  if [ ! -d "$target" ]; then
+    audit_dir="${target%/*}"
+    audit_dir="${audit_dir:-/}"
+  fi
+  [ "$audit_dir" -ef . ] && return 0
+  with_audit_bun "$audit_dir" "$BUN_PREREQ_RAW_PATH" probe_init_bun "$mode" "$BUN_PREREQ_RAW_PATH"
+}
+
 # preflight_existing_registry
 # Validate a registry that already exists. Do not create an absent one.
 preflight_existing_registry() {
@@ -642,9 +717,9 @@ preflight_existing_registry() {
   return 0
 }
 
-# warn_dry_run_state
+# warn_dry_run_state <target>
 # Dry-run still writes nothing. Say when registry or onboarded-state
-# detection cannot be checked.
+# detection cannot be checked, or when Bun does not meet the runtime floor.
 warn_dry_run_state() {
   local why="" path
   if ! command -v jq >/dev/null 2>&1; then
@@ -658,6 +733,7 @@ warn_dry_run_state() {
   if [ -n "$why" ]; then
     echo "gstack-extend init: warning: registry and onboarded-state detection is unavailable because $why. Dry-run writes nothing." >&2
   fi
+  require_bun "$1" preview || true
 }
 
 # ─── cmd_init ──────────────────────────────────────────────────────────
@@ -783,9 +859,10 @@ cmd_init() {
   # and cannot create a target. An absent registry stays absent until
   # registration. Dry-run keeps the no-write policy and only warns.
   if [ "$dry_run" = "1" ]; then
-    warn_dry_run_state
+    warn_dry_run_state "$target_abs"
   else
     require_jq || return 1
+    require_bun "$target_abs" || return 1
     preflight_existing_registry || return 1
   fi
 
@@ -841,6 +918,14 @@ cmd_init() {
   if [ "$dry_run" = "1" ]; then
     echo "gstack-extend init: DRY RUN — no files will be written."
   fi
+  # Compare directory identity, not spelling: REPO_ROOT keeps bash's pwd
+  # spelling (a leading //, or the case typed on a case-insensitive volume)
+  # while target_abs comes from /bin/pwd -P.
+  local version_scheme="4-digit"
+  if [ "$target_abs" -ef "$REPO_ROOT" ]; then
+    version_scheme="3-digit"
+  fi
+
   local migrate_label=""
   [ "$migrate" = "1" ] && migrate_label=" (--migrate)"
   cat <<EOF
@@ -850,7 +935,7 @@ gstack-extend init: $target_abs
   language:       $lang
   base_branch:    $base_branch
   remote_url:     ${remote:-(none)}
-  version_scheme: 4-digit
+  version_scheme: $version_scheme
   state:          ${state}${migrate_label}
 
 EOF
@@ -889,7 +974,7 @@ EOF
   # replaces a stale entry at this path or one with a colliding slug.
   local created_policy=fresh
   [ "$migrate" = "1" ] && created_policy=keep
-  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at" "$created_policy"; then
+  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "$version_scheme" "$created_at" "$created_policy"; then
     echo "gstack-extend init: registry write failed (files were rendered)" >&2
     return 1
   fi
@@ -899,7 +984,7 @@ EOF
   echo
   echo "Running post-render audit..."
   local audit_out audit_exit
-  audit_out=$(run_audit "$target_abs") && audit_exit=0 || audit_exit=$?
+  audit_out=$(run_audit "$target_abs" "$BUN_PREREQ_RAW_PATH") && audit_exit=0 || audit_exit=$?
 
   local cli_abs="$SCRIPT_DIR/gstack-extend"
   local quoted_retry
