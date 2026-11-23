@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.112.1] - 2026-11-23
+
+### Changed
+
+- `/review-and-prep` now writes the `Greptile:` line of its receipt and of its `/ship-and-land` prompt from fixed wording, so a completed review always reads `findings dispositioned in the receipt, so triage only newer feedback` whatever the reviewing agent wrote.
+- After a no-response Greptile request ends in a recorded user decision, the unverified `Greptile:` value keeps that decision reference and then ends with the usual `that request used the PR's one run` wording.
+
+### Fixed
+
+- When a paused run has an unrecognized Greptile value, `/review-and-prep` resumes the recorded segment, corrects the gate, and checkpoints the pause again before rendering the receipt.
+
+### Upgrade notes
+
+- A review run recorded before this release whose `Greptile:` value does not start with one of the published status forms gets a render refusal, and the skill then records the Greptile gate again before rendering.
+
 ## [0.112.0] - 2026-11-23
 
 ### Added

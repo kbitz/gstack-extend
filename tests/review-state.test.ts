@@ -1913,7 +1913,7 @@ describe('bin/review-state', () => {
     };
     expect(unresolvedFindings(withForeignCor)).toEqual(['F-HOST P2', 'F-CRED P3', 'F-CHAIN P1']);
 
-    // 5. Formatter refusal envelopes: greptile-gate-missing and skipped-pregate-lanes-too-long
+    // 5. Formatter refusal envelopes: greptile-gate-missing, greptile-value-unrecognized, and skipped-pregate-lanes-too-long
     const dNoGrep = newDir();
     callCmd(dNoGrep, 'start', mkStart(770));
     callCmd(dNoGrep, 'checkpoint', { checkpoint_id: uid(771), kind: 'ready', base: baseSha });
@@ -1921,6 +1921,20 @@ describe('bin/review-state', () => {
     expect(rNoGrep.code).toBe(1);
     expect(rNoGrep.json.detail.violations).toEqual([{ path: '$', rule: 'greptile-gate-missing', expected: 'greptile-gate-recorded' }]);
     expect(readdirSync(dNoGrep).filter((f) => f.startsWith('full-receipt-'))).toEqual([]);
+
+    const dBadGrep = newDir();
+    callCmd(dBadGrep, 'start', mkStart(768));
+    callCmd(dBadGrep, 'record gate', {
+      gate_id: uid(769), name: 'greptile', result: 'passed',
+      candidate: { commit: headSha, base: baseSha },
+      details: { value: 'reviewed (0 comments)', run: null },
+    });
+    callCmd(dBadGrep, 'checkpoint', { checkpoint_id: uid(767), kind: 'ready', base: baseSha });
+    const rBadGrep = runRender(dBadGrep, 'bad-grep.json', { output: 'full-receipt' });
+    expect(rBadGrep.code).toBe(1);
+    expect(rBadGrep.json.reason).toBe('invalid-input');
+    expect(rBadGrep.json.detail.violations).toEqual([{ path: '$', rule: 'greptile-value-unrecognized', expected: 'completed|unverified|skipped|postponed' }]);
+    expect(readdirSync(dBadGrep).filter((f) => f.startsWith('full-receipt-'))).toEqual([]);
 
     const dLongLanes = newDir();
     writeFileSync(join(dLongLanes, 'full-receipt-1.md'), 'receipt\n');
@@ -2097,7 +2111,7 @@ describe('bin/review-state', () => {
     });
     callCmd(dReady, 'record gate', {
       gate_id: uid(44), name: 'greptile', result: 'passed', candidate: { commit: baseSha, base: baseSha },
-      details: { value: 'completed; 0 open', run: 'https://github.com/kbitz/gstack-extend/pull/240#pullrequestreview-1' },
+      details: { value: `completed on ${baseSha}; findings dispositioned in the receipt, so triage only newer feedback`, run: 'https://github.com/kbitz/gstack-extend/pull/240#pullrequestreview-1' },
     });
     callCmd(dReady, 'record audit', {
       audit_id: uid(52), name: 'documentation', result: 'accepted',
