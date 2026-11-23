@@ -482,6 +482,70 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
     expect(JSON.parse(readFileSync(join(state, 'projects.json'), 'utf8')).projects).toHaveLength(1);
   });
 
+  // Value: protects=init refuses before writing if the audit directory selects an older Bun; fails_when=the Bun check runs only in the caller directory; why_new=relative PATH coverage does not exercise a directory-aware launcher; seam=none
+  for (const pinLocation of ['target', 'parent'] as const) {
+    test(`init detects an old Bun selected by the audit directory (${pinLocation} pin) before writes`, () => {
+      const caller = freshDir('init-pin-caller');
+      const home = freshDir('init-pin-home');
+      const parent = freshDir('init-pin-parent');
+      const target = join(parent, 'consumer');
+      if (pinLocation === 'target') mkdirSync(target);
+      writeFileSync(join(pinLocation === 'target' ? target : parent, 'bun-runtime-pin'), '1.2.0\n');
+      const before = snapshotTree(parent);
+
+      const runtime = freshDir('init-pin-runtime');
+      makeShim(runtime, [
+        '#!/bin/sh',
+        'if [ "$1" = --version ] && { [ -f "$PWD/bun-runtime-pin" ] || [ -f "$PWD/../bun-runtime-pin" ]; }; then',
+        '  echo 1.2.0',
+        '  exit 0',
+        'fi',
+        'exec "$TEST_REAL_BUN" "$@"',
+        '',
+      ].join('\n'));
+      const env = {
+        HOME: home,
+        GSTACK_EXTEND_STATE_DIR: join(home, 'state'),
+        PATH: `${runtime}:${NO_BUN_PATH}`,
+        TEST_REAL_BUN: REAL_BUN,
+      };
+      const options = { cwd: caller, env, encoding: 'utf8' as const, timeout: 15_000 };
+      const args = [join(REPO_ROOT, 'bin/gstack-extend'), 'init', target, '--no-prompt'];
+      const preview = spawnSync('/bin/bash', [...args, '--dry-run'], options);
+      expect(preview.status).toBe(0);
+      expect(preview.stderr).toContain('init: warning: PREREQ_BUN_TOO_OLD');
+      expect(snapshotTree(parent)).toEqual(before);
+      expect(snapshotTree(home)).toEqual([]);
+
+      const result = spawnSync('/bin/bash', args, options);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('init: PREREQ_BUN_TOO_OLD');
+      expect(snapshotTree(parent)).toEqual(before);
+      expect(snapshotTree(home)).toEqual([]);
+    });
+  }
+
+  // Value: protects=init audits with the Bun it checked when /bin/sh resolves bun differently from bash; fails_when=the audit's PATH repair compares bash's lookup only; why_new=a relative PATH entry changes the lookup in both shells, a literal ~ entry only in /bin/sh; seam=none
+  test('init audits with the checked Bun when /bin/sh skips a literal ~ PATH entry', () => {
+    const caller = freshDir('init-tilde-caller');
+    const home = freshDir('init-tilde-home');
+    mkdirSync(join(home, 'bin'));
+    symlinkSync(REAL_BUN, join(home, 'bin', 'bun'));
+    const oldBun = freshDir('init-tilde-old');
+    makeShim(oldBun, '#!/bin/sh\necho 1.2.0\n');
+    const target = join(freshDir('init-tilde-parent'), 'consumer');
+    const result = spawnSync('/bin/bash', [join(REPO_ROOT, 'bin/gstack-extend'), 'init', '--no-prompt', target], {
+      cwd: caller,
+      env: { HOME: home, GSTACK_EXTEND_STATE_DIR: join(home, 'state'), PATH: `~/bin:${oldBun}:${NO_BUN_PATH}` },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(result.stderr).not.toContain('PREREQ_BUN');
+    expect(result.status).toBe(0);
+    expect(existsSync(join(target, 'CLAUDE.md'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, 'state', 'projects.json'), 'utf8')).projects).toHaveLength(1);
+  });
+
   test('init warns in preview and refuses mutation when the Bun path cannot survive chdir', () => {
     const home = freshDir('init-unusable-bun-home');
     const parent = freshDir('init-unusable-bun');

@@ -8,7 +8,7 @@
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/) **1.3.3 or newer** (verified runtime and development floor). Every Bun-backed launcher passes `--no-env-file --no-install --config=/dev/null`; `--no-env-file` was introduced in Bun 1.3.3, and earlier builds (such as 1.2.0 and 1.3.2) silently ignore it and still load `.env`.
 
-`setup`, `gstack-extend init`, and all 13 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
+`setup`, `gstack-extend init`, and all 13 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. `gstack-extend init` also checks Bun from the project directory (its parent for a new project), where its post-render audit runs, so a version manager that pins an older Bun there is refused before anything is written. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
 
 ```text
 <entry>: PREREQ_BUN_MISSING Bun >= 1.3.3 is required (not on PATH); run: install Bun >= 1.3.3 (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.

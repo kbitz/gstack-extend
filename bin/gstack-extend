@@ -550,20 +550,27 @@ layout_refusal() {
   echo "  init writes only inside $1 and never through a link. Fix that path (ask before changing a link someone set up on purpose), then re-run." >&2
 }
 
+# with_audit_bun <dir> <checked_bun> <command> [args...]
+# Run a command from <dir> with the PATH the post-render audit gets, so the
+# pre-write check and the audit use the same Bun. bin/roadmap-audit runs
+# under /bin/sh, which can resolve bun differently from bash (bash expands a
+# literal ~ PATH entry; /bin/sh skips it), so ask /bin/sh. When it would not
+# find the checked Bun there, put that Bun's directory first.
+with_audit_bun() (
+  local cwd="$1" checked_bun="$2" bun_dir="${2%/*}"
+  shift 2
+  cd "$cwd" || return $?
+  if [ "$(/bin/sh -c 'command -v bun' 2>/dev/null)" != "$checked_bun" ]; then
+    export PATH="${bun_dir:-/}${PATH:+:$PATH}"
+  fi
+  "$@"
+)
+
 # run_audit <target> <checked_bun>
-# Spawns bin/roadmap-audit with the target as cwd and as the positional
-# repo root (so a nested project is not audited at its parent git toplevel).
-# Restore the checked Bun on PATH if the directory change changed its lookup.
-# Captures stdout only. Stderr flows to the caller and is not merged.
+# Pass the target as cwd and as the positional repo root so a nested project
+# is audited on its own. Captures stdout only. Stderr flows to the caller.
 run_audit() {
-  local target="$1" checked_bun="$2" bun_dir="${2%/*}"
-  (
-    cd "$target" || exit
-    if [ "$(command -v bun)" != "$checked_bun" ]; then
-      export PATH="${bun_dir:-/}${PATH:+:$PATH}"
-    fi
-    "$REPO_ROOT/bin/roadmap-audit" "$target"
-  ) || return $?
+  with_audit_bun "$1" "$2" "$REPO_ROOT/bin/roadmap-audit" "$1"
 }
 
 # filter_fresh_audit_stdout <raw>
@@ -659,18 +666,44 @@ check_bun_audit_path() {
   return 0
 }
 
-# require_bun
+probe_init_bun() {
+  local mode="$1"
+  shift
+  if bun_prereq_probe "$@"; then
+    return 0
+  fi
+  if [ "$mode" = 'preview' ]; then
+    printf 'gstack-extend init: warning: %s; run: %s. Dry-run writes nothing.\n' "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX" >&2
+  else
+    bun_prereq_print_shared 'gstack-extend init' >&2
+  fi
+  return 1
+}
+
+# require_bun <target> [preview]
 # Mutating init needs a supported Bun before any scaffold or registry write.
 require_bun() {
+  local target="$1" mode="${2:-}" audit_dir="$1"
   if [ "$_bun_prereq_loaded" -eq 0 ]; then
-    printf '%s\n' 'gstack-extend init: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+    if [ "$mode" = 'preview' ]; then
+      printf '%s\n' 'gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements.' >&2
+    else
+      printf '%s\n' 'gstack-extend init: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.' >&2
+    fi
     return 1
   fi
-  if ! bun_prereq_probe; then
-    bun_prereq_print_shared 'gstack-extend init' >&2
-    return 1
+  probe_init_bun "$mode" || return 1
+  check_bun_audit_path "$mode" || return 1
+
+  # The audit runs the checked Bun from the target directory, where a version
+  # manager's shim can select another version at the same path. A new target
+  # inherits its existing parent's settings.
+  if [ ! -d "$target" ]; then
+    audit_dir="${target%/*}"
+    audit_dir="${audit_dir:-/}"
   fi
-  check_bun_audit_path
+  [ "$audit_dir" -ef . ] && return 0
+  with_audit_bun "$audit_dir" "$BUN_PREREQ_RAW_PATH" probe_init_bun "$mode" "$BUN_PREREQ_RAW_PATH"
 }
 
 # preflight_existing_registry
@@ -684,7 +717,7 @@ preflight_existing_registry() {
   return 0
 }
 
-# warn_dry_run_state
+# warn_dry_run_state <target>
 # Dry-run still writes nothing. Say when registry or onboarded-state
 # detection cannot be checked, or when Bun does not meet the runtime floor.
 warn_dry_run_state() {
@@ -700,13 +733,7 @@ warn_dry_run_state() {
   if [ -n "$why" ]; then
     echo "gstack-extend init: warning: registry and onboarded-state detection is unavailable because $why. Dry-run writes nothing." >&2
   fi
-  if [ "$_bun_prereq_loaded" -eq 0 ]; then
-    echo "gstack-extend init: warning: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. Dry-run writes nothing. See docs/installation.md#requirements." >&2
-  elif ! bun_prereq_probe; then
-    printf 'gstack-extend init: warning: %s; run: %s. Dry-run writes nothing.\n' "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX" >&2
-  else
-    check_bun_audit_path preview || true
-  fi
+  require_bun "$1" preview || true
 }
 
 # ─── cmd_init ──────────────────────────────────────────────────────────
@@ -832,10 +859,10 @@ cmd_init() {
   # and cannot create a target. An absent registry stays absent until
   # registration. Dry-run keeps the no-write policy and only warns.
   if [ "$dry_run" = "1" ]; then
-    warn_dry_run_state
+    warn_dry_run_state "$target_abs"
   else
     require_jq || return 1
-    require_bun || return 1
+    require_bun "$target_abs" || return 1
     preflight_existing_registry || return 1
   fi
 
