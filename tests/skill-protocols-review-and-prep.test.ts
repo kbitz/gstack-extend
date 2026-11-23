@@ -725,25 +725,20 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     '`auto` turns on all three additions together',
     'The light review default never sets it. `auto` turns on all three additions together',
     'later values may narrow them, so a caller matches the exact value, not the key',
-    'active `doc-audit-gap=auto` also runs the single classification rule in **Under `doc-audit-gap=auto`** *before* spending a re-audit attempt',
+    '`doc-audit-gap=auto` runs the single classification rule in **Under `doc-audit-gap=auto`** *before* spending a re-audit attempt',
     'falls back to that same classification rule after a blocked or failed re-audit.',
     'Its one extra attempt takes precedence over the "never a third attempt" wording in the `documentation-audit=final` and `post-audit=classify` bullets.',
     'Use `full-suite-absent` if the line lacks `full-suite=external` (including `full-suite=final`) and `post-audit-absent` otherwise. Name every missing companion in `<context>`',
   ]) {
     if (!policy.includes(required)) violations.push(`policy section missing: ${required}`);
   }
-  if (!postAudit.includes('**Outcome.** When **Under `doc-audit-gap=auto`** is active, add `undocumented-internal` and `base-merge` to the following no-owner class list.')) {
-    violations.push('classify outcome must include both new no-owner classes when active');
-  }
-  for (const entryPhrase of [
-    '(1) *before* spending a re-audit attempt whenever this invocation already has an accepted (`current` or `updated`) documentation audit and a documentation freshness check runs;',
-    '(2) when a re-audit attempt returns `blocked` or fails to complete or validate (after confirming the child stopped and checking clean tree and non-waivable invariants);',
-    '(3) if this invocation\'s last audit attempt returned `blocked` and upstream\'s attempt budget is exhausted, even if no freshness check found the audit stale.',
-    'Without active `doc-audit-gap=auto`, it is not applied, and blocked recovery runs as today',
+  for (const required of [
+    '**Outcome.** When **Under `doc-audit-gap=auto`** is active, use that group\'s decision table and preconditions.',
+    'Keep the checks below with that group\'s explicit exceptions. Otherwise enter only at the exhausted freshness check above.',
+    '**Receipt lines.** Without active `doc-audit-gap=auto`',
+    'Without active `doc-audit-gap=auto`, when the value is on the policy line but no exhausted-audit freshness check was reached',
   ]) {
-    if (!postAudit.includes(entryPhrase)) {
-      violations.push(`classify entry gate missing: ${entryPhrase}`);
-    }
+    if (!postAudit.includes(required)) violations.push(`classify entry, outcome or receipt missing: ${required}`);
   }
 
   // D10 invariant carve-out names only doc-audit-gap=auto, and both cross-references exist
@@ -776,18 +771,30 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   for (const required of [
     'writes the exact `--docs` arguments it passes to `gstack-docs-candidate snapshot`, one per line, to `doc-roots-<audit_id>.txt` in the evidence directory',
     "every path in that audit's snapshot `docs` list is also protected, and a missing or unreadable roots file is `docs-roots-unreadable`",
-    'The value changes classify in exactly three ways: the `undocumented-internal` class, qualifying base merges and one extra audit attempt, applied through that single classification rule at all three entry points.',
-    'before spending a re-audit attempt whenever this invocation already has an accepted (`current` or `updated`) audit `S`',
-    'upstream\'s remaining re-audit attempt stays unspent (so a later commit touching an audited document or user-visible text still runs a normal re-audit before any extra attempt or owner stop)',
+    'Apply the single classification rule below at three entry points:',
+    '**Pre-attempt:** Before spending a re-audit attempt when a freshness check would dispatch one after an accepted audit in this invocation.',
+    'A still-current audit with the same binding follows ordinary re-entry, with no reuse decision or attempt.',
+    '**Blocked or failed re-audit fallback:** After upstream\'s re-audit attempt 2 or the one extra attempt returns `blocked` or fails to complete or validate.',
+    'Use this entry whenever evaluating that failed attempt, including on resume and after exhaustion.',
+    '**Post-exhaustion:** At a stale freshness check when upstream\'s attempt budget is exhausted.',
+    'Upstream\'s remaining re-audit attempt stays unspent, and a later change that fails classification uses that attempt before any extra attempt or owner stop.',
     'when `GX_CAPTURE=1` the parent records a raw `REUSE` decision for phase `documentation` with a fresh `step_id` and no interval.',
-    'invocations with no earlier accepted audit, including a blocked or failed initial audit, never reuse and record `classify-not-applied`',
-    'first execute blocked recovery step 1 (**confirm the child stopped**)',
-    'unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, `docs-caps` failure, uncommitted partial edits leaving a dirty working tree (`dirty-tree`; never auto-reset or clean partial child edits), or no earlier accepted audit `S` in this invocation.',
-    'A blocked or failed audit is never upgraded to `current` or `updated`.',
+    'An initially blocked or failed audit cannot enter fallback.',
+    'A missing accepted audit or unverifiable evidence declines reuse.',
+    'first execute blocked recovery step 1 (**confirm the child stopped**). Before any write, require the clean-tree check below and compare against that attempt\'s original Prepare snapshot to verify HEAD, index and ownership even if the child returned no valid output.',
+    'Verify redaction, security and the base policy\'s `docs-caps` gate even when upstream stopped before its usual checks.',
+    'Stop under blocked recovery if any check fails or cannot be verified, including an unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, or `docs-caps` failure.',
+    'In fallback a dirty tree stops recovery before any retry, staging or commit. Preserve partial child edits.',
+    'A blocked or failed re-audit disclosed alongside a reused audit keeps its actual result in the full documentation detail and evidence. Keep it out of the compact audit ledger so it does not replace the accepted audit.',
+    'verify the earlier accepted (`current` or `updated`) audit in this invocation and its post-child snapshot, section and recorded documentation roots against retained evidence.',
+    'Preserve the existing base-change, unverifiable-delta and broad-fallback checks for the PR\'s own contribution, with the test-tooling and qualifying base-merge exceptions described here.',
+    'Reuse requires every commit to qualify for an `owner=not-needed` class for this entry point.',
+    'A change whose documented behavior is inaccurate, or whose class is uncertain, is `documented-behavior` even without an audited path or user-visible text edit.',
+    'recheck a qualifying merge against the current PR diff before relying on its earlier classification.',
     'never while upstream\'s re-audit attempt remains or when reuse applied',
     '`git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` (non-empty is `dirty-tree`, including pending changes inside submodules)',
-    'When `S` equals `HEAD` the walk is empty and classify runs as today, with nothing added.',
-    'the walk reaches `S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD` (otherwise the result is `walk-missed-snapshot`)',
+    'A verified empty walk on fallback has no `Post-audit change:` rows.',
+    'The walk reaches `S` only when `S` appears as a whole line of `git rev-list --first-parent HEAD` (otherwise the result is `walk-missed-snapshot`)',
     'the post-audit changes are the commits on `git rev-list --first-parent S..HEAD`',
     'write stdout, stderr and the exit status to files in the evidence directory; `evidence=` locators point there, and any unexpected command or script failure is `command-failed`',
     'When an existing no-owner class (for example `tests-only` or `rename`) fits a change, classify uses it; `undocumented-internal` applies only otherwise',
@@ -811,13 +818,16 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'A path is a SPEC when its base name, ignoring case and with every extension removed, is `SPEC`, at any depth (`SPEC`, `SPEC.md`, `SPEC.txt`, `docs/SPEC.md`, `api/spec.rst`), or when it is the file the project instructions name as the product spec; because the list uses `--no-renames`, a deleted, added or renamed spec (old and new names) all count.',
     'Before launching the extra attempt, the parent appends the `Doc-audit extra: action=extra-audit` line to `doc-audit-extra.txt` first, so an interrupted launch counts as used on resume.',
     'The launch runs `gstack-docs-candidate attempt` like any launch; an `ATTEMPT: not-counted` install refusal lets upstream\'s one relaunch run as the same extra attempt with no new `action=extra-audit` line.',
-    'If `gstack-docs-candidate attempt` refuses either launch (exit 3, STOP), including when the install-refusal allowance was already used before the first extra launch, the extra attempt is spent: record `result=refused` and take the owner stop.',
+    'If `gstack-docs-candidate attempt` refuses either launch (exit 3, STOP), including when the install-refusal allowance was already used before the first extra launch, the extra attempt is spent: record `result=refused`.',
+    'Blocked recovery\'s safety checks have passed. A non-waivable failure or unverifiable safety check stops before this allowance is considered.',
     'When the attempt ends, the parent appends an `action=result` line with its outcome.',
     'On resume, reconcile any interrupted extra launch before deciding whether an attempt remains.',
-    'An `action=extra-audit` line with no later `action=result` line is an interrupted extra launch: the parent first runs blocked recovery step 1 (confirm the child stopped), then validates that child\'s saved output through upstream\'s Parent processing (collect, check output, check ownership, check freshness), records `result=accepted` only when it passes, and otherwise records `result=interrupted` and takes the owner stop.',
-    "Its result stands on its own and is never a reuse; a `blocked` or invalid result takes blocked recovery's owner stop, with no further attempt.",
+    'An `action=extra-audit` line with no later `action=result` line is an interrupted extra launch: the parent first runs blocked recovery step 1 (confirm the child stopped)',
+    'For any blocked or failed result, including a refusal or interruption, use the same safety-gated fallback above. Reuse carries the earlier accepted audit only. If fallback declines reuse, take the existing owner stop. The extra attempt remains spent.',
     'A later change after an accepted extra audit with no attempt left reaches the trigger again: classify, with these additions, runs against the extra audit as the last accepted audit; no second extra audit runs; the owner stop follows otherwise.',
-    "A reuse writes no new `record audit`: the compact receipt's `- documentation:` line renders `not-run` for the final head",
+    'A reuse writes no new `record audit`. When the carried audit lacks a final binding, the compact receipt\'s `- documentation:` line renders `not-run`;',
+    'At each trigger, record `post-audit: active` and one `Post-audit change:` line per classified commit, or `post-audit: not applied — <reason>` when classification cannot proceed.',
+    'Record the decline even if the next audit succeeds. A fresh accepted audit replaces the carried audit for readiness;',
     '`doc-audit-gap: active; reuse=applied`',
     '`doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`',
     '`doc-audit-gap: not applied — <token> <context>; evidence=<evidence locator>`',
@@ -859,16 +869,16 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   if (!byCase.get('an audited document changed')?.[1]?.includes('`mechanical-correction` pre-attempt or on blocked/failed fallback')) {
     violations.push('audited document row must exclude mechanical-correction from pre-attempt and fallback reuse');
   }
-  if (!byCase.get('an audited document changed')?.[2]?.includes('Pre-attempt: do not reuse; spend upstream\'s remaining re-audit attempt')) {
+  if (!byCase.get('an audited document changed')?.[2]?.includes('Pre-attempt: decline reuse and spend the remaining upstream re-audit')) {
     violations.push('audited document row must spend remaining re-audit attempt pre-attempt');
   }
-  if (!byCase.get('user-visible text changed')?.[2]?.includes('Pre-attempt: do not reuse; spend upstream\'s remaining re-audit attempt')) {
+  if (!byCase.get('user-visible text changed')?.[2]?.includes('Decline reuse. Pre-attempt: spend the remaining upstream re-audit')) {
     violations.push('user-visible text row must spend remaining re-audit attempt pre-attempt');
   }
-  if (!byCase.get('a blocked re-audit')?.[2]?.includes('no question to the developer and no extra attempt')) {
+  if (!byCase.get('a blocked re-audit')?.[2]?.includes('no question and no extra attempt')) {
     violations.push('blocked re-audit row must reuse without asking or extra attempt when unchanged');
   }
-  if (!byCase.get('a failed re-audit')?.[2]?.includes('no question to the developer and no extra attempt')) {
+  if (!byCase.get('a failed re-audit')?.[2]?.includes('no question and no extra attempt')) {
     violations.push('failed re-audit row must reuse without asking or extra attempt when unchanged');
   }
 
@@ -876,7 +886,8 @@ function checkDocAuditGapAutoLock(text: string): string[] {
   for (const required of [
     'Under `post-audit: active`, an accepted audit plus a `Post-audit change:` line with `owner=not-needed` for every commit after its post-child snapshot satisfies the documentation gate for the final content, with the audit\'s own status; an `owner=needed` line still needs the user\'s named-risk decision.',
     'When **Under `doc-audit-gap=auto`** is active, that readiness rule requires an `owner=not-needed` `Post-audit change:` line for every commit on `git rev-list --first-parent S..HEAD` (`undocumented-internal` and `base-merge` lines are `owner=not-needed`, and base commits a qualifying merge brings in need no line of their own, because the merge\'s `class=base-merge` line covers them), while an extra audit\'s own accepted result satisfies the gate as any audit does.',
-    'This satisfies the documentation gate whether reuse applied before spending a re-audit attempt, on fallback from a blocked or failed re-audit, or after the attempt limit, while writing no new `record audit` and leaving compact `- documentation:` as `not-run`.',
+    'This satisfies the documentation gate whether reuse applied before spending a re-audit attempt, on fallback from a blocked or failed re-audit, or after the attempt limit, using the decision and rows verified for the current audit, head and fetched base.',
+    'Reuse writes no new `record audit`; compact `- documentation:` stays `not-run` when the carried audit lacks a final binding.',
     'a reuse never counts as, replaces or defers that attestation.',
   ]) {
     if (!readiness.includes(required)) violations.push(`Readiness missing: ${required}`);
@@ -2015,14 +2026,7 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
     const docClassRows = parseMarkdownTableRows(handoffDoc, '<a id="doc-audit-gap-classification"></a>');
     expect(skillClassRows.map((r) => r[0]?.replace(/^`|`$/g, ''))).toEqual([...DOC_AUDIT_GAP_CLASSIFICATION_CASES]);
     expect(docClassRows.map((r) => r[0]?.replace(/^`|`$/g, ''))).toEqual([...DOC_AUDIT_GAP_CLASSIFICATION_CASES]);
-    for (let i = 0; i < DOC_AUDIT_GAP_CLASSIFICATION_CASES.length; i++) {
-      const label = DOC_AUDIT_GAP_CLASSIFICATION_CASES[i]!;
-      const skillRow = skillClassRows[i]!.join(' ');
-      const docRow = docClassRows[i]!.join(' ');
-      for (const marker of ['`Post-audit change:`', '`doc-audit-gap: active; reuse=applied`', '`doc-audit-gap: active; reuse=not-applied', '`Doc-audit extra:`', '`- documentation: not-run`']) {
-        expect(docRow.includes(marker), `${label} receipt marker ${marker}`).toBe(skillRow.includes(marker));
-      }
-    }
+    expect(docClassRows).toEqual(skillClassRows);
   });
 
   describe('doc-audit-gap=auto merge commands fixture (E16)', () => {
@@ -2859,7 +2863,7 @@ describe('kept contract locks fail on mutation', () => {
     {
       name: 'doc-audit-gap=auto (Track 94A): drop pre-attempt classification before spending a re-audit attempt',
       lock: checkDocAuditGapAutoLock,
-      mutate: (t) => t.replace('before spending a re-audit attempt whenever this invocation already has an\naccepted (`current` or `updated`) audit `S`', 'only after upstream\'s attempt budget is exhausted'),
+      mutate: (t) => t.replace('Before spending a re-audit attempt when a freshness check', 'Only after upstream’s attempt budget is exhausted when a freshness check'),
     },
     {
       name: 'doc-audit-gap=auto (Track 94A): drop blocked or failed re-audit fallback',
@@ -2869,17 +2873,32 @@ describe('kept contract locks fail on mutation', () => {
     {
       name: 'doc-audit-gap=auto (Track 94A): drop child-stop confirmation or non-waivable exclusions from fallback',
       lock: checkDocAuditGapAutoLock,
-      mutate: (t) => t.replace('first execute blocked recovery step 1 (**confirm the\nchild stopped**)', 'skip blocked recovery step 1').replace('ownership violation, unauthorized Git mutation, redaction or\nsecurity gate failure, `docs-caps` failure', 'only dirty-tree'),
+      mutate: (t) => t.replace('first execute blocked recovery step 1\n(**confirm the child stopped**)', 'skip blocked recovery step 1').replace('ownership violation, unauthorized Git mutation, redaction or\nsecurity gate failure, or `docs-caps` failure', 'only dirty-tree'),
     },
     {
       name: 'doc-audit-gap=auto (Track 94A): allow an audited-document or user-visible change to reuse pre-attempt',
       lock: checkDocAuditGapAutoLock,
-      mutate: (t) => t.replace("Pre-attempt: do not reuse; spend upstream's remaining re-audit attempt (`protected-path <path>`", 'Pre-attempt: reuse S without spending an attempt (`protected-path <path>`'),
+      mutate: (t) => t.replace('Pre-attempt: decline reuse and spend the remaining upstream re-audit', 'Pre-attempt: reuse S without spending an attempt'),
     },
     {
       name: 'doc-audit-gap=auto (Track 94A): widen opt-in boundary to no-policy runs',
       lock: checkDocAuditGapAutoLock,
       mutate: (t) => t.replace('It stays opt-in\n  behind this value rather than becoming the default for runs with no policy\n  line, light-default runs, or `post-audit=classify`-only runs.', 'It is now the default for runs with no policy line.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: spend the extra attempt without first verifying recovery safety',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('Blocked recovery\'s safety checks have passed. A non-waivable failure or\n     unverifiable safety check stops before this allowance is considered.', 'The upstream attempts are exhausted.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: send a refused extra attempt directly to the owner stop',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('including a refusal or\n   interruption, use the same safety-gated fallback above.', 'including a refusal or interruption, take the owner stop.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: keep a qualifying merge row after the PR diff changes',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace('recheck a qualifying merge against the current\nPR diff before relying on its earlier classification.', 'keep every earlier merge classification.'),
     },
     {
       name: 'capability grep -F lines: drop blocking=shown capability line',
