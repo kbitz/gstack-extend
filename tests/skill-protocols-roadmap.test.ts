@@ -428,3 +428,110 @@ describe('roadmap stage line', () => {
     }
   });
 });
+
+describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
+  const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+
+  const FIXED_TMP_IN_FENCE_RE = /(?:^|[\s"'=><;|&(])\/tmp\//;
+  const INLINE_TMP_WRITE_RE =
+    /(?:(?:\d|&)?>>?\|?\s*["']?\/tmp\/|\btee\b(?:\s+-[^\s]+)*\s+["']?\/tmp\/|--(?:from|map-file)(?:=|\s+)["']?\/tmp\/)/;
+
+  function findFixedTmpWrites(markdown: string): string[] {
+    const hits: string[] = [];
+    for (const fence of extractFences(markdown)) {
+      for (const rawLine of fence.body.split('\n')) {
+        const stripped = rawLine.replace(/\$\{TMPDIR:-\/tmp\}/g, '');
+        if (FIXED_TMP_IN_FENCE_RE.test(stripped)) {
+          hits.push(`fence(${fence.lang}): ${rawLine.trim()}`);
+        }
+      }
+    }
+    const withoutFences = markdown.replace(/^([ \t]*)```[^\n]*\n[\s\S]*?^\1```/gm, '');
+    const inlineCodeRe = /`([^`\n]+)`/g;
+    let m: RegExpExecArray | null;
+    while ((m = inlineCodeRe.exec(withoutFences))) {
+      const span = m[1]!.replace(/\$\{TMPDIR:-\/tmp\}/g, '');
+      if (INLINE_TMP_WRITE_RE.test(span)) {
+        hits.push(`inline: ${m[1]!}`);
+      }
+    }
+    return hits;
+  }
+
+  // Value: protects=skills/roadmap.md does not direct writes, redirects, or fixed /tmp/ file paths in shell fences or inline code; fails_when=any fixed /tmp/ redirect, tee target, or --from/--map-file /tmp/ path is reintroduced into skills/roadmap.md; why_new=Track 94B criteria 1 and 3; seam=none; no_claim=agent behavior (static prose lock)
+  test('roadmap has no fixed /tmp/ paths or redirects and detector catches synthetic regressions', () => {
+    expect(roadmap).not.toContain('/tmp/roadmap-audit.txt');
+    expect(roadmap).not.toContain('/tmp/draft-tracks.md');
+    expect(roadmap).not.toContain('/tmp/renames.txt');
+    expect(findFixedTmpWrites(roadmap)).toEqual([]);
+
+    for (const bad of [
+      '```bash\n"$_EXTEND_ROOT/bin/roadmap-audit" "$ROOT" > /tmp/roadmap-audit.txt\n```',
+      '```bash\ncmd 2>>/tmp/err.txt\n```',
+      '```sh\ncmd > "/tmp/out.txt"\n```',
+      '```bash\ncmd | tee -a /tmp/out.txt\n```',
+      '```bash\n"$_EXTEND_ROOT/bin/roadmap-pack" "$ROOT" --from /tmp/draft-tracks.md\n```',
+      '```bash\n# or: --map-file /tmp/renames.txt\n```',
+      'Run `roadmap-audit "$ROOT" > /tmp/audit.txt` first.',
+    ]) {
+      expect(findFixedTmpWrites(bad).length, bad).toBeGreaterThan(0);
+    }
+
+    for (const ok of [
+      'Use `<PROPOSAL_DIR>` or `~/scratch/`, never a fixed `/tmp/` path.',
+      '```bash\ntmp=$(mktemp -d "${TMPDIR:-/tmp}/foo.XXXXXX")\n```',
+    ]) {
+      expect(findFixedTmpWrites(ok), ok).toEqual([]);
+    }
+  });
+
+  // Value: protects=Step 1b prints its first audit to stdout and documents <PROPOSAL_DIR> with ~/scratch/ fallback and no host-private directory, while audit, packer, and renumber keep their arguments; fails_when=Step 1b re-adds a redirect or drops scratch-dir guidance, or audit/pack/renumber invocations lose their root or CLI flags; why_new=Track 94B criteria 2 and 4; seam=none; no_claim=agent behavior (static prose lock)
+  test('Step 1b, Collision-driven grouping, and Renumbering preserve invocations and scratch-path guidance', () => {
+    const step1b = roadmap.slice(
+      roadmap.indexOf('### 1b. Read the roadmap, inbox, and audit'),
+      roadmap.indexOf('## Step 2: Regenerate'),
+    );
+    expect(step1b.length).toBeGreaterThan(0);
+    const step1bFence = extractFences(step1b)[0];
+    expect(step1bFence?.lang).toBe('bash');
+    expect(step1bFence?.body).toContain(
+      '"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"',
+    );
+    expect(step1bFence?.body).not.toContain('>');
+    const step1bFlat = step1b.replace(/\s+/g, ' ');
+    expect(step1bFlat).toContain('<PROPOSAL_DIR>');
+    expect(step1bFlat).toContain('~/scratch/');
+    expect(step1bFlat).toContain('host-private directory');
+
+    const grouping = roadmap.slice(
+      roadmap.indexOf('### Collision-driven grouping'),
+      roadmap.indexOf('### Renumbering'),
+    );
+    expect(grouping.length).toBeGreaterThan(0);
+    const groupingFence = extractFences(grouping)[0];
+    expect(groupingFence?.lang).toBe('bash');
+    expect(groupingFence?.body).toContain(
+      '"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from \'<PROPOSAL_DIR>/<run>/draft-tracks.md\'',
+    );
+    expect(grouping.replace(/\s+/g, ' ')).toContain(
+      '"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin',
+    );
+
+    const renumbering = roadmap.slice(
+      roadmap.indexOf('### Renumbering'),
+      roadmap.indexOf('### Greenfield'),
+    );
+    expect(renumbering.length).toBeGreaterThan(0);
+    const renumberingFence = extractFences(renumbering)[0];
+    expect(renumberingFence?.lang).toBe('bash');
+    expect(renumberingFence?.body).toContain(
+      '"$_EXTEND_ROOT/bin/roadmap-renumber" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --map old=new,old=new --dry-run',
+    );
+    expect(renumberingFence?.body).toContain("# or: --map-file '<PROPOSAL_DIR>/<run>/renames.txt'");
+
+    const proposal = roadmap.slice(roadmap.indexOf('### Structured proposal artifact'));
+    expect(proposal).toContain('create a directory for this run under `~/scratch/`');
+    expect(proposal).toContain('create a unique subdirectory of `<PROPOSAL_DIR>` for this run');
+    expect(proposal).toContain('substitute the resolved absolute file path for the full placeholder path');
+  });
+});

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.110.1] - 2026-11-22
+
+### Fixed
+
+- `/roadmap` now prints its initial audit to stdout and places scratch files in the per-project proposal directory or `~/scratch/` instead of fixed `/tmp/` paths, so it runs without stalling when `/tmp` is read-only.
+- `/roadmap` prints its first audit to stdout and uses per-run scratch paths for draft tracks and rename maps.
+
 ## [0.110.0] - 2026-11-22
 
 ### Changed
