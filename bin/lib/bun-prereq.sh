@@ -6,7 +6,7 @@
 # - Never mutates IFS; splits via parameter expansion.
 # - Every probe command runs in condition context so caller set -e / set -u /
 #   ERR traps never fire before classification.
-# - On the ok path, runs only shell builtins plus "$BUN_PREREQ_RAW_PATH" --version.
+# - Runs only shell builtins and the selected Bun: --version, plus --help at the floor.
 # - Probe-derived strings printed in messages are sanitized to a single line
 #   of [0-9A-Za-z.+/_-] truncated at 64 characters.
 
@@ -84,6 +84,21 @@ _bun_prereq_refuse() {
   BUN_PREREQ_REMEDY=$5
   BUN_PREREQ_FIX="$BUN_PREREQ_REMEDY, then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements"
   BUN_PREREQ_MSG="$BUN_PREREQ_TOKEN $BUN_PREREQ_WHAT"
+}
+
+_bun_prereq_floor_has_flag() {
+  if ! { BUN_PREREQ_HELP=$(NO_COLOR=1 FORCE_COLOR=0 "$BUN_PREREQ_RAW_PATH" --help); } 2>/dev/null; then
+    return 1
+  fi
+  while IFS= read -r BUN_PREREQ_HELP_LINE; do
+    BUN_PREREQ_HELP_LINE=${BUN_PREREQ_HELP_LINE#"${BUN_PREREQ_HELP_LINE%%[![:blank:]]*}"}
+    case "$BUN_PREREQ_HELP_LINE" in
+      --no-env-file|--no-env-file[[:blank:]]*) return 0 ;;
+    esac
+  done <<EOF
+$BUN_PREREQ_HELP
+EOF
+  return 1
 }
 
 # bun_prereq_probe [resolved_bun_path]
@@ -172,15 +187,21 @@ bun_prereq_probe() {
       elif [ "$BUN_PREREQ_F4" -gt "$BUN_PREREQ_P4" ]; then BUN_PREREQ_CMP=1
       fi
       BUN_PREREQ_FOUND=$BUN_PREREQ_CORE
-      if [ "$BUN_PREREQ_CMP" -ge 0 ]; then
+      # Early canaries reported the stable floor before this flag landed.
+      if [ "$BUN_PREREQ_CMP" -gt 0 ] ||
+         { [ "$BUN_PREREQ_CMP" -eq 0 ] && _bun_prereq_floor_has_flag; }; then
         BUN_PREREQ_CLASS='ok'
         BUN_PREREQ_PATH=$BUN_PREREQ_RAW_PATH
         return 0
       fi
       _bun_prereq_sanitize "$BUN_PREREQ_RAW_PATH"
       BUN_PREREQ_PATH=${BUN_PREREQ_SAN:-bun}
+      BUN_PREREQ_DETAIL="found $BUN_PREREQ_FOUND at $BUN_PREREQ_PATH"
+      if [ "$BUN_PREREQ_CMP" -eq 0 ]; then
+        BUN_PREREQ_DETAIL="$BUN_PREREQ_DETAIL, but its help did not confirm --no-env-file"
+      fi
       _bun_prereq_refuse too_old PREREQ_BUN_TOO_OLD bun_too_old \
-        "Bun >= $BUN_PREREQ_MIN is required (found $BUN_PREREQ_FOUND at $BUN_PREREQ_PATH)" \
+        "Bun >= $BUN_PREREQ_MIN is required ($BUN_PREREQ_DETAIL)" \
         "upgrade Bun to >= $BUN_PREREQ_MIN (bun upgrade, or upgrade via your package manager)"
       return 1
     fi

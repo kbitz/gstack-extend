@@ -26,6 +26,10 @@
 | `merge-gate` | `ERROR <code>:` / `FIX:` on stderr, or canonical JSON object on stdout when `--json` / `--jsonl` is passed | 1 | `bun_missing`, `bun_too_old`, `bun_version_unknown`, `internal_error` |
 | `review-state` | Canonical `internal-error` JSON envelope on stdout plus `ERROR INTERNAL_ERROR:` / `FIX:` on stderr | 5 | `runtime-missing`, `runtime-too-old`, `runtime-version-unknown` |
 
+A build reporting exactly Bun 1.3.3 must list `--no-env-file` in its help.
+Early canaries reported that version before the flag existed. If the check
+fails, the launcher reports `PREREQ_BUN_TOO_OLD` with the missing capability.
+
 If setup refuses Bun during an update, fix Bun and resume the
 [update procedure](#update-checks) so the updater can finish migrations.
 
