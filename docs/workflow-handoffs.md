@@ -1154,8 +1154,7 @@ classification rule at three entry points:
    resume without saved reconciliation, require independent proof that the
    checkout still reflects the state at the child's stop, even if interruption
    preceded reconciliation. Require that proof before comparing. Check the
-   current clean tree, redaction, security and `docs-caps`, and assess any
-   reported documentation discrepancy before reuse. An unconfirmed writer,
+   current clean tree, redaction, security and `docs-caps`. An unconfirmed writer,
    ownership violation, unauthorized
    Git mutation, redaction or security gate failure, `docs-caps` failure,
    unverifiable safety check or partial edits (`dirty-tree`) stops recovery
@@ -1176,8 +1175,9 @@ which must pass caps before acceptance. Unverifiable policy evidence or a
 cap violation during failed re-audit recovery or exhaustion stops dispatch.
 Every interrupted audit, including the extra attempt, verifies its Prepare
 snapshot binding and the stopped-state evidence under the same resume rule
-before Parent processing can accept it. An unresolved documentation discrepancy
-declines reuse for the whole walk, including an empty walk.
+before Parent processing can accept it. Blocked or failed re-audit fallback
+uses the [stop for recorded discrepancies](../skills/review-and-prep.md#classify-changes-after-the-documentation-audits-last-attempt)
+for the whole invocation.
 
 `S` means the commit whose content the accepted audit verified. Either accepted
 status can cover authorized pending content, such as reviewed coverage tests or

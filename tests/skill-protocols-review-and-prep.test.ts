@@ -799,7 +799,8 @@ function checkDocAuditGapAutoLock(text: string): string[] {
     'copy its exact bytes from that commit to private evidence, and run upstream\'s `gstack-ship-receipt docs-caps --policy <file>`.',
     'A pre-attempt visit can still take the ordinary upstream re-audit, which must pass the cap gate before acceptance. In failed re-audit recovery or after exhaustion, a cap violation stops before dispatch.',
     'Apply existing redaction and security checks to the current inputs and available child artifacts before retaining or citing their content.',
-    'A confirmed or unresolved discrepancy declines reuse for the whole walk, including an empty walk.',
+    'Before handling each re-audit result, retain its recorded confirmed or open documentation discrepancies with the attempt ID in this invocation\'s parent-held evidence.',
+    'If any re-audit in this invocation has recorded a confirmed or open documentation discrepancy, record `classify-not-applied` with that evidence and take blocked recovery\'s existing stop before fallback can reuse an earlier audit or dispatch another attempt.',
     'Stop under blocked recovery if any check fails or cannot be verified, including an unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, or `docs-caps` failure.',
     'In fallback a dirty tree stops recovery before any retry, staging or commit. Preserve partial child edits.',
     'A blocked or failed re-audit disclosed alongside a reused audit keeps its actual result in the full documentation detail and evidence while that audit is carried.',
@@ -2968,6 +2969,11 @@ describe('kept contract locks fail on mutation', () => {
       name: 'doc-audit-gap=auto: accept an interrupted extra audit without stopped-state proof',
       lock: checkDocAuditGapAutoLock,
       mutate: (t) => t.replace('Apply the stopped-state evidence rule\n   above even when there is no saved reconciliation.', 'A resumed comparison against Prepare is sufficient.'),
+    },
+    {
+      name: 'doc-audit-gap=auto: forget a discrepancy from an earlier re-audit',
+      lock: checkDocAuditGapAutoLock,
+      mutate: (t) => t.replace(/If any re-audit in this invocation has recorded a\s+confirmed or open documentation discrepancy/, 'If the latest re-audit has recorded a confirmed discrepancy'),
     },
     {
       name: 'capability grep -F lines: drop blocking=shown capability line',

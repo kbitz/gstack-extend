@@ -3275,10 +3275,16 @@ base-policy cap check below before reuse or retry. Apply existing redaction and
 security checks to the current inputs and available child artifacts before retaining or citing
 their content. Missing child output can take fallback when independent evidence
 establishes the required safety checks. Unreadable required evidence fails
-closed. Verify any substantive documentation discrepancy the child reported.
-A confirmed or unresolved discrepancy declines reuse for the whole walk,
-including an empty walk. Stop under
-blocked recovery if any check fails or cannot be verified, including an
+closed.
+
+Before handling each re-audit result, retain its recorded confirmed or
+open documentation discrepancies with the attempt ID in this invocation's
+parent-held evidence. If any re-audit in this invocation has recorded a
+confirmed or open documentation discrepancy, record `classify-not-applied`
+with that evidence and take blocked recovery's existing stop before fallback
+can reuse an earlier audit or dispatch another attempt.
+
+Stop under blocked recovery if any check fails or cannot be verified, including an
 unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or
 security gate failure, or `docs-caps` failure. Record `classify-not-applied`
 with the reason and retain any non-waivable failure for that attempt in the
