@@ -1138,7 +1138,7 @@ shapes the prompt below, so the continuation starts in a fresh session.
    the base-only TODOS entries before this commit (**Block readiness only on
    shown findings**). Request no Greptile review and
    do not mark ready.
-Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. Preserve the local checkpoint or stopped receipt if posting fails. Step 1 reconciles either before another review. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.
+Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. If posting fails, keep `STOPPED — review cycle cap` in the draft body and the local receipt. Step 1 reconciles the hold first. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-cap --expect 76384b9e98e8e6bd` before saving a cycle-cap receipt when `/review` stops at its three-cycle cap.
 

@@ -183,7 +183,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '2. Without a policy that names `continuation`, ask the user: repair-only',
     endBeforeMarker: "On `/review-and-prep continue`, refresh Step 1's live state. A later pause or",
     readInstructionSuffix: "before saving a cycle-cap receipt when `/review` stops at its three-cycle cap",
-    coreGate: "Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. Preserve the local checkpoint or stopped receipt if posting fails. Step 1 reconciles either before another review. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.",
+    coreGate: "Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. If posting fails, keep `STOPPED — review cycle cap` in the draft body and the local receipt. Step 1 reconciles the hold first. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.",
     navigationEdits: [['`next-cycle` late write above.', "`next-cycle` late write in **Record cycle 1's full-review baseline**."]],
   },
   {

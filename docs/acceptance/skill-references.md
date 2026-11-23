@@ -159,7 +159,7 @@ reference set in this update.
 
 | Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|
-| `review-and-prep` | 366,223 | 168,479 | 184,320 | 225,197 (29) | 196,541 | 222,851 |
+| `review-and-prep` | 366,223 | 168,493 | 184,320 | 225,197 (29) | 196,555 | 222,865 |
 
 The by-hand budget counts unique bytes for a successful first cycle on Codex
 with metrics active, the selected Claude Code outside pass, no findings to
@@ -172,9 +172,9 @@ The orchestrated row adds policy values and the external-gate procedure.
 These are path budgets from the reader map. Per-run usage and the complete
 by-hand read sequence remain to be measured.
 
-The Codex rendering is 168,327 bytes, 93,817 bytes below the verified Muse
+The Codex rendering is 168,341 bytes, 93,803 bytes below the verified Muse
 limit. `bun scripts/skill-references.ts check --base 39c2b0c --skill review-and-prep`
-returned `ok=true blocks=42 dropped=0 base=366223B core=168479B`.
+returned `ok=true blocks=42 dropped=0 base=366223B core=168493B`.
 
 ### Navigation edits in moved text
 
@@ -206,7 +206,7 @@ isolated installation for root resolution and left the installed copies alone.
 |---|---|---|
 | Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers |
 | Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers |
-| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers. The validator accepted the 168,327-byte package with no diagnostics. |
+| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers on the preceding scratch copy. The validator accepted the final 168,341-byte package. |
 | Codex-format scratch file | Grok 1.0.92 alpha | 5/5 load markers from a paged file read. Workspace skill discovery was unavailable in this scratch configuration. |
 
 Claude Code, Codex and Muse fetched the commanded reference and saw its digest
@@ -242,6 +242,12 @@ the stopped marker in the dry-run disposition and emitted a blocked trailer
 without a continuation prompt.
 
 ## Open verification
+
+The last review reproduced an open regression in optional workflow metrics.
+The original core enters Step 2 when capture is active. The candidate takes
+the blocked exit if its metrics reference is absent at that step. The
+cycle-cap fallback now keeps the stopped status in the draft body if the
+stop comment cannot be posted.
 
 - `eval: not run (no spend authorized by docs/SPEC.md)`. The table records the
   subscription-backed scratch probes. Full-workflow parity and measured context

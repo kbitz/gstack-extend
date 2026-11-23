@@ -183,6 +183,7 @@ describe('pointer integrity and reference structure (Track 94I)', () => {
     expect(guard).toContain('save the cap hold at that HEAD using `checkpoint stop`');
     expect(guard).toContain('<!-- review-and-prep:stopped:<full-sha> -->');
     expect(guard).toContain('`Full-review evidence: unavailable` and no continuation prompt');
+    expect(guard).toContain('If posting fails, keep `STOPPED — review cycle cap` in the draft body');
     expect(core).toContain('Reconcile a recorded cap hold even when no stop comment was confirmed.');
   });
 

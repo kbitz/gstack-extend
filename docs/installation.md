@@ -180,7 +180,7 @@ foreign install pointers, and unrelated files are preserved.
 `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
 `~/.gemini/config/skills/` is one such directory. Muse Code 1.4.25 validated
-the 168,327-byte Codex rendering of `/review-and-prep` in a scratch install.
+the 168,341-byte Codex rendering of `/review-and-prep` in a scratch install.
 See the [pre-merge load checks](acceptance/skill-references.md#pre-merge-scratch-load-and-reference-checks).
 
 With a managed Claude install, link the directory `setup` already maintains, so
