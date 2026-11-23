@@ -506,6 +506,38 @@ describe('bin/lib/preamble.sh — --ref mode (Track 94I)', () => {
     expect(outOfRange.stderr).toContain('requested line range ends after line 5');
   });
 
+  test('reads a reference snapshot when the temporary directory is a relative path containing an equals sign', () => {
+    const { home, root } = setupRefFixture('relative-temp');
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    mkdirSync(join(home, 'tmp=reference'));
+    const body = 'alpha\nbeta\n';
+    writeFileSync(join(refDir, 'conditional-sample.md'), body);
+    const digest = refDigest(body);
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-sample', '--expect', digest],
+      { cwd: home, env: { ...scopedEnv(home), TMPDIR: 'tmp=reference' }, encoding: 'utf8', timeout: 3000 },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(`1: alpha\n2: beta\nREFERENCE_END review-and-prep/conditional-sample lines=2 digest=${digest}\n`);
+  });
+
+  test('a dangling reference symlink uses unreadable recovery', () => {
+    const { home, root } = setupRefFixture('dangling-reference');
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    symlinkSync('unavailable.md', join(refDir, 'conditional-sample.md'));
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-sample', '--expect', '0123456789abcdef'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('cause: unreadable');
+    expect(r.stdout).toContain('readable regular reference file');
+  });
+
   test('absent reference on normal checkout prints SKILL_REFERENCE_MISSING with update-run fix and exits 1', () => {
     const { home, root } = setupRefFixture('absent', { version: '0.113.0' });
     const r = spawnSync(

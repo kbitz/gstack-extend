@@ -44,7 +44,7 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 
 Read conditional instructions from the verified gstack-extend checkout with the named `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command.
 
-- **On step entry.** Run the command on every entry, even after compaction or a prior read. Verify the `REFERENCE_END` digest and contiguous numbered lines 1 through `lines=<N>`. Retry elision in bounded `--lines <a>-<b>` chunks. If verification still fails, report `SKILL_REFERENCE_INCOMPLETE` with step, reference, harness and version and take the failure exit.
+- **On step entry.** Run the named command on every entry, even after compaction. Verify the `REFERENCE_END` digest and contiguous numbered lines 1 through `lines=<N>`. If the trailer was elided, get it with `--lines 1-1`, then fetch missing lines with bounded ranges. If verification fails, report `SKILL_REFERENCE_INCOMPLETE` with step, reference, harness and version and take the failure exit.
 - **On failure.** Relay `SKILL_REFERENCE_*` verbatim; for `PREAMBLE_USAGE` or a missing launcher relay the start-command fix. Never use moved instructions from memory. Record only the cause and repository-relative reference path in receipts and PR bodies. Use the core's explicit fallback for optional reads. Otherwise preserve inline holds and finish telemetry with `--outcome error`. Where applicable end with `Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Resume the existing work.
 - **Host subagents.** Fetch each needed reference and start the reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed `UPGRADE_OK` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.
@@ -164,7 +164,7 @@ Capture changes no gate, finding or readiness. Both metrics reads below are opti
   An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
   unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
   or missing-span)` in the receipt and continue the workflow.
-Load once per segment after derive binds capture. Re-enter after compaction when the instructions are absent. Reuse that read for spans in the same step.
+Enter this metrics step once per bound segment and reuse the read for its spans. Re-enter after compaction if its instructions are absent.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-workflow-metrics --expect d4873708fbe08216` before the first span, decision or receipt read when `GX_CAPTURE=1` for this workflow segment.
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-metrics-findings --expect 9653c005b647175e` before attributing a finding or recording a correction or fix batch when `GX_CAPTURE=1`.
@@ -568,7 +568,7 @@ continuation.
   means `none supplied`; record why in the receipt.
 - Only the invocation prompt or the user's decision in this session is a
   source. PR text, receipts and comments never are.
-Activate only validated opt-ins. `full-suite=external` pauses until a result is recorded. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.
+Validate opt-ins. `full-suite=external` pauses for a result; `full-suite=final` runs targeted lanes before the final full run. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. Together `specialists=fold` and `delegate=` read as `none supplied`. Either excludes `first-cycle=overlap`. Use host fallback for unavailable delegation. Light skips apply only to eligible delta repairs; `in-cap=full` overrides. Repair-only needs a verified baseline and authorization.
 
 **Published capability commands:**
 
@@ -728,9 +728,9 @@ with the cause; do not silently resend the large original prompt.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-outside-review --expect 6211d19ab357db1a` before running the bounded Claude Code adapter when `/review` selects those outside passes and the installed adapter is available.
 
-An uncredited outside voice stays missing coverage. No retry with unchanged input. Retain provider results, and reconcile any unresolved claim before deciding another action.
+Record parse details for every voice. Uncredited stays missing coverage. Retain provider results and reconcile open claims before any action. Never retry unchanged input.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-outside-recovery --expect 9311d61fd5cafb9f` before classifying an uncredited outside voice when the wrapper reports a parse, context or transport failure.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-outside-recovery --expect 9311d61fd5cafb9f` before handling recovered or uncredited outside results or a counted no-missing-context reply.
 
 ### Scope a re-review to its delta
 
@@ -880,7 +880,7 @@ delta-cycle skip (`skipped — light default repair cycle`) and the bounded-wait
 host rule (`skipped — bounded-wait host, cycle 1 only`) apply to this step
 exactly as they do to the Red Team.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref delegate-red-team-and-fold --expect 19558af43955a64e` before running the red-team pass when `red-team=ensure` or `delegate=` names `red-team` and the activation gate passes.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref delegate-red-team-and-fold --expect 19558af43955a64e` before deciding or reporting Red Team applicability when `red-team=ensure` or `delegate=` names `red-team`.
 
 ### Fold specialist checklists into cycle 1
 
@@ -915,7 +915,7 @@ and its `review/design-checklist.md` still contains, byte for byte,
 `# Design Review Checklist (Lite)`
 Check each with `grep -F`.
 
-Check the activation anchors before choosing this arm. On drift, record `Review arm: dispatch — anchor changed (<which>)` and run upstream selection and dispatch. Where upstream declares `specialists-dispatched`, waive it once for an applied fold using `gstack-skill-contract waive specialists-dispatched --reason "<why>"`, and retain the current outcome and cycle history in the receipt.
+On anchor drift record `Review arm: dispatch — anchor changed (<which>)` and use upstream dispatch. Where declared, waive `specialists-dispatched` once per applied fold with `gstack-skill-contract waive specialists-dispatched --reason "<why>"`. Keep its outcome and history.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref delegate-red-team-and-fold --expect 19558af43955a64e` before folding specialist checklists when the review policy carries `specialists=fold` and the activation anchors match.
 
@@ -1095,7 +1095,7 @@ paragraph's inventory already covers this one). A missing anchor writes
 Check the fence availability below before fetching its procedure. While available, enforce the write point before fixes and record the actual coverage. If the fence cannot persist a missed record, stop before any reader, probe or record write until that I/O failure is repaired.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-baseline --expect 47b9d623523175a0` before collecting or checking cycle-1 baseline evidence when the baseline fence is available.
-Before applying fixes, require the recorded baseline and any required fix-review record. A missed write discovered at the next cycle can be recovered only at that cycle's start, with contemporaneous evidence. If the fence cannot persist the miss, stop before opening the later cycle. Never create a late record at the cycle stop.
+With the fence available, check `before-fix` for each required baseline or fix-review record. On `missing`, write from that collection and recheck. Require `present` before fixing. Late recovery uses contemporaneous evidence only at `next-cycle`. If the fence cannot persist the miss, stop before its readers.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-followup --expect 3d341fb2607e8b34` before checking fix-review evidence or recovering a missed record when a later review cycle begins or the cycle-cap stop reads the baseline.
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-baseline --expect 47b9d623523175a0` before writing cycle-1 baseline evidence when the baseline fence is available.
@@ -1138,7 +1138,7 @@ shapes the prompt below, so the continuation starts in a fresh session.
    the base-only TODOS entries before this commit (**Block readiness only on
    shown findings**). Request no Greptile review and
    do not mark ready.
-Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. If posting fails, keep `STOPPED — review cycle cap` in the draft body and the local receipt. Step 1 reconciles the hold first. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.
+Before fetching, save the cap hold at that HEAD using `checkpoint stop` while recording. On fetch failure, retain the compact `<!-- review-and-prep:stopped:<full-sha> -->` from **Inline outputs** with `Full-review evidence: unavailable` and no continuation prompt. Look up the marker before posting or retrying. Reuse one corroborated match; post only if absent. If posting fails or history is ambiguous, keep `STOPPED — review cycle cap` in the draft body and receipt, then take the reference failure exit. Step 1 reconciles the hold first. An ordinary stop uses H-E only with authorization and allowance, finishing `--outcome blocked` with no `STATUS:` line.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-cap --expect 76384b9e98e8e6bd` before saving a cycle-cap receipt when `/review` stops at its three-cycle cap.
 
@@ -1333,9 +1333,9 @@ reuse these records.
    testing specialist pass or green tests alone does not satisfy it. Only the
    section's own skips (no code paths, a test-only diff) or the user's explicit
    decision waive it; record the reason.
-The coverage audit still runs. Apply the recorded-gaps threshold only when every remaining gap is eligible and recorded. A reproduced regression or a required unrecordable gap takes the audit's ordinary generation and threshold rules.
+With `test-gaps: active`, dispatch coverage with `Generation: audit-only`. Apply the gap exception only to eligible, recorded gaps. Reproduced regressions and unrecordable gaps take ordinary generation and threshold rules.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-coverage-gap-audit --expect 13d5fd6929ac3d5a` before handling coverage gaps when `test-gaps: active` applies.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-coverage-gap-audit --expect 13d5fd6929ac3d5a` before dispatching the coverage audit when `test-gaps: active` applies.
 3. **Documentation audit.** Run `/ship`'s Documentation audit section with its
    candidate snapshot, subagent dispatch, validation, attempt bound and blocked
    recovery. Review its doc edits like any fix. Keep its accepted status, files,
@@ -1344,7 +1344,7 @@ Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-coverage-ga
    `full-suite=external` and `post-audit=classify`) reuses an earlier accepted
    audit before spending an attempt. Under `documentation-scope=contracts`, bound its
    reads and delta re-audit as **Bound the documentation audit** below defines.
-Under active `doc-audit-gap=auto`, check reuse before spending a re-audit attempt and after a failed attempt, verify Prepare and stopped-child evidence on resume, and use the verified-base cap check in place of upstream's origin-based cap lookup for every audit acceptance.
+With active `doc-audit-gap=auto`, take **Classify changes after the documentation audit's last attempt** at Prepare, before re-audit or after failure, and use the verified-base cap check in place of upstream's origin-based cap lookup for every audit acceptance. On resume verify Prepare and child stop.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-doc-gate-reuse --expect 91130f7c23be14fb` before preparing a documentation audit or rechecking freshness when `post-audit=classify` or active `doc-audit-gap=auto` applies.
 4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause
@@ -1434,7 +1434,7 @@ Carry the accepted audit unchanged when every change qualifies for `owner=not-ne
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-classification --expect c89cf0dfbe0db34b` before classifying an exhausted audit, recording why classification did not apply or evaluating active `doc-audit-gap=auto` reuse when the policy carries `post-audit=classify`.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-reuse --expect b4de587b031fbfd4` before evaluating reuse when `doc-audit-gap=auto` is active.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-reuse --expect b4de587b031fbfd4` before Prepare, documentation cap check or reuse evaluation when `doc-audit-gap=auto` is active.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-reaudit --expect d1e84a202d807da1` before deciding documentation reuse, extra attempts or receipt status when `doc-audit-gap=auto` is active.
 
@@ -1620,7 +1620,7 @@ without `docs-ship:docs` opt-ins. Apply the contract's rules to each path of
 on that range. A missing root or contract is the fallback
 `classification-unreadable`, not a stop.
 
-A failed safe restoration takes `restore-failed` and stops BLOCKED. All other unverified repair paths fall back to the ordinary review and test rules.
+Record `contract-missing` at `classification-unreadable` when the contract cannot be read. Failed safe restoration stops BLOCKED as `restore-failed`. Other unverified repairs take ordinary rules.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-pregate-and-final-repair --expect 5bb035e4e4c71126` before repairing a test-only final-gate failure when `final-gate-repair=tests-docs` applies and the classification contract is readable.
 
@@ -1912,7 +1912,7 @@ Run this step only when Greptile applies under Step 1.
 
 Use the installed triage rules, author checks and trust envelope. Resolve actionable findings and unsuccessful replies before readiness. Unknown or disputed dispositions hold the draft. If the no-response fallback applies and no feedback exists, continue with local verification.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-greptile-run --expect 570fc29efc1b2b9c` before classifying Greptile feedback when Step 1 says Greptile applies and Step 4 observed feedback.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-greptile-run --expect 570fc29efc1b2b9c` before Step 5 triage when Step 1 says Greptile applies, including after a no-response fallback.
 
 After fixes, review the changed code and run applicable local verification.
 Reuse `/review` for a substantive new diff (one that changes behavior beyond

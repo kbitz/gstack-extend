@@ -180,7 +180,7 @@ foreign install pointers, and unrelated files are preserved.
 `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
 `~/.gemini/config/skills/` is one such directory. Muse Code 1.4.25 validated
-the 168,341-byte Codex rendering of `/review-and-prep` in a scratch install.
+the Codex rendering of `/review-and-prep` in a scratch install.
 See the [pre-merge load checks](acceptance/skill-references.md#pre-merge-scratch-load-and-reference-checks).
 
 With a managed Claude install, link the directory `setup` already maintains, so
@@ -737,7 +737,8 @@ Slimmed skills fetch conditional instructions from `skills/references/<skill>/<f
 | `PREAMBLE_USAGE` (exit 2) on `--ref` | The shared `~/.gstack-extend/bin/preamble` predates `--ref` support | Run `./setup --host auto` from your updated gstack-extend checkout |
 | `SKILL_REFERENCE_INCOMPLETE` | The skill still could not verify the full reference after retrying in chunks | Report the step, reference, harness and version before resuming |
 
-If output omits lines, retry with one-based inclusive `--lines <a>-<b>` ranges.
+If output omits the trailer, fetch `--lines 1-1` first to recover the line count.
+Retry missing lines within that count using one-based inclusive `--lines <a>-<b>` ranges.
 Each read verifies the whole file and ends with `REFERENCE_END`, which reports
 the full line count and digest. After updating a checkout manually, rerun
 `./setup --host auto` from that checkout to refresh the managed skill copies

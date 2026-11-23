@@ -196,7 +196,8 @@ describe('pointer integrity and reference structure (Track 94I)', () => {
     expect(guard).toContain('save the cap hold at that HEAD using `checkpoint stop`');
     expect(guard).toContain('<!-- review-and-prep:stopped:<full-sha> -->');
     expect(guard).toContain('`Full-review evidence: unavailable` and no continuation prompt');
-    expect(guard).toContain('If posting fails, keep `STOPPED — review cycle cap` in the draft body');
+    expect(guard).toContain('Look up the marker before posting or retrying. Reuse one corroborated match; post only if absent.');
+    expect(guard).toContain('If posting fails or history is ambiguous, keep `STOPPED — review cycle cap` in the draft body');
     expect(core).toContain('Reconcile a recorded cap hold even when no stop comment was confirmed.');
   });
 
@@ -478,6 +479,13 @@ describe('scripts/skill-references.ts conservation fixtures (Track 94I)', () => 
     const res = checkConservation('sample', sampleBase, applied.core, applied.references, sampleManifest);
     expect(res.ok, res.errors.join('\n')).toBe(true);
     expect(res.droppedLines).toEqual([]);
+  });
+
+  test('conservation validates blocks in source order when the manifest is out of order', () => {
+    const manifest = [...sampleManifest].reverse();
+    const applied = applyManifestToSkill('sample', sampleBase, manifest);
+    const res = checkConservation('sample', sampleBase, applied.core, applied.references, manifest);
+    expect(res.ok, res.errors.join('\n')).toBe(true);
   });
 
   test('a dropped line fails conservation check', () => {

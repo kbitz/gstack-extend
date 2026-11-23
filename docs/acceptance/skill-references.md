@@ -159,7 +159,7 @@ reference set in this update.
 
 | Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|
-| `review-and-prep` | 366,223 | 168,510 | 184,320 | 225,197 (29) | 196,572 | 222,882 |
+| `review-and-prep` | 366,223 | 168,484 | 184,320 | 225,197 (29) | 196,546 | 222,856 |
 
 The by-hand budget counts unique bytes for a successful first cycle on Codex
 with metrics active, the selected Claude Code outside pass, no findings to
@@ -172,9 +172,9 @@ The orchestrated row adds policy values and the external-gate procedure.
 These are path budgets from the reader map. Per-run usage and the complete
 by-hand read sequence remain to be measured.
 
-The Codex rendering is 168,358 bytes, 93,786 bytes below the verified Muse
+The Codex rendering is 168,332 bytes, 93,812 bytes below the verified Muse
 limit. `bun scripts/skill-references.ts check --base 39c2b0c --skill review-and-prep`
-returned `ok=true blocks=42 dropped=0 base=366223B core=168510B`.
+returned `ok=true blocks=42 dropped=0 base=366223B core=168484B`.
 
 ### Navigation edits in moved text
 
@@ -206,7 +206,7 @@ isolated installation for root resolution and left the installed copies alone.
 |---|---|---|
 | Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers |
 | Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers |
-| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers on the preceding scratch copy. The validator accepted the 168,358-byte package. |
+| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers on the preceding scratch copy. The validator accepted the 168,332-byte package. |
 | Codex-format scratch file | Grok 1.0.92 alpha | 5/5 load markers from a paged file read. Workspace skill discovery was unavailable in this scratch configuration. |
 
 Claude Code, Codex and Muse fetched the commanded reference and saw its digest
@@ -250,6 +250,19 @@ proceeded to Step 2. The repaired core relayed `SKILL_REFERENCE_MISSING`
 and recorded `capture=partial (reference-unavailable)`. The P8 missing-file
 and persistent line-elision replays still blocked on the required reference.
 
+### Review-order repairs
+
+Claude Code compared the base, the first continuation candidate and the repaired
+core at three additional dry-run boundaries. The repaired core captured and
+hashed documentation roots and the initial snapshot before dispatch, used the
+verified base policy for documentation caps, retried an ordinary missing
+cycle-one baseline from the same collection before fixes, and sent
+`Generation: audit-only` on the initial recorded-gap coverage pass. The
+first continuation candidate found the documentation and coverage instructions
+by following later sections. Its baseline replay treated an ordinary missing
+record as an I/O failure. The repaired core directs each action at its entry
+point.
+
 ## Open verification
 
 - `eval: not run (no spend authorized by docs/SPEC.md)`. The table records the
@@ -257,6 +270,7 @@ and persistent line-elision replays still blocked on the required reference.
   savings require recorded runs.
 - After merge, run the installed-copy load checks and observe the first real
   by-hand run on each available harness, using the plan's acceptance rows.
+  Grok native discovery and a full measured by-hand read sequence remain open.
 - Tracks 96A and 97A must widen their `_touches` to the relevant
   `skills/references/review-and-prep/*.md` files when changing moved sections.
 - Track 94I PR B starts from a fresh base after PR A merges. Its scope is

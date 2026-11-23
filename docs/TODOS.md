@@ -360,7 +360,7 @@
 - **Hypothesis (untested):** Compare the fetched reference set from a complete successful by-hand run with the representative budget after rollout.
 - **Upstream severity:** INFORMATIONAL
 - **Found in:** `skills/review-and-prep.md`.
-- **Evidence:** The early default gate passed and the static path budget is 196,467 bytes. The audit reproduced no failure.
+- **Evidence:** The early default gate passed. The acceptance record tracks the current static byte count. The audit reproduced no failure.
 - **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
 - **Effort:** ? (user triages in `/roadmap`)
 
@@ -374,6 +374,24 @@
 - **Evidence:** The applicable guard and published shapes were inspected. The item repository has no root Greptile configuration. The audit reproduced no failure.
 - **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
 - **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Verify reference renames in the migration command
+
+- **Description:** A renamed reference can leave its old file after `apply`. The conservation check rejects the orphan. Exercise the rename path when PR B introduces another migration and give the maintainer an explicit remove-or-retain diagnostic.
+- **Evidence:** The writer updates the named files, and the checker compares the complete reference set.
+- **Context:** Track 94I PR A full continuation.
+
+### [review:files=skills/review-and-prep.md|scripts/skill-references.ts|tests/skill-protocols-review-and-prep.test.ts] Verify rendered reference boundaries and whole-skill content locks
+
+- **Description:** Check that the generated table and numbered list boundaries render as intended. Apply whole-skill content restrictions, including the Track ID scan, to each moved reference.
+- **Evidence:** The move check preserves the raw instructions. The layout and Track ID checks still focus on the core, so these cases lack a separate fixture.
+- **Context:** Track 94I PR A full continuation. Revisit with the next skill split.
+
+### [review:files=docs/acceptance/skill-references.md|skills/review-and-prep.md] Exercise Grok native skill discovery
+
+- **Description:** Repeat the five-marker probe through native discovery if the installed Grok build supports it. The pre-merge fixture verified a paged scratch-file read.
+- **Evidence:** Grok 1.0.92 alpha returned all five file markers. The scratch configuration did not discover the skill by name.
+- **Context:** Track 94I PR A full continuation. Revisit at the planned installed-copy check.
 
 ## Completed
 

@@ -32,7 +32,7 @@ export const CORE_REFERENCE_RULE = `### Reference files and mid-run upgrades
 
 Read conditional instructions from the verified gstack-extend checkout with the named \`~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>\` command.
 
-- **On step entry.** Run the command on every entry, even after compaction or a prior read. Verify the \`REFERENCE_END\` digest and contiguous numbered lines 1 through \`lines=<N>\`. Retry elision in bounded \`--lines <a>-<b>\` chunks. If verification still fails, report \`SKILL_REFERENCE_INCOMPLETE\` with step, reference, harness and version and take the failure exit.
+- **On step entry.** Run the named command on every entry, even after compaction. Verify the \`REFERENCE_END\` digest and contiguous numbered lines 1 through \`lines=<N>\`. If the trailer was elided, get it with \`--lines 1-1\`, then fetch missing lines with bounded ranges. If verification fails, report \`SKILL_REFERENCE_INCOMPLETE\` with step, reference, harness and version and take the failure exit.
 - **On failure.** Relay \`SKILL_REFERENCE_*\` verbatim; for \`PREAMBLE_USAGE\` or a missing launcher relay the start-command fix. Never use moved instructions from memory. Record only the cause and repository-relative reference path in receipts and PR bodies. Use the core's explicit fallback for optional reads. Otherwise preserve inline holds and finish telemetry with \`--outcome error\`. Where applicable end with \`Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>\`. Resume the existing work.
 - **Host subagents.** Fetch each needed reference and start the reply with \`REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>\`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed \`UPGRADE_OK\` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.`;
@@ -74,7 +74,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '- One governing `decision` per executed phase visit, recorded under the phase of',
     endBeforeMarker: '- A fix batch is a `kind:"fix"` step, counted separately from passes. Greptile is',
     readInstructionSuffix: "before the first span, decision or receipt read when `GX_CAPTURE=1` for this workflow segment",
-    coreGate: "Load once per segment after derive binds capture. Re-enter after compaction when the instructions are absent. Reuse that read for spans in the same step.",
+    coreGate: "Enter this metrics step once per bound segment and reuse the read for its spans. Re-enter after compaction if its instructions are absent.",
   },
   {
     skill: 'review-and-prep',
@@ -114,7 +114,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: '### Run a red team where /review has none',
     startMarker: "**Place and inputs.** Run the step at most once per cycle, after Step 4's core",
     endBeforeMarker: null,
-    readInstructionSuffix: 'before running the red-team pass when `red-team=ensure` or `delegate=` names `red-team` and the activation gate passes',
+    readInstructionSuffix: 'before deciding or reporting Red Team applicability when `red-team=ensure` or `delegate=` names `red-team`',
   },
   {
     skill: 'review-and-prep',
@@ -124,7 +124,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: 'This is a **wrapper override**, not an upstream fork: it changes who applies a',
     endBeforeMarker: null,
     readInstructionSuffix: 'before folding specialist checklists when the review policy carries `specialists=fold` and the activation anchors match',
-    coreGate: "Check the activation anchors before choosing this arm. On drift, record `Review arm: dispatch — anchor changed (<which>)` and run upstream selection and dispatch. Where upstream declares `specialists-dispatched`, waive it once for an applied fold using `gstack-skill-contract waive specialists-dispatched --reason \"<why>\"`, and retain the current outcome and cycle history in the receipt.",
+    coreGate: "On anchor drift record `Review arm: dispatch — anchor changed (<which>)` and use upstream dispatch. Where declared, waive `specialists-dispatched` once per applied fold with `gstack-skill-contract waive specialists-dispatched --reason \"<why>\"`. Keep its outcome and history.",
   },
   {
     skill: 'review-and-prep',
@@ -183,7 +183,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '2. Without a policy that names `continuation`, ask the user: repair-only',
     endBeforeMarker: "On `/review-and-prep continue`, refresh Step 1's live state. A later pause or",
     readInstructionSuffix: "before saving a cycle-cap receipt when `/review` stops at its three-cycle cap",
-    coreGate: "Before fetching the procedure, save the cap hold at that HEAD using `checkpoint stop` while run state is recorded. On fetch failure, retain the stop using the compact `<!-- review-and-prep:stopped:<full-sha> -->` form in **Inline outputs**, with `Full-review evidence: unavailable` and no continuation prompt. If posting fails, keep `STOPPED — review cycle cap` in the draft body and the local receipt. Step 1 reconciles the hold first. An ordinary stop uses H-E only with the authorized policy and allowance. Finish with `--outcome blocked` and no `STATUS:` line.",
+    coreGate: "Before fetching, save the cap hold at that HEAD using `checkpoint stop` while recording. On fetch failure, retain the compact `<!-- review-and-prep:stopped:<full-sha> -->` from **Inline outputs** with `Full-review evidence: unavailable` and no continuation prompt. Look up the marker before posting or retrying. Reuse one corroborated match; post only if absent. If posting fails or history is ambiguous, keep `STOPPED — review cycle cap` in the draft body and receipt, then take the reference failure exit. Step 1 reconciles the hold first. An ordinary stop uses H-E only with authorization and allowance, finishing `--outcome blocked` with no `STATUS:` line.",
     navigationEdits: [['`next-cycle` late write above.', "`next-cycle` late write in **Record cycle 1's full-review baseline**."]],
   },
   {
@@ -203,7 +203,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: "### Classify changes after the documentation audit's last attempt",
     startMarker: '**Under `doc-audit-gap=auto`.** Under `doc-audit-gap=auto`, apply this paragraph',
     endBeforeMarker: '1. **`undocumented-internal` class (`owner=not-needed`).** When an existing',
-    readInstructionSuffix: 'before evaluating reuse when `doc-audit-gap=auto` is active',
+    readInstructionSuffix: 'before Prepare, documentation cap check or reuse evaluation when `doc-audit-gap=auto` is active',
   },
   {
     skill: 'review-and-prep',
@@ -271,7 +271,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "- A path qualifies as tests only if its basename matches the classification's",
     endBeforeMarker: null,
     readInstructionSuffix: "before repairing a test-only final-gate failure when `final-gate-repair=tests-docs` applies and the classification contract is readable",
-    coreGate: "A failed safe restoration takes `restore-failed` and stops BLOCKED. All other unverified repair paths fall back to the ordinary review and test rules.",
+    coreGate: "Record `contract-missing` at `classification-unreadable` when the contract cannot be read. Failed safe restoration stops BLOCKED as `restore-failed`. Other unverified repairs take ordinary rules.",
   },
   {
     skill: 'review-and-prep',
@@ -317,7 +317,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: "Greptile reservation, submission and monitoring procedure",
     startMarker: "Use the installed `/review` Greptile triage instructions for classification and",
     endBeforeMarker: "After fixes, review the changed code and run applicable local verification.",
-    readInstructionSuffix: "before classifying Greptile feedback when Step 1 says Greptile applies and Step 4 observed feedback",
+    readInstructionSuffix: "before Step 5 triage when Step 1 says Greptile applies, including after a no-response fallback",
     coreGate: "Use the installed triage rules, author checks and trust envelope. Resolve actionable findings and unsuccessful replies before readiness. Unknown or disputed dispositions hold the draft. If the no-response fallback applies and no feedback exists, continue with local verification.",
   },
   {
@@ -344,7 +344,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
       ['the phase-status warning above', 'the phase-status warning in **Read an optional review policy**'],
       ['bounded-wait host rules above', '**Hosts with bounded subagent waits**'],
     ],
-    coreGate: "Activate only validated opt-ins. `full-suite=external` pauses until a result is recorded. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.\n\n**Published capability commands:**",
+    coreGate: "Validate opt-ins. `full-suite=external` pauses for a result; `full-suite=final` runs targeted lanes before the final full run. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. Together `specialists=fold` and `delegate=` read as `none supplied`. Either excludes `first-cycle=overlap`. Use host fallback for unavailable delegation. Light skips apply only to eligible delta repairs; `in-cap=full` overrides. Repair-only needs a verified baseline and authorization.\n\n**Published capability commands:**",
   },
   {
     skill: "review-and-prep",
@@ -364,7 +364,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "- **Fix-review record.** When cycle 1's record says",
     endBeforeMarker: "- **Files and write-once.** Write the records as `cycle-1-baseline.json` and",
     readInstructionSuffix: "before checking fix-review evidence or recovering a missed record when a later review cycle begins or the cycle-cap stop reads the baseline",
-    coreGate: "Before applying fixes, require the recorded baseline and any required fix-review record. A missed write discovered at the next cycle can be recovered only at that cycle's start, with contemporaneous evidence. If the fence cannot persist the miss, stop before opening the later cycle. Never create a late record at the cycle stop.",
+    coreGate: "With the fence available, check `before-fix` for each required baseline or fix-review record. On `missing`, write from that collection and recheck. Require `present` before fixing. Late recovery uses contemporaneous evidence only at `next-cycle`. If the fence cannot persist the miss, stop before its readers.",
   },
   {
     skill: "review-and-prep",
@@ -420,8 +420,8 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: "Coverage-audit adjustments for recorded test gaps",
     startMarker: "   Under `test-gaps: active`, **Record unproven test gaps** changes only how",
     endBeforeMarker: "3. **Documentation audit.** Run `/ship`'s Documentation audit section with its",
-    readInstructionSuffix: "before handling coverage gaps when `test-gaps: active` applies",
-    coreGate: "The coverage audit still runs. Apply the recorded-gaps threshold only when every remaining gap is eligible and recorded. A reproduced regression or a required unrecordable gap takes the audit's ordinary generation and threshold rules.",
+    readInstructionSuffix: "before dispatching the coverage audit when `test-gaps: active` applies",
+    coreGate: "With `test-gaps: active`, dispatch coverage with `Generation: audit-only`. Apply the gap exception only to eligible, recorded gaps. Reproduced regressions and unrecordable gaps take ordinary generation and threshold rules.",
   },
   {
     skill: "review-and-prep",
@@ -431,7 +431,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "   Under active `doc-audit-gap=auto`, any documentation freshness check that",
     endBeforeMarker: "4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause",
     readInstructionSuffix: "before preparing a documentation audit or rechecking freshness when `post-audit=classify` or active `doc-audit-gap=auto` applies",
-    coreGate: "Under active `doc-audit-gap=auto`, check reuse before spending a re-audit attempt and after a failed attempt, verify Prepare and stopped-child evidence on resume, and use the verified-base cap check in place of upstream's origin-based cap lookup for every audit acceptance.",
+    coreGate: "With active `doc-audit-gap=auto`, take **Classify changes after the documentation audit's last attempt** at Prepare, before re-audit or after failure, and use the verified-base cap check in place of upstream's origin-based cap lookup for every audit acceptance. On resume verify Prepare and child stop.",
     navigationEdits: [['the verified-base cap check below', "the cap check in **Classify changes after the documentation audit's last attempt**"]],
   },
   {
@@ -451,8 +451,8 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: "Claude Code outside-review recovery outcomes",
     startMarker: "A completed response with a marker failure is a **parse failure**, not a",
     endBeforeMarker: null,
-    readInstructionSuffix: "before classifying an uncredited outside voice when the wrapper reports a parse, context or transport failure",
-    coreGate: "An uncredited outside voice stays missing coverage. No retry with unchanged input. Retain provider results, and reconcile any unresolved claim before deciding another action.",
+    readInstructionSuffix: "before handling recovered or uncredited outside results or a counted no-missing-context reply",
+    coreGate: "Record parse details for every voice. Uncredited stays missing coverage. Retain provider results and reconcile open claims before any action. Never retry unchanged input.",
   },
   {
     skill: "review-and-prep",
@@ -630,14 +630,16 @@ export function checkConservation(
   // Track last matched offset per reference file so source order is enforced.
   const lastOffsetByRef = new Map<string, number>();
 
-  for (const entry of manifest) {
-    let slice: { from: number; to: number; block: string };
+  const slices = manifest.flatMap((entry) => {
     try {
-      slice = extractManifestSlice(baseText, entry);
+      return [{ entry, ...extractManifestSlice(baseText, entry) }];
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
-      continue;
+      return [];
     }
+  }).sort((left, right) => left.from - right.from);
+
+  for (const { entry, ...slice } of slices) {
     for (let i = slice.from; i < slice.to; i++) movedLineFlags[i] = true;
 
     const refBody = references[entry.ref];

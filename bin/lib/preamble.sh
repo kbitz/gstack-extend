@@ -259,7 +259,7 @@ if [ "$_HAS_REF" -eq 1 ]; then
     [ -n "$_REF_VER" ] || _REF_VER="unknown"
   fi
   _REF_PATH="$_EXTEND_ROOT/skills/references/$_ER_SKILL/$_REF_FILE.md"
-  if [ ! -e "$_REF_PATH" ]; then
+  if [ ! -e "$_REF_PATH" ] && [ ! -L "$_REF_PATH" ]; then
     if [ -f "$_EXTEND_ROOT/.git" ]; then
       _REF_FIX="\"$_EXTEND_ROOT\" is a linked worktree (bin/update-run refuses linked worktrees); run setup --host auto from your stable gstack-extend checkout."
     else
@@ -283,13 +283,13 @@ if [ "$_HAS_REF" -eq 1 ]; then
     echo "SKILL_REFERENCE_STALE: /$_ER_SKILL ref $_REF_FILE (cause: digest-mismatch; expected $_REF_EXPECT; actual $_REF_ACTUAL; path $_REF_PATH; root $_EXTEND_ROOT; VERSION $_REF_VER) Fix: restart /$_ER_SKILL so the loaded skill matches checkout VERSION $_REF_VER; if it still differs, run \"$_EXTEND_ROOT/setup\" --host auto from the checkout this host should use. See docs/installation.md#skill-references"
     exit 1
   fi
-  _REF_TOTAL=$(awk 'END { print NR + 0 }' "$_REF_COPY" 2>/dev/null) ||
+  _REF_TOTAL=$(awk 'END { print NR + 0 }' < "$_REF_COPY" 2>/dev/null) ||
     _fail_ref_missing unreadable "check that awk can read the reference from the temporary directory."
   if [ "$_HAS_LINES" -eq 1 ] && [ "$_REF_LINE_END" -gt "$_REF_TOTAL" ]; then
     _fail_ref_usage "requested line range ends after line $_REF_TOTAL"
   fi
   awk -v a="${_REF_LINE_START:-1}" -v b="${_REF_LINE_END:-$_REF_TOTAL}" \
-    'NR >= a && NR <= b { printf "%d: %s\n", NR, $0 }' "$_REF_COPY" || exit 1
+    'NR >= a && NR <= b { printf "%d: %s\n", NR, $0 }' < "$_REF_COPY" || exit 1
   echo "REFERENCE_END $_ER_SKILL/$_REF_FILE lines=$_REF_TOTAL digest=$_REF_ACTUAL"
   exit 0
 fi
