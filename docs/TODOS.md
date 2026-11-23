@@ -24,6 +24,78 @@
 - **Context:** Track 94B review of `193eb39` (2026-11-22). Revisit when a Track next changes roadmap storage or its protocol tests.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=skills/plan-track.md|tests/skill-protocols-plan-track.test.ts] Test gap: Pin selector placement and case normalization
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The protocol tests pin whole-ID matching and field-value exclusion. The exact standalone argument forms and case normalization can drift independently.
+- **Hypothesis (untested):** Extend the selector assertions to pin the supported positions and folding of the ID letter.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/plan-track.md:131` and `skills/plan-track.md:151`
+- **Evidence:** Track 94C coverage audit at `86aa4fe`. The protocol and shell checks passed.
+- **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
+- **Revisit when:** A Track changes the selector grammar or its tests.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/plan-track.md|tests/skill-protocols-plan-track.test.ts] Test gap: Pin the end of active roadmap sections
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The tests pin the active section names and the card extraction boundary. They do not pin the scan's stop at the next level-two heading.
+- **Hypothesis (untested):** Lock the scan boundary alongside the active-section names.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/plan-track.md:164`
+- **Evidence:** Track 94C coverage audit at `86aa4fe`. The active-section assertions passed.
+- **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
+- **Revisit when:** A Track changes roadmap section handling in `/plan-track`.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/plan-track.md|tests/skill-protocols-plan-track.test.ts] Test gap: Pin direct card-file selection rules
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Tests pin card selection before path choice. They leave room for drift in supplied-file scope, heading-only uniqueness and matching an accompanying selector to a single card.
+- **Hypothesis (untested):** Add checks for these direct-file rules to the existing selector contract test.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/plan-track.md:159`
+- **Evidence:** Track 94C coverage audit at `86aa4fe`. The direct-file path-order check passed.
+- **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
+- **Revisit when:** A Track changes explicit `CARD_FILE` selection or its tests.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/plan-track.md|tests/skill-protocols-plan-track.test.ts] Test gap: Pin selector provenance fields
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The test pins the Auto-decisions section for a resolved selector. It does not check that the row names the selector, file, active roadmap section and matched heading.
+- **Hypothesis (untested):** Extend the existing section assertion to cover the recorded fields.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/plan-track.md:178`
+- **Evidence:** Track 94C coverage audit at `86aa4fe`. The Auto-decisions assertion passed.
+- **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
+- **Revisit when:** A Track changes the plan's selector provenance or its tests.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/plan-track.md|tests/skill-protocols-plan-track.test.ts] Test gap: Pin Track title punctuation handling
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Naming tests pin the ASCII rule, slug cap and fallback. The punctuation-run and pre-cap trimming rules can drift without tripping those assertions.
+- **Hypothesis (untested):** Extend the naming assertion to cover the hyphen mapping and trim order.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/plan-track.md:199`
+- **Evidence:** Track 94C coverage audit at `86aa4fe`. The default-naming tests passed.
+- **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
+- **Revisit when:** A Track changes default naming or its tests.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/plan-track.md|tests/skill-protocols-plan-track.test.ts] Test gap: Exercise Track selection with an installed agent
+
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The protocol checks read the skill and execute the session-kind fence. They leave card extraction, generated plans and stop behavior untested in actual agent invocations.
+- **Hypothesis (untested):** Use isolated roadmap fixtures to exercise interactive resolution and ambiguous or ineligible input, strict named-field calls and rejected selectors, and distinct outputs and collision preservation.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/plan-track.md:131`
+- **Evidence:** Track 94C coverage audit at `86aa4fe`. Static and shell checks passed. The approved plan records the live-agent limit.
+- **Context:** Filed by /review-and-prep for Track 94C at `86aa4fe` (2026-11-22).
+- **Revisit when:** A Track qualifies installed-agent planning with suitable fixtures.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
