@@ -1141,10 +1141,13 @@ classification rule at three entry points:
    `REUSE` decision for phase `documentation` when `GX_CAPTURE=1`. An
    audit that still matches the current inputs keeps its original binding.
 2. **Blocked or failed re-audit fallback.** This covers upstream attempt 2
-   and the extra attempt. Confirm the child stopped, check the clean tree
-   and the child's original Prepare snapshot, then verify ownership, Git
-   integrity, redaction, security and `docs-caps` before using the same
-   classification. An unconfirmed writer, ownership violation, unauthorized
+   and the extra attempt. Confirm the child stopped or verify dispatch never
+   started a child. At reconciliation, check the clean tree and verify HEAD,
+   index and ownership against the child's original Prepare snapshot before
+   any writes. Retain that proof. On a later trigger, verify it and account
+   for intervening authorized changes. Check the current clean tree, redaction,
+   security and `docs-caps`, and assess any reported documentation discrepancy
+   before reuse. An unconfirmed writer, ownership violation, unauthorized
    Git mutation, redaction or security gate failure, `docs-caps` failure,
    unverifiable safety check or partial edits (`dirty-tree`) stops recovery
    before another child can run. Preserve partial edits. Reuse requires an
@@ -1158,7 +1161,10 @@ classification rule at three entry points:
 Use only the decisions verified for the current audit, head and fetched
 base. Every classified commit has its own `Post-audit change:` row. An empty
 fallback walk carries the accepted audit and failure detail with zero commit
-rows. When a new audit is accepted, earlier reuse rows are history.
+rows. When a fresh accepted audit covers the final binding and no later trigger
+applies, the receipt preserves the latest decline as `doc-audit-gap:`, records
+`post-audit: not applied — fresh audit covers current binding` and emits zero
+current `Post-audit change:` rows. Every superseded row stays in evidence.
 
 The extra-audit allowance belongs to one invocation and its resumes (the counter
 file `doc-audit-extra.txt` in its evidence directory); a continuation
@@ -1233,9 +1239,9 @@ doc-audit-gap: active; reuse=not-applied git-too-old git version 2.35.1 (needs G
 | Case | Condition | Decision and attempt or stop | Receipt fields |
 |---|---|---|---|
 | `documents unchanged` | The full walk qualifies for reuse. Each non-merge change is `owner=not-needed` with no 1(a) protected path change (except `todos-only`) and no 1(c) user-visible text change. For `undocumented-internal`, 1(b) must also pass. | Reuse `S` with no question. Pre-attempt leaves the remaining re-audit unspent and records `REUSE` when `GX_CAPTURE=1`. | `post-audit: active`, `Post-audit change:` with class, `carried-audit=<S>` and trigger in `reason=`, plus `doc-audit-gap: active; reuse=applied`. Compact `- documentation: not-run` when no audit matches the final binding. |
-| `an audited document changed` | A 1(a) protected path changed, except `todos-only`. This includes `mechanical-correction` pre-attempt or on blocked/failed fallback. | Pre-attempt: decline reuse and spend the remaining upstream re-audit. Fallback or exhaustion: use the eligible extra attempt or existing stop. After exhaustion only, `mechanical-correction` still qualifies when the last attempt neither blocked nor failed. | Record `Post-audit change:` with the effective class and owner. On decline record `doc-audit-gap: active; reuse=not-applied classify-not-applied <reason>; evidence=<evidence locator>` and `Doc-audit extra:` if evaluated. On reuse record `doc-audit-gap: active; reuse=applied`. |
+| `an audited document changed` | A 1(a) protected path changed, except `todos-only`. This includes `mechanical-correction` pre-attempt or on blocked/failed fallback. | Pre-attempt: decline reuse and spend the remaining upstream re-audit. Fallback or exhaustion: use the eligible extra attempt or existing stop. After exhaustion only, `mechanical-correction` still qualifies when the last attempt neither blocked nor failed. | On decline, record `Post-audit change:` with `class=documented-behavior; owner=needed` and `doc-audit-gap: active; reuse=not-applied classify-not-applied <reason>; evidence=<evidence locator>` and `Doc-audit extra:` if evaluated. On mechanical-correction reuse, record `class=mechanical-correction; owner=not-needed` and `doc-audit-gap: active; reuse=applied`. |
 | `user-visible text changed` | A 1(c) surface changed. Give doubt, an unreadable diff and other `documented-behavior` (including changed behavior that makes a documented claim false) the same outcome. | Decline reuse. Pre-attempt: spend the remaining upstream re-audit. Fallback or exhaustion: use the eligible extra attempt or existing stop. | `Post-audit change:` with `class=documented-behavior; owner=needed`, `doc-audit-gap: active; reuse=not-applied classify-not-applied <reason>; evidence=<evidence locator>`, plus `Doc-audit extra:` if evaluated. |
-| `a base merge` | Two parents, second parent an ancestor of the fetched base tip, empty `--remerge-diff` on Git 2.36+, and the two-way merge guard passes against the current PR diff. | A qualifying merge is `owner=not-needed`; the whole walk still has to qualify. An unqualified merge or failed precondition declines reuse. Before dispatch require a verified base fetch and clean tree; then take the remaining upstream re-audit, eligible extra attempt or existing stop. | Qualifying merge: `Post-audit change:` with `class=base-merge; owner=not-needed; carried-audit=<S>`. On reuse record `post-audit: active` and `doc-audit-gap: active; reuse=applied`. On decline record `doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`. |
+| `a base merge` | Two parents, second parent an ancestor of the fetched base tip, empty `--remerge-diff` on Git 2.36+, and the two-way merge guard passes against the current PR diff. | A qualifying merge is `owner=not-needed`; the whole walk still has to qualify. An unqualified merge or failed precondition declines reuse. Before dispatch require a verified base fetch and clean tree; then take the remaining upstream re-audit, eligible extra attempt or existing stop. | Qualifying merge: `Post-audit change:` with `class=base-merge; owner=not-needed; carried-audit=<S>`. On reuse record `post-audit: active` and `doc-audit-gap: active; reuse=applied`. On decline record `post-audit: not applied — <reason>` and `doc-audit-gap: active; reuse=not-applied <token> <context>; evidence=<evidence locator>`. |
 | `a blocked re-audit` | Upstream attempt 2 or the extra attempt returned `blocked`. Verify the stopped child and all fallback prerequisites first. | Apply the same rule to `S..HEAD`. A qualifying unchanged walk reuses `S` with no question and no extra attempt. On decline, take the eligible extra attempt or existing stop. A non-waivable failure stops recovery. | `post-audit: active` and `doc-audit-gap: active; reuse=applied` on reuse, with `Post-audit change:` rows for any commits, `carried-audit=<S>` and `blocked-re-audit` in `reason=`. Keep the attempt's actual result, `audit_id` and child-stop proof in the full `Ship gates` detail and evidence. On decline record `reuse=not-applied` and `Doc-audit extra:` if evaluated. |
 | `a failed re-audit` | Upstream attempt 2 or the extra attempt failed to complete or validate. Includes timeout, missing output, `DOCS_RESULT_INVALID` after any allowed format repair, exit 3 refusal, or failed validation or freshness. Verify the stopped child and all fallback prerequisites first. | Apply the same rule to `S..HEAD`. A qualifying unchanged walk reuses `S` with no question and no extra attempt. On decline, take the eligible extra attempt or existing stop. A non-waivable failure stops recovery. | `post-audit: active` and `doc-audit-gap: active; reuse=applied` on reuse, with `Post-audit change:` rows for any commits, `carried-audit=<S>` and `failed-re-audit` in `reason=`. Keep the attempt's actual failure code, `audit_id` and child-stop proof in the full `Ship gates` detail and evidence. On decline record `reuse=not-applied` and `Doc-audit extra:` if evaluated. |
 

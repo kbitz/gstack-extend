@@ -3593,9 +3593,11 @@ describe('(R) doc-audit-gap=auto', () => {
     '**Pre-attempt.** When a freshness check would spend a re-audit attempt after an accepted (`current` or `updated`) audit `S` in this invocation, classify the full delta first.',
     'Reuse leaves the remaining attempt unspent and records a `REUSE` decision for phase `documentation` when `GX_CAPTURE=1`.',
     '**Blocked or failed re-audit fallback.** This covers upstream attempt 2 and the extra attempt.',
-    'Confirm the child stopped, check the clean tree and the child\'s original Prepare snapshot, then verify ownership, Git integrity, redaction, security and `docs-caps` before using the same classification.',
+    'Confirm the child stopped or verify dispatch never started a child.',
+    'Retain that proof. On a later trigger, verify it and account for intervening authorized changes.',
     'An unconfirmed writer, ownership violation, unauthorized Git mutation, redaction or security gate failure, `docs-caps` failure, unverifiable safety check or partial edits (`dirty-tree`) stops recovery before another child can run.',
     'Reuse requires an earlier accepted audit, with its evidence verified, and preserves that audit\'s status and the rejected attempt\'s separate failure.',
+    '`post-audit: not applied — fresh audit covers current binding` and emits zero current `Post-audit change:` rows.',
       'The extra-audit allowance belongs to one invocation and its resumes (the counter file `doc-audit-extra.txt` in its evidence directory); a continuation (`/review-and-prep continue`) runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream\'s fresh budget and its own allowance.',
       'A base merge qualifies only where Git supports `--remerge-diff` (2.36 or later), so with an older Git any base merge after the audit leaves classify not applied (`git-too-old`)',
     'Reuse writes no new `record audit`. The compact `- documentation:` line renders `not-run` when the carried audit lacks a final binding.',
@@ -3635,7 +3637,7 @@ describe('(R) doc-audit-gap=auto', () => {
     ]);
     for (const [caseName, expectedFragments] of [
       ['documents unchanged', ['Reuse `S` with no question', '`REUSE`', '`post-audit: active`', '`carried-audit=<S>`', '`- documentation: not-run`']],
-      ['an audited document changed', ['Pre-attempt: decline reuse and spend the remaining upstream re-audit', '`mechanical-correction` pre-attempt or on blocked/failed fallback', 'reuse=not-applied classify-not-applied', '`Doc-audit extra:`']],
+      ['an audited document changed', ['Pre-attempt: decline reuse and spend the remaining upstream re-audit', '`mechanical-correction` pre-attempt or on blocked/failed fallback', '`class=documented-behavior; owner=needed`', 'reuse=not-applied classify-not-applied', '`Doc-audit extra:`']],
       ['user-visible text changed', ['Decline reuse', '`class=documented-behavior; owner=needed`', 'makes a documented claim false', 'reuse=not-applied classify-not-applied']],
       ['a base merge', ['the whole walk still has to qualify', '`class=base-merge; owner=not-needed; carried-audit=<S>`', '`doc-audit-gap: active; reuse=applied`', '`doc-audit-gap: active; reuse=not-applied <token>']],
       ['a blocked re-audit', ['reuses `S` with no question and no extra attempt', 'A non-waivable failure stops recovery', '`blocked-re-audit`', 'child-stop proof']],
