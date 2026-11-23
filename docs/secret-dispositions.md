@@ -125,7 +125,10 @@ Exit 0 means the **wrapper gate** is satisfied; 1 means blocked; 2 means invalid
 arguments, incompatible helpers, or unavailable evidence. JSON always includes
 `satisfied`; a successful evaluation also includes raw verdict/status,
 tree/HEAD/base, raw-record and disposition-file SHA-256s, matched entries,
-unmatched findings, stale entries and errors. Finding text is private inspection
+unmatched findings, stale entries and errors. The one exception is a launcher
+refusal: `bin/secret-dispositions` checks the [Bun prerequisite](installation.md#requirements)
+before either command starts, and a refusal writes its diagnostic to stderr,
+prints no JSON and exits 1. Finding text is private inspection
 data. Publish only sanitized receipt fields and entry references, for example:
 
 ```text
