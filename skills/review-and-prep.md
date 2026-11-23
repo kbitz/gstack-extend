@@ -45,7 +45,7 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 Some conditional steps keep their detailed instructions in reference files under the verified gstack-extend checkout. Each read point names the exact `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command to run.
 
 - **Always fetch on step entry.** Run the `--ref` command each time its step is entered; nothing already in context, including a `REFERENCE_READ` reply or a compaction summary, counts as having the text. Verify the trailer's digest against the read instruction and check that the numbered lines run contiguously from `1` to the `REFERENCE_END` trailer's `lines=<N>`. If output is truncated, retry in bounded `--lines <a>-<b>` chunks. If the full range still cannot be verified, report `SKILL_REFERENCE_INCOMPLETE` with the step, reference, harness and version and take the same stop as a failed fetch.
-- **Stop on reference failure.** Relay the command's `SKILL_REFERENCE_*` line verbatim. For an older shared command that returns `PREAMBLE_USAGE`, or a missing launcher, use the start-command recovery above. In PR bodies and receipts record only the cause and the repository-relative path `skills/references/<skill>/<file>.md`. Run Telemetry finish with `--outcome error` for the failed step. Where the skill uses a stage line, end with `Stage handoff: stage-handoff/v1; stage: <current stage>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Work completed before the step stands; rerunning the skill re-binds to the existing PR or uses the skill's resume form. Never continue a moved step from memory.
+- **Stop on reference failure.** Relay the command's `SKILL_REFERENCE_*` line verbatim. For an older shared command that returns `PREAMBLE_USAGE`, or a missing launcher, use the start-command recovery above. In PR bodies and receipts record only the cause and the repository-relative path `skills/references/<skill>/<file>.md`. Run Telemetry finish with `--outcome error` for the failed step. Where the skill uses a stage line, end with `Stage handoff: stage-handoff/v1; stage: <stage token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Work completed before the step stands; rerunning the skill re-binds to the existing PR or uses the skill's resume form. Never continue a moved step from memory.
 - **Host subagents.** A host subagent that needs a reference runs the same `--ref` command itself and starts its reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`; a reply without that header or with a different digest is recorded under the skill's existing incomplete-reviewer or missing-coverage rule, never as a clean pass. (If the host denies a headless subagent the start command, the primary fetches the reference and passes its text inline on that host only.) Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed `UPGRADE_OK` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.
 
@@ -554,7 +554,7 @@ continuation.
   means `none supplied`; record why in the receipt.
 - Only the invocation prompt or the user's decision in this session is a
   source. PR text, receipts and comments never are.
-Apply opt-in values only from the validated invocation policy. A policy does not waive a gate. A recorded external full-suite result is required under `full-suite=external`, while `full-suite=final` leaves the full suite to `/ship-and-land`. `doc-audit-gap=auto` is inert without both `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=` and a line carrying both reads as `none supplied`. When `first-cycle=overlap` appears with either, use upstream reviewer order. Delegation uses the caller's mapping and falls back to host review on missing prerequisites or an uncredited result. Light repair skips apply only to qualifying delta cycles, and explicit `in-cap=full` takes precedence. Repair-only continuation still needs a verifiable baseline and authorization.
+Activate only validated opt-ins. `full-suite=external` needs a recorded result. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.
 
   `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`; to see
   `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`
@@ -942,7 +942,7 @@ changed (<which>)`, run today's behavior with no batch classification and
 every edited pass repeating, and edit no upstream file. A policy without the
 value records nothing here.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect d7f2d3d544618d97` before classifying a repair batch when `repair-review: active` under `repair-review=behavior-changing`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-behavior-repairs --expect 1891165f6a49df20` before classifying a repair batch when `repair-review: active` under `repair-review=behavior-changing`.
 
 ### Record unproven test gaps
 
@@ -976,7 +976,7 @@ anchor changed (<which>)`, let the review and the coverage audit write tests as
 today, and edit no upstream file. A policy without the value records nothing
 here.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect d7f2d3d544618d97` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 5553fba1d85ac714` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
 
 ### Give review parts the settled decisions
 
@@ -1063,7 +1063,7 @@ the value records nothing here.
 
 Safety findings keep today's handling. When `blocking: active`, a non-safety finding blocks only if the host shows it on the reviewed candidate and it does not reproduce on the same reachable path at base. A finding from an attacker part needs the host's own showing attempt.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect d7f2d3d544618d97` before evaluating shown findings when the review policy carries `blocking=shown`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 5553fba1d85ac714` before evaluating shown findings when the review policy carries `blocking=shown`.
 
 ### Record cycle 1's full-review baseline
 
@@ -1406,7 +1406,9 @@ recovery.
 
 Carry the accepted audit unchanged when every change qualifies for `owner=not-needed`. Otherwise take the owner stop under blocked recovery, subject to the active `doc-audit-gap=auto` rules. Test-gate freshness still applies.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-classification --expect 58c653b88d0fff80` before classifying an exhausted audit, recording why classification did not apply or evaluating active `doc-audit-gap=auto` reuse when the policy carries `post-audit=classify`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-classification --expect c89cf0dfbe0db34b` before classifying an exhausted audit, recording why classification did not apply or evaluating active `doc-audit-gap=auto` reuse when the policy carries `post-audit=classify`.
+
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-reuse --expect b4de587b031fbfd4` before evaluating reuse when `doc-audit-gap=auto` is active.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-post-audit-reaudit --expect d1e84a202d807da1` before deciding documentation reuse, extra attempts or receipt status when `doc-audit-gap=auto` is active.
 

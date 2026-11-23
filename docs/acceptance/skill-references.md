@@ -12,15 +12,23 @@ Measured on `mmm/c69c8c30` at base `6293d8c3d27cb8ef25cce6ba52b60e14adad4011`
 
 | Harness | Installed version | Hard `SKILL.md` size limit | Per-call command output cap / truncation shape | Reference serving mechanism |
 |---|---|---|---|---|
-| Claude Code | 2.1.330 | No hard rejection up to 366,223 B (loads installed `/review-and-prep` daily) | ~30,000 chars (~30 KiB) per Bash tool output; tail/middle persisted to file on overflow | `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest> [--lines <a>-<b>]` (already covered by `Bash(~/.gstack-extend/bin/preamble:*)`) |
-| Codex | codex-cli 0.171.0 | No hard rejection documented or observed | ~10 KiB–32 KiB depending on config; middle elision on long command output | Same `preamble --ref` command; numbered lines + `REFERENCE_END lines=N` + `--lines <a>-<b>` contiguity check handles middle elision |
-| Muse | Muse Code 1.4.25 (1.4.25-R9361.1) | **262,144 bytes** (measured via `muse skills validate --json`: 262,144 B `valid: true`, 262,145 B `SKILL.md exceeds 262144 byte limit`) | Same command-output contiguity rule | Loads the Codex install (`~/.codex/skills/<skill>/SKILL.md`), which shares the `preamble --ref` command |
-| Grok | grok 1.0.92 (b06756fd6256) [alpha] | No hard rejection observed | Same command-output contiguity rule | Same `preamble --ref` command |
+| Claude Code | 2.1.330 | No hard rejection observed for the 366,223-byte base | Five markers visible in one 28,990-byte synthetic result | Existing preamble allow rule |
+| Codex | 0.171.0 | No hard rejection observed for the base | Five markers visible in one 28,990-byte synthetic result | Rendered copy and shared preamble |
+| Muse Code | 1.4.25 (1.4.25-R9361.1) | 262,144 bytes. The skill validator accepts this size and rejects 262,145 bytes. | Five markers visible in one 28,990-byte synthetic result | Codex-format copy and shared preamble |
+| Grok | 1.0.92 (b06756fd6256), alpha | No hard rejection measured | Five markers at 18,000 bytes and 340 lines. Middle marker omitted at 22,000 and 24,100 bytes with the same line count. | Numbered preamble output with range retry |
+
+The output tests sent synthetic numbered text and asked for markers from a
+single shell call. These observations bound the tested output shape. The
+reference reader still checks contiguity and retries a truncated read in ranges.
 
 ### Reference and core caps
 
-- **Core cap:** `196,608` bytes (75% of Muse Code 1.4.25's measured `262,144`-byte limit).
-- **Per-reference cap:** `24,576` bytes (24 KiB) and `400` lines, with every line ≤ `2,000` characters (longest line across all 11 skills at `6293d8c` is `1,791` chars in `docs-ship.md`, `1,654` chars in `review-and-prep.md`).
+- **Core cap.** `196,608` bytes (75% of Muse Code's 262,144-byte limit).
+- **Per-reference caps.** `16,384` file bytes, `340` lines, and at most
+  `2,000` characters per line. The numbered response and trailer must fit
+  `17,000` bytes, with a 1,000-byte margin below the measured Grok result.
+  The final 30 references top out at 15,513 file bytes,
+  231 lines and 16,540 output bytes.
 - **Budgets:** enforced in `tests/helpers/skill-budgets.ts` and `tests/skill-references.test.ts` for all 11 skills in `setup`'s `SKILLS` list.
 - **Root-read proof:** `setup` is unchanged; references live at `skills/references/<skill>/<prefix>-<topic>.md` under the gstack-extend checkout and are served through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`, which resolves the same verified checkout root as the start command and binds the loaded core to the checkout via a 16-hex SHA-256 content digest.
 
@@ -31,7 +39,7 @@ Measured on `mmm/c69c8c30` at base `6293d8c3d27cb8ef25cce6ba52b60e14adad4011`
 
 ## Reader map for `skills/review-and-prep.md` (PR A)
 
-Every section of `skills/review-and-prep.md` mapped before moving any text:
+The initial reader map was committed before the first move. The revision below records the paths split during review.
 
 | Section | Reader class | Disposition | Target reference | Notes |
 |---|---|---|---|---|
@@ -104,32 +112,95 @@ grading key below is never shown to the probed agent.
 
 ## Before / after sizes (PR A)
 
-Measured on branch `mmm/c69c8c30` over base `6293d8c3d27cb8ef25cce6ba52b60e14adad4011`:
+The original core is from `6293d8c`. The review incorporated base `39c2b0c`
+without changes to that original core. Sizes use the final candidate
+reference set in this update.
 
-| Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated default path (B) |
+| Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|
-| `review-and-prep` | 366,223 | 188,556 | 196,608 | 187,497 (12 files) | 188,556 | 240,377 |
+| `review-and-prep` | 366,223 | 167,650 | 184,320 | 226,963 (30) | 196,467 | 221,552 |
 
-- Codex rendering of slimmed `skills/review-and-prep.md`: `188,404` bytes (down from `366,071` bytes; `73,740` bytes below Muse Code 1.4.25's `262,144`-byte limit).
-- Conservation check (`bun scripts/skill-references.ts check --base HEAD`): `CONSERVATION review-and-prep: ok=true blocks=21 dropped=0 base=366223B core=188556B`.
-- Paid diet eval: `eval: not run (no spend authorized by docs/SPEC.md)`.
-- Per-run model usage savings: `unknown` until recorded runs measure it.
-- Downstream Tracks note: Tracks 96A and 97A, which also edit `skills/review-and-prep.md`, must widen their `_touches` to the matching `skills/references/review-and-prep/*.md` files when touching moved sections.
-- Remaining Track 94I scope (PR B, from a fresh base after PR A merges): slimming `skills/roadmap.md`, `skills/ship-and-land.md`, and `skills/pair-review.md` with their reader maps, probes, budgets, and load-check rows.
+The by-hand budget counts unique bytes for a successful first cycle on Codex
+with metrics active, the selected Claude Code outside pass and no Greptile.
+It includes the workflow metrics, outside adapter and cycle-baseline references.
+The orchestrated row adds policy values and the external-gate procedure.
+These are path budgets from the reader map. Per-run usage and the complete
+by-hand read sequence remain to be measured.
 
-## Pre-merge load-check results (PR A, five nonces on scratch copies)
+The Codex rendering is 167,498 bytes, 94,646 bytes below the verified Muse
+limit. `bun scripts/skill-references.ts check --base 39c2b0c --skill review-and-prep`
+returned `ok=true blocks=42 dropped=0 base=366223B core=167650B`.
 
-Scratch copies only; no step modified `$HOME` or installed skills. Five unique nonces inserted at start, 25%, 50%, 75%, and end of the slimmed `skills/review-and-prep.md` (and its Codex rendering):
+### Navigation edits in moved text
 
-| Exercised combination | Harness version | Base rev | Result |
-|---|---|---|---|
-| Claude-format scratch copy in Claude Code | Claude Code 2.1.330 | `6293d8c` + working tree | **PASS** — 5/5 nonces reported (`status=0`) |
-| Codex-format scratch copy in Codex | `codex-cli 0.171.0` | `6293d8c` + working tree | **PASS** — 5/5 nonces reported (`status=0`) |
-| Scratch copy in Grok | `grok 1.0.92` (`b06756fd6256`) | `6293d8c` + working tree | **PASS** — 5/5 nonces reported (`status=0`) |
-| Codex-format scratch package in Muse (`muse skills validate`) | Muse Code 1.4.25 (`1.4.25-R9361.1`) | `6293d8c` + working tree | **PASS** — `valid: true`, `result: compatible`, `diagnostics: []` (`188,404` B vs `262,144` B limit) |
+The move manifest declares and checks these replacements. They direct readers
+to the named core step after the move.
+
+| Reference | Original direction | Destination |
+|---|---|---|
+| Workflow metrics | Literal status line below | Core metrics status line |
+| Greptile recovery | Resume rule above | Establish the branch, PR, and review inputs |
+| Outside review and cycle baseline | Delta procedure above or below | Scope a re-review to its delta |
+| Cycle cap | Next-cycle late write above | Record cycle 1's full-review baseline |
+| Delta selection | Full-review baseline below | Record cycle 1's full-review baseline |
+| Optional policy values | Phase-status warning and bounded-wait rules above | Read an optional review policy and Hosts with bounded subagent waits |
+| Documentation-gate reuse | Verified-base cap check below | Classify changes after the documentation audit's last attempt |
+| Bounded reviewer waits | Provider-failure rule above | Report elapsed time and stop on provider failures |
+
+The review split repair-only classification from test gaps and shown findings.
+It also separated ordinary post-audit classification from the additional
+reuse and re-audit rules gated by `doc-audit-gap=auto`.
+
+## Pre-merge scratch load and reference checks
+
+The fixture placed five hidden markers across each scratch skill. It used an
+isolated installation for root resolution and left the installed copies alone.
+
+| Exercised combination | Harness version | Result |
+|---|---|---|
+| Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers |
+| Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers |
+| Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers. The validator accepted the 167,498-byte package with no diagnostics. |
+| Codex-format scratch file | Grok 1.0.92 alpha | 5/5 load markers from a paged file read. Workspace skill discovery was unavailable in this scratch configuration. |
+
+Claude Code, Codex and Muse fetched the commanded reference and saw its digest
+trailer in the applicable gate probes. The disposable-home install tests also
+verify each installed pointer on Claude Code and Codex. The Grok file read
+measures complete visibility in a scratch session.
 
 ## Base-versus-candidate behavior probe results (PR A)
 
-| Probe ID | Harnesses | Status | Notes |
-|---|---|---|---|
-| P1–P8 | Claude Code 2.1.330, Codex 0.171.0, Muse Code 1.4.25 | **Unproven** (pending live base-vs-candidate probe execution in `/review-and-prep` / post-merge) | Preregistered probe set and grading key committed above; deterministic disposable-HOME install + `preamble --ref` fetch tests pass for Claude and Codex in `tests/skill-references.test.ts` and `tests/preamble.test.ts`. |
+The fixtures provide synthetic state at each gate. The agents ran the real
+reference fetch in the scratch checkout. The remaining Git, telemetry, suite
+and service operations were described as a dry run. After the output cap split,
+P4 and P5 were repeated with the final reference digests.
+
+| Probe | Claude Code 2.1.330 and Codex 0.171.0 | Muse Code 1.4.25 |
+|---|---|---|
+| P1 | Both versions proceeded to Step 2 without a reference at this entry. | Outside the preregistered subset |
+| P2 | Both versions paused for the external suite. The candidate fetched the checkpoint reference. | Outside the preregistered subset |
+| P3 | Both versions entered test-only repair on the scoped failure. The candidate fetched the final-repair reference. | Outside the preregistered subset |
+| P4 | Both versions carried the accepted audit for the tests-only change. The candidate fetched classification without the reuse opt-in. | Same outcome and classification fetch |
+| P5 | Both versions recorded the unshown finding as non-blocking. The candidate fetched the shown-finding rules. | Outside the preregistered subset |
+| P6 | Both versions reached the cycle-cap stop with full-review evidence and the repair-only continuation. The candidate fetched the stop procedure. | Outside the preregistered subset |
+| P7 | Both versions carried the first passing check and kept the second pending. The candidate fetched resume reconciliation. | Outside the preregistered subset |
+| P8 | The base used inline checkpoint instructions. The candidate relayed the missing-file error, preserved the hold and emitted the blocked stage trailer after the stage-token repair. | Same outcome with the coded error and blocked trailer |
+
+Claude Code and Codex also exercised two omitted-line cases while keeping the
+digest trailer intact. Both fetched bounded ranges and reached the checkpoint
+when the missing line was available on retry. Both reported
+`SKILL_REFERENCE_INCOMPLETE` and emitted the blocked stage trailer when the
+same line was missing from every read.
+
+## Open verification
+
+- `eval: not run (no spend authorized by docs/SPEC.md)`. The table records the
+  subscription-backed scratch probes. Full-workflow parity and measured context
+  savings require recorded runs.
+- After merge, run the installed-copy load checks and observe the first real
+  by-hand run on each available harness, using the plan's acceptance rows.
+- Tracks 96A and 97A must widen their `_touches` to the relevant
+  `skills/references/review-and-prep/*.md` files when changing moved sections.
+- Track 94I PR B starts from a fresh base after PR A merges. Its scope is
+  slimming `skills/roadmap.md`, `skills/ship-and-land.md`, and
+  `skills/pair-review.md` with their own budgets and verification.

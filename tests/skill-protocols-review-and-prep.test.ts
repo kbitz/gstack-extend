@@ -35,10 +35,12 @@ const REF_WORKFLOW_METRICS = referenceText('review-and-prep', 'conditional-workf
 const REF_GREPTILE_RECOVERY = referenceText('review-and-prep', 'conditional-greptile-recovery');
 const REF_DELEGATE_PARTS = referenceText('review-and-prep', 'delegate-specialist-parts');
 const REF_RED_TEAM_FOLD = referenceText('review-and-prep', 'delegate-red-team-and-fold');
+const REF_BEHAVIOR_REPAIRS = referenceText('review-and-prep', 'conditional-behavior-repairs');
 const REF_REPAIR_GAPS = referenceText('review-and-prep', 'conditional-repair-and-gaps');
 const REF_CYCLE_BASELINE = referenceText('review-and-prep', 'conditional-cycle-baseline');
 const REF_CYCLE_CAP = referenceText('review-and-prep', 'conditional-cycle-cap');
 const REF_POST_AUDIT_CLASS = referenceText('review-and-prep', 'conditional-post-audit-classification');
+const REF_POST_AUDIT_REUSE = referenceText('review-and-prep', 'conditional-post-audit-reuse');
 const REF_POST_AUDIT_REAUDIT = referenceText('review-and-prep', 'conditional-post-audit-reaudit');
 const REF_DOC_AUDIT_GATES = referenceText('review-and-prep', 'conditional-doc-audit-and-gates');
 const REF_PREGATE_REPAIR = referenceText('review-and-prep', 'conditional-pregate-and-final-repair');
@@ -53,12 +55,12 @@ const REF_BY_HEADING: Record<string, string[]> = {
   '### Run a red team where /review has none': [REF_RED_TEAM_FOLD],
   '### Fold specialist checklists into cycle 1': [REF_RED_TEAM_FOLD],
   '### Overlap independent first-cycle reviewers': [REF_RED_TEAM_FOLD],
-  '### Reopen review only for behavior-changing repairs': [REF_REPAIR_GAPS],
+  '### Reopen review only for behavior-changing repairs': [REF_BEHAVIOR_REPAIRS],
   '### Record unproven test gaps': [REF_REPAIR_GAPS],
   '### Block readiness only on shown findings': [REF_REPAIR_GAPS],
   "### Record cycle 1's full-review baseline": [REF_CYCLE_BASELINE],
   '### When /review stops at its cycle cap': [REF_CYCLE_CAP],
-  "### Classify changes after the documentation audit's last attempt": [REF_POST_AUDIT_CLASS, REF_POST_AUDIT_REAUDIT],
+  "### Classify changes after the documentation audit's last attempt": [REF_POST_AUDIT_CLASS, REF_POST_AUDIT_REUSE, REF_POST_AUDIT_REAUDIT],
   '### Bound the documentation audit': [REF_DOC_AUDIT_GATES],
   '### Pause for an external full-suite gate': [REF_DOC_AUDIT_GATES],
   '### Narrow the pregate after an accepted pass': [REF_PREGATE_REPAIR],
@@ -784,14 +786,16 @@ function checkDocAuditGapAutoLock(
   docAuditGatesRef = REF_DOC_AUDIT_GATES,
   policyRef = REF_POLICY_VALUES,
   auditGateRef = REF_DOC_GATE_REUSE,
+  reuseRef = REF_POST_AUDIT_REUSE,
 ): string[] {
   const violations: string[] = [];
   const policyCore = skillSection(text, '### Read an optional review policy').replace(/\s+/g, ' ');
   const policy = refHeadingSection(policyRef, '### Read an optional review policy').replace(/\s+/g, ' ');
   const postAuditCore = skillSection(text, H_POST_AUDIT_CLASSIFY).replace(/\s+/g, ' ');
   const postAuditPart1 = refHeadingSection(postAuditClassRef, H_POST_AUDIT_CLASSIFY);
+  const postAuditReuse = refHeadingSection(reuseRef, H_POST_AUDIT_CLASSIFY);
   const postAuditPart2 = refHeadingSection(postAuditReauditRef, H_POST_AUDIT_CLASSIFY);
-  const postAuditRaw = `${postAuditPart1}\n\n${postAuditPart2}`;
+  const postAuditRaw = `${postAuditPart1}\n\n${postAuditReuse}\n\n${postAuditPart2}`;
   const postAudit = `${postAuditCore} ${postAuditRaw.replace(/\s+/g, ' ')}`;
   const gates = refHeadingSection(auditGateRef, '### Prove /ship\'s release gates on this head').replace(/\s+/g, ' ');
   const bound = refHeadingSection(docAuditGatesRef, H_BOUND_DOC_AUDIT).replace(/\s+/g, ' ');
@@ -1663,7 +1667,7 @@ describe('review-and-prep external full-suite gate and narrowed pregate', () => 
 
 describe('review-and-prep behavior-changing repair review and repair-cycles=light', () => {
   const prep = coreText('review-and-prep');
-  const reopenRaw = refHeadingSection(REF_REPAIR_GAPS, H_REOPEN_BEHAVIOR);
+  const reopenRaw = refHeadingSection(REF_BEHAVIOR_REPAIRS, H_REOPEN_BEHAVIOR);
 
   // Value: protects=the activation paragraph's exact shape, which bin/upstream-check parses; fails_when=a span moves, wraps onto two lines, changes file or loses a delimiter; why_new=drift-checked gate; seam=none
   test('the activation paragraph keeps the shape the drift check parses', () => {
@@ -2022,7 +2026,9 @@ describe('review-and-prep blocking=shown and post-audit=classify', () => {
   const prep = coreText('review-and-prep');
   const sectionRaw = refHeadingSection(REF_REPAIR_GAPS, H_BLOCK_SHOWN);
   const section = sectionRaw.replace(/\s+/g, ' ');
-  const postAuditRaw = `${refHeadingSection(REF_POST_AUDIT_CLASS, H_POST_AUDIT_CLASSIFY)}\n\n${refHeadingSection(REF_POST_AUDIT_REAUDIT, H_POST_AUDIT_CLASSIFY)}`;
+  const postAuditRaw = [REF_POST_AUDIT_CLASS, REF_POST_AUDIT_REUSE, REF_POST_AUDIT_REAUDIT]
+    .map((reference) => refHeadingSection(reference, H_POST_AUDIT_CLASSIFY))
+    .join('\n\n');
   const postAudit = postAuditRaw.replace(/\s+/g, ' ');
 
   // Value: protects=both Finding blocking / Finding not blocking receipt templates' keys in order and delimiter-free section body; fails_when=a template key is reordered/dropped or a gate idiom enters the section; why_new=Track 75A T2 + Track 86B T2/T4; seam=none
@@ -3302,6 +3308,7 @@ describe('kept contract locks fail on mutation', () => {
       policyValues: REF_POLICY_VALUES,
       docGateReuse: REF_DOC_GATE_REUSE,
       postAuditClass: REF_POST_AUDIT_CLASS,
+      postAuditReuse: REF_POST_AUDIT_REUSE,
       postAuditReaudit: REF_POST_AUDIT_REAUDIT,
     };
     const callLock = (d: typeof docs): string[] => {
@@ -3316,7 +3323,7 @@ describe('kept contract locks fail on mutation', () => {
       if (lock === checkAttackerPartsAnchorsLock) return checkAttackerPartsAnchorsLock(d.core, d.delegate);
       if (lock === checkDelegatedPartTemplateLock) return checkDelegatedPartTemplateLock(d.core, d.delegate);
       if (lock === checkExecutableFenceContractsLock) return checkExecutableFenceContractsLock(d.core, d.baseline, d.deltaSelection);
-      if (lock === checkDocAuditGapAutoLock) return checkDocAuditGapAutoLock(d.core, d.postAuditClass, d.postAuditReaudit, d.docAuditGates, d.policyValues, d.docGateReuse);
+      if (lock === checkDocAuditGapAutoLock) return checkDocAuditGapAutoLock(d.core, d.postAuditClass, d.postAuditReaudit, d.docAuditGates, d.policyValues, d.docGateReuse, d.postAuditReuse);
       return lock(d.core);
     };
     expect(callLock(docs)).toEqual([]);
@@ -3334,6 +3341,7 @@ describe('kept contract locks fail on mutation', () => {
       policyValues: mutate(docs.policyValues),
       docGateReuse: mutate(docs.docGateReuse),
       postAuditClass: mutate(docs.postAuditClass),
+      postAuditReuse: mutate(docs.postAuditReuse),
       postAuditReaudit: mutate(docs.postAuditReaudit),
     };
     const changed = (Object.keys(docs) as Array<keyof typeof docs>).some((k) => mutatedDocs[k] !== docs[k]);

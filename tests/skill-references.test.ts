@@ -26,6 +26,7 @@ import {
   REFERENCE_BYTE_CAP,
   REFERENCE_LINE_CAP,
   REFERENCE_MAX_LINE_CHARS,
+  REFERENCE_OUTPUT_BYTE_CAP,
   SKILL_BUDGETS,
 } from './helpers/skill-budgets.ts';
 import { scopedEnv } from './helpers/extend-root.ts';
@@ -113,10 +114,18 @@ describe('skill size budgets (Track 94I)', () => {
         const refContent = readFileSync(refPath, 'utf8');
         const refBytes = Buffer.byteLength(refContent, 'utf8');
         const refLines = refContent === '' ? [] : refContent.replace(/\n$/, '').split('\n');
+        const numberedOutput = refLines.map((line, index) => `${index + 1}: ${line}\n`).join('')
+          + `REFERENCE_END ${skill}/${ref} lines=${refLines.length} digest=${computeRefDigest(refContent)}\n`;
+        const outputBytes = Buffer.byteLength(numberedOutput);
         totalRefBytes += refBytes;
         if (refBytes > REFERENCE_BYTE_CAP) {
           violations.push(
             `skills/references/${skill}/${ref}.md: ${refBytes} B exceeds per-reference cap ${REFERENCE_BYTE_CAP} B (+${refBytes - REFERENCE_BYTE_CAP} B) — split by reader cluster; see docs/skill-references.md.`,
+          );
+        }
+        if (outputBytes > REFERENCE_OUTPUT_BYTE_CAP) {
+          violations.push(
+            `skills/references/${skill}/${ref}.md: numbered preamble output ${outputBytes} B exceeds cap ${REFERENCE_OUTPUT_BYTE_CAP} B — split by reader cluster; see docs/skill-references.md.`,
           );
         }
         if (refLines.length > REFERENCE_LINE_CAP) {

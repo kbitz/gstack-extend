@@ -6,9 +6,8 @@
  * 75% of Muse Code 1.4.25's measured 262,144-byte SKILL.md limit).
  *
  * Budget formula: min(CORE_BYTE_CAP, roundUp4KiB(measured * 1.10)).
- * Reference cap: 24,576 bytes (24 KiB) and 400 lines per reference file, with
- * every line <= 2,000 characters, staying safely below the smallest measured
- * per-call command output cap (~30 KiB on Claude Code).
+ * Reference cap: 16,384 file bytes, 340 lines and 17,000 numbered output bytes,
+ * leaving 1,000 bytes below the smallest successful single-call measurement.
  *
  * Raising any budget requires the developer's explicit word and an entry in
  * BUDGET_RAISE_LOG below. See docs/skill-references.md.
@@ -18,8 +17,9 @@ import type { ExpectedSetupSkill } from './expected-setup-skills.ts';
 
 export const SMALLEST_HARD_SKILL_LIMIT_BYTES = 262_144; // Muse Code 1.4.25 measured
 export const CORE_BYTE_CAP = 196_608; // 75% of 262,144
-export const REFERENCE_BYTE_CAP = 24_576; // 24 KiB (< ~30 KiB Claude Code per-call output cap)
-export const REFERENCE_LINE_CAP = 400;
+export const REFERENCE_BYTE_CAP = 16_384;
+export const REFERENCE_OUTPUT_BYTE_CAP = 17_000;
+export const REFERENCE_LINE_CAP = 340;
 export const REFERENCE_MAX_LINE_CHARS = 2_000;
 
 export interface SkillBudgetEntry {

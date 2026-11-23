@@ -43,9 +43,9 @@ gstack-extend checkout rather than beside each host's installed `SKILL.md`:
 - Delegate / subagent prompt bodies and dispatch detail.
 - Resume reconciliation checklists and large reference tables.
 
-Split by **reader cluster**, not only by topic, so the primary reviewer does
-not load delegate-only instructions and default by-hand runs load zero
-conditional references.
+Split by **reader cluster**. The primary reviewer reads delegate instructions
+only when dispatching that part. Count every reference on the representative
+default path alongside its core.
 
 ## Exact formats (enforced by `tests/skill-references.test.ts`)
 
@@ -56,8 +56,10 @@ conditional references.
 2. **Size caps:**
    - Core: ≤ per-skill budget in `tests/helpers/skill-budgets.ts` and ≤ `196,608`
      bytes (75% of Muse Code 1.4.25's measured `262,144`-byte limit).
-   - Reference file: ≤ `24,576` bytes (24 KiB), ≤ `400` lines, and every line
-     ≤ `2,000` characters.
+   - Reference file: ≤ `16,384` bytes (16 KiB), ≤ `340` lines, and every line
+     ≤ `2,000` characters. The numbered output including the
+     `REFERENCE_END` trailer must fit in `17,000` bytes. This leaves 1,000
+     bytes below the smallest successful single-call measurement.
 3. **Read instruction in the core** (the only allowed way a core names a
    reference):
    ```markdown

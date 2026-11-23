@@ -33,7 +33,7 @@ export const CORE_REFERENCE_RULE = `### Reference files and mid-run upgrades
 Some conditional steps keep their detailed instructions in reference files under the verified gstack-extend checkout. Each read point names the exact \`~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>\` command to run.
 
 - **Always fetch on step entry.** Run the \`--ref\` command each time its step is entered; nothing already in context, including a \`REFERENCE_READ\` reply or a compaction summary, counts as having the text. Verify the trailer's digest against the read instruction and check that the numbered lines run contiguously from \`1\` to the \`REFERENCE_END\` trailer's \`lines=<N>\`. If output is truncated, retry in bounded \`--lines <a>-<b>\` chunks. If the full range still cannot be verified, report \`SKILL_REFERENCE_INCOMPLETE\` with the step, reference, harness and version and take the same stop as a failed fetch.
-- **Stop on reference failure.** Relay the command's \`SKILL_REFERENCE_*\` line verbatim. For an older shared command that returns \`PREAMBLE_USAGE\`, or a missing launcher, use the start-command recovery above. In PR bodies and receipts record only the cause and the repository-relative path \`skills/references/<skill>/<file>.md\`. Run Telemetry finish with \`--outcome error\` for the failed step. Where the skill uses a stage line, end with \`Stage handoff: stage-handoff/v1; stage: <current stage>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>\`. Work completed before the step stands; rerunning the skill re-binds to the existing PR or uses the skill's resume form. Never continue a moved step from memory.
+- **Stop on reference failure.** Relay the command's \`SKILL_REFERENCE_*\` line verbatim. For an older shared command that returns \`PREAMBLE_USAGE\`, or a missing launcher, use the start-command recovery above. In PR bodies and receipts record only the cause and the repository-relative path \`skills/references/<skill>/<file>.md\`. Run Telemetry finish with \`--outcome error\` for the failed step. Where the skill uses a stage line, end with \`Stage handoff: stage-handoff/v1; stage: <stage token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>\`. Work completed before the step stands; rerunning the skill re-binds to the existing PR or uses the skill's resume form. Never continue a moved step from memory.
 - **Host subagents.** A host subagent that needs a reference runs the same \`--ref\` command itself and starts its reply with \`REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>\`; a reply without that header or with a different digest is recorded under the skill's existing incomplete-reviewer or missing-coverage rule, never as a clean pass. (If the host denies a headless subagent the start command, the primary fetches the reference and passes its text inline on that host only.) Helper-run delegates keep their code-built prompts.
 - **Mid-run upgrade.** If **Inline upgrade flow** printed \`UPGRADE_OK\` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.`;
 
@@ -128,8 +128,8 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
   },
   {
     skill: 'review-and-prep',
-    ref: 'conditional-repair-and-gaps',
-    refTitle: 'Behavior-changing repair classification, unproven test gaps, and shown-finding blocking',
+    ref: 'conditional-behavior-repairs',
+    refTitle: 'Behavior-changing repair classification',
     sectionHeading: '### Reopen review only for behavior-changing repairs',
     startMarker: "**Classify the batch once.** Under the active value only, after `/review`'s",
     endBeforeMarker: null,
@@ -138,7 +138,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
   {
     skill: 'review-and-prep',
     ref: 'conditional-repair-and-gaps',
-    refTitle: 'Behavior-changing repair classification, unproven test gaps, and shown-finding blocking',
+    refTitle: 'Unproven test gaps and shown-finding blocking',
     sectionHeading: '### Record unproven test gaps',
     startMarker: '**A recordable gap** meets all of these:',
     endBeforeMarker: null,
@@ -147,7 +147,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
   {
     skill: 'review-and-prep',
     ref: 'conditional-repair-and-gaps',
-    refTitle: 'Behavior-changing repair classification, unproven test gaps, and shown-finding blocking',
+    refTitle: 'Unproven test gaps and shown-finding blocking',
     sectionHeading: '### Block readiness only on shown findings',
     startMarker: "**Where it acts.** Under the active value only, after `/review`'s Step 5.0",
     endBeforeMarker: null,
@@ -179,12 +179,21 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
   {
     skill: 'review-and-prep',
     ref: 'conditional-post-audit-classification',
-    refTitle: 'Post-audit diff classification and doc-audit-gap decision table',
+    refTitle: 'Post-audit diff classification and outcomes',
     sectionHeading: "### Classify changes after the documentation audit's last attempt",
     startMarker: "**The delta.** Compute the delta from the last accepted audit's post-child",
-    endBeforeMarker: '1. **`undocumented-internal` class (`owner=not-needed`).** When an existing',
+    endBeforeMarker: '**Under `doc-audit-gap=auto`.** Under `doc-audit-gap=auto`, apply this paragraph',
     readInstructionSuffix: "before classifying an exhausted audit, recording why classification did not apply or evaluating active `doc-audit-gap=auto` reuse when the policy carries `post-audit=classify`",
     coreGate: "Carry the accepted audit unchanged when every change qualifies for `owner=not-needed`. Otherwise take the owner stop under blocked recovery, subject to the active `doc-audit-gap=auto` rules. Test-gate freshness still applies.",
+  },
+  {
+    skill: 'review-and-prep',
+    ref: 'conditional-post-audit-reuse',
+    refTitle: 'Documentation audit reuse checks and attempt entry points',
+    sectionHeading: "### Classify changes after the documentation audit's last attempt",
+    startMarker: '**Under `doc-audit-gap=auto`.** Under `doc-audit-gap=auto`, apply this paragraph',
+    endBeforeMarker: '1. **`undocumented-internal` class (`owner=not-needed`).** When an existing',
+    readInstructionSuffix: 'before evaluating reuse when `doc-audit-gap=auto` is active',
   },
   {
     skill: 'review-and-prep',
@@ -325,7 +334,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
       ['the phase-status warning above', 'the phase-status warning in **Read an optional review policy**'],
       ['bounded-wait host rules above', '**Hosts with bounded subagent waits**'],
     ],
-    coreGate: "Apply opt-in values only from the validated invocation policy. A policy does not waive a gate. A recorded external full-suite result is required under `full-suite=external`, while `full-suite=final` leaves the full suite to `/ship-and-land`. `doc-audit-gap=auto` is inert without both `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=` and a line carrying both reads as `none supplied`. When `first-cycle=overlap` appears with either, use upstream reviewer order. Delegation uses the caller's mapping and falls back to host review on missing prerequisites or an uncredited result. Light repair skips apply only to qualifying delta cycles, and explicit `in-cap=full` takes precedence. Repair-only continuation still needs a verifiable baseline and authorization.",
+    coreGate: "Activate only validated opt-ins. `full-suite=external` needs a recorded result. `full-suite=final` leaves the suite to `/ship-and-land`. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. `specialists=fold` excludes `delegate=`; both read as `none supplied`. With `first-cycle=overlap` plus either, use upstream order. Use host review for missing delegate prerequisites or credit. Only eligible delta repairs take light skips. `in-cap=full` takes precedence. Repair-only continuation needs a verified baseline and authorization.",
   },
   {
     skill: "review-and-prep",

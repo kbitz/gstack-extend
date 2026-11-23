@@ -2080,7 +2080,7 @@ describe('(F) repair-review and repair-cycles', () => {
     expect(fixtureText(FIX.cases['B-NEUTRAL-REPAIR-HEAD'])).not.toContain('Repair without review cycle:');
     expect(has(doc, 'a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`')).toBe(true);
     // The fixture line has the producer template's keys, in order.
-    const repairRef = squash(referenceText('review-and-prep', 'conditional-repair-and-gaps'));
+    const repairRef = squash(referenceText('review-and-prep', 'conditional-behavior-repairs'));
     const template = repairRef.match(/`Repair without review cycle: ([^`]+)`/)![1];
     const row = body.split('\n').find((l) => l.startsWith('Repair without review cycle: '))!.slice('Repair without review cycle: '.length);
     const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
@@ -2095,7 +2095,7 @@ describe('(F) repair-review and repair-cycles', () => {
     expect(has(doc, '`Repair chain voided:` and `neutral-only baseline:` lines | receipt-present')).toBe(true);
     expect(has(doc, 'each skip names `source: repair-cycles=light`')).toBe(true);
     expect(has(doc, 'they never authorize a stage or merge')).toBe(true);
-    const repairRef = squash(referenceText('review-and-prep', 'conditional-repair-and-gaps'));
+    const repairRef = squash(referenceText('review-and-prep', 'conditional-behavior-repairs'));
     expect(has(repairRef, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line') || has(prep, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
     expect(has(doc, 'and `/review`\'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`)')).toBe(true);
   });
