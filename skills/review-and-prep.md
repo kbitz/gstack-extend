@@ -588,7 +588,7 @@ Activate only validated opt-ins. `full-suite=external` pauses until a result is 
 - `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`
 - `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`
 - `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect f77f553884ed3bba` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect 3fea1dbcd927c247` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
 - `run-state=record` (its only value) is accepted and changes nothing: recording is the default. Every invocation records its run state through the
   experimental `bin/review-state` helper as
   `<extend-root>/docs/review-run-state-calls.md` defines, when the preamble

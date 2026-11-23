@@ -159,7 +159,7 @@ reference set in this update.
 
 | Skill | Before core (B) | After core (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|
-| `review-and-prep` | 366,223 | 168,479 | 184,320 | 225,117 (29) | 196,541 | 222,771 |
+| `review-and-prep` | 366,223 | 168,479 | 184,320 | 225,197 (29) | 196,541 | 222,851 |
 
 The by-hand budget counts unique bytes for a successful first cycle on Codex
 with metrics active, the selected Claude Code outside pass, no findings to
@@ -189,6 +189,7 @@ to the named core step after the move.
 | Cycle cap | Next-cycle late write above | Record cycle 1's full-review baseline |
 | Delta selection | Full-review baseline below | Record cycle 1's full-review baseline |
 | Optional policy values | Phase-status warning and bounded-wait rules above | Read an optional review policy and Hosts with bounded subagent waits |
+| Optional policy values | Inline capability commands | Published capability commands in the core. The reference keeps the exit meanings beside their policy values. |
 | Documentation-gate reuse | Verified-base cap check below | Classify changes after the documentation audit's last attempt |
 | Bounded reviewer waits | Provider-failure rule above | Report elapsed time and stop on provider failures |
 

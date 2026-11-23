@@ -451,7 +451,7 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
 
   test('the span-library lookup resolves the launcher through the helper in both skills and the docs', () => {
     const lookup = '_GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)';
-    expect(referenceText('review-and-prep', 'conditional-workflow-metrics'), 'review-and-prep').toContain(lookup + '\n  GX_LIB=$(');
+    expect(coreText('review-and-prep'), 'review-and-prep').toContain(lookup + '\n  GX_LIB=$(');
     expect(coreText('ship-and-land'), 'ship-and-land').toContain(lookup + '\n  GX_LIB=$(');
     expect(readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8')).toContain(lookup + '\nGX_LIB=$(');
   });
@@ -1746,7 +1746,7 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(wrapperSame).toContain("GX_LIB='<retained library path>'; GX_RUN='<run step_id>'");
       expect(wrapperSame).toContain(`GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac`);
       expect(wrapperSame.trimEnd().endsWith('(exit "$rc")')).toBe(true);
-      expect(spanBlock(body, 'print the library path to retain'), `${skill}: the library lookup differs from docs/telemetry.md`)
+      expect(spanBlock(coreText(skill), 'print the library path to retain'), `${skill}: the library lookup differs from docs/telemetry.md`)
         .toBe(spanBlock(spanDocs, 'To obtain the retained library path'));
       const flat = body.replace(/\s+/g, ' ');
       expect(flat).toContain("gx_span_end 'STEP-FROM-THE-SPAN-LINE' \"$rc\" 'BEGIN-FROM-THE-SPAN-LINE'");

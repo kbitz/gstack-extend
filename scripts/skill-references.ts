@@ -583,10 +583,16 @@ export function extractManifestSlice(baseText: string, entry: MoveEntry): { from
   let trimmedTo = to;
   while (trimmedTo > from && lines[trimmedTo - 1] === '') trimmedTo--;
   const moved = lines.slice(from, trimmedTo);
-  const kept = entry.keepCapabilityChecks
-    ? moved.flatMap((line) => [...line.matchAll(/`grep -F [^`]+`/g)].map(([command]) => `- ${command}`))
-    : [];
   let block = moved.join('\n');
+  const capabilityCommand = /`grep -F '([^']+)' "<installed skill dir>\/SKILL\.md"`/g;
+  const kept = entry.keepCapabilityChecks
+    ? [...block.matchAll(capabilityCommand)].map(([command]) => `- ${command}`)
+    : [];
+  if (entry.keepCapabilityChecks) {
+    block = block.replaceAll(capabilityCommand, (_command, literal: string) =>
+      `the **Published capability commands** entry for \`${literal}\``,
+    );
+  }
   for (const [source, target] of entry.navigationEdits ?? []) {
     const index = block.indexOf(source);
     if (index < 0 || index !== block.lastIndexOf(source)) {
