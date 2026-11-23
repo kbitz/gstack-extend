@@ -1161,7 +1161,13 @@ classification rule at three entry points:
    only when reuse is declined and all existing retry and safety checks pass.
 
 Every reuse requires passing the current tree's `docs-caps` check against the
-verified fetched base, including after a qualifying base merge.
+verified fetched base SHA, including after a qualifying base merge. Confirm
+policy absence or read the exact policy at that commit, including for forks.
+A measured cap violation can still take the ordinary pre-attempt re-audit,
+which must pass caps before acceptance. Unverifiable policy evidence or a
+cap violation during failed re-audit recovery or exhaustion stops dispatch.
+An interrupted extra attempt checks its Prepare snapshot binding before
+Parent processing can accept it.
 
 Use only the decisions verified for the current audit, head and fetched
 base. Every classified commit has its own `Post-audit change:` row. An empty

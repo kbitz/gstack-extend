@@ -3280,10 +3280,17 @@ failed-child recovery, commit intended pending work first. Require an empty
 In fallback a dirty tree stops recovery before any retry, staging or commit.
 Preserve partial child edits. A missing or unreadable `doc-roots-<audit_id>.txt`
 or snapshot `docs` list is `docs-roots-unreadable`.
-Before granting reuse at any entry point, run upstream's `gstack-ship-receipt
-docs-caps --base <base>` against the current clean tree and verified fetched
-base, even after a qualifying base merge. A cap failure or unverifiable result
-takes blocked recovery's non-waivable stop before reuse or another dispatch.
+Before granting reuse at any entry point, check the current clean tree against
+the documentation caps at the verified fetched base SHA, even after a qualifying
+base merge. Use a successful `git ls-tree --full-tree <base-sha> -- .gstack/ship-policy.json`
+to distinguish a confirmed absent policy (no caps) from a failed lookup. For a
+present policy, require a regular blob, copy its exact bytes from that commit
+to private evidence, and run upstream's `gstack-ship-receipt docs-caps --policy <file>`.
+Never substitute `origin/<base>` or the working-tree policy for the verified SHA.
+An unverifiable policy or check takes the non-waivable stop. A measured cap
+violation declines reuse. A pre-attempt visit can still take the ordinary
+upstream re-audit, which must pass the cap gate before acceptance. In failed
+re-audit recovery or after exhaustion, a cap violation stops before dispatch.
 
 Judge the whole walk. Reuse requires every commit to qualify for an
 `owner=not-needed` class for this entry point. Apply 1(a) and 1(c) to existing
@@ -3447,10 +3454,13 @@ there, and any unexpected command or script failure is `command-failed`.
    any interrupted extra launch before deciding whether an attempt remains. An
    `action=extra-audit` line with no later `action=result` line is an
    interrupted extra launch: the parent first runs blocked recovery step 1
-   (confirm the child stopped), then validates that child's saved output through
-   upstream's Parent processing (collect, check output, check ownership, check
-   freshness and doc caps), records `result=accepted` only when it passes, and
-   otherwise records `result=interrupted` with the failure code in evidence.
+   (confirm the child stopped), then verifies the original Prepare snapshot's
+   pre-dispatch hash, invocation and audit ID before Parent processing. Missing
+   or mismatched proof takes the non-waivable stop. With verified proof, validate
+   the saved output through upstream's Parent processing (collect, check output,
+   check ownership, check freshness and run the verified-base cap check above).
+   Record `result=accepted` only when it passes. Otherwise record
+   `result=interrupted` with the failure code in evidence.
    For any blocked or failed result, including a refusal or
    interruption, use the same safety-gated fallback above. Reuse carries the
    earlier accepted audit only. If fallback declines reuse, take the existing
