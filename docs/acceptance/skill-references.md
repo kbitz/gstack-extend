@@ -208,7 +208,7 @@ isolated installation for root resolution and left the installed copies alone.
 | Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers |
 | Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers |
 | Codex-format scratch skill | Muse Code 1.4.25 | 5/5 load markers on the preceding scratch copy. The validator accepted the 168,332-byte package. |
-| Codex-format scratch file | Grok 1.0.92 alpha | 5/5 load markers from a paged file read. Workspace skill discovery was unavailable in this scratch configuration. |
+| Scratch skill package | Grok 1.0.92 alpha | 5/5 markers from a paged read. `grok inspect` listed that identical marker package and the current core as invocable skills in disposable homes. Workspace discovery was unavailable in the untrusted scratch project. |
 
 Claude Code, Codex and Muse fetched the commanded reference and saw its digest
 trailer in the applicable gate probes. The disposable-home install tests also
@@ -277,7 +277,7 @@ exit. The optional metrics probe again reached Step 2.
   savings require recorded runs.
 - After merge, run the installed-copy load checks and observe the first real
   by-hand run on each available harness, using the plan's acceptance rows.
-  Grok native discovery and a full measured by-hand read sequence remain open.
+  A full measured by-hand read sequence remains open.
 - Tracks 96A and 97A must widen their `_touches` to the relevant
   `skills/references/review-and-prep/*.md` files when changing moved sections.
 - Track 94I PR B starts from a fresh base after PR A merges. Its scope is

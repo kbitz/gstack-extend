@@ -387,11 +387,20 @@
 - **Evidence:** The move check preserves the raw instructions. The layout and Track ID checks still focus on the core, so these cases lack a separate fixture.
 - **Context:** Track 94I PR A full continuation. Revisit with the next skill split.
 
-### [review:files=docs/acceptance/skill-references.md|skills/review-and-prep.md] Exercise Grok native skill discovery
+### [review:files=docs/acceptance/skill-references.md|skills/review-and-prep.md] Exercise an installed Grok skill end to end
 
-- **Description:** Repeat the five-marker probe through native discovery if the installed Grok build supports it. The pre-merge fixture verified a paged scratch-file read.
-- **Evidence:** Grok 1.0.92 alpha returned all five file markers. The scratch configuration did not discover the skill by name.
+- **Description:** Observe the first installed by-hand run through Grok, including discovery and workflow reference reads.
+- **Evidence:** Grok 1.0.92 alpha returned all five scratch markers. Its local inspector accepted the same package as invocable in a disposable home.
 - **Context:** Track 94I PR A full continuation. Revisit at the planned installed-copy check.
+
+### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test reference snapshot allocation and copy failures
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The read tests exercise source, digest, range and temporary-path handling. They do not force the temporary snapshot allocation or file copy to fail.
+- **Hypothesis (untested):** Inject those I/O failures and check that the helper reports cause `unreadable` and emits no reference body.
+- **Upstream severity:** INFORMATIONAL
+- **Evidence:** Final continuation coverage audit at `f979ee7`.
+- **Context:** Revisit when the next Track changes reference snapshot I/O.
 
 ## Completed
 
