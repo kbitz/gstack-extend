@@ -1171,11 +1171,12 @@ An interrupted extra attempt checks its Prepare snapshot binding before
 Parent processing can accept it. An unresolved documentation discrepancy
 declines reuse for the whole walk, including an empty walk.
 
-`S` means the commit whose content the accepted audit verified. When an
-`updated` audit's approved edits are committed, that commit can serve as `S`
-only with proof that its sole parent was Prepare's head, that its diff holds
-exactly those edits, and that its content matches the accepted post-child
-snapshot. The table's `carried-audit=<S>` uses the audit ID and section hash
+`S` means the commit whose content the accepted audit verified. Either accepted
+status can cover authorized pending content, such as reviewed coverage tests or
+accepted child edits. A commit that adopts that content can serve as `S` only
+with proof that its sole parent was Prepare's head, its diff holds exactly that
+content, and its committed bytes match the accepted post-child snapshot. The
+table's `carried-audit=<S>` uses the audit ID and section hash
 bound to `S`. The existing `reason=` field names the phase as `pre-attempt`,
 `blocked-re-audit`, `failed-re-audit` or `post-exhaustion`.
 

@@ -3601,6 +3601,7 @@ describe('(R) doc-audit-gap=auto', () => {
       'original Prepare snapshot against its parent-held pre-dispatch hash, invocation and audit ID.',
       'Every reuse requires passing the current tree\'s `docs-caps` check against the verified fetched base SHA, including after a qualifying base merge.',
       'An interrupted extra attempt checks its Prepare snapshot binding before Parent processing can accept it.',
+      'Either accepted status can cover authorized pending content, such as reviewed coverage tests or accepted child edits.',
       'The extra-audit allowance belongs to one invocation and its resumes (the counter file `doc-audit-extra.txt` in its evidence directory); a continuation (`/review-and-prep continue`) runs none; an ordinary new `/review-and-prep` run on the same pull request, such as one after a `/ship-and-land` hand-back, is a new review round with upstream\'s fresh budget and its own allowance.',
       'A base merge qualifies only where Git supports `--remerge-diff` (2.36 or later), so with an older Git any base merge after the audit leaves classify not applied (`git-too-old`)',
     'Reuse writes no new `record audit`. The compact `- documentation:` line renders `not-run` when the carried audit lacks a final binding.',

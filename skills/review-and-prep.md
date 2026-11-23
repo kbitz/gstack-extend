@@ -3317,15 +3317,17 @@ as evidence only.
 | `a blocked re-audit` | Upstream attempt 2 or the extra attempt returned `blocked`. Verify the stopped child and all fallback prerequisites first. | Apply the same rule to `S..HEAD`. A qualifying unchanged walk reuses `S` with no question and no extra attempt. On decline, take the eligible extra attempt or existing stop. A non-waivable failure stops recovery. | `post-audit: active` and `doc-audit-gap: active; reuse=applied` on reuse, with `Post-audit change:` rows for any commits, `carried-audit=<S>` and `blocked-re-audit` in `reason=`. Keep the attempt's actual result, `audit_id` and child-stop proof in the full `Ship gates` detail and evidence. On decline record `reuse=not-applied` and `Doc-audit extra:` if evaluated. |
 | `a failed re-audit` | Upstream attempt 2 or the extra attempt failed to complete or validate. Includes timeout, missing output, `DOCS_RESULT_INVALID` after any allowed format repair, exit 3 refusal, or failed validation or freshness. Verify the stopped child and all fallback prerequisites first. | Apply the same rule to `S..HEAD`. A qualifying unchanged walk reuses `S` with no question and no extra attempt. On decline, take the eligible extra attempt or existing stop. A non-waivable failure stops recovery. | `post-audit: active` and `doc-audit-gap: active; reuse=applied` on reuse, with `Post-audit change:` rows for any commits, `carried-audit=<S>` and `failed-re-audit` in `reason=`. Keep the attempt's actual failure code, `audit_id` and child-stop proof in the full `Ship gates` detail and evidence. On decline record `reuse=not-applied` and `Doc-audit extra:` if evaluated. |
 
-Let `S` be the commit representing the accepted audit's content. For a clean
-`current` audit, use its verified post-child snapshot HEAD. For `updated`, the
-upstream post-child snapshot still names Prepare's HEAD and records the child's
-accepted content separately. Keep that snapshot and its section intact. Commit
-only the verified audit edits before unrelated work, and bind `S` to that commit
-only after confirming its sole parent is Prepare's HEAD, its diff contains
-exactly the verified audit edits, and its committed content matches the
-post-child snapshot's recorded path hashes. Retain this binding with the audit
-ID, base and snapshot hash. If any proof is missing, decline reuse. The table's
+Let `S` be the commit representing the accepted audit's content. If the verified
+post-child snapshot has no pending changes, use its HEAD. Otherwise the snapshot
+records pending content separately from Prepare's HEAD. This can happen for
+either accepted status, including reviewed coverage tests still pending when a
+`current` audit runs and permitted child edits from an `updated` audit. Keep the
+snapshot and its section intact. Commit only the verified, authorized pending
+content before unrelated work. Bind `S` to that commit only after confirming its
+sole parent is Prepare's HEAD, its diff contains exactly that pending content,
+and its committed content matches the post-child snapshot's recorded path hashes.
+Retain this binding with the audit ID, base and snapshot hash. If any proof is
+missing, decline reuse. The table's
 `carried-audit=<S>` means the existing `<audit_id> <section-sha256>` of the audit
 bound to `S`.
 
