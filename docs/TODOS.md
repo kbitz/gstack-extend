@@ -38,6 +38,54 @@
 - **Revisit when:** A Track changes delegate policy execution or qualifies the installed workflow on either host.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Cover the Antigravity model tail boundary
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The launch fixture covers the opening-line size limit. Model selection reads a separate 8 MiB tail and discards a line cut by the seek.
+- **Hypothesis (untested):** Extend the provenance fixture with a transcript that exceeds the tail limit and assert that only complete planner rows inside the read can determine the model.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `bin/lib/telemetry.py`, `antigravity_turns`.
+- **Evidence:** The coverage audit traced the bounded read and the existing fixture inputs.
+- **Context:** Antigravity telemetry review at `1641c42` (2026-11-24).
+- **Revisit when:** A Track changes the Antigravity model reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Skip invalid Antigravity planner rows
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The provenance fixtures exercise valid planner responses. The malformed opening-line case exercises launch classification.
+- **Hypothesis (untested):** Combine a valid planner response with invalid JSON, an invalid timestamp and an invalid model in a synthetic tail. Check that the valid response determines the model.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `bin/lib/telemetry.py`, `antigravity_turns`.
+- **Evidence:** The coverage audit compared the model parser branches with the planner fixtures.
+- **Context:** Antigravity telemetry review at `1641c42` (2026-11-24).
+- **Revisit when:** A Track changes Antigravity provenance parsing.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Check explicit Antigravity discovery roots
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The audit hook checks successful discovery. The existing finish fixtures exercise the live readers for missing, linked and nonregular logs.
+- **Hypothesis (untested):** Check that an explicit discovery root takes precedence over an inherited override and that discovery returns an empty list after refusing a candidate.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `bin/lib/telemetry.py`, `antigravity_logs`.
+- **Evidence:** The coverage audit traced the helper's explicit-root path and its audit-hook caller.
+- **Context:** Antigravity telemetry review at `1641c42` (2026-11-24).
+- **Revisit when:** A Track changes Antigravity resolver inputs or discovery.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=tests/helpers/telemetry-env.ts|tests/telemetry.test.ts] Test gap: Pin the Antigravity resolver inventory
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The test guard registers `ANTIGRAVITY_APP_DATA_DIR`. The fixture checks do not assert that this variable appears by name in the inherited resolver inventory.
+- **Hypothesis (untested):** Run the guard with an isolated synthetic override and require the inventory to include the variable name while omitting its value.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `tests/helpers/telemetry-env.ts`, `OTHER_RESOLVER_VARS`.
+- **Evidence:** The coverage audit traced the registered variable through the snapshot inventory.
+- **Context:** Antigravity telemetry review at `1641c42` (2026-11-24).
+- **Revisit when:** A Track changes the telemetry fixture guard or its resolver inventory.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

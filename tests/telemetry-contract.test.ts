@@ -2611,6 +2611,24 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     symlinkSync(museSessionFile('muse-contract-host'), museSessionFile('muse-contract-sym'));
     writeMuseOpen('muse-contract-over', 'paseo', 70_000);
 
+    const agyTranscriptFile = (cid: string) =>
+      join(fix.home, '.gemini/antigravity-cli/brain', cid, '.system_generated/logs/transcript.jsonl');
+    writeLines(agyTranscriptFile('agy-contract-term'), [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: '2026-11-24T00:00:00Z' },
+      { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: '2026-11-24T00:00:01Z' },
+    ]);
+    writeLines(agyTranscriptFile('agy-contract-subagent'), [
+      { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: '2026-11-24T00:00:00Z' },
+    ]);
+    writeLines(agyTranscriptFile('agy-contract-implicit'), [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_IMPLICIT', created_at: '2026-11-24T00:00:00Z' },
+    ]);
+    mkdirSync(dirname(agyTranscriptFile('agy-contract-sym')), { recursive: true });
+    symlinkSync(agyTranscriptFile('agy-contract-term'), agyTranscriptFile('agy-contract-sym'));
+    writeLines(agyTranscriptFile('agy-contract-over'), [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', pad: 'x'.repeat(70_000) },
+    ]);
+
     // Value: protects=contract run-mode matrix mirrors shared per-harness launch-surface classification and schema validity; fails_when=a qualified harness diverges on terminal/host-app/orchestrated/workspace-owner/other/unavailable/override cases; why_new=Track 90B T3 shared contract matrix; seam=none
     const qualifiedHarnesses: Array<{
       harness: string;
@@ -2658,6 +2676,18 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         missing: { MUSE_SESSION_ID: 'muse-session-contract' },
         symlinked: { MUSE_SESSION_ID: 'muse-contract-sym' },
         overBound: { MUSE_SESSION_ID: 'muse-contract-over' },
+      },
+      {
+        harness: 'antigravity',
+        overrideAgent: 'claude',
+        terminal: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-contract-term', PASEO_AGENT_ID: 'paseo-agy-contract' },
+        other: [
+          { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-contract-subagent', PASEO_AGENT_ID: 'paseo-agy-contract' },
+          { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-contract-implicit', PASEO_AGENT_ID: 'paseo-agy-contract' },
+        ],
+        missing: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-contract-missing', PASEO_AGENT_ID: 'paseo-agy-contract' },
+        symlinked: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-contract-sym' },
+        overBound: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-contract-over' },
       },
     ];
 
@@ -2747,6 +2777,7 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
       ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
       ['Muse', { MUSE_SESSION_ID: 'synthetic-muse' }],
+      ['Antigravity', { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'synthetic-antigravity' }],
     ] as Array<[string, Record<string, string>]>) {
       for (const owner of ['', 'fixture-owner']) {
         cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
@@ -2922,7 +2953,7 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     expect(record).not.toContain('kbitz/');
     const telemetryDoc = docText();
     const runModeSection = section(telemetryDoc, '### Run mode');
-    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `muse` |']) {
+    for (const h of ['| `claude` |', '| `grok` |', '| `codex` |', '| `muse` |', '| `antigravity` |']) {
       expect(runModeSection).toContain(h);
     }
     expect(runModeSection).not.toContain('| `cursor` |');
