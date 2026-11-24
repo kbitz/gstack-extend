@@ -4,6 +4,7 @@
 
 ### [review:files=src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Test gap: Refuse a finding with no matching part
 
+- **ID:** wi-542e1f
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
 - **Description:** The matching tests cover one candidate, ambiguous candidates, malformed locations and source-line mismatches. They do not isolate a well-formed finding with zero candidates in an otherwise valid record.
 - **Hypothesis (untested):** Extend the evaluator fixture with a finding on an absent path. Check that evaluation stays unsatisfied, reports the path refusal and produces no match.
