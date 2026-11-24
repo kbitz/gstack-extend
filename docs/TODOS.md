@@ -2,6 +2,42 @@
 
 ## Unprocessed
 
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Keep multiple machine-read clauses from one move
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The manifest and its fixture each carry one clause and pointer pair. They leave a future change that processes only the first pair undetected.
+- **Hypothesis (untested):** Extend the conservation fixture with two distinct pairs and assert that both clauses stay in core and both pointers appear in the reference.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `scripts/skill-references.ts`, `extractManifestSlice`.
+- **Evidence:** The coverage audit traced the loop and the passing single-pair fixture.
+- **Context:** Review of the delegate clause restoration at `d30f79e` (2026-11-24).
+- **Revisit when:** A Track adds a second clause to a reference move or changes clause extraction.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|tests/skill-references.test.ts] Test gap: Pin the first delegate grammar marker
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** A caller can read from the first delegate grammar marker to its closing parenthesis. Finding one exact clause still passes if an earlier marker points to different text.
+- **Hypothesis (untested):** Assert that the first marker in the core skill starts the exact historical clause, then verify that an earlier lookalike fails the assertion.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `skills/review-and-prep.md`, **Read an optional review policy**.
+- **Evidence:** The consumer probe reads both conditional parts on the reviewed candidate. The permanent lock checks the clause's bytes and count.
+- **Context:** Review of the delegate clause restoration at `d30f79e` (2026-11-24).
+- **Revisit when:** A Track changes the delegation grammar or how it is generated in core.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|skills/references/review-and-prep/conditional-policy-values.md] Test gap: Exercise the delegate policy on installed hosts
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The setup fixtures verify the skill bytes and reference reads. They leave actual policy interpretation on both installed hosts unobserved.
+- **Hypothesis (untested):** On Codex and Claude Code, use an isolated delegate fixture to observe the selected parts, host fallback, conflicting policy status and suite route.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `skills/review-and-prep.md` and `conditional-policy-values.md`.
+- **Evidence:** Both generated host copies carry the clause. Static policy checks passed, and no live host failure was shown.
+- **Context:** Review of the delegate clause restoration at `d30f79e` (2026-11-24).
+- **Revisit when:** A Track changes delegate policy execution or qualifies the installed workflow on either host.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Refuse a missing secondary reference entry heading
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.

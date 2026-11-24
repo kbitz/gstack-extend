@@ -83,9 +83,7 @@
   seconds), Step 4's Greptile status reads, Step 6's `mergeable` poll and the
   **Hosts with bounded subagent waits**, which keep their own bounds. Capability check:
   the **Published capability commands** entry for `parent-io=lean`.
-- `delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,
-  `simplification`, `adversarial` and `red-team`, comma-separated, each at most
-  once) sends those parts to a provider the caller configured, as **Delegate
+- `delegate=<part>[,<part>...]` (parts listed in **Read an optional review policy** in the core) sends those parts to a provider the caller configured, as **Delegate
   named specialist parts** defines (`adversarial` is the native adversarial pass
   and `red-team` is the Red Team), and a part whose delegate fails runs on the
   host model instead. Security, state-machines, the outside voices and the

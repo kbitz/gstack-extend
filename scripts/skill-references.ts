@@ -52,6 +52,8 @@ export interface MoveEntry {
   coreGate?: string;
   /** Exact published capability commands stay in the core. */
   keepCapabilityChecks?: boolean;
+  /** Exact machine-read clauses kept in the core and replaced with a core pointer in the reference. */
+  keepMachineReadClauses?: readonly (readonly [clause: string, refPointer: string])[];
   /** Relative directions replaced by named steps after moving the text. */
   navigationEdits?: readonly (readonly [from: string, to: string])[];
 }
@@ -342,11 +344,17 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     endBeforeMarker: "- `run-state=record` (its only value) is accepted and changes nothing: recording is the default. Every invocation records its run state through the",
     readInstructionSuffix: "before applying opt-in policy values when a valid Review policy line contains a key covered in this section",
     keepCapabilityChecks: true,
+    keepMachineReadClauses: [
+      [
+        '`delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,\n  `simplification`, `adversarial` and `red-team`, comma-separated, each at most\n  once)',
+        '`delegate=<part>[,<part>...]` (parts listed in **Read an optional review policy** in the core)',
+      ],
+    ],
     navigationEdits: [
       ['the phase-status warning above', 'the phase-status warning in **Read an optional review policy**'],
       ['bounded-wait host rules above', '**Hosts with bounded subagent waits**'],
     ],
-    coreGate: "Validate opt-ins. `full-suite=external` pauses for a result; `full-suite=final` runs targeted lanes before the final full run. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. Together `specialists=fold` and `delegate=` read as `none supplied`. Either excludes `first-cycle=overlap`. Use host fallback for unavailable delegation. Light skips apply only to eligible delta repairs; `in-cap=full` overrides. Repair-only needs a verified baseline and authorization.\n\n**Published capability commands:**",
+    coreGate: "Validate opt-ins: `full-suite=external` pauses; `final` runs targeted lanes before the final run. `specialists=fold` + `delegate=` reads as `none supplied`; either excludes `first-cycle=overlap`. Unavailable delegation uses host review. Light skips need eligible delta repairs (`in-cap=full` overrides). Repair-only needs verified baseline and authorization.\n\n**Published capability commands:**",
   },
   {
     skill: "review-and-prep",
@@ -928,7 +936,7 @@ function findSectionBounds(lines: string[], heading: string): { start: number; e
 }
 
 /** Locate one manifest entry's exact line range [from, to) inside `baseText`. */
-export function extractManifestSlice(baseText: string, entry: MoveEntry): { from: number; to: number; block: string; kept: string[] } {
+export function extractManifestSlice(baseText: string, entry: MoveEntry): { from: number; to: number; block: string; kept: string[]; keptClauses: string[] } {
   const lines = baseText.split('\n');
   const { start, end } = findSectionBounds(lines, entry.sectionHeading);
   let from = -1;
@@ -968,6 +976,15 @@ export function extractManifestSlice(baseText: string, entry: MoveEntry): { from
       `the **Published capability commands** entry for \`${literal}\``,
     );
   }
+  const keptClauses: string[] = [];
+  for (const [clause, refPointer] of entry.keepMachineReadClauses ?? []) {
+    const index = block.indexOf(clause);
+    if (index < 0 || index !== block.lastIndexOf(clause)) {
+      throw new Error(`Expected one kept clause in ${entry.ref}: ${clause}`);
+    }
+    keptClauses.push(`- ${clause}`);
+    block = block.slice(0, index) + refPointer + block.slice(index + clause.length);
+  }
   for (const [source, target] of entry.navigationEdits ?? []) {
     const index = block.indexOf(source);
     if (index < 0 || index !== block.lastIndexOf(source)) {
@@ -975,7 +992,7 @@ export function extractManifestSlice(baseText: string, entry: MoveEntry): { from
     }
     block = block.slice(0, index) + target + block.slice(index + source.length);
   }
-  return { from, to: trimmedTo, block, kept };
+  return { from, to: trimmedTo, block, kept, keptClauses };
 }
 
 export interface ConservationResult {
@@ -1132,7 +1149,10 @@ export function applyManifestToSkill(
     const pointer = s.entry.readInstructionSuffix === null
       ? []
       : [formatReadInstruction(skill, s.entry.ref, digests[s.entry.ref]!, s.entry.readInstructionSuffix)];
-    const retained = s.entry.coreGate ? [s.entry.coreGate, '', ...s.kept, ...pointer] : [...s.kept, ...pointer];
+    const keptClauses = s.keptClauses.length ? [...s.keptClauses, ''] : [];
+    const retained = s.entry.coreGate
+      ? [...keptClauses, s.entry.coreGate, '', ...s.kept, ...pointer]
+      : [...keptClauses, ...s.kept, ...pointer];
     if (pointer.length && baseLines[s.to]) retained.push('');
     outLines.splice(s.from, s.to - s.from, ...retained);
   }
