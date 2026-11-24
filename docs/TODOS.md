@@ -417,7 +417,7 @@
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
 - **Description:** The optional summary tests cover absence, malformed files, links, size and identity. They leave a present nonregular entry untested.
-- **Hypothesis (untested):** Use an isolated FIFO fixture with a bounded finish command. Verify the reader returns unavailable without waiting for a writer.
+- **Hypothesis (untested):** Use isolated FIFO fixtures for the optional summary and required context with a bounded finish command. Verify the reader returns unavailable without waiting for a writer.
 - **Upstream severity:** INFORMATIONAL (coverage audit)
 - **Found in:** `bin/lib/telemetry.py:1091`
 - **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
@@ -439,7 +439,7 @@
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
 - **Description:** The ambiguity fixture covers multiple unnamed active sessions. It leaves a named session duplicated under both current-directory and checkout-root buckets untested.
-- **Hypothesis (untested):** Place the same valid session identifier under both fixture buckets and verify the reader leaves mode unknown.
+- **Hypothesis (untested):** Place the same valid session identifier under both fixture buckets, then try unnamed sessions with one fresh log in each bucket. Verify both lookups leave mode unknown.
 - **Upstream severity:** INFORMATIONAL (coverage audit)
 - **Found in:** `bin/lib/telemetry.py:1649`
 - **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
@@ -450,7 +450,7 @@
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
 - **Description:** The active-session fixtures use regular event logs. Link tests currently exercise named session directories and metadata files.
-- **Hypothesis (untested):** Give unnamed candidates linked or nonregular events entries and verify they cannot qualify.
+- **Hypothesis (untested):** Give unnamed candidates a linked session directory or linked or nonregular event log and verify they cannot qualify.
 - **Upstream severity:** INFORMATIONAL (coverage audit)
 - **Found in:** `bin/lib/telemetry.py:1677`
 - **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
@@ -476,6 +476,17 @@
 - **Upstream severity:** INFORMATIONAL (coverage audit)
 - **Found in:** `bin/lib/telemetry.py:1708`
 - **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Reject the first byte above the metadata size limit
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Existing fixtures accept exactly 64 KiB and reject a substantially larger file. They leave the first byte above the limit untested.
+- **Hypothesis (untested):** Extend the isolated size fixture with a valid JSON file of exactly 65,537 bytes and verify that it returns entrypoint-unavailable.
+- **Upstream severity:** P3 (outside structured review)
+- **Found in:** `bin/lib/telemetry.py:1098`
+- **Evidence:** The 64 KiB and over-limit assertions cover the adjacent paths. No failure was reproduced.
 - **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
 - **Effort:** ? (user triages in `/roadmap`)
 
