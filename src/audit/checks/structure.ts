@@ -183,7 +183,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     for (const b of t.blockedBy) {
       if (!trackIds.has(b) && !knownWorkItemIds.has(b)) {
         findings.push(
-          `- Track ${t.id}: _blocked-by: ${b} is not a known Track ID`,
+          `- Track ${t.id}: _blocked-by: ${b} is not a known Track ID or work-item ID`,
         );
       }
     }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { runIdCli } from '../src/audit/id-cli.ts';
+import { createGitGateway } from '../src/audit/lib/git.ts';
 import {
   WORK_ITEM_ID_CONTRACT,
   WORK_ITEM_ID_PREFIX,
@@ -54,6 +55,7 @@ describe('work-item-id library', () => {
     expect(parseTodoIdBullet('- **Why:** something')).toBeNull();
 
     expect(parseTrackIdLine('_id: wi-0123ab_')).toEqual({ raw: 'wi-0123ab', id: 'wi-0123ab' });
+    expect(parseTrackIdLine('_id: wi-0123ab')).toEqual({ raw: 'wi-0123ab', id: null });
     expect(parseTrackIdLine('_id: wi-12_')).toEqual({ raw: 'wi-12', id: null });
     expect(parseTrackIdLine('_touches: src/a.ts_')).toBeNull();
 
@@ -62,6 +64,7 @@ describe('work-item-id library', () => {
       id: 'wi-a1b2c3',
     });
     expect(extractInlineBulletId('- **Title** — body **Revisit when:** **ID:** wi-a1b2c3')).toBeNull();
+    expect(extractInlineBulletId('- **Title** — Shows `- **ID:** wi-a1b2c3` in an example.')).toBeNull();
     expect(extractInlineBulletId('- **Title** — **ID:** wi-ZZZZ — body')).toEqual({
       raw: 'wi-ZZZZ',
       id: null,
@@ -237,7 +240,7 @@ describe('work-item-id library', () => {
 });
 
 describe('bin/roadmap-id CLI', () => {
-  test('mint refuses live IDs and git-deleted/killed IDs', () => {
+  test('mint and migrate reserve Markdown Track IDs in live and deleted records', () => {
     const repo = freshDir('mint-git');
     mkdirSync(join(repo, 'docs'), { recursive: true });
     const git = (args: string[]) =>
@@ -253,16 +256,31 @@ describe('bin/roadmap-id CLI', () => {
         encoding: 'utf8',
       });
     expect(git(['init']).status).toBe(0);
+    const roadmapPath = join(repo, 'ROADMAP.md');
+    const todoPath = join(repo, 'docs', 'TODOS.md');
+    const pending = '## Unprocessed\n### My entry\n';
+    const id = migrateTodosText(pending, new Set()).ids[0]!;
+    const track = `## Current Plan\n### Group 1: Work\n#### Track 1A: First\n_1 task . low risk_\n_id: ${id}_\n`;
+    writeFileSync(roadmapPath, track);
     writeFileSync(
       join(repo, 'docs', 'TODOS.md'),
       '# TODOS\n\n## Unprocessed\n\n### [manual] Killed entry\n- **ID:** wi-dead01\n',
     );
     expect(git(['add', '.']).status).toBe(0);
     expect(git(['commit', '-m', 'add entry']).status).toBe(0);
+    writeFileSync(todoPath, pending);
+    expect(runIdCli(['migrate', repo]).exitCode).toBe(0);
+    expect(readFileSync(todoPath, 'utf8')).not.toContain(`- **ID:** ${id}\n`);
     // Kill the entry
-    writeFileSync(join(repo, 'docs', 'TODOS.md'), '# TODOS\n\n## Unprocessed\n');
+    writeFileSync(roadmapPath, '');
+    writeFileSync(todoPath, pending);
     expect(git(['add', '.']).status).toBe(0);
     expect(git(['commit', '-m', 'kill entry']).status).toBe(0);
+    const historical = createGitGateway({ cwd: repo }).historicalWorkItemIds(['ROADMAP.md', 'docs/TODOS.md']);
+    expect(historical).toContain(id);
+    expect(historical).toContain('wi-dead01');
+    expect(runIdCli(['migrate', repo]).exitCode).toBe(0);
+    expect(readFileSync(todoPath, 'utf8')).not.toContain(`- **ID:** ${id}\n`);
 
     const r = spawnSync('/bin/sh', [BIN, 'mint', repo, '--count', '5'], {
       encoding: 'utf8',
@@ -277,6 +295,35 @@ describe('bin/roadmap-id CLI', () => {
       expect(isValidWorkItemId(id)).toBe(true);
       expect(id).not.toBe('wi-dead01');
     }
+  });
+
+  test('rewrite uses the live label over a shipped label and reads legacy archive Groups', () => {
+    const repo = freshDir('rewrite');
+    mkdirSync(join(repo, 'docs'));
+    writeFileSync(join(repo, 'docs', 'roadmap-shipped.md'), [
+      '## Shipped', '### Track 1A: Retired ✓ Shipped', '_id: wi-aaaaaa_',
+      '## Group 2: Legacy', '- Track 2A — Shipped', '',
+    ].join('\n'));
+    const path = join(repo, 'ROADMAP.md');
+    writeFileSync(path, [
+      '## Current Plan', '### Group 1: Current',
+      '#### Track 1A: Live', '_1 task . low risk_', '_id: wi-bbbbbb_',
+      '#### Track 1B: Blocked', '_1 task . low risk_',
+      '_blocked-by: Track 1A (live, required), Track 2A_', '',
+    ].join('\n'));
+    expect(runIdCli(['migrate', '--rewrite-blocked-by', repo]).exitCode).toBe(0);
+    const archive = readFileSync(join(repo, 'docs', 'roadmap-shipped.md'), 'utf8');
+    const legacyId = archive.match(/^- Track 2A — \*\*ID:\*\* (wi-[0-9a-f]+) —/m)?.[1];
+    expect(legacyId).toBeDefined();
+    expect(readFileSync(path, 'utf8')).toContain(`_blocked-by: wi-bbbbbb, ${legacyId}_`);
+  });
+
+  test('migration retains CRLF and the existing spaces before a Future trigger', () => {
+    const input = '## Future\r\n- A plain entry    **Revisit when:** ready.\r\n';
+    const result = migrateFutureText(input, new Set());
+    expect(result.added).toBe(1);
+    expect(result.text.replace(` — **ID:** ${result.ids[0]}`, '')).toBe(input);
+    expect(migrateFutureText(result.text, new Set()).text).toBe(result.text);
   });
 
   test('migrate --dry-run, migrate, and idempotent second run', () => {
@@ -318,6 +365,7 @@ describe('bin/roadmap-id CLI', () => {
     expect(runIdCli(['bogus']).exitCode).toBe(2);
     expect(runIdCli(['mint', '--count', '0']).exitCode).toBe(2);
     expect(runIdCli(['mint', '--count', 'abc']).exitCode).toBe(2);
+    expect(runIdCli(['mint', '--count', '999999999999999999999999']).exitCode).toBe(2);
     expect(runIdCli(['migrate', '--nope']).exitCode).toBe(2);
   });
 });

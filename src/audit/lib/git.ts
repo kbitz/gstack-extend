@@ -15,7 +15,7 @@
  *   logFirstWithPhrase(phrase, f)  git log -1 --format=%ai -S "phrase" -- f
  *   logSubjectsSince(since, f)     git log --format=%s --after=since -- f
  *
- * All methods return plain TS values; failures (git missing, non-repo cwd,
+ * Read-only audit methods return plain TS values; failures (git missing, non-repo cwd,
  * empty output) return null / [] rather than throwing. Match bash's
  * `2>/dev/null || true` semantics exactly — the audit must keep running
  * even when git is unhealthy.
@@ -26,6 +26,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { scanAllWorkItemIds } from './work-item-id.ts';
 
 export type GitSpawnResult = {
   ok: boolean;
@@ -52,7 +53,7 @@ export type GitGateway = {
   logSubjectsSince(sinceISO: string, file: string): string[];
   /** Union of unstaged, staged, and untracked paths (drift check). */
   workingTreePaths(): string[];
-  /** All work-item IDs (`wi-[0-9a-f]{4,8}`) ever seen in git history of `relPaths`. */
+  /** Reserve IDs from available Git history. Throws if history cannot be checked. */
   historicalWorkItemIds(relPaths: string[]): string[];
 };
 
@@ -150,18 +151,20 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
 
     historicalWorkItemIds(relPaths: string[]): string[] {
       if (relPaths.length === 0) return [];
+      // The mint and migration commands cannot safely treat a failed Git
+      // command as an empty reservation set. A non-repository is legitimate.
+      const repo = spawn(['rev-parse', '--is-inside-work-tree'], cwd);
+      if (!repo.ok) {
+        if (/not a git repository/i.test(repo.stderr)) return [];
+        throw new Error('could not establish Git history for work-item IDs');
+      }
       const r = spawn(
-        ['log', '--no-color', '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '--', ...relPaths],
+        ['log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv',
+          '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...relPaths],
         cwd,
       );
-      if (!r.ok || r.stdout === '') return [];
-      const found = new Set<string>();
-      const re = /\bwi-[0-9a-f]{4,8}\b/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(r.stdout)) !== null) {
-        found.add(m[0]!);
-      }
-      return [...found].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      if (!r.ok) throw new Error('could not read Git history for work-item IDs');
+      return scanAllWorkItemIds(r.stdout);
     },
   };
 }

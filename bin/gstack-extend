@@ -941,11 +941,22 @@ gstack-extend init: $target_abs
 EOF
 
   local init_todo_id=""
-  if [ "$dry_run" != "1" ] && [ -x "$REPO_ROOT/bin/roadmap-id" ] && [ -n "${BUN_PREREQ_RAW_PATH:-}" ]; then
-    init_todo_id=$(with_audit_bun "$target_abs" "$BUN_PREREQ_RAW_PATH" "$REPO_ROOT/bin/roadmap-id" mint "$target_abs" 2>/dev/null | head -n 1 || true)
-  fi
-  if ! printf '%s' "$init_todo_id" | grep -qE '^wi-[0-9a-f]{4,8}$'; then
+  if [ "$dry_run" = "1" ] || [ ! -e "$REPO_ROOT/bin/roadmap-id" ]; then
     init_todo_id=$(printf 'wi-%06x' "$(( (RANDOM * 32768 + RANDOM) % 16777216 ))")
+  else
+    # A fresh path has no documents or history. Mint before scaffolding so a
+    # launcher failure cannot leave a partially initialized project.
+    local id_root="$target_abs" empty_root="" mint_status=0
+    if [ ! -d "$id_root" ]; then
+      empty_root=$(mktemp -d "${TMPDIR:-/tmp}/gstack-init-id.XXXXXXXX") || return 1
+      id_root="$empty_root"
+    fi
+    init_todo_id=$(with_audit_bun "$id_root" "$BUN_PREREQ_RAW_PATH" "$REPO_ROOT/bin/roadmap-id" mint "$id_root") || mint_status=$?
+    if [ -n "$empty_root" ]; then rmdir -- "$empty_root" || return 1; fi
+    if [ "$mint_status" != "0" ] || ! [[ "$init_todo_id" =~ ^wi-[0-9a-f]{6,8}$ ]]; then
+      echo "gstack-extend init: could not mint the starter work-item ID" >&2
+      return 1
+    fi
   fi
 
   # Build the template var argv. Use ${test_cmd_block} as a multi-line var.

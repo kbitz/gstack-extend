@@ -39,6 +39,7 @@ import {
   extractInlineBulletId,
   isValidWorkItemId,
   parseTrackIdLine,
+  planningLines,
 } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
@@ -104,7 +105,7 @@ export type LegacyShippedTrack = {
   label: string;
   workItemId: string | null;
   workItemIdRaw: string | null;
-  workItemIdError: 'malformed' | null;
+  workItemIdError: 'malformed' | 'duplicate' | null;
   line: number;
 };
 
@@ -143,6 +144,9 @@ export type ParsedRoadmap = {
   legacyShippedTracks?: LegacyShippedTrack[];
   /** Archive Track ID records dropped on Track-label collision during mergeShippedArchive. */
   archiveCollisionTracks?: ArchiveTrackIdRecord[];
+  /** Keep both Future sources available for ID auditing after a split failure. */
+  unmergedFutureArchive?: string[];
+  futureFromArchive?: boolean;
 };
 
 /** Pointer in ROADMAP.md ## Future. Count is required. */
@@ -202,21 +206,24 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
   const pushRef = (val: string) => {
     if (val !== '' && !refs.includes(val)) refs.push(val);
   };
-  for (const part of parseCommaList(line, /^_blocked-by:/)) {
+  const body = stripItalic(line, /^_blocked-by:/);
+  if (/^(?:none|—|-*)$/i.test(body)) return { refs, malformed };
+  for (const token of body.split(/,(?![^()]*\))/)) {
+    const part = trim(token);
+    if (part === '') continue;
     if (isValidWorkItemId(part)) {
       pushRef(part);
-      continue;
-    }
-    const trackWithNote = part.match(/^Track[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?:[ \t]+\([^)]*\))?$/i);
-    if (trackWithNote !== null) {
-      pushRef(canonicalizeTrackId(trackWithNote[1]!));
       continue;
     }
     if (/^[0-9]+[A-Za-z](?:\.[0-9]+)?$/.test(part)) {
       pushRef(canonicalizeTrackId(part));
       continue;
     }
-    malformed.push(part);
+    // Legacy readers accepted named Track labels embedded in prose. Keep
+    // that path while requiring the new work-item tokens to match exactly.
+    const legacy = [...part.matchAll(/\bTrack[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?![0-9A-Za-z.])/gi)];
+    if (/^wi-/i.test(part) || legacy.length === 0) malformed.push(part);
+    else for (const match of legacy) pushRef(canonicalizeTrackId(match[1]!));
   }
   return { refs, malformed };
 }
@@ -355,8 +362,7 @@ export function parseRoadmap(
 
   const lines = content.split('\n');
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+  for (const [i, line] of planningLines(lines)) {
     const lineNo = i + 1;
 
     // Top-level state section detection.
@@ -489,7 +495,7 @@ export function parseRoadmap(
           label: legacyMatch[1]!,
           workItemId: parsed?.id ?? null,
           workItemIdRaw: parsed?.raw ?? null,
-          workItemIdError: parsed !== null && parsed.id === null ? 'malformed' : null,
+          workItemIdError: parsed?.duplicate ? 'duplicate' : parsed !== null && parsed.id === null ? 'malformed' : null,
           line: lineNo,
         });
         continue;
@@ -913,11 +919,14 @@ export function mergeFutureArchive(
   archive: ParserResult<ParsedRoadmap>,
 ): ParserResult<ParsedRoadmap> {
   if (archive.value.futureBullets.length === 0) return active;
-  if (active.value.futureBullets.length > 0) return active;
+  if (active.value.futureBullets.length > 0) {
+    return { ...active, value: { ...active.value, unmergedFutureArchive: archive.value.futureBullets } };
+  }
   return {
     value: {
       ...active.value,
       futureBullets: [...archive.value.futureBullets],
+      futureFromArchive: true,
       futureMalformed: [
         ...active.value.futureMalformed,
         ...archive.value.futureMalformed,

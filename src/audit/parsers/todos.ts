@@ -18,7 +18,7 @@
  */
 
 import { extractTagFromHeading, extractTitleFromHeading } from '../lib/source-tag.ts';
-import { parseTodoIdBullet } from '../lib/work-item-id.ts';
+import { parseTodoIdBullet, planningLines } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
 export type TodoEntryKind = 'heading' | 'compactBullet' | 'legacyBullet';
@@ -46,72 +46,56 @@ export type ParsedTodos = {
   entries: TodoEntry[];
   /** Valid work-item IDs observed under `## Completed` (for cross-doc uniqueness). */
   completedIds?: string[];
+  completedEntries?: TodoEntry[];
 };
 
 export function parseTodos(content: string): ParserResult<ParsedTodos> {
   const errors: ParseError[] = [];
   const entries: TodoEntry[] = [];
   const completedIds: string[] = [];
+  const completedEntries: TodoEntry[] = [];
 
   if (content === '') {
     return { value: { hasUnprocessedSection: false, entries, completedIds }, errors };
   }
 
-  let inFence = false;
   let section: 'unprocessed' | 'completed' | null = null;
   let hasUnprocessedSection = false;
   let currentHeading: TodoEntry | null = null;
-  let lineno = 0;
-
   const lines = content.split('\n');
-  for (const line of lines) {
-    lineno++;
-
-    // Fence toggle: matches `^[ \t]*\x60{3,}` and `^[ \t]*~{3,}` per bash.
-    if (/^[ \t]*```/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-
-    if (!inFence && /^## Unprocessed\b/.test(line)) {
+  for (const [index, line] of planningLines(lines)) {
+    const lineno = index + 1;
+    if (/^## Unprocessed\b/.test(line)) {
       hasUnprocessedSection = true;
       section = 'unprocessed';
       currentHeading = null;
       continue;
     }
 
-    if (!inFence && /^## Completed\b/.test(line)) {
+    if (/^## Completed\b/.test(line)) {
       section = 'completed';
       currentHeading = null;
       continue;
     }
 
-    if (!inFence && section !== null && /^## /.test(line)) {
+    if (section !== null && /^## /.test(line)) {
       section = null;
       currentHeading = null;
       continue;
     }
 
-    if (section === null || inFence) continue;
-
-    if (section === 'completed') {
-      const parsedId = parseTodoIdBullet(line);
-      if (parsedId !== null && parsedId.id !== null) {
-        completedIds.push(parsedId.id);
-      }
-      continue;
-    }
+    if (section === null) continue;
 
     // Compact bold form: `- **[`. Check before legacy `- [` (compact also
     // matches `- \[` once the bold prefix is stripped).
-    if (/^- \*\*\[/.test(line)) {
+    if (section === 'unprocessed' && /^- \*\*\[/.test(line)) {
       currentHeading = null;
       entries.push({ kind: 'compactBullet', line: lineno, raw: line });
       continue;
     }
 
     // Legacy bullet form.
-    if (/^- \[/.test(line)) {
+    if (section === 'unprocessed' && /^- \[/.test(line)) {
       currentHeading = null;
       entries.push({ kind: 'legacyBullet', line: lineno, raw: line });
       continue;
@@ -134,15 +118,16 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
         workItemIdRaw: null,
         workItemIdError: null,
       };
-      entries.push(entry);
+      (section === 'unprocessed' ? entries : completedEntries).push(entry);
       currentHeading = entry;
       continue;
     }
 
     // Attribute bullet `- **ID:** <val>` belonging to current heading entry.
-    if (currentHeading !== null) {
-      const parsedId = parseTodoIdBullet(line);
-      if (parsedId !== null) {
+    const parsedId = parseTodoIdBullet(line);
+    if (parsedId !== null) {
+      if (section === 'completed' && parsedId.id !== null) completedIds.push(parsedId.id);
+      if (currentHeading !== null) {
         if (currentHeading.workItemIdRaw !== null && currentHeading.workItemIdRaw !== undefined) {
           currentHeading.workItemIdError = 'duplicate';
         } else {
@@ -154,5 +139,5 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
     }
   }
 
-  return { value: { hasUnprocessedSection, entries, completedIds }, errors };
+  return { value: { hasUnprocessedSection, entries, completedIds, completedEntries }, errors };
 }

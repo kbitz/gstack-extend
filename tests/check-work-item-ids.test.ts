@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { runCheckWorkItemIds } from '../src/audit/checks/work-item-ids.ts';
-import { mergeShippedArchive, parseRoadmap } from '../src/audit/parsers/roadmap.ts';
+import { mergeFutureArchive, mergeShippedArchive, parseRoadmap } from '../src/audit/parsers/roadmap.ts';
 import { parseTodos } from '../src/audit/parsers/todos.ts';
 import { makeCtx } from './helpers/audit-ctx.ts';
 
@@ -11,6 +11,33 @@ describe('runCheckWorkItemIds', () => {
     const res = runCheckWorkItemIds(ctx);
     expect(res.section).toBe('WORK_ITEM_IDS');
     expect(res.status).toBe('skip');
+  });
+
+  test('audits duplicates and malformed fields in Completed even without active records', () => {
+    const todos = parseTodos([
+      '## Completed', '### A', '- **ID:** wi-112233',
+      '### B', '- **ID:** wi-112233', '### C', '- **ID:** wi-BAD',
+    ].join('\n'));
+    const result = runCheckWorkItemIds(makeCtx({ parsedTodos: todos.value }));
+    expect(result.status).toBe('fail');
+    expect(result.body.join('\n')).toContain('DUPLICATE_ID: TODOS.md ## Completed');
+    expect(result.body.join('\n')).toContain('MALFORMED_ID: TODOS.md ## Completed');
+  });
+
+  test('checks both Future sources and ignores fenced examples', () => {
+    const active = parseRoadmap([
+      '## Future', '- **Inline** — **ID:** wi-a1b2c3 — first.', '~~~md', '- An example.', '~~~',
+    ].join('\n'));
+    const satellite = parseRoadmap([
+      '## Future', '- **Archive** — **ID:** wi-a1b2c3 — second.',
+      '- **Two fields** — **ID:** wi-444444 — **ID:** wi-555555 — third.',
+    ].join('\n'));
+    const merged = mergeFutureArchive(active, satellite);
+    const result = runCheckWorkItemIds(makeCtx({ parsedRoadmap: merged.value }));
+    expect(merged.value.futureBullets).toHaveLength(1);
+    expect(result.body.join('\n')).toContain('DUPLICATE_ID: docs/roadmap-future.md (Archive)');
+    expect(result.body.join('\n')).toContain('DUPLICATE_ID: docs/roadmap-future.md (Two fields)');
+    expect(result.body.join('\n')).not.toContain('MISSING_ID');
   });
 
   test('passes when all records across TODOS, Future, ROADMAP, and shipped have valid unique IDs', () => {

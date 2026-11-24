@@ -7,18 +7,19 @@
  *   roadmap-id --help | -h
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 import { createGitGateway, type GitGateway } from './lib/git.ts';
 import {
-  extractInlineBulletId,
   migrateFutureText,
   migrateRoadmapText,
   migrateTodosText,
   mintRandomId,
-  parseTrackIdLine,
+  type MigrateResult,
   scanAllWorkItemIds,
+  WORK_ITEM_ID_DEFAULT_HEX,
+  WORK_ITEM_ID_MAX_HEX,
 } from './lib/work-item-id.ts';
 
 export const USAGE = `Usage: roadmap-id mint [repo-path] [--count N]
@@ -39,89 +40,67 @@ Options:
   -h, --help            Show this help and exit 0
 `;
 
-function findDoc(repoRoot: string, name: string): string | null {
-  const root = join(repoRoot, name);
-  const docs = join(repoRoot, 'docs', name);
-  const docsFirst = name === 'roadmap-future.md' || name === 'roadmap-shipped.md';
-  const first = docsFirst ? docs : root;
-  const second = docsFirst ? root : docs;
-  if (existsSync(first) && statSync(first).isFile()) return first;
-  if (existsSync(second) && statSync(second).isFile()) return second;
-  return null;
-}
-
 function resolveRepoRoot(positional: string | null): string {
-  if (positional !== null) return positional;
   const gw = createGitGateway({ cwd: process.cwd() });
-  return gw.toplevel() ?? process.cwd();
+  return resolve(positional ?? gw.toplevel() ?? process.cwd());
 }
 
-type DocPaths = {
-  shipped: string | null;
-  roadmap: string | null;
-  future: string | null;
-  todos: string | null;
-};
+const DOC_NAMES = ['roadmap-shipped.md', 'ROADMAP.md', 'roadmap-future.md', 'TODOS.md'] as const;
+const DOC_PATHS = DOC_NAMES.flatMap((name) => [name, `docs/${name}`]);
+const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_HEX - 1) + 16 ** WORK_ITEM_ID_MAX_HEX;
 
-function discoverDocs(repoRoot: string): DocPaths {
-  return {
-    shipped: findDoc(repoRoot, 'roadmap-shipped.md'),
-    roadmap: findDoc(repoRoot, 'ROADMAP.md'),
-    future: findDoc(repoRoot, 'roadmap-future.md'),
-    todos: findDoc(repoRoot, 'TODOS.md'),
-  };
-}
+type PlanningDoc = { path: string; name: string; text: string; mode: number };
 
-function readDoc(path: string | null): string {
-  if (path === null || !existsSync(path) || !statSync(path).isFile()) return '';
-  return readFileSync(path, 'utf8');
-}
-
-function collectLiveTakenIds(docs: DocPaths): Set<string> {
-  const taken = new Set<string>();
-  for (const p of [docs.shipped, docs.roadmap, docs.future, docs.todos]) {
-    const text = readDoc(p);
-    for (const id of scanAllWorkItemIds(text)) taken.add(id);
+function readDocs(repoRoot: string): Map<string, PlanningDoc> {
+  if (!statSync(repoRoot).isDirectory()) throw new Error('project path is not a directory');
+  const root = realpathSync(repoRoot);
+  const folder = join(root, 'docs');
+  if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error('refusing linked docs directory');
   }
+  const docs = new Map<string, PlanningDoc>();
+  for (const name of DOC_PATHS) {
+    const path = join(root, name);
+    const st = lstatSync(path, { throwIfNoEntry: false });
+    if (st === undefined) continue;
+    if (!st.isFile()) throw new Error(`refusing non-regular planning document ${name}`);
+    docs.set(name, { path, name, text: readFileSync(path, 'utf8'), mode: st.mode & 0o777 });
+  }
+  return docs;
+}
+
+function findDoc(docs: ReadonlyMap<string, PlanningDoc>, name: string): PlanningDoc | undefined {
+  const root = docs.get(name);
+  const satellite = docs.get(`docs/${name}`);
+  // Match the audit's precedence for root files and satellite archives.
+  return name === 'roadmap-future.md' || name === 'roadmap-shipped.md'
+    ? satellite ?? root
+    : root ?? satellite;
+}
+
+function collectTakenIds(docs: Iterable<PlanningDoc>, git: GitGateway): Set<string> {
+  const taken = new Set<string>();
+  for (const doc of docs) {
+    for (const id of scanAllWorkItemIds(doc.text)) taken.add(id);
+  }
+  for (const id of git.historicalWorkItemIds(DOC_PATHS)) taken.add(id);
   return taken;
 }
 
-function collectTrackLabelToId(content: string): Map<string, string> {
-  const map = new Map<string, string>();
-  const lines = content.split('\n');
-  let curLabel: string | null = null;
-  let inFence = false;
-  for (const line of lines) {
-    if (/^[ \t]*(?:```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    if (/^## /.test(line)) {
-      curLabel = null;
-      continue;
-    }
-    const tm = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/.exec(line);
-    if (tm !== null) {
-      curLabel = tm[1]!;
-      continue;
-    }
-    if (curLabel !== null) {
-      const parsed = parseTrackIdLine(line);
-      if (parsed !== null && parsed.id !== null && !map.has(curLabel)) {
-        map.set(curLabel, parsed.id);
-      }
-      continue;
-    }
-    const lm = /^- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]/.exec(line);
-    if (lm !== null) {
-      const parsed = extractInlineBulletId(line);
-      if (parsed !== null && parsed.id !== null && !map.has(lm[1]!)) {
-        map.set(lm[1]!, parsed.id);
-      }
-    }
+function replaceDoc(doc: PlanningDoc, text: string): void {
+  if (!lstatSync(doc.path).isFile() || realpathSync(doc.path) !== doc.path ||
+      readFileSync(doc.path, 'utf8') !== doc.text) {
+    throw new Error(`planning document changed during migration: ${doc.name}`);
   }
-  return map;
+  const staging = mkdtempSync(join(dirname(doc.path), '.roadmap-id-'));
+  const tmp = join(staging, 'document');
+  try {
+    writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
+    chmodSync(tmp, doc.mode);
+    renameSync(tmp, doc.path);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 export type CliResult = {
@@ -131,6 +110,15 @@ export type CliResult = {
 };
 
 export function runIdCli(argv: string[], gitOverride?: GitGateway): CliResult {
+  try {
+    return execute(argv, gitOverride);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { stdout: '', stderr: `roadmap-id: ${message}\n`, exitCode: 1 };
+  }
+}
+
+function execute(argv: string[], gitOverride?: GitGateway): CliResult {
   if (argv.length === 0) {
     return { stdout: '', stderr: USAGE, exitCode: 2 };
   }
@@ -151,10 +139,12 @@ export function runIdCli(argv: string[], gitOverride?: GitGateway): CliResult {
       }
       if (arg === '--count') {
         const val = rest[++i];
-        if (val === undefined || !/^[1-9][0-9]*$/.test(val)) {
+        const candidate = Number(val);
+        if (val === undefined || !/^[1-9][0-9]*$/.test(val) ||
+            !Number.isSafeInteger(candidate) || candidate > MINT_ID_SPACE) {
           return { stdout: '', stderr: `roadmap-id mint: invalid --count value\n${USAGE}`, exitCode: 2 };
         }
-        count = Number.parseInt(val, 10);
+        count = candidate;
         continue;
       }
       if (arg.startsWith('-')) {
@@ -167,23 +157,8 @@ export function runIdCli(argv: string[], gitOverride?: GitGateway): CliResult {
     }
 
     const repoRoot = resolveRepoRoot(positionals[0] ?? null);
-    const docs = discoverDocs(repoRoot);
-    const taken = collectLiveTakenIds(docs);
-
     const git = gitOverride ?? createGitGateway({ cwd: repoRoot });
-    const historyPaths = [
-      'TODOS.md',
-      'docs/TODOS.md',
-      'ROADMAP.md',
-      'docs/ROADMAP.md',
-      'docs/roadmap-future.md',
-      'roadmap-future.md',
-      'docs/roadmap-shipped.md',
-      'roadmap-shipped.md',
-    ];
-    for (const id of git.historicalWorkItemIds(historyPaths)) {
-      taken.add(id);
-    }
+    const taken = collectTakenIds(readDocs(repoRoot).values(), git);
 
     const minted: string[] = [];
     for (let i = 0; i < count; i++) {
@@ -221,71 +196,44 @@ export function runIdCli(argv: string[], gitOverride?: GitGateway): CliResult {
     }
 
     const repoRoot = resolveRepoRoot(positionals[0] ?? null);
-    const docs = discoverDocs(repoRoot);
-    const taken = collectLiveTakenIds(docs);
+    const docs = readDocs(repoRoot);
+    const git = gitOverride ?? createGitGateway({ cwd: repoRoot });
+    const taken = collectTakenIds(docs.values(), git);
 
     const lines: string[] = [];
     let totalAdded = 0;
-    let anyChanged = false;
-    const labelToId = new Map<string, string>();
+    const changes: Array<{ doc: PlanningDoc; text: string }> = [];
+    function record(doc: PlanningDoc, result: MigrateResult) {
+      lines.push(`ADDED: ${doc.name} (${result.added})`);
+      totalAdded += result.added;
+      if (doc.text !== result.text) changes.push({ doc, text: result.text });
+    }
 
     // Order: roadmap-shipped.md, ROADMAP.md, roadmap-future.md, TODOS.md
-    if (docs.shipped !== null) {
-      const before = readDoc(docs.shipped);
-      const res = migrateRoadmapText(before, taken, { rewriteBlockedBy: false });
-      const rel = relative(repoRoot, docs.shipped) || docs.shipped;
-      lines.push(`ADDED: ${rel} (${res.added})`);
-      totalAdded += res.added;
-      if (res.text !== before) {
-        anyChanged = true;
-        if (!dryRun) writeFileSync(docs.shipped, res.text);
-      }
-      for (const [k, v] of collectTrackLabelToId(res.text)) {
-        if (!labelToId.has(k)) labelToId.set(k, v);
-      }
+    const shipped = findDoc(docs, 'roadmap-shipped.md');
+    const roadmap = findDoc(docs, 'ROADMAP.md');
+    const future = findDoc(docs, 'roadmap-future.md');
+    const todos = findDoc(docs, 'TODOS.md');
+    const archive = shipped === undefined ? undefined : migrateRoadmapText(shipped.text, taken);
+    if (shipped !== undefined && archive !== undefined) {
+      record(shipped, archive);
     }
 
-    if (docs.roadmap !== null) {
-      const before = readDoc(docs.roadmap);
+    if (roadmap !== undefined) {
       // Migrate active/inline-shipped Tracks, then inline ## Future bullets if present in ROADMAP.md.
-      const r1 = migrateRoadmapText(before, taken, { rewriteBlockedBy, labelToId });
+      const r1 = migrateRoadmapText(roadmap.text, taken, { rewriteBlockedBy, labelToId: archive?.labelToId });
       const r2 = migrateFutureText(r1.text, taken);
-      const added = r1.added + r2.added;
-      const rel = relative(repoRoot, docs.roadmap) || docs.roadmap;
-      lines.push(`ADDED: ${rel} (${added})`);
-      totalAdded += added;
-      if (r2.text !== before) {
-        anyChanged = true;
-        if (!dryRun) writeFileSync(docs.roadmap, r2.text);
-      }
+      record(roadmap, { ...r2, added: r1.added + r2.added });
     }
 
-    if (docs.future !== null) {
-      const before = readDoc(docs.future);
-      const res = migrateFutureText(before, taken);
-      const rel = relative(repoRoot, docs.future) || docs.future;
-      lines.push(`ADDED: ${rel} (${res.added})`);
-      totalAdded += res.added;
-      if (res.text !== before) {
-        anyChanged = true;
-        if (!dryRun) writeFileSync(docs.future, res.text);
-      }
-    }
-
-    if (docs.todos !== null) {
-      const before = readDoc(docs.todos);
-      const res = migrateTodosText(before, taken);
-      const rel = relative(repoRoot, docs.todos) || docs.todos;
-      lines.push(`ADDED: ${rel} (${res.added})`);
-      totalAdded += res.added;
-      if (res.text !== before) {
-        anyChanged = true;
-        if (!dryRun) writeFileSync(docs.todos, res.text);
-      }
+    if (future !== undefined) record(future, migrateFutureText(future.text, taken));
+    if (todos !== undefined) record(todos, migrateTodosText(todos.text, taken));
+    if (!dryRun) {
+      for (const { doc, text } of changes) replaceDoc(doc, text);
     }
 
     lines.push(`ADDED: ${totalAdded}`);
-    const status = !anyChanged ? 'unchanged' : dryRun ? 'dry-run' : 'ok';
+    const status = changes.length === 0 ? 'unchanged' : dryRun ? 'dry-run' : 'ok';
     lines.push(`STATUS: ${status}`);
     return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
   }

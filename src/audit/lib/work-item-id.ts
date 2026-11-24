@@ -19,15 +19,38 @@ export const WORK_ITEM_ID_RE = /^wi-[0-9a-f]{4,8}$/;
 export const WORK_ITEM_ID_DEFAULT_HEX = 6;
 export const WORK_ITEM_ID_MAX_HEX = 8;
 
-const SCAN_WORK_ITEM_ID_RE = /\bwi-[0-9a-f]{4,8}\b/g;
+// Markdown's closing underscore is a delimiter even though it is a regex word character.
+const SCAN_WORK_ITEM_ID_RE = /\bwi-[0-9a-f]{4,8}(?![0-9A-Za-z])/g;
 const TODO_ID_BULLET_RE = /^- \*\*ID:\*\*[ \t]*(.*)$/;
 const TRACK_ID_LINE_RE = /^_id:[ \t\v\f\r]*(.*)$/i;
-const INLINE_ID_RE = /\*\*ID:\*\*[ \t]*([^\s—–,;()]*)/;
+const INLINE_ID_RE = /^\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*/;
+const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*$/;
+const BOLD_BULLET_RE = /^(- \*\*(.+?)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const TRACK_HEADING_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):(.*)$/;
 const GROUP_HEADING_RE = /^#{2,4} Group ([0-9]+):/;
 const LEGACY_SHIPPED_TRACK_BULLET_RE = /^(- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]+[ \t]*)(.*)$/;
-const FENCE_RE = /^[ \t]*(?:```|~~~)/;
+const FENCE_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
+
+/** Yield document lines outside fenced examples, keeping their original indices. */
+export function* planningLines(lines: readonly string[], start = 0, end = lines.length) {
+  let fence: string | null = null;
+  for (let i = start; i < end; i++) {
+    const line = lines[i]!.replace(/\r$/, '');
+    const delimiter = FENCE_RE.exec(line);
+    if (fence !== null) {
+      if (delimiter && delimiter[1]!.startsWith(fence) && delimiter[2]!.trim() === '') fence = null;
+    } else if (delimiter) {
+      fence = delimiter[1]!;
+    } else {
+      yield [i, line] as const;
+    }
+  }
+}
+
+function lineEnding(rawLine: string): string {
+  return rawLine.endsWith('\r') ? '\r' : '';
+}
 
 function byteCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -46,6 +69,7 @@ export function isValidWorkItemId(raw: string): boolean {
 export type ParsedIdField = {
   raw: string;
   id: string | null;
+  duplicate?: true;
 };
 
 /**
@@ -54,7 +78,7 @@ export type ParsedIdField = {
  * Returns `{ raw, id }` where `id` is null if `<val>` is malformed.
  */
 export function parseTodoIdBullet(line: string): ParsedIdField | null {
-  const m = TODO_ID_BULLET_RE.exec(line);
+  const m = TODO_ID_BULLET_RE.exec(line.replace(/\r$/, ''));
   if (m === null) return null;
   const raw = m[1]!.trim();
   return { raw, id: isValidWorkItemId(raw) ? raw : null };
@@ -66,25 +90,39 @@ export function parseTodoIdBullet(line: string): ParsedIdField | null {
  * Returns `{ raw, id }` where `id` is null if `<val>` is malformed.
  */
 export function parseTrackIdLine(line: string): ParsedIdField | null {
-  const m = TRACK_ID_LINE_RE.exec(line);
+  const m = TRACK_ID_LINE_RE.exec(line.replace(/\r$/, ''));
   if (m === null) return null;
-  let raw = m[1]!.replace(/[ \t\v\f\r]*$/, '');
-  raw = raw.replace(/_$/, '').trim();
-  return { raw, id: isValidWorkItemId(raw) ? raw : null };
+  const value = m[1]!.trim();
+  const closed = value.endsWith('_');
+  const raw = closed ? value.slice(0, -1).trim() : value;
+  return { raw, id: closed && isValidWorkItemId(raw) ? raw : null };
 }
 
 /**
  * Extract an inline `**ID:** <val>` token from a `## Future` bullet or legacy
  * shipped `- Track <label> —` bullet, ignoring anything inside `**Revisit when:**`.
- * Returns null if no `**ID:**` marker appears before `**Revisit when:**`.
+ * Recognizes the field after the title dash, or at the end of a legacy
+ * bullet's prose. An ID mentioned elsewhere in prose is not a field.
  */
 export function extractInlineBulletId(bullet: string): ParsedIdField | null {
   const revisitIdx = bullet.lastIndexOf(REVISIT_MARKER);
   const head = revisitIdx >= 0 ? bullet.slice(0, revisitIdx) : bullet;
-  const m = INLINE_ID_RE.exec(head);
-  if (m === null) return null;
-  const raw = m[1]!.trim();
-  return { raw, id: isValidWorkItemId(raw) ? raw : null };
+  const bold = BOLD_BULLET_RE.exec(head);
+  const legacy = LEGACY_SHIPPED_TRACK_BULLET_RE.exec(head);
+  const body = bold?.[3] ?? legacy?.[3];
+  const leading = body === undefined ? null : INLINE_ID_RE.exec(body);
+  const trailing = TRAILING_INLINE_ID_RE.exec(head);
+  const raw = leading?.[1] ?? trailing?.[1];
+  if (raw === undefined) return null;
+  const result: ParsedIdField = { raw, id: isValidWorkItemId(raw) ? raw : null };
+  if (leading && body !== undefined) {
+    const remainder = body.slice(leading[0].length);
+    const repeated = /^[—–-]+[ \t]*\*\*ID:\*\*/.test(remainder);
+    if (repeated || (remainder.trim() !== '' && trailing && trailing.index >= head.length - remainder.length)) {
+      result.duplicate = true;
+    }
+  }
+  return result;
 }
 
 /**
@@ -168,18 +206,10 @@ export function migrateTodosText(content: string, taken: Set<string>): MigrateRe
     title: string;
   };
   const spans: EntrySpan[] = [];
-  let inFence = false;
   let section: 'unprocessed' | 'completed' | null = null;
   let current: EntrySpan | null = null;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (FENCE_RE.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-
+  for (const [i, line] of planningLines(lines)) {
     if (/^## Unprocessed\b/.test(line)) {
       if (current !== null) {
         current.endIdx = i;
@@ -234,14 +264,7 @@ export function migrateTodosText(content: string, taken: Set<string>): MigrateRe
 
     let hasId = false;
     let firstAttrBulletIdx = -1;
-    let bodyInFence = false;
-    for (let j = span.headingIdx + 1; j < span.endIdx; j++) {
-      const l = lines[j]!;
-      if (FENCE_RE.test(l)) {
-        bodyInFence = !bodyInFence;
-        continue;
-      }
-      if (bodyInFence) continue;
+    for (const [j, l] of planningLines(lines, span.headingIdx + 1, span.endIdx)) {
       if (parseTodoIdBullet(l) !== null) {
         hasId = true;
         break;
@@ -275,7 +298,7 @@ export function migrateTodosText(content: string, taken: Set<string>): MigrateRe
         targetIdx = firstAttrBulletIdx;
       }
     }
-    insertBefore.set(targetIdx, `- **ID:** ${id}`);
+    insertBefore.set(targetIdx, `- **ID:** ${id}${lineEnding(lines[span.headingIdx]!)}`);
   }
 
   if (addedIds.length === 0) {
@@ -302,21 +325,13 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
   if (content === '') return { text: '', added: 0, ids: [] };
 
   const lines = content.split('\n');
-  let inFence = false;
   let inFuture = false;
   const occ = new Map<string, number>();
   const addedIds: string[] = [];
   const out = [...lines];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (FENCE_RE.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-
-    if (/^## Future($| \()/i.test(line)) {
+  for (const [i, line] of planningLines(lines)) {
+    if (/^## Future[ \t]*(?:\([^)]*\))?[ \t]*$/.test(line)) {
       inFuture = true;
       continue;
     }
@@ -329,7 +344,7 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
 
     // Extract title for deterministic seeding regardless of whether ID exists.
     const rest = line.slice(2);
-    const boldDash = rest.match(/^(\*\*(.+?)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/);
+    const boldDash = BOLD_BULLET_RE.exec(line);
     const title = boldDash !== null ? boldDash[2]! : rest.split(/[—–-]/)[0]!.replace(/^\*\*|\*\*$/g, '').trim();
     const normTitle = normalizeTitle(title);
     const occurrence = occ.get(normTitle) ?? 0;
@@ -342,17 +357,18 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
     taken.add(id);
     addedIds.push(id);
 
+    const ending = lineEnding(lines[i]!);
     if (boldDash !== null) {
       // `- **<Title>** — <body>` → `- **<Title>** — **ID:** <id> — <body>`
-      out[i] = `- ${boldDash[1]}**ID:** ${id} — ${boldDash[3]}`;
+      out[i] = `${boldDash[1]}**ID:** ${id} — ${boldDash[3]}${ending}`;
     } else {
       const revisitIdx = line.lastIndexOf(REVISIT_MARKER);
       if (revisitIdx >= 0) {
-        const before = line.slice(0, revisitIdx).replace(/[ \t]+$/, '');
-        const after = line.slice(revisitIdx);
-        out[i] = `${before} — **ID:** ${id} ${after}`;
+        const insertion = line.slice(0, revisitIdx).search(/[ \t]*$/);
+        const gap = insertion === revisitIdx ? ' ' : '';
+        out[i] = `${line.slice(0, insertion)} — **ID:** ${id}${gap}${line.slice(insertion)}${ending}`;
       } else {
-        out[i] = `${line} — **ID:** ${id}`;
+        out[i] = `${line} — **ID:** ${id}${ending}`;
       }
     }
   }
@@ -367,6 +383,8 @@ export type MigrateRoadmapOpts = {
   rewriteBlockedBy?: boolean;
   labelToId?: ReadonlyMap<string, string>;
 };
+
+type MigrateRoadmapResult = MigrateResult & { labelToId: ReadonlyMap<string, string> };
 
 function canonicalizeTrackLabel(raw: string): string {
   return raw.replace(/^([0-9]+)([A-Za-z])((?:\.[0-9]+)?)$/, (_m, n: string, letter: string, rest: string) => {
@@ -383,10 +401,13 @@ function rewriteBlockedByLine(line: string, labelToId: ReadonlyMap<string, strin
   if (body.trim() === '') return line;
 
   let changed = false;
-  const parts = body.split(',').map((rawPart) => {
+  const parts = body.split(/,(?![^()]*\))/).map((rawPart) => {
     const trimmed = rawPart.trim();
     if (isValidWorkItemId(trimmed)) return trimmed;
-    const bare = trimmed.replace(/^Track[ \t]+/i, '');
+    const note = trimmed.match(/[ \t]+\(([^)]*)\)$/);
+    // Legacy readers treat a named Track inside a note as another dependency.
+    if (note && /\bTrack[ \t]+[0-9]+[A-Za-z]/i.test(note[1]!)) return trimmed;
+    const bare = (note ? trimmed.slice(0, note.index) : trimmed).replace(/^Track[ \t]+/i, '');
     if (/^[0-9]+[A-Za-z](?:\.[0-9]+)?$/.test(bare)) {
       const canon = canonicalizeTrackLabel(bare);
       const mapped = labelToId.get(canon);
@@ -415,9 +436,7 @@ export function migrateRoadmapText(
   content: string,
   taken: Set<string>,
   opts: MigrateRoadmapOpts = {},
-): MigrateResult {
-  if (content === '') return { text: '', added: 0, ids: [] };
-
+): MigrateRoadmapResult {
   const lines = content.split('\n');
   const addedIds: string[] = [];
   const labelMap = new Map<string, string>(opts.labelToId ?? []);
@@ -430,20 +449,12 @@ export function migrateRoadmapText(
     title: string;
   };
   const spans: TrackSpan[] = [];
-  let inFence = false;
   let inGroup = false;
   let inFuture = false;
   let current: TrackSpan | null = null;
   const legacyBulletIndices: Array<{ idx: number; label: string; prefix: string; rest: string }> = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (FENCE_RE.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-
+  for (const [i, line] of planningLines(lines)) {
     if (/^## Future($| \()/i.test(line)) {
       if (current !== null) {
         current.endIdx = i;
@@ -452,6 +463,17 @@ export function migrateRoadmapText(
       }
       inFuture = true;
       inGroup = false;
+      continue;
+    }
+    const groupHeading = GROUP_HEADING_RE.test(line);
+    if (groupHeading && (!inFuture || /^## /.test(line))) {
+      if (current !== null) {
+        current.endIdx = i;
+        spans.push(current);
+        current = null;
+      }
+      inFuture = false;
+      inGroup = true;
       continue;
     }
     if (/^## /.test(line)) {
@@ -465,16 +487,6 @@ export function migrateRoadmapText(
       continue;
     }
     if (inFuture) continue;
-
-    if (GROUP_HEADING_RE.test(line)) {
-      if (current !== null) {
-        current.endIdx = i;
-        spans.push(current);
-        current = null;
-      }
-      inGroup = true;
-      continue;
-    }
 
     const tm = TRACK_HEADING_RE.exec(line);
     if (tm !== null) {
@@ -527,11 +539,12 @@ export function migrateRoadmapText(
     taken.add(id);
     addedIds.push(id);
     if (!labelMap.has(b.label)) labelMap.set(b.label, id);
-    outLines[b.idx] = `${b.prefix}**ID:** ${id} — ${b.rest}`;
+    outLines[b.idx] = `${b.prefix}**ID:** ${id} — ${b.rest}${lineEnding(lines[b.idx]!)}`;
   }
 
   // Handle `#{3,5} Track` headings.
   const insertAfter = new Map<number, string>();
+  const localLabels = new Set<string>();
   for (const span of spans) {
     const normKey = `track\0${span.label}\0${normalizeTitle(span.title)}`;
     const occurrence = occ.get(normKey) ?? 0;
@@ -540,28 +553,28 @@ export function migrateRoadmapText(
     let existingId: string | null = null;
     let hasIdLine = false;
     let metaLineIdx = -1;
-    let bodyInFence = false;
-    for (let j = span.headingIdx + 1; j < span.endIdx; j++) {
-      const l = lines[j]!;
-      if (FENCE_RE.test(l)) {
-        bodyInFence = !bodyInFence;
-        continue;
-      }
-      if (bodyInFence) continue;
+    let firstBodyLine = true;
+    for (const [j, l] of planningLines(lines, span.headingIdx + 1, span.endIdx)) {
       const parsedId = parseTrackIdLine(l);
       if (parsedId !== null) {
         hasIdLine = true;
         existingId = parsedId.id;
         break;
       }
-      if (metaLineIdx === -1 && /^_.*_$/.test(l) && /risk|low|medium|high/i.test(l)) {
+      if (firstBodyLine && /^_.*_$/.test(l) && /\b(?:risk|low|medium|high)\b/i.test(l)) {
         metaLineIdx = j;
       }
+      if (l.trim() !== '') firstBodyLine = false;
     }
 
+    // The active document owns its display labels even if an older archive
+    // receipt has the same label. A malformed local ID must not bind to history.
+    const firstLocalRecord = !localLabels.has(span.label);
+    localLabels.add(span.label);
     if (hasIdLine) {
-      if (existingId !== null && !labelMap.has(span.label)) {
-        labelMap.set(span.label, existingId);
+      if (firstLocalRecord) {
+        if (existingId === null) labelMap.delete(span.label);
+        else labelMap.set(span.label, existingId);
       }
       continue;
     }
@@ -570,30 +583,23 @@ export function migrateRoadmapText(
     const id = deriveDeterministicId(seed, taken);
     taken.add(id);
     addedIds.push(id);
-    if (!labelMap.has(span.label)) labelMap.set(span.label, id);
+    if (firstLocalRecord) labelMap.set(span.label, id);
 
     // Insert right after the `_...risk..._` metadata line when present,
     // or immediately under the heading otherwise.
     const anchor = metaLineIdx >= 0 ? metaLineIdx : span.headingIdx;
-    insertAfter.set(anchor, `_id: ${id}_`);
+    insertAfter.set(anchor, `_id: ${id}_${lineEnding(lines[anchor]!)}`);
   }
 
   // Optionally rewrite `_blocked-by:` lines inside Track bodies.
   let blockedByChanged = false;
   if (opts.rewriteBlockedBy === true) {
     for (const span of spans) {
-      let bodyInFence = false;
-      for (let j = span.headingIdx + 1; j < span.endIdx; j++) {
-        const l = outLines[j]!;
-        if (FENCE_RE.test(l)) {
-          bodyInFence = !bodyInFence;
-          continue;
-        }
-        if (bodyInFence) continue;
+      for (const [j, l] of planningLines(lines, span.headingIdx + 1, span.endIdx)) {
         if (/^_blocked-by:/i.test(l)) {
           const rewritten = rewriteBlockedByLine(l, labelMap);
           if (rewritten !== l) {
-            outLines[j] = rewritten;
+            outLines[j] = rewritten + lineEnding(lines[j]!);
             blockedByChanged = true;
           }
         }
@@ -602,7 +608,7 @@ export function migrateRoadmapText(
   }
 
   if (addedIds.length === 0 && !blockedByChanged) {
-    return { text: content, added: 0, ids: [] };
+    return { text: content, added: 0, ids: [], labelToId: labelMap };
   }
 
   const finalLines: string[] = [];
@@ -612,5 +618,5 @@ export function migrateRoadmapText(
     if (ins !== undefined) finalLines.push(ins);
   }
 
-  return { text: finalLines.join('\n'), added: addedIds.length, ids: addedIds };
+  return { text: finalLines.join('\n'), added: addedIds.length, ids: addedIds, labelToId: labelMap };
 }

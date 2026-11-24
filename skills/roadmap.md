@@ -399,6 +399,8 @@ extract_referenced_files_from_roadmap | tr '\n' '\0' | xargs -0 -I {} \
   git log --since="$LAST_ROADMAP_RUN" --pretty='%h %s' -- {} 2>/dev/null
 ```
 
+When `WORK_ITEM_IDS` reports `MISSING_ID`, preview `"$_EXTEND_ROOT/bin/roadmap-id" migrate --dry-run "$_ROADMAP_ROOT"` using both resolved root assignments. Obtain approval for the ID-only migration, apply it, and refresh the audit and fingerprints before drafting. This also covers entries filed by hand or by an older producer. Resolve malformed or duplicate IDs before validation.
+
 **Pre-classify inbox items.** Each Unprocessed item carries a `[source:key=val]` tag. Run the routing helper for each:
 
 ```bash
