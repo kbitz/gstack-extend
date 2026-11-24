@@ -115,6 +115,7 @@ export type TrackWorkItemRecord = {
   workItemIdRaw: string | null;
   workItemIdError: 'malformed' | 'duplicate' | null;
   fromShippedArchive?: boolean;
+  shipped?: boolean;
 };
 
 export type SizeLabelMismatch = {
@@ -223,7 +224,8 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
     // Legacy readers accepted named Track labels embedded in prose. Keep
     // that path while requiring the new work-item tokens to match exactly.
     const legacy = [...part.matchAll(/\bTrack[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?![0-9A-Za-z])(?!\.[0-9A-Za-z])/gi)];
-    if (/^wi-/i.test(part) || legacy.length === 0) malformed.push(part);
+    const withoutNotes = part.replace(/\([^)]*\)/g, '');
+    if (/\bwi-/i.test(withoutNotes) || legacy.length === 0) malformed.push(part);
     else for (const match of legacy) pushRef(canonicalizeTrackId(match[1]!));
   }
   return { refs, malformed };
@@ -512,6 +514,8 @@ export function parseRoadmap(
         workItemId: null,
         workItemIdRaw: null,
         workItemIdError: null,
+        shipped: COMPLETE_SUFFIX_RE.test(line) || stateAtLine(regions, lineNo) === 'shipped'
+          || groupInlineComplete.has(groupNum),
       };
       let headingTitle = trim(line.replace(TRACK_HEADING_RE, ''));
       if (COMPLETE_SUFFIX_RE.test(headingTitle)) {

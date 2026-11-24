@@ -169,7 +169,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     if (t.workItemId) knownWorkItemIds.add(t.workItemId);
   }
   for (const rec of ctx.roadmap.value.extraTrackWorkItems ?? []) {
-    if (rec.workItemId) knownWorkItemIds.add(rec.workItemId);
+    if ((rec.fromShippedArchive || rec.shipped) && rec.workItemId) knownWorkItemIds.add(rec.workItemId);
   }
   for (const leg of ctx.roadmap.value.legacyShippedTracks ?? []) {
     if (leg.workItemId) knownWorkItemIds.add(leg.workItemId);

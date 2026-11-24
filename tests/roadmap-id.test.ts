@@ -335,6 +335,25 @@ describe('bin/roadmap-id CLI', () => {
     expect(result.text).toBe(`${card}_id: ${result.ids[0]}_\n`);
   });
 
+  test('migration of a CRLF Group receipt neither changes its bytes nor re-adds its ID on rerun', () => {
+    const original = '## Shipped\r\n#### Group 3: Old\r\n- Track 3A — Shipped.\r\n';
+    const migrated = migrateRoadmapText(original, new Set());
+    expect(migrated.added).toBe(1);
+    expect(migrated.text.replace(`**ID:** ${migrated.ids[0]} — `, '')).toBe(original);
+    expect(migrateRoadmapText(migrated.text, new Set()).text).toBe(migrated.text);
+  });
+
+  test('code spans and inline attribute prose leave later Future records visible', () => {
+    const original = [
+      '## Future', '```code``` explains the entry below.',
+      '- **Entry** — Text mentions — **ID:** as a label here. **Revisit when:** ready.',
+    ].join('\n');
+    const migrated = migrateFutureText(original, new Set());
+    expect(migrated.added).toBe(1);
+    const bullet = migrated.text.split('\n')[2]!;
+    expect(extractInlineBulletId(bullet)).toEqual({ raw: migrated.ids[0], id: migrated.ids[0] });
+  });
+
   test('migrate --dry-run, migrate, and idempotent second run', () => {
     const repo = freshDir('migrate-cli');
     mkdirSync(join(repo, 'docs'), { recursive: true });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { runCheckStructure } from '../src/audit/checks/structure.ts';
-import type { GroupInfo, TrackInfo } from '../src/audit/parsers/roadmap.ts';
+import { parseRoadmap, type GroupInfo, type TrackInfo } from '../src/audit/parsers/roadmap.ts';
 import { makeCtx } from './helpers/audit-ctx.ts';
 
 function group(num: string, state: GroupInfo['state']): GroupInfo {
@@ -161,5 +161,18 @@ describe('STRUCTURE tombstones', () => {
     expect(badRes.body.some((l) => l.includes('wi-999999') && l.includes('not a known Track ID'))).toBe(true);
     expect(badRes.body.some((l) => l.includes('wi-12') && l.includes('malformed'))).toBe(true);
     expect(badRes.body.some((l) => l.includes('wi-ZZZZ') && l.includes('malformed'))).toBe(true);
+  });
+
+  test('a work-item ID on an unschedulable duplicate active Track cannot satisfy a blocker', () => {
+    const roadmap = [
+      '## Current Plan', '### Group 1: Work',
+      '#### Track 1A: First', '_low risk_', '_id: wi-111111_', '_touches: a.ts_',
+      '#### Track 1A: Second', '_low risk_', '_id: wi-222222_', '_touches: b.ts_',
+      '#### Track 1B: Blocked', '_low risk_', '_id: wi-333333_', '_touches: c.ts_',
+      '_blocked-by: wi-222222_',
+    ].join('\n');
+    const result = runCheckStructure(makeCtx({ roadmap, parsedRoadmap: parseRoadmap(roadmap).value }));
+    expect(result.status).toBe('fail');
+    expect(result.body.join('\n')).toContain('_blocked-by: wi-222222 is not a known Track ID or work-item ID');
   });
 });

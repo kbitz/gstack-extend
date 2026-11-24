@@ -40,7 +40,7 @@ export function* planningLines(lines: readonly string[], start = 0, end = lines.
     const delimiter = FENCE_RE.exec(line);
     if (fence !== null) {
       if (delimiter && delimiter[1]!.startsWith(fence) && delimiter[2]!.trim() === '') fence = null;
-    } else if (delimiter) {
+    } else if (delimiter && !(delimiter[1]![0] === '`' && delimiter[2]!.includes('`'))) {
       fence = delimiter[1]!;
     } else {
       yield [i, line] as const;
@@ -105,8 +105,9 @@ export function parseTrackIdLine(line: string): ParsedIdField | null {
  * bullet's prose. An ID mentioned elsewhere in prose is not a field.
  */
 export function extractInlineBulletId(bullet: string): ParsedIdField | null {
-  const revisitIdx = bullet.lastIndexOf(REVISIT_MARKER);
-  const head = (revisitIdx >= 0 ? bullet.slice(0, revisitIdx) : bullet).trimStart();
+  const line = bullet.replace(/\r$/, '');
+  const revisitIdx = line.lastIndexOf(REVISIT_MARKER);
+  const head = (revisitIdx >= 0 ? line.slice(0, revisitIdx) : line).trimStart();
   const bold = BOLD_BULLET_RE.exec(head);
   const legacy = LEGACY_SHIPPED_TRACK_BULLET_RE.exec(head);
   const body = bold?.[3] ?? legacy?.[3];
@@ -115,9 +116,14 @@ export function extractInlineBulletId(bullet: string): ParsedIdField | null {
   const raw = leading?.[1] ?? trailing?.[1];
   if (raw === undefined) return null;
   const result: ParsedIdField = { raw, id: isValidWorkItemId(raw) ? raw : null };
-  // Ignore Markdown code spans when counting separators in the prose.
-  const fields = head.replace(/(`+)(.*?)\1/g, '').match(/[—–-]+[ \t]*\*\*ID:\*\*/g);
-  if (fields && fields.length > 1) result.duplicate = true;
+  const remainder = leading ? body!.slice(leading[0].length) : '';
+  const secondLeadingField = /^(?:[—–-]+[ \t]*)?\*\*ID:\*\*/.test(remainder);
+  const secondTrailingField = trailing !== null && (
+    TRAILING_INLINE_ID_RE.test(head.slice(0, trailing.index)) ||
+    (leading !== null && trailing.index >= head.length - remainder.length)
+  );
+  if (secondLeadingField || secondTrailingField) result.duplicate = true;
+  if (leading && remainder !== '' && !/^[—–-]/.test(remainder)) result.id = null;
   return result;
 }
 
