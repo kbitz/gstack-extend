@@ -37,7 +37,7 @@
     "agent": {
       "description": "Harness that ran the stage; null when unverifiable.",
       "type": ["string", "null"],
-      "enum": ["claude", "codex", "grok", "cursor", "muse", null]
+      "enum": ["claude", "codex", "grok", "cursor", "muse", "antigravity", null]
     },
     "model": { "description": "Model ID in the harness's own vocabulary; null when unverifiable.", "type": ["string", "null"] },
     "effort": { "description": "Effort level in the harness's own vocabulary; null when unverifiable.", "type": ["string", "null"] },

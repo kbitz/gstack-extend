@@ -31,7 +31,7 @@ LOGGER_TIMEOUT_S = 15  # the delegated completion logger
 # Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
-HARNESSES = ("claude", "codex", "grok", "muse")
+HARNESSES = ("claude", "codex", "grok", "muse", "antigravity")
 OUTCOMES = ("success", "error", "abort", "blocked", "unknown")
 ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "sdk", "unknown"
 ROUTES = (ROUTE_CLI, ROUTE_SDK, ROUTE_UNKNOWN)
@@ -114,7 +114,7 @@ WORK_ITEM_ENV = "GSTACK_EXTEND_WORK_ITEM"
 REQUESTED_MODEL_ENV, REQUESTED_EFFORT_ENV = "GSTACK_EXTEND_MODEL", "GSTACK_EXTEND_EFFORT"
 REQUESTED_ENV = (("model", REQUESTED_MODEL_ENV), ("effort", REQUESTED_EFFORT_ENV))
 # Each marker counts on its own when valid_session(value) holds, matching detect().
-SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "GROK_SESSION_ID", "MUSE_SESSION_ID")
+SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "GROK_SESSION_ID", "MUSE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
               "or set GSTACK_DIR to a gstack checkout")
 
@@ -1381,6 +1381,72 @@ def grok_turns(root, begin):
     return turns
 
 
+def antigravity_app_data_dir(app_data_dir=None):
+    return Path(app_data_dir or os.environ.get("ANTIGRAVITY_APP_DATA_DIR") or Path.home() / ".gemini/antigravity-cli")
+
+
+def antigravity_logs(conversation_id, app_data_dir=None):
+    if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", conversation_id):
+        return []
+    home = antigravity_app_data_dir(app_data_dir)
+    if not home.is_absolute():
+        return []
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY
+    try:
+        with ExitStack() as opened:
+            directory = os.open(home, directory_flags)
+            opened.callback(os.close, directory)
+            for part in ("brain", conversation_id, ".system_generated", "logs"):
+                directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
+                opened.callback(os.close, directory)
+            descriptor = os.open("transcript.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            opened.callback(os.close, descriptor)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return []
+    except OSError:
+        return []
+    return [home / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"]
+
+
+def antigravity_turns(conversation_id):
+    if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", conversation_id):
+        return []
+    home = antigravity_app_data_dir()
+    if not home.is_absolute():
+        return []
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY
+    try:
+        with ExitStack() as opened:
+            directory = os.open(home, directory_flags)
+            opened.callback(os.close, directory)
+            for part in ("brain", conversation_id, ".system_generated", "logs"):
+                directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
+                opened.callback(os.close, directory)
+            descriptor = os.open("transcript.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            opened.callback(os.close, descriptor)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return []
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                size = stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, size - LOG_TAIL_BYTES))
+                lines = stream.read(LOG_TAIL_BYTES).split(b"\n")
+    except OSError:
+        return []
+    turns = []
+    for line in lines[1:] if size > LOG_TAIL_BYTES else lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict) or record.get("type") != "PLANNER_RESPONSE":
+            continue
+        model, ts = clean(record.get("model")), parse_ts(record.get("created_at"))
+        if model is None or ts is None:
+            continue
+        turns.append((ts, model, None))
+    return turns
+
+
 def settle(turns, begin, carry):
     # Turns inside the stage, plus (carry) the per-turn record already open when it began: Codex and Grok log a turn
     # once, at its start, and a whole skill usually runs inside one turn. Claude logs every API response, so the stage's
@@ -1417,7 +1483,7 @@ def process_argv0(pid):
 
 def harness_ancestor(candidates, table=None, pid=None):
     """Nearest marked harness; injectable table contains (ppid, argv0, comm)."""
-    names = {"claude": "claude", "codex": "codex", "grok": "grok", "muse": "muse"}
+    names = {"claude": "claude", "codex": "codex", "grok": "grok", "muse": "muse", "agy": "antigravity", "antigravity": "antigravity"}
     if table is None:
         ps = which("ps")
         if not ps:
@@ -1472,6 +1538,8 @@ def detect(begin, end, root):
         readers.append(("muse", False, lambda: muse_turns(os.environ["MUSE_SESSION_ID"])))
     if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
         readers.append(("claude", False, lambda: claude_turns(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))))
+    if os.environ.get("ANTIGRAVITY_AGENT") == "1" or valid_session(os.environ.get("ANTIGRAVITY_CONVERSATION_ID")):
+        readers.append(("antigravity", True, lambda: antigravity_turns(os.environ.get("ANTIGRAVITY_CONVERSATION_ID", ""))))
     nearest = harness_ancestor({agent for agent, _, _ in readers}) if len(readers) > 1 else None
     if nearest:
         readers = [reader for reader in readers if reader[0] == nearest]
@@ -1710,11 +1778,46 @@ def grok_launch_surface(root=None, begin=None):
     return "terminal"
 
 
+def antigravity_launch_surface():
+    conversation_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID", "")
+    if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", conversation_id):
+        return None
+    home = antigravity_app_data_dir()
+    # A relative ANTIGRAVITY_APP_DATA_DIR (or relative HOME without it) would resolve against the checkout.
+    if not home.is_absolute():
+        return None
+    log = home / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
+    try:
+        record = next(head_records(log, home), None)
+    except OSError:
+        return None
+    if record is None:
+        return None
+    step_index = record.get("step_index")
+    if not isinstance(step_index, int) or isinstance(step_index, bool) or step_index != 0:
+        return None
+    raw_type = record.get("type")
+    record_type = clean(raw_type)
+    raw_source = record.get("source")
+    record_source = clean(raw_source)
+    if (
+        record_type is None
+        or record_type != record_type.strip()
+        or record_source is None
+        or record_source != record_source.strip()
+    ):
+        return None
+    if (record_type, record_source) == ("USER_INPUT", "USER_EXPLICIT"):
+        return "terminal"
+    return "other"
+
+
 LAUNCH_SURFACE_READERS = {
     "claude": claude_launch_surface,
     "codex": codex_launch_surface,
     "grok": grok_launch_surface,
     "muse": muse_launch_surface,
+    "antigravity": antigravity_launch_surface,
 }
 
 
@@ -1816,7 +1919,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
             agent = explicit
             flagged.add("agent")
         elif explicit is not None:
-            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, grok or muse)")
+            trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, grok, muse or antigravity)")
         model_flag, effort_flag = clean(values.get("--model")), clean(values.get("--effort"))
         if model_flag is not None:
             model = model_flag
@@ -2503,7 +2606,7 @@ def main(args):
         print("       gstack-extend-telemetry report [--json] [--by-host] [--state-dir DIR]...")
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown] [--blocked-reason TOKEN]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
-        print("  finish provenance overrides: [--agent claude|codex|grok|muse] [--model ID] [--effort LEVEL] [--work-item ID]")
+        print("  finish provenance overrides: [--agent claude|codex|grok|muse|antigravity] [--model ID] [--effort LEVEL] [--work-item ID]")
         print("  blocked_reason: --blocked-reason when --outcome blocked ([a-z0-9][a-z0-9-]{0,63}, local-only, otherwise null).")
         print("  work_item: --work-item, else the value start saved from GSTACK_EXTEND_WORK_ITEM, else that variable at finish;")
         print("  at most 200 printable characters, otherwise null.")

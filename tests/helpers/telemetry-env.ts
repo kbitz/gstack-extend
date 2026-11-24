@@ -300,7 +300,7 @@ const STORE_ENV: Array<[string, StoreKind]> = [
   ['GSTACK_EXTEND_STATE_DIR', 'extend'], ['GSTACK_STATE_ROOT', 'upstream'], ['GSTACK_STATE_DIR', 'upstream'],
   ['GSTACK_HOME', 'upstream'], ['CLAUDE_PLUGIN_DATA', 'upstream'], ['CLAUDE_PLUGIN_ROOT', 'upstream'],
 ];
-const OTHER_RESOLVER_VARS = ['GSTACK_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME'];
+const OTHER_RESOLVER_VARS = ['GSTACK_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME', 'ANTIGRAVITY_APP_DATA_DIR'];
 const TREES = ['analytics', 'telemetry', 'telemetry-completed', 'telemetry-locks', 'workflow-metrics-locks'];
 const ID_RE = /extend-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 const CARRY = 512; // longer than any needle, so a token or path split across two chunks is still seen

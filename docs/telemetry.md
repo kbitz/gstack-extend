@@ -161,18 +161,20 @@ one ([Work item and launcher quick-start](#work-item-and-launcher-quick-start)).
 the SHA-256 hex digest of the compact JSON list of `[name, value]` pairs, sorted
 by name, for each marker whose value passes `valid_session`. The markers are
 `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`,
-`GROK_SESSION_ID`, and `MUSE_SESSION_ID` (the same session-marker gate `detect()` uses). Names
+`GROK_SESSION_ID`, `MUSE_SESSION_ID`, and `ANTIGRAVITY_CONVERSATION_ID` (the same session-marker gate `detect()` uses). Names
 are hashed with the values, so equal IDs from different harnesses do not collide.
 No valid marker stores null. Debug mode names the markers that contributed and
 never prints their values.
 
 **Upgrade during an open stage.** The Grok change added valid `GROK_SESSION_ID`
-to the fingerprint without requiring `GROK_AGENT=1`. The Muse change adds valid
-`MUSE_SESSION_ID`. A non-resumable Muse stage started with only the Muse marker
-before the upgrade has a null fingerprint and can still pair within the 24-hour
-bound (`ADOPTION_BOUND_S`). If another harness marker was already part of the
-start fingerprint, adding a marker across the upgrade changes that fingerprint.
-An implicit finish for a non-resumable stage then refuses the handoff as belonging
+to the fingerprint without requiring `GROK_AGENT=1`, the Muse change added valid
+`MUSE_SESSION_ID`, and the Antigravity change adds valid
+`ANTIGRAVITY_CONVERSATION_ID` without requiring `ANTIGRAVITY_AGENT=1`. A
+non-resumable stage started with only the newly added harness marker before the
+upgrade has a null fingerprint and can still pair within the 24-hour bound
+(`ADOPTION_BOUND_S`). If another harness marker was already part of the start
+fingerprint, adding a marker across the upgrade changes that fingerprint. An
+implicit finish for a non-resumable stage then refuses the handoff as belonging
 to another session. Finish open stages before upgrading or pass the stage's
 original telemetry session ID to `--session-id` at finish. Existing rows retain
 their original values.
@@ -1736,7 +1738,7 @@ table below is the reader's reference; the schema is authoritative where they di
 | Field | Hand-run value |
 |---|---|
 | `stage` | Skill name without `extend:`, e.g. `roadmap` |
-| `agent` | `claude`, `codex`, `grok`, or `muse`; null when unverifiable; historical rows may carry `cursor` |
+| `agent` | `claude`, `codex`, `grok`, `muse`, or `antigravity`; null when unverifiable; historical rows may carry `cursor` |
 | `model` | Model ID from detection, a finish flag, or `GSTACK_EXTEND_MODEL`; see `model_source` |
 | `effort` | Effort level from detection, a finish flag, or `GSTACK_EXTEND_EFFORT`, in that source's vocabulary (`xhigh`, `high`); see `effort_source` |
 | `rung` | Always 0: a hand-run skill has no fallback chain |
@@ -1859,7 +1861,7 @@ classes:
 Claude's `"cli"` and `"paseo-entrypoint"` are the legacy equivalents of
 `"terminal-session"` and `"host-app-session"`. Claude keeps its existing
 `entrypoint_raw` field and maps `CLAUDE_CODE_ENTRYPOINT=Paseo` in its reader.
-Codex, Grok Build, and Muse launch-surface fields stay in their session logs. Telemetry emits only
+Codex, Grok Build, Muse, and Antigravity launch-surface fields stay in their session logs. Telemetry emits only
 the mapped source and omits the raw log values from debug traces. A log read
 failure yields `unknown` and finish continues.
 
@@ -1872,9 +1874,9 @@ Finish evaluates signals in this exact 10-rule precedence:
 5. A non-default absolute `GSTACK_HOME` (normalized path different from `$HOME/.gstack`) → `unknown` / `launcher-state-root`.
 6. A malformed non-empty `GSTACK_SESSION_KIND`, a rejected saved or finish-environment `GSTACK_EXTEND_WORK_ITEM`, or a relative non-empty `GSTACK_HOME` → `unknown` / `malformed-signal`.
 7. Any non-empty `GSTACK_EXTEND_WORKSPACE_OWNER`, including whitespace-only or malformed values → `unknown` / `host-managed-workspace`. A host-managed checkout without an orchestration signal is not proof of hand use, even when its attribution label is rejected.
-8. No detected harness (including runs from unsupported harnesses such as Antigravity/`agy` and non-orchestrated `review-state derive` projections where `derived=True`) → `unknown` / `no-harness`.
-9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (all four supported harnesses now provide a reader; historical pre-`v0.104.0` Muse rows and pre-reader Grok rows remain as recorded) → `unknown` / `harness-unqualified`.
-10. Detected and final harness match and have a launch-surface reader (`claude`, `codex`, `grok`, `muse`): the reader returns no class (evidence missing, unclean, unreadable, past the 64 KiB `LOG_HEAD_BYTES` head-read bound, reached through a link inside the harness's configured home or under a relative one, from a non-regular file, or the reader raised) → `unknown` / `entrypoint-unavailable`; the reader returns `other` (a headless, SDK, exec, subagent, or unlisted client surface) → `unknown` / `entrypoint-unqualified`; the reader returns `terminal` → `user-directed` / `terminal-session` (`cli` for Claude); the reader returns `host-app` → `user-directed` / `host-app-session` (`paseo-entrypoint` for Claude).
+8. No detected harness (including runs from unsupported harnesses and non-orchestrated `review-state derive` projections where `derived=True`) → `unknown` / `no-harness`.
+9. Detected and final harness differ (an `--agent` override to or from another harness), or the detected harness has no launch-surface reader (all five supported harnesses now provide a reader; historical pre-`v0.104.0` Muse rows and pre-reader Grok rows remain as recorded) → `unknown` / `harness-unqualified`.
+10. Detected and final harness match and have a launch-surface reader (`claude`, `codex`, `grok`, `muse`, `antigravity`): the reader returns no class (evidence missing, unclean, unreadable, past the 64 KiB `LOG_HEAD_BYTES` head-read bound, reached through a link inside the harness's configured home or under a relative one, from a non-regular file, or the reader raised) → `unknown` / `entrypoint-unavailable`; the reader returns `other` (a headless, SDK, exec, subagent, or unlisted client surface) → `unknown` / `entrypoint-unqualified`; the reader returns `terminal` → `user-directed` / `terminal-session` (`cli` for Claude); the reader returns `host-app` → `user-directed` / `host-app-session` (`paseo-entrypoint` for Claude).
 
 `PASEO_AGENT_ID` is never read: Paseo sets it for every agent it launches, so it
 cannot distinguish the owner's hand session in the Paseo app from an
@@ -1894,13 +1896,19 @@ with `codex exec resume` reads `terminal-session`, and one started with
 (an orchestrator or a script) that resumes a thread must supply a run-mode
 signal. Muse's open record likewise supplies the recorded client for the
 named session, so orchestrators must signal every launch, including a reopen.
+Antigravity's `transcript.jsonl` step-0 record (`("USER_INPUT", "USER_EXPLICIT")`) is
+likewise identical across interactive terminal TUI, Paseo ACP (`agy acp`), and
+headless `agy -p` / stream-JSON print mode, so any orchestrator or automated
+script invoking `agy -p` or stream-JSON print mode must supply an orchestration
+signal (`GSTACK_EXTEND_RUN_MODE=orchestrated`, `GSTACK_SESSION_KIND=spawned|unattended`,
+`GSTACK_EXTEND_WORK_ITEM`, or `GSTACK_EXTEND_WORKSPACE_OWNER`).
 Historical v3 rows that recorded `run_mode_source` `Paseo`, `sdk-cli`, `sdk-ts`,
 `acp`, or `none` remain valid under the v3 schema branch. The classifier never
 inspects parent process command lines or orchestrator directories. Hand-use
 capture is qualified by real readbacks for the owner's observed Claude `cli` and
 `paseo-entrypoint` launch types plus an orchestrated interactive run, while
 non-Claude classifications (`codex` `terminal-session`, `grok` `terminal-session`,
-and `muse` `host-app-session`) are fixture-qualified until their post-merge
+`muse` `host-app-session`, and `antigravity` `terminal-session`) are fixture-qualified until their post-merge
 by-hand readbacks; see [the hand-use record](acceptance/hand-use-telemetry.md)
 for dated readbacks, pending non-Claude readbacks, the per-harness launch
 inventory, and upstream request status. This is not fleet-wide SPEC O6 acceptance.
@@ -1911,12 +1919,12 @@ inventory, and upstream request status. This is not fleet-wide SPEC O6 acceptanc
 | `grok` | Valid `GROK_SESSION_ID` or `GROK_AGENT=1` (non-`"1"` profile names ignored); model and effort from `$GROK_HOME/sessions/<encoded-cwd>/<session>/{events.jsonl,summary.json}` (default `~/.grok`). Grok's local shell tool (`run_terminal_command`, observed on terminal CLI and Paseo `grok acp` with `grok 1.0.92`) exports Grok markers, while ACP `terminal/create` without marker forwarding remains unmarked (`agent: null`, `unknown` / `no-harness`) | `prompt_context.json` (`audience`, `is_non_interactive`) and, when present, `summary.json` (`session_kind`, plus `info.id` matching the session directory name when present) within `LOG_HEAD_BYTES` (64 KiB) under an absolute `GROK_HOME` (default `$HOME/.grok`), opened without following links below `GROK_HOME`, for the named `GROK_SESSION_ID` session or (when `GROK_SESSION_ID` is absent and `GROK_AGENT=1`) the sole regular session whose `events.jsonl` was touched since stage start | `prompt_context.json` `audience == "primary"` and `is_non_interactive` equal to `false`, with `summary.json` absent or `session_kind` unset → `user-directed` / `terminal-session` (fixture-qualified; post-merge readback pending). Covers both terminal CLI and host-app Paseo `grok acp` sessions, which share the same `prompt_context.json` shape without recording a host client name | None (unqualified separately — Paseo `grok acp` does not persist a host client name in Grok's session files and maps to `terminal-session`) | `host-app` cannot qualify separately because `grok acp` does not record a host client name in `prompt_context.json`, `summary.json`, or `events.jsonl`. `is_non_interactive: true`, any clean `audience != "primary"` (such as `"subagent"`), or any non-null `summary.json` `session_kind` (`"headless"`, `"subagent"`) maps to `other` (`unknown` / `entrypoint-unqualified`). Missing, unreadable, malformed, or over-bound `prompt_context.json` (or unreadable, malformed, linked, over-bound, or session-mismatched `summary.json`), non-boolean `is_non_interactive`, missing, unclean, or whitespace-padded `audience`, a linked directory or file inside `GROK_HOME`, a relative `GROK_HOME` (or relative `HOME` without `GROK_HOME`), an invalid non-empty `GROK_SESSION_ID`, or zero or multiple active sessions when `GROK_SESSION_ID` is absent return no class (`unknown` / `entrypoint-unavailable`). ACP `terminal/create` without forwarded markers remains unmarked (`no-harness`) |
 | `codex` | Non-empty `CODEX_THREAD_ID`; model and effort from `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (default `~/.codex`) | First `type: "session_meta"` record (`payload.originator` and `payload.source`), whose `payload.id` must name `CODEX_THREAD_ID`, within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own named regular rollout log under an absolute `CODEX_HOME` | `(payload.originator, payload.source)` in `{("codex_cli_rs", "vscode"), ("codex-tui", "vscode")}` → `user-directed` / `terminal-session` (fixture-qualified; post-merge readback pending). Host-app `codex app-server` sessions that pass Codex's non-originating `clientInfo.name="codex_app_server_daemon"` share `("codex_cli_rs", "vscode")` and also classify as `terminal-session` | None (unqualified) | `host-app` cannot qualify separately because `codex app-server` sessions using Codex's non-originating `clientInfo.name="codex_app_server_daemon"` record the same `("codex_cli_rs", "vscode")` pair as the terminal TUI instead of a host client name. Non-interactive `("codex_exec", "exec")`, subagent object sources (`{"subagent": ...}`), and any other clean `(originator, source)` map to `other` (`unknown` / `entrypoint-unqualified`); a missing, symlinked, over-bound or malformed rollout, a linked `sessions` or date directory inside `CODEX_HOME`, a header naming another thread, or a relative `CODEX_HOME` returns no class (`unknown` / `entrypoint-unavailable`) |
 | `muse` | Valid `MUSE_SESSION_ID`; model from `runtime.session` `model_completed` events in `$XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<session>/session.jsonl` (default `$HOME/.local/share`); effort stays `null` unless supplied via flags or `GSTACK_EXTEND_EFFORT` | First `payload_type: "session.opened.observed"` record (`payload.kind == "session_opened"`, `payload.record.client_info_name`) within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own named top-level regular `session.jsonl` | None (unqualified) | `payload.record.client_info_name` in `HOST_APP_CLIENTS` → `user-directed` / `host-app-session` (fixture-qualified; post-merge readback pending) | `terminal` cannot qualify because Muse records `client_info_name` only at the MSP serve open boundary and omits it on both interactive `tui` and headless `exec` opens (as well as pre-`#23124` `1.4.14` logs and subagent logs), and exports no entrypoint environment variable. Any other clean non-empty `client_info_name` maps to `other` (`unknown` / `entrypoint-unqualified`); missing `client_info_name`, missing `session.opened.observed`, or a missing, symlinked or over-bound log, or one reached through a linked `muse`, `sessions`, date or session directory inside the data home, or a relative data home (a relative `HOME` with no absolute `XDG_DATA_HOME`), returns no class (`unknown` / `entrypoint-unavailable`) |
+| `antigravity` | `ANTIGRAVITY_AGENT=1` (non-`"1"` values ignored without a valid ID) or valid `ANTIGRAVITY_CONVERSATION_ID`; model recorded verbatim from `PLANNER_RESPONSE` records in `$ANTIGRAVITY_APP_DATA_DIR/brain/<conversation-id>/.system_generated/logs/transcript.jsonl` (default `$HOME/.gemini/antigravity-cli`); effort stays `null` because `transcript.jsonl` has no separate effort field (finish flags or `GSTACK_EXTEND_EFFORT` can supply it) | First JSON record (`step_index == 0`, `type`, `source`) within the first 64 KiB (`LOG_HEAD_BYTES`) of the detected session's own regular `transcript.jsonl` under an absolute `ANTIGRAVITY_APP_DATA_DIR`, opened without following links below `ANTIGRAVITY_APP_DATA_DIR` (`PASEO_AGENT_ID` is never read) | `("USER_INPUT", "USER_EXPLICIT")` at `step_index == 0` → `user-directed` / `terminal-session` (fixture-qualified; post-merge readback pending). Covers terminal TUI, Paseo ACP (`agy acp`), and legacy Paseo stream-JSON sessions, which share this step-0 shape | None (unqualified separately — Paseo ACP and stream-JSON launches do not record a host client name in `transcript.jsonl` and map to `terminal-session`) | `host-app` cannot qualify separately because `transcript.jsonl` records no host client name. Subagent `("SYSTEM_MESSAGE", "SYSTEM")` and any other clean `(type, source)` pair at `step_index == 0` map to `other` (`unknown` / `entrypoint-unqualified`). Missing or invalid `ANTIGRAVITY_CONVERSATION_ID`, missing, empty, malformed, over-bound, non-`0` or boolean `step_index`, missing, unclean, or whitespace-padded `type`/`source`, a linked directory or file below `ANTIGRAVITY_APP_DATA_DIR`, a non-regular file (FIFO), or a relative `ANTIGRAVITY_APP_DATA_DIR` (or relative `HOME` without it) return no class (`unknown` / `entrypoint-unavailable`) |
 
 Unsupported harnesses, `review-state derive`, and historical ledger rows:
 
-- **Antigravity (`agy`)** is an unsupported harness (`unknown` / `no-harness`): it is outside the four supported harnesses (`claude`, `codex`, `grok`, `muse`), and host-app launches drive it via headless stream-JSON print mode (`agy --input-format stream-json --output-format stream-json`) without a launch-surface marker separating interactive host use from orchestration.
 - **Non-orchestrated `review-state derive` (`derived=True`)** projections record `unknown` / `no-harness` because `derive` never attributes the deriving shell's harness ([Deriving from review state](#review-state-derive)).
-- **Existing stage-run ledger rows are never rewritten** — including historical pre-`v0.104.0` Muse `harness-unqualified` rows (`0.102.0`–`0.103.0`, written after Muse detection landed and before `muse_launch_surface()` shipped in `v0.104.0`), pre-reader Grok `harness-unqualified` rows, and historical `no-harness` rows.
+- **Existing stage-run ledger rows are never rewritten** — including historical pre-`v0.104.0` Muse `harness-unqualified` rows (`0.102.0`–`0.103.0`, written after Muse detection landed and before `muse_launch_surface()` shipped in `v0.104.0`), pre-reader Grok `harness-unqualified` rows, and historical `no-harness` rows (including prior Antigravity `no-harness` rows).
 
 <a id="hand-run-usability-signals"></a>
 
@@ -2186,6 +2194,18 @@ until finish flags or requested variables supply them:
   read, never a sibling session's log or a `<session>/subagent/<child>/session.jsonl`
   log, and a missing or unreadable log leaves model null. In the observed Paseo
   launch, `MUSE_SESSION_ID` reached commands in Muse's own shell.
+- When **Antigravity** exports `ANTIGRAVITY_AGENT=1` or a valid
+  `ANTIGRAVITY_CONVERSATION_ID`, the wrapper reads that conversation's regular
+  `transcript.jsonl` under `$ANTIGRAVITY_APP_DATA_DIR/brain/<conversation-id>/.system_generated/logs/`
+  (default `$HOME/.gemini/antigravity-cli`, refusing relative roots and any
+  symlinked directory or file below `ANTIGRAVITY_APP_DATA_DIR`), taking `model`
+  verbatim from `PLANNER_RESPONSE` records (with `carry=True`, since
+  `PLANNER_RESPONSE` carries the turn-start `created_at` timestamp and subagents
+  receive distinct conversation IDs). Effort stays null because
+  `transcript.jsonl` has no separate effort field (finish flags or
+  `GSTACK_EXTEND_EFFORT` can supply it). A missing, invalid, linked, or
+  unreadable log leaves model null without reading sibling conversations or
+  database/config files.
 - **Cursor telemetry classification is retired.** Finish ignores `--agent cursor`
   as an invalid override. The `CURSOR_CONVERSATION_ID`,
   `CURSOR_AGENT` and `CURSOR_INVOKED_AS` markers and the `CURSOR_SDK_REASONS`
@@ -2204,7 +2224,7 @@ When ancestry is unavailable, the latest comparable log wins; without evidence
 the agent remains null. A failed
 detection costs only the detected values, never the row.
 
-Explicit finish flags override detection: `--agent claude|codex|grok|muse`, `--model`,
+Explicit finish flags override detection: `--agent claude|codex|grok|muse|antigravity`, `--model`,
 `--effort`, and `--work-item`. When `--agent` names a different harness than the
 detected one, the detected model and effort are dropped. These flags never reach
 gstack's logger.
@@ -2269,8 +2289,8 @@ on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
 
-The `muse` value extends the shared `agent` enum. Update pinned schema copies
-before validating version 4 rows with `agent: "muse"`. The `terminal-session`
+The `muse` and `antigravity` values extend the shared `agent` enum. Update pinned schema copies
+before validating version 4 rows with `agent: "muse"` or `agent: "antigravity"`. The `terminal-session`
 and `host-app-session` values likewise extend the v4 `run_mode_source` enum and
 `user-directed` branch, so update pinned schema copies before validating
 version 4 rows that carry them.
