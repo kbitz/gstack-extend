@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.116.2] - 2026-11-24
+
+### Changed
+
+- Advisory `upstream-check` reports drift when the qualified display-path formatter changes.
+
+### Fixed
+
+- Secret dispositions resolve upstream-quoted paths and refuse ambiguous matches.
+
 ## [0.116.1] - 2026-11-24
 
 ### Fixed
