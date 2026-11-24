@@ -40,16 +40,17 @@ post-default remeasurement record (94F, PR #299, docs-only, verdict
 `insufficient-evidence`), fixed Greptile receipt wording (94G, v0.112.1),
 actionable Bun prerequisite failures (94H, v0.112.2), digest-bound skill
 reference slimming (94I, PR #302 v0.113.0 and PR #304 v0.114.0) and Grok Build
-interactive telemetry qualification (94J, v0.115.0). Two Tracks are in flight in
-Group 95: restoring `/review-and-prep`'s `delegate=<part>` part-list clause to
-the core skill (95A, fixing a v0.113.0 regression from 94I) and detecting
-Antigravity and reading its by-hand runs back as `user-directed` (95B). Group
-95 also holds the remaining open install/upgrade qualification obligations
-(95C, former 94D, where PR #303 landed the scratch record and left U1–U3 open
-on the developer's "SHIP WITH GAPS OPEN" decision). Next in Group 96 come
-re-anchoring pregate narrowing and `secret-dispositions` location to installed
-gstack 1.103.0.0 (96A, which launches as soon as 95A lands, ahead of the
-developer-run Tracks), the remaining real review records and by-hand run-mode
+interactive telemetry qualification (94J, v0.115.0). Track 95A (restoring
+`/review-and-prep`'s `delegate=<part>` part-list clause to the core skill,
+fixing a v0.113.0 regression from 94I) has also shipped (PR #307, v0.115.1). One
+Track remains in flight in Group 95: detecting Antigravity and reading its
+by-hand runs back as `user-directed` (95B). Group 95 also holds the remaining
+open install/upgrade qualification obligations (95C, former 94D, where PR #303
+landed the scratch record and left U1–U3 open on the developer's "SHIP WITH
+GAPS OPEN" decision). Next in Group 96 come re-anchoring pregate narrowing and
+`secret-dispositions` location to installed gstack 1.103.0.0 (96A, now
+unblocked after 95A shipped and ready to launch ahead of the developer-run
+Tracks), the remaining real review records and by-hand run-mode
 readbacks (96B, former 94E), and the two-driver workflow qualification (96C,
 former 95A, whose rows can be harvested from real by-hand runs once 94J and 95B
 merge). Behind them come the O6 measurement and decisions (97A, former 96B)
@@ -121,10 +122,11 @@ the reason is on 51A's shipped receipt).
 
 **Labels.** This regeneration (2026-11-24) recorded Tracks 94A, 94B, 94C, 94F
 and assigned canonical IDs 94G, 94H, 94I and 94J to the placeholder Tracks
-shipped since `81e36f3`, retiring Group 94 by tombstone. Two new Tracks are
-declared in flight in Group 95: 95A (restore `/review-and-prep`'s delegate
-part-list clause to the core skill; item `93449c95`) and 95B (detect
-Antigravity and read its by-hand runs back as `user-directed`; item
+shipped since `81e36f3`, retiring Group 94 by tombstone, and also recorded
+Track 95A (restore `/review-and-prep`'s delegate part-list clause to the core
+skill; item `93449c95`; PR #307, `v0.115.1`) as shipped after it merged before
+this PR landed. One new Track remains declared in flight in Group 95: 95B
+(detect Antigravity and read its by-hand runs back as `user-directed`; item
 `d574f7e2`). Remaining unshipped Tracks recycled from 95 in packer order:
 former 94D (U1–U3 open after PR #303) became 95C; 96A kept its ID 96A (widened
 for installed gstack `1.103.0.0`'s `secret-dispositions.location.1` drift and
@@ -144,25 +146,13 @@ distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-Two Tracks are declared in flight at this regeneration (2026-11-24): Track 95A (item `93449c95`, restoring `/review-and-prep`'s `delegate=<part>` part-list clause to the core skill after the v0.113.0 regression) and Track 95B (item `d574f7e2`, detecting Antigravity and reading its by-hand runs back as `user-directed`). Track 95C (former 94D; PR #303 landed the scratch record and left U1–U3 open) shares Group 95's packer bin because its file footprint is disjoint and unblocked, and is not declared in flight. Tracks 94A, 94B, 94C, 94F, 94G, 94H, 94I and 94J shipped since `81e36f3` and are recorded in shipped history. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
+One Track remains declared in flight at this regeneration (2026-11-24): Track 95B (item `d574f7e2`, detecting Antigravity and reading its by-hand runs back as `user-directed`). Track 95A (item `93449c95`, restoring `/review-and-prep`'s `delegate=<part>` part-list clause to the core skill after the v0.113.0 regression) shipped as `v0.115.1` in PR #307 (`a4e3da7`) and is recorded in shipped history alongside Tracks 94A, 94B, 94C, 94F, 94G, 94H, 94I and 94J. Track 95C (former 94D; PR #303 landed the scratch record and left U1–U3 open) shares Group 95's packer bin because its file footprint is disjoint and unblocked, and is not declared in flight. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
 
-### Group 95: Restore delegate part-list clause ∥ Antigravity run-mode telemetry ∥ install/upgrade qualification gaps
+### Group 95: Antigravity run-mode telemetry ∥ install/upgrade qualification gaps
 
 _Depends on: none_
 
-**This group delivers:** Core `/review-and-prep` again carrying the `delegate=<part>` part-list clause so transport reviews stop dropping `adversarial` and `red-team`; Antigravity (`agy`) harness detection and by-hand `user-directed` telemetry readback so everyday Antigravity runs count toward O3.3 and O6.1; and, whenever the owner runs them, closure of the open U1–U3 install/upgrade qualification gaps in `docs/acceptance/install-upgrade.md`.
-
-##### Track 95A: Restore review-and-prep's delegate part-list clause to the core skill
-_1 task . ~30 LOC incl. tests . low risk_
-**Outcome:** The core `skills/review-and-prep.md` again carries the review-policy grammar's delegate part-list clause, so a caller that reads only the loaded `SKILL.md` to learn which parts the skill can delegate (the attacker parts `adversarial` and `red-team` included) sees them again, and reviews launched with `delegate=adversarial` or `delegate=red-team` stop dropping those parts.
-**Supports:** [SPEC](SPEC.md) review-policy contract and O3.1; repairs a defect from Track 94I (`v0.113.0`, `ce16f48`, PR #302), whose own rule keeps machine-read text in the core skill.
-**Done when:** (1) The core `skills/review-and-prep.md` contains the clause beginning `` `delegate=<part>[,<part>...]` ( `` through its closing `)` (the part list `testing`, `maintainability`, `performance`, `simplification`, `adversarial` and `red-team`, comma-separated, each at most once), byte-identical to its text before `ce16f48`. (2) The reference-split tooling (`scripts/skill-references.ts` `MOVE_MANIFEST`, conservation `dropped=0`, the duplication checks and `tests/helpers/skill-budgets.ts`) stays green: the plan decides whether the clause moves back from `skills/references/review-and-prep/conditional-policy-values.md` or the reference keeps a pointer, with no duplicated rule text. (3) A test pins the clause in the core skill as machine-read text (the same way the other caller-parsed fragments Track 94I kept inline are pinned), so a later slimming cannot move it again. (4) The generated host copies carry the change.
-_touches: skills/review-and-prep.md, skills/references/review-and-prep/conditional-policy-values.md, scripts/skill-references.ts, tests/helpers/skill-budgets.ts, tests/skill-references.test.ts, tests/skill-protocols-review-and-prep.test.ts_
-_blocked-by: Track 94I_
-**Scheduling:** Declared in flight (2026-11-24, item `93449c95`; the developer, 2026-11-24: "do it"). Priority regression fix running alongside Track 95B and ordered ahead of Track 96A, which also edits `skills/review-and-prep.md` and `tests/skill-protocols-review-and-prep.test.ts`. Verified at `5128dce`: the part-list clause currently lives only in `skills/references/review-and-prep/conditional-policy-values.md` (line 86), matching `ce16f48~1:skills/review-and-prep.md` (line 980).
-_Source: the manager's note (2026-11-24; item `93449c95`): the orchestrator consumer's transport checks only the loaded `SKILL.md` for the part-list clause, so since v0.113.0 launches warn that the loaded review skill does not carry `delegate=adversarial` or `delegate=red-team` and omit them._
-_read-first: scripts/skill-references.ts, docs/acceptance/skill-references.md_
-- **Restore the clause, pin it, and refresh generated copies** -- Return the exact `delegate=<part>[,<part>...]` part-list clause from `ce16f48~1` to `skills/review-and-prep.md` with no duplicated rule text against `conditional-policy-values.md`, keep conservation and budget checks green, pin the clause as machine-read core text in tests, and refresh generated host copies. _~30 lines incl. tests._ (S)
+**This group delivers:** Antigravity (`agy`) harness detection and by-hand `user-directed` telemetry readback so everyday Antigravity runs count toward O3.3 and O6.1; and, whenever the owner runs them, closure of the open U1–U3 install/upgrade qualification gaps in `docs/acceptance/install-upgrade.md`.
 
 ##### Track 95B: Detect Antigravity and read its by-hand runs back as user-directed
 _2 tasks . ~180 LOC incl. tests . medium risk_
@@ -171,7 +161,7 @@ _2 tasks . ~180 LOC incl. tests . medium risk_
 **Done when:** (1) Antigravity is a detected harness: its session markers are identified from real local sessions (named in the plan with evidence), `agent` records it, and model and effort are read where Antigravity's session store exposes them (absent fields stay null with a reason). (2) A launch-surface reader maps a by-hand Antigravity stage, terminal or host-app launched, to `user-directed` with a qualified source; print-mode stream-JSON launches are classified from evidence, never from `PASEO_AGENT_ID` alone, and fail closed to an explicit non-`user-directed` source when evidence is missing. (3) No orchestrated run reads `user-directed`: `GSTACK_SESSION_KIND` and the run-mode environment keep precedence, with tests for Antigravity's orchestrated and by-hand paths. (4) `docs/stage-runs.schema.json`'s `agent` enum and `docs/telemetry.md`'s harness and run-mode tables add Antigravity; the schema change is disclosed in the release notes as a compatible addition; existing rows are not rewritten.
 _touches: bin/lib/telemetry.py, docs/telemetry.md, docs/stage-runs.schema.json, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/helpers/telemetry-env.ts_
 _blocked-by: Track 94J_
-**Scheduling:** Declared in flight (2026-11-24, item `d574f7e2`). Technical edge on Track 94J (shipped, `v0.115.0`, PR #305), which edited the same telemetry files; runs beside Track 95A on disjoint files. Never read Antigravity credential or config files beyond its session logs; telemetry changes run the full telemetry suite list in `CLAUDE.md`'s Testing section. Tracks 96B and 96C follow this Track so by-hand Antigravity runs count in their readbacks and harvest.
+**Scheduling:** Declared in flight (2026-11-24, item `d574f7e2`). Technical edge on Track 94J (shipped, `v0.115.0`, PR #305), which edited the same telemetry files; ran beside Track 95A on disjoint files (Track 95A has since shipped in PR #307, `v0.115.1`). Never read Antigravity credential or config files beyond its session logs; telemetry changes run the full telemetry suite list in `CLAUDE.md`'s Testing section. Tracks 96B and 96C follow this Track so by-hand Antigravity runs count in their readbacks and harvest.
 _Source: the developer (2026-11-23): "I run agy by hand all the time, you can tell from all the manual runs" (item `d574f7e2`, after Track 94J's plan left Antigravity as `unknown`/`no-harness` to avoid a schema change outside its card; developer approved adding Antigravity to the published `agent` enum as a compatible schema addition). Verified at `5128dce`: `docs/stage-runs.schema.json` `agent` enum lists `claude`, `codex`, `grok`, `cursor`, `muse`, `null` and `docs/telemetry.md` documents Antigravity/`agy` as `unknown`/`no-harness`._
 _read-first: docs/telemetry.md, docs/stage-runs.schema.json_
 - **Detect Antigravity sessions and classify launch surfaces** -- Identify Antigravity session markers from local session logs, read available model and effort fields, map terminal and host-app by-hand runs to `user-directed` from positive evidence (failing closed when missing), and keep `GSTACK_SESSION_KIND` and run-mode env precedence for orchestrated runs. _~120 lines incl. tests._ (M)
@@ -198,7 +188,7 @@ _tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 
 
 _Depends on: Group 95_
 
-**This group delivers:** Pregate narrowing and `secret-dispositions` location re-anchored to installed upstream gstack `1.103.0.0` with clean `bin/upstream-check` on both hosts and the recorded anchor-inventory and secret-dispositions test gaps covered (ready to start as soon as Track 95A lands, ahead of the developer-run Tracks); the remaining real review records and non-Claude by-hand run-mode readbacks; and real by-hand and orchestrated workflow evidence on the holds-first matrix PR #291 added, harvestable from real by-hand runs once Tracks 94J and 95B have merged.
+**This group delivers:** Pregate narrowing and `secret-dispositions` location re-anchored to installed upstream gstack `1.103.0.0` with clean `bin/upstream-check` on both hosts and the recorded anchor-inventory and secret-dispositions test gaps covered (now unblocked after Track 95A shipped in PR #307 and ready to start ahead of the developer-run Tracks); the remaining real review records and non-Claude by-hand run-mode readbacks; and real by-hand and orchestrated workflow evidence on the holds-first matrix PR #291 added, harvestable from real by-hand runs once Tracks 94J and 95B have merged.
 
 ##### Track 96A: Re-anchor pregate narrowing and secret-dispositions location to installed gstack 1.103.0.0 and cover the recorded test gaps
 _4 tasks . ~290 LOC incl. tests . medium risk_
@@ -207,7 +197,7 @@ _4 tasks . ~290 LOC incl. tests . medium risk_
 **Done when:** (1) `bin/upstream-check --gstack-root <root>` on both hosts' installed gstack (`1.103.0.0`, revision `0d6cc1be56136706854e40dccf417e008e5c69ab`) exits `0` (`checks=108 drift=0` unless an anchor is added or removed): `review-and-prep.pregate-narrowing.index.1` is re-anchored for `policyFloorCheck` in `lib/pregate/index.ts`, and `secret-dispositions.location.1` is re-anchored for `displayPath(f.file)` in `lib/pregate/checks/secrets.ts`; the plan verifies whether `policyFloorCheck` changes any narrowing coverage assumption (widening `skills/references/review-and-prep/conditional-pregate-and-final-repair.md` if coverage prose changes) and whether `displayPath(f.file)` changes any location-matching assumption in `src/secret-dispositions/evaluate.ts`. (2) The anchor text in `skills/review-and-prep.md` and `src/secret-dispositions/evaluate.ts`, the qualified-revision table in `docs/upstream-check.md`, `PREGATE_NARROW_QUALIFIED`, `FINDING_LOCATION_QUALIFIED` and the protocol, secret-dispositions and CLI tests agree. (3) The seven recorded test gaps from Track 93C's coverage audit (mixed-width delimiters, a leading dangling `or`, repeated dispatch alternatives, keeping alternatives in the final slot, a malformed local adversarial list through the CLI, both dispatch forms and Codex wording in the nested layout, and unreadable upstream review with both attacker items drifting) and the promoted Future test gap for `secret-dispositions` added-line part type guards each have a test, or the plan records why one cannot. (4) The fallback on a missing anchor (pregate runs unmodified with `inactive`; `secret-dispositions` fails closed) is unchanged.
 _touches: skills/review-and-prep.md, skills/references/review-and-prep/conditional-pregate-and-final-repair.md, src/upstream-check/cli.ts, src/secret-dispositions/evaluate.ts, docs/upstream-check.md, tests/upstream-check.test.ts, tests/secret-dispositions.test.ts, tests/skill-protocols-review-and-prep.test.ts_
 _blocked-by: Track 94A, Track 95A_
-**Scheduling:** Ordering edge on Track 95A (in flight, item `93449c95`; both edit `skills/review-and-prep.md` and `tests/skill-protocols-review-and-prep.test.ts`); its edge on Track 94A is satisfied (`v0.112.0`). **Starts ahead of Track 96C (former 95A):** Track 96A has no dependency on two-driver qualification — in the 2026-11-22 plan it sat behind old Group 95 only because its Group 96 siblings waited on old 95A — whereas Track 96C waits on the developer's runs and binds each matrix row to the `producer_version` it ran on so landing 96A does not invalidate runs of other stages; launching 96A as soon as 95A merges eliminates both active `upstream-check` drifts immediately. Both drifts verified 2026-11-24 at `5128dce` with `bin/upstream-check --gstack-root` on `~/.claude/skills/gstack` and `~/.codex/skills/gstack` (`1.103.0.0`, `checks=108 drift=2`): `lib/pregate/index.ts:39` adds `policyFloorCheck` after `literalsCheck`, and `lib/pregate/checks/secrets.ts:248` wraps `${f.file}` in `${displayPath(f.file)}`. Widens `_touches:` to `skills/references/review-and-prep/conditional-pregate-and-final-repair.md` per Track 94I's open-verification note in `docs/acceptance/skill-references.md`. Absorbs the superseded Future entry "Requalify the pregate-narrowing registry anchor on installed gstack 1.97" and places the promoted Future test gap "Recorded test gap: secret-dispositions added-line part type guards" (its trigger is met here).
+**Scheduling:** Its ordering edges on Track 94A (`v0.112.0`) and Track 95A (`v0.115.1`, PR #307, item `93449c95`) are both satisfied. **Starts ahead of Track 96C (former 95A):** Track 96A has no dependency on two-driver qualification — in the 2026-11-22 plan it sat behind old Group 95 only because its Group 96 siblings waited on old 95A — whereas Track 96C waits on the developer's runs and binds each matrix row to the `producer_version` it ran on so landing 96A does not invalidate runs of other stages; launching 96A now eliminates both active `upstream-check` drifts immediately. Both drifts verified 2026-11-24 at `5128dce` with `bin/upstream-check --gstack-root` on `~/.claude/skills/gstack` and `~/.codex/skills/gstack` (`1.103.0.0`, `checks=108 drift=2`): `lib/pregate/index.ts:39` adds `policyFloorCheck` after `literalsCheck`, and `lib/pregate/checks/secrets.ts:248` wraps `${f.file}` in `${displayPath(f.file)}`. Widens `_touches:` to `skills/references/review-and-prep/conditional-pregate-and-final-repair.md` per Track 94I's open-verification note in `docs/acceptance/skill-references.md`. Absorbs the superseded Future entry "Requalify the pregate-narrowing registry anchor on installed gstack 1.97" and places the promoted Future test gap "Recorded test gap: secret-dispositions added-line part type guards" (its trigger is met here).
 _Source: the manager's note (2026-11-22), `docs/acceptance/release-compatibility.md` (Track 93C's "Remaining unrelated drift disclosure"), live `bin/upstream-check` verification on installed gstack `1.103.0.0` (2026-11-24), inbox `[review:files=src/upstream-check/cli.ts|tests/upstream-check.test.ts]` items from PR #293 (`ff5473c3`), and Future entries "Requalify the pregate-narrowing registry anchor on installed gstack 1.97" and "Recorded test gap: secret-dispositions added-line part type guards"._
 _read-first: docs/upstream-check.md, docs/acceptance/release-compatibility.md, docs/secret-dispositions.md_
 - **Re-anchor the `CHECKS` and finding-location anchors on 1.103.0.0** -- Update `review-and-prep.pregate-narrowing.index.1` (`policyFloorCheck`) and `secret-dispositions.location.1` (`displayPath(f.file)`), verify narrowing and location-matching assumptions, and update `PREGATE_NARROW_QUALIFIED`, `FINDING_LOCATION_QUALIFIED`, `docs/upstream-check.md` and tests. _~80 lines incl. tests._ (M)
@@ -306,28 +296,28 @@ Track shares a file with a Track in an earlier Group, the packer has already
 turned that into an edge here. The adjacency below is the packer's DEPENDS
 output with bin numbers replaced by Group numbers; the Track IDs after each set
 are the packer's own list of the Tracks that cause the edge, so a Group never
-waits on a blocker's siblings. In particular, Track 96A waits only on in-flight
-Track 95A (not on Track 95C or Track 96C), Tracks 96B and 96C wait on Track 95B
-(and once 94J and 95B merge, Track 96C's by-hand rows can be harvested as a
+waits on a blocker's siblings. In particular, Track 96A's blockers (Tracks 94A
+and 95A) have both shipped, so Track 96A is ready to launch now (it does not
+wait on Track 95B, Track 95C or Track 96C), Tracks 96B and 96C wait on Track
+95B (and once 94J and 95B merge, Track 96C's by-hand rows can be harvested as a
 report-only step), and Track 95C gates only Track 97B. Document order is
 priority, not a gate. The cards label priority choices separately from
 technical prerequisites.
 
 ```
 - Group 95 ← {}
-- Group 96 ← {95}: Tracks 95A, 95B
+- Group 96 ← {95}: Track 95B
 - Group 97 ← {95, 96}: Tracks 95C, 96C
 - Group 98 ← {97}: Track 97B
 ```
 
 Track detail per group:
 ```
-Group 95: Restore delegate part-list clause ∥ Antigravity run-mode telemetry ∥ install/upgrade qualification gaps (in progress: 95A, 95B)
-  +-- Track 95A ........... ~S . 1 task    (in flight: item 93449c95)
+Group 95: Antigravity run-mode telemetry ∥ install/upgrade qualification gaps (in progress: 95B)
   +-- Track 95B ........... ~M . 2 tasks   (in flight: item d574f7e2)
   +-- Track 95C ........... ~M . 2 tasks   (not in flight: U1–U3 open, owner's runs)
 Group 96: Upstream 1.103.0.0 re-anchor ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
-  +-- Track 96A ........... ~M . 4 tasks   (starts after 95A, ahead of 96C)
+  +-- Track 96A ........... ~M . 4 tasks   (ready now after 95A shipped; ahead of 96C)
   +-- Track 96B ........... ~S . 3 tasks   (developer's runs)
   +-- Track 96C ........... ~L . 2 tasks   (holds open: harvestable after 94J + 95B)
 Group 97: Measured stage cost ∥ stable update channel
@@ -337,7 +327,7 @@ Group 98: Install and upgrade aligned with upstream gstack
   +-- Track 98A ........... ~M . 3 tasks
 ```
 
-**4 Groups / 9 Tracks remaining**, 2 in progress (Tracks 95A and 95B).
+**4 Groups / 8 Tracks remaining**, 1 in progress (Track 95B).
 
 Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
