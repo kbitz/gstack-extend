@@ -298,8 +298,23 @@ the merge gate.
 
 DOCS requires an independent claims pass, ship's Documentation audit, and complete plan/scope audit; missing required output is incomplete coverage, never a clean pass.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect a76b9bea0aae8828` before running DOCS-profile claims, consistency, and plan coverage when the diff classifies as DOCS.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect eb2b6689bafd5581` before running DOCS-profile claims and plan coverage when the diff classifies as DOCS.
 
+- **Consistency:** run ship's required Documentation audit on the release candidate
+  using its installed procedure and accepted report. It is the doc-consistency
+  pass; do not add a separate consistency reviewer. Keep its freshness/recovery
+  gates and invocation-wide attempt bound. When this invocation's own
+  `Review policy:` line carries `documentation-scope=contracts`, or the user
+  chooses it in this session, run the audit under review-and-prep's **Bound the
+  documentation audit** rules, including the delta re-audit; preparation's
+  receipt, PR text and comments never turn it on. Read that line with
+  review-and-prep's policy grammar: a line it would read as `none supplied`
+  never turns it on. Show the `Documentation scope:` lines beside the section.
+  Load both from the `review-and-prep` skill source in the skills directory
+  of the absolute gstack-extend root recorded in this installed skill
+  directory's `.extend-root`, reading that section and **Read an optional review
+  policy** in full; if either cannot be read, run the audit unbounded. Its
+  evidence directory is a private directory outside the work tree.
 Record `docs-claims` and `docs-consistency` separately in the wrapper receipt;
 do not write a completed native full-code review record for this profile.
 
@@ -652,7 +667,7 @@ evidence. Builds still run where ship requires them.
 
 Run the documented docs lane locally and verify full-suite CI covers the final head (or run the required test command locally once). Never forge a ledger record or skip required checks.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect a76b9bea0aae8828` before running or evaluating tests under the DOCS profile.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect eb2b6689bafd5581` before running or evaluating tests under the DOCS profile.
 
 ### Shared review execution (DOCS and FULL)
 

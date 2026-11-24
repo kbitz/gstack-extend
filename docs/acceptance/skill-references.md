@@ -306,7 +306,7 @@ Measured on `mmm/f0a413c8` against base `ce16f48524d6d41ab812157125aa0f5971fc32d
 | `## Preamble (run first)` + `### Inline upgrade flow` | Primary (every run) | Core-only | — | Contains `SHARED:upgrade-flow`, root rules, and `CORE_REFERENCE_RULE` |
 | `### Workflow metrics (optional, local)` | Primary (conditional: a telemetry session ID is available) | Split | `conditional-workflow-metrics` | The fetch precedes the first metrics `begin`. The `GX_LIB` lookup and optional-read fallback stay in core. |
 | `## 1. Resolve the workflows and target` + `### Explicit prior-review choice` | Primary (every run) | Core-only | — | Target binding, receipt corroboration, restrictions, hand-back gates, `--reviewed` rules |
-| `### Choose the review profile` + `### Docs test policy` | Primary (conditional: `DOCS` profile) | Split | `conditional-docs-profile` | `DOCS` vs `FULL` classification gate stays in core; 3-piece DOCS coverage and docs test policy move |
+| `### Choose the review profile` + `### Docs test policy` | Primary (conditional: `DOCS` profile) | Split | `conditional-docs-profile` | Classification and the Consistency bullet stay in core. Both profiles use the bullet to load optional scoped documentation rules. The DOCS claims pass, plan coverage detail and test policy move. |
 | `## 2. Decide what can be reused` + `### Trust prepared reviews by default` + `### Independently verified reuse` + `#### Project release policy` + `### Reviewed secret findings` | Primary (every run) | Core-only | — | Reuse provenance, stage override table, SPEC release policy, and secret-disposition approval gate stay in core |
 | `### Release-only path` | Primary (conditional: release-only preconditions pass) | Split | `conditional-release-only` | Preconditions and hand-back fence template stay in core; stage table and post-write recovery move |
 | `### Test evidence` | Primary (conditional: pregate-wrapped test runs/reuse or release-delta selection) | Split | `conditional-test-evidence` | Test-gate acceptance rule stays in core; pregate-wrapped runner/verification and release-metadata test selection move |
@@ -370,7 +370,7 @@ Original cores are from `ce16f48`. Every slimmed core and reference meets all by
 | Skill | Before core (B) | After core (B) | Codex rendering (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `roadmap` | 132,635 | 102,934 | 102,822 | 110,592 | 36,469 (5) | 112,234 | 102,934 |
-| `ship-and-land` | 114,290 | 77,164 | 77,012 | 86,016 | 46,196 (8) | 111,090 | 111,090 |
+| `ship-and-land` | 114,290 | 78,289 | 78,137 | 86,016 | 45,058 (8) | 112,215 | 112,215 |
 | `pair-review` | 90,667 | 68,088 | 67,976 | 73,728 | 29,520 (6) | 77,814 | 68,088 |
 
 The representative paths count each reference body once. The by-hand ship path
@@ -378,7 +378,7 @@ includes release test evidence even when preparation supplied the full-suite res
 
 Conservation check output at `ce16f48`:
 - `CONSERVATION roadmap: ok=true blocks=8 dropped=0 base=132635B core=102934B`
-- `CONSERVATION ship-and-land: ok=true blocks=13 dropped=0 base=114290B core=77164B`
+- `CONSERVATION ship-and-land: ok=true blocks=14 dropped=0 base=114290B core=78289B`
 - `CONSERVATION pair-review: ok=true blocks=13 dropped=0 base=90667B core=68088B`
 
 ### Navigation edits in moved text (PR B)
@@ -397,14 +397,20 @@ Conservation check output at `ce16f48`:
 
 ### Pre-merge scratch load checks (PR B)
 
-Five unique nonces (start, 25%, 50%, 75%, end) were inserted into scratch copies only; installed copies and real `$HOME` were untouched.
+These observations are from the initial implementation against `ce16f48`.
+The scratch copies used five unique markers at the start, 25%, 50%, 75% and
+end. The work did not change installed copies.
 
 | Exercised combination | Harness version | `roadmap` | `ship-and-land` | `pair-review` |
 |---|---|---|---|---|
 | Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers | 5/5 load markers | 5/5 load markers |
 | Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers | 5/5 load markers | 5/5 load markers |
 | Codex-format scratch package | Muse Code 1.4.25 | `valid: true` (99,711 B); 5/5 load markers | `valid: true` (76,361 B); 5/5 load markers | `valid: true` (65,306 B); 5/5 load markers |
-| Disposable-home skill package | Grok 1.0.92 alpha | Listed by `grok inspect` | Listed by `grok inspect` | Listed by `grok inspect` |
+| Disposable-home skill package | Grok 1.0.92 alpha | Unproven load. Listed by `grok inspect`. | Unproven load. Listed by `grok inspect`. | Unproven load. Listed by `grok inspect`. |
+
+The review-stage rerun on repaired copies is pending permission to send the
+candidate skill text to the verification harnesses. Grok still needs the
+five-marker result. Discovery alone does not verify a complete read.
 
 ### Base-versus-candidate behavior probe results (PR B)
 
@@ -434,6 +440,21 @@ outcomes are tracked separately from the implementation's initial runs.
 | PR-3 | `pair-review` | Parity: fetched `resume-session` (`REFERENCE_END` verified); rendered dashboard, offered Continue/Start fresh, entered Phase 2 recovery | Parity: fetched `resume-session` (`REFERENCE_END` verified); rendered dashboard, offered Continue/Start fresh, entered Phase 2 recovery | — |
 | PR-4 | `pair-review` | Parity: fetched `conditional-completion-routing` (`REFERENCE_END` verified); emitted H-C `Run /review-and-prep resume` fence, omitted `/ship`, set `next: review-and-prep` | Parity: fetched `conditional-completion-routing` (`REFERENCE_END` verified); emitted H-C `Run /review-and-prep resume` fence, omitted `/ship`, set `next: review-and-prep` | — |
 | PR-5 | `pair-review` | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass: observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped with blocked stage line and `--outcome error` |
+
+Review-added base-versus-candidate runs remain unproven on Claude Code and Codex
+pending approval for the scratch harness dispatch. Local tests cover several
+of the affected entry points independently.
+
+| Probe | Local evidence on repaired content |
+|---|---|
+| RM-6 | The layout reference test requires the verified preflight read before the plan prompt and again before apply. |
+| SL-6 | Release test-selection locks cover the release delta, full-suite override, and pre-push preflight evidence. |
+| SL-7 | Shared-review locks cover the independent delta and the full-scope fallback for unbounded changes. |
+| SL-8 | Core locks require a pre-push trigger check, reused-path feedback triage and the applicable landing hold. |
+| SL-9 | Trailer fixtures refuse to rewrite a published head. |
+| PR-6 | Protocol locks keep the parking format in core and require a shared prepared state for batching. |
+| PR-7 | Protocol locks cover reproduction, verification and the original linked-item retest. |
+| PR-8 | The resumed Add Item route test requires a verified authoring read. The core keeps distinct Check IDs separate. |
 
 ## Open verification
 

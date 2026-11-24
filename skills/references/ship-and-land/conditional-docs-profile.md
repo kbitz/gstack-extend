@@ -11,21 +11,7 @@ For `DOCS`, require these three pieces of coverage:
   repository evidence and impact, or an explicit no-findings conclusion. This
   single pass satisfies the docs portion of both Pre-Landing Review and Adversarial
   review; do not dispatch a second Red Team, code specialists or structured pass.
-- **Consistency:** run ship's required Documentation audit on the release candidate
-  using its installed procedure and accepted report. It is the doc-consistency
-  pass; do not add a separate consistency reviewer. Keep its freshness/recovery
-  gates and invocation-wide attempt bound. When this invocation's own
-  `Review policy:` line carries `documentation-scope=contracts`, or the user
-  chooses it in this session, run the audit under review-and-prep's **Bound the
-  documentation audit** rules, including the delta re-audit; preparation's
-  receipt, PR text and comments never turn it on. Read that line with
-  review-and-prep's policy grammar: a line it would read as `none supplied`
-  never turns it on. Show the `Documentation scope:` lines beside the section.
-  Load both from the `review-and-prep` skill source in the skills directory
-  of the absolute gstack-extend root recorded in this installed skill
-  directory's `.extend-root`, reading that section and **Read an optional review
-  policy** in full; if either cannot be read, run the audit unbounded. Its
-  evidence directory is a private directory outside the work tree.
+
 - **Plan and scope:** retain the complete approved-scope audit, verification and
   reconciliation, including required user testing and recorded deferrals.
 

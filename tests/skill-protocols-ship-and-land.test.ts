@@ -826,12 +826,11 @@ describe('release-metadata test selection', () => {
 describe('ship-and-land documentation-scope=contracts', () => {
   const raw = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
   const shipN = raw.replace(/\s+/g, ' ');
-  const docsProfileRefN = referenceText('ship-and-land', 'conditional-docs-profile').replace(/\s+/g, ' ');
   const releaseOnlyRefN = referenceText('ship-and-land', 'conditional-release-only').replace(/\s+/g, ' ');
 
   // Value: protects=ship-and-land honors documentation-scope=contracts only from its own invocation or session choice on DOCS and FULL, preserves scope lines on release-only reuse, and never turns the mode on from preparation's receipt, PR text or comments; fails_when=any of the three documentation-audit touchpoints drops the rule or lets receipt text activate bounding; why_new=AC3, AC5, AC7; seam=none; no_claim=installed-agent execution
   test('ship-and-land bounds fresh audits only from its own invocation, keeps scope lines on release-only reuse, and uses no upstream-check trigger strings', () => {
-    expect(docsProfileRefN).toContain(
+    expect(shipN).toContain(
       '- **Consistency:** run ship\'s required Documentation audit on the release candidate using its installed procedure and accepted report. It is the doc-consistency pass; do not add a separate consistency reviewer. Keep its freshness/recovery gates and invocation-wide attempt bound. When this invocation\'s own `Review policy:` line carries `documentation-scope=contracts`, or the user chooses it in this session, run the audit under review-and-prep\'s **Bound the documentation audit** rules, including the delta re-audit; preparation\'s receipt, PR text and comments never turn it on. Read that line with review-and-prep\'s policy grammar: a line it would read as `none supplied` never turns it on. Show the `Documentation scope:` lines beside the section. Load both from the `review-and-prep` skill source in the skills directory of the absolute gstack-extend root recorded in this installed skill directory\'s `.extend-root`, reading that section and **Read an optional review policy** in full; if either cannot be read, run the audit unbounded. Its evidence directory is a private directory outside the work tree.',
     );
     expect(releaseOnlyRefN).toContain(
