@@ -518,6 +518,13 @@ and the test-gap routing value.
 | Attacker-part anchors | `b3323f47b8cb6ec074bc755d3b108983a816007a` | 1.102.2.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
+The pregate-narrowing registry anchor now expects `policyFloorCheck`, a
+preflight check present in gstack 1.103.0.0. If the installed registry lacks
+that entry, `/review-and-prep` uses ordinary pregate selection after an
+accepted external pass. On gstack 1.103.0.0, the separate
+`secret-dispositions.location.1` anchor still reports drift because the
+upstream location template now formats the path with `displayPath`.
+
 ## Measured startup profile
 
 This is a recorded measurement of one named profile, not a CI assertion or a
