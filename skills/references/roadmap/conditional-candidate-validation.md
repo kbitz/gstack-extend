@@ -54,34 +54,6 @@ to allocate, freeze or tombstone.
 pass, reserving retired 22. This example's cap 2 (and default cap 6) yields one
 bin, no dependencies. Use the caller's actual cap/output if different.
 
-Print the actual project cap next; every separate
-shell call starts with the literal `_EXTEND_ROOT=…` printed by the preamble
-and `_ROADMAP_ROOT=…` for that project. Commands published to the user replace
-variables with those observed literal absolute paths, including draft/script paths.
-
-```bash
-# First paste both resolved root assignments as described above.
-bun -e 'const extendDir = process.argv[1]; const repoRoot = process.argv[2]; const { buildAuditCtx } = await import(extendDir + "/src/audit/cli.ts"); const ctx = buildAuditCtx({ repoRoot, extendDir, argv: { repoRoot, scanState: false, futureIndex: false, prompt: null } }); const { fillCap } = await import(extendDir + "/src/audit/lib/pack.ts"); console.log("PROJECT_ROOT:", repoRoot, "EXTEND_ROOT:", extendDir, "PARALLELISM_CAP:", fillCap(ctx.parallelismCap));' -- "$_EXTEND_ROOT" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"
-"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin <<'MD'
-## Current Plan
-### Group 23: Repacked remainder
-_Depends on: none_
-#### Track 23A: Second remaining
-_1 task . ~50 LOC . low risk_
-_touches: src/b.ts_
-- Finish the second task (~50 lines).
-#### Track 23B: Third remaining
-_1 task . ~50 LOC . low risk_
-_touches: src/c.ts_
-- Finish the third task (~50 lines).
-MD
-```
-
-Draft `--from` / `--stdin` packing skips archive merge: raw history reservations
-are a separate lookup, never an allocator feature of the packer. Empty stdin
-falls back to the live file; use a **nonempty full state scaffold** even for an
-empty remainder. This snippet proves packing only, not the whole audit gate.
-
 ## From Complete-candidate validation
 
 Save active/archive drafts and this temporary Bun script **outside the workspace**

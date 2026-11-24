@@ -141,8 +141,10 @@ describe('ship-and-land drift-locks', () => {
 
   test('Greptile stays once per PR and manual testing cannot be bypassed', () => {
     expect(normalized).toContain('This wrapper never requests another run or resets a timeout.');
-    expect(greptileRefN).toContain('Never make a ready PR draft to trigger review.');
-    expect(greptileRefN).toContain('If a push would start a second run, stop before it and ask the user');
+    expect(normalized).toContain('Never make a ready PR draft to trigger review.');
+    expect(normalized).toContain('If a push would start a second run, stop before it and ask the user');
+    expect(normalized).toContain('hold landing until its one review completed with findings resolved');
+    expect(normalized).toContain('including when Step 2 reused every review');
     expect(normalized).toContain('Do not use fallback ship reviews to bypass pending user testing or scope decisions.');
     expect(normalized).toContain('never inherits another PR\'s receipts or Greptile status.');
   });
@@ -222,7 +224,7 @@ describe('ship-and-land drift-locks', () => {
 
   test('DOCS test policy still requires authenticated full-suite coverage', () => {
     for (const clause of [
-      "let the configured full-suite CI lane be the full test gate; its check-run must meet the test gate's requirements above.",
+      'let the configured full-suite CI lane be the full test gate; its check-run must meet the requirements under **Test evidence** in the core.',
       'an empty required-check list, absent CI, a docs path filter that skips the suite, or a selected-test job is not full-suite coverage.',
       "run the repository's required test command locally once; do not assume CI will supply it.",
       'blocks landing until it passes on the final head; report it as pending, never passed.',
@@ -339,6 +341,8 @@ describe('release-only ship path', () => {
       "use `git restore --source=<prepared HEAD> --staged --worktree -- <owned paths>`.",
       "If ownership is uncertain, preserve the changes and report them.",
     ]) expect(releaseOnlyRefN).toContain(clause);
+    expect(releaseOnlyN).toContain('Ship never edits code, tests or docs on this path.');
+    expect(releaseOnlyN).toContain('A non-release finding stops and hands back to `/review-and-prep`');
     const handBack =
       Array.from(releaseOnly.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '').find((b) => b.includes('Finding:')) ?? '';
     const flat = handBack.replace(/\s+/g, ' ');
@@ -378,9 +382,9 @@ describe('release-only ship path', () => {
       'Never fill in `--reviewed`: when this invocation accepted it, say to add it only if the user still accepts the prior review for that head.',
       'When this invocation validated a marked handoff, tell them to paste the same handoff again with it.',
       'Say that run rechecks the head, asks for each acceptance and the merge approval, then merges and reports.',
-      'With a blocker, name each blocker and its repair instead of offering to land.',
       'Leaving the PR open needs no action.',
     ]) expect(landAdaptersRefN).toContain(clause);
+    expect(stopN).toContain('With a blocker, name each blocker and its repair instead of offering to land.');
     for (const clause of [
       'The answer is never approval, and nothing merges in this run.',
       'starts the landing run as a new invocation for the same PR and verification URL.',
@@ -672,8 +676,8 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
   });
 
   test('a failed first-run detection is unknown state, never an unconfirmed setup', () => {
-    expect(landAdaptersRefN).toContain('No token, or the detection itself failed: unknown state, not `FIRST_RUN`.');
-    expect(landAdaptersRefN).toContain('Never guess a token or read a broken check as unconfirmed setup.');
+    expect(shipN).toContain('No token, or the detection itself failed: unknown state, not `FIRST_RUN`.');
+    expect(shipN).toContain('Never guess a token or read a broken check as unconfirmed setup.');
   });
 
   // Value: protects=a landing run still gets the full first-run confirmation and nothing writes the fingerprint without the user; fails_when=the read-only path leaks into landing or the wrapper gains a fingerprint write; why_new=no earlier lock covers Step 1.5 at all; seam=none; no_claim=agent behavior (static prose lock)

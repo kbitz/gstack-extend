@@ -3,8 +3,8 @@
 ## From Release-only path
 
 On this path reuse the receipt's `Ship gates` coverage and documentation audits
-only after the provenance and binding checks above; pregate and test lanes keep
-their own evidence rules. These rows replace the matching stage-table rows below.
+only after the provenance and binding checks under **Release-only path** in the core; pregate and test lanes keep
+their own evidence rules. These rows replace the matching rows under **Ship overrides** in the core.
 Other rows keep their wrapper behavior:
 
 | Installed ship stage | Release-only behavior |

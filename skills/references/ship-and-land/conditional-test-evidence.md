@@ -60,8 +60,7 @@ take the release-only path or reuse the run on the `FULL` path:
   selection retained from the original head-policy run, or take the ordinary
   exact-command fallback. The stamp's truncated `ran:` text is not full output.
 - Grade it with `gstack-evidence check --label tests` using the validated
-  record's exact command as `--expect-cmd` and the installed permitted age
-  above (plus `--allow-paths` after the release stamp). `check` grades only
+  record's exact command as `--expect-cmd` and the installed permitted age under **Independently verified reuse** in the core (plus `--allow-paths` after the release stamp). `check` grades only
   the latest record per label, so any later `tests` record displaces it.
 
 **Release-metadata verification (FULL path).** Before Steps 12–15, verify and

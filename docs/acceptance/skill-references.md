@@ -286,16 +286,16 @@ Measured on `mmm/f0a413c8` against base `ce16f48524d6d41ab812157125aa0f5971fc32d
 | Section | Reader class | Disposition | Target reference | Notes |
 |---|---|---|---|---|
 | `## Preamble (run first)` + `### Inline upgrade flow` + `# /roadmap — Plan Regeneration` | Primary (every run) | Core-only | — | Contains `SHARED:upgrade-flow`, root rules, `CORE_REFERENCE_RULE`, and hard gate |
-| `## Shipped-Track reconciliation` + `### Common path` | Primary (conditional: shipped-Track reconciliation) | Split | `conditional-candidate-validation` | Steps 1–6 and `_ROADMAP_ROOT` resolver stay in core; illustrative example and remainder preview snippet move |
+| `## Shipped-Track reconciliation` + `### Common path` | Primary (conditional: shipped-Track reconciliation) | Split | `conditional-candidate-validation` | Steps 1–6, both root bindings, and the cap and remainder preview stay in core. Illustrative receipts move. |
 | `### Complete-candidate validation` | Primary (conditional: pre-write validation) | Split | `conditional-candidate-validation` | Gate summary and post-script inspection gates stay in core; temporary Bun validation script moves |
 | `### Exceptions and recovery` | Primary (conditional: reconciliation exceptions) | Split | `conditional-candidate-validation` | Escalation field mapping and refusal gate stay in core; exception detail bullets move |
 | `## The four lifecycle states` + `## Step 1: Gather` + `## Step 2: Regenerate` (except `### Deferred work` conditional batches) | Primary (every run) | Core-only | — | Product contract, ground truth, audit/drain rules, manifestation/admission gates, sizing, packing, renumbering, proposal artifact, AskUserQuestion clusters |
 | `### Deferred work` | Primary (conditional: legacy trigger migration or GitHub backlog filing) | Split | `conditional-deferred-migration` | Core deferral policy and GitHub destination authorization gate stay in core; trigger migration steps 1–6 and GitHub bash filing recipe move |
 | `## Step 3: Apply` + `### Audit-after-apply` + `### TODOS.md drain orphan check` + `### Apply summary` | Primary (every run) | Core-only | — | Freshness check, satellite-first apply, post-apply audit, orphan check |
-| `## Step 4: PROGRESS.md staleness check` | Delegate (conditional: user picks "Yes, append rows") | Split | `delegate-progress-append` | Bootstrap rule, destination/Acceptance rules, STOP report, and AskUserQuestion stay in core; baseline capture, subagent prompt, and parent `diff -U0` verification move |
+| `## Step 4: PROGRESS.md staleness check` | Delegate (conditional: user picks "Yes, append rows") | Split | `delegate-progress-append` | Bootstrap, destination and Acceptance rules, reference acknowledgment, and parent `diff -U0` verification stay in core. The baseline capture and writer prompt move. |
 | `## Step 5: Version Recommendation` + `## Step 6: Commit` + `## Step 7: Hand off to /docs-ship` + `## Output Format` + `## Trust boundary` + `## Interpreting audit findings` + `## Documentation Taxonomy Reference` | Primary (every run) | Core-only | — | Version policy, commit staging rules, `/docs-ship` handoff, stage line, templates |
 | `## Layout Scaffolding` + `### Trigger detection` + `### Idempotent re-run` | Primary (conditional trigger) | Core-only | — | Trigger conditions and always-block rules stay in core |
-| `### Plan presentation (single batch confirm)` | Primary (conditional: Layout Scaffolding triggered) | Split | `conditional-layout-plan` | Read-only preflight gate and external-target authorization gate stay in core; plan lists, example shape, and confirmation detail move |
+| `### Plan presentation (single batch confirm)` | Primary (conditional: Layout Scaffolding triggered) | Split | `conditional-layout-plan`, `conditional-layout-apply` | The read-only preflight is fetched before the approval prompt. External-target authorization stays in core. |
 | `### Execution (apply path)` | Primary (conditional: user approves A or C) | Split | `conditional-layout-apply` | Audited-root binding and `copied byte for byte` paragraph (`src/upstream-check/cli.ts` exemption) stay in core; preflight steps 1–5, refusal format, apply scaffold/moves, and post-apply summary move |
 | `## Completion Status Protocol` + `### Escalation` + `## Confusion Protocol` + `## GSTACK REVIEW REPORT` + `### Telemetry finish` | Primary (every run) | Core-only | — | SHARED blocks and report contract |
 
@@ -304,14 +304,14 @@ Measured on `mmm/f0a413c8` against base `ce16f48524d6d41ab812157125aa0f5971fc32d
 | Section | Reader class | Disposition | Target reference | Notes |
 |---|---|---|---|---|
 | `## Preamble (run first)` + `### Inline upgrade flow` | Primary (every run) | Core-only | — | Contains `SHARED:upgrade-flow`, root rules, and `CORE_REFERENCE_RULE` |
-| `### Workflow metrics (optional, local)` | Primary (conditional: `GX_CAPTURE=1`) | Split | `conditional-workflow-metrics` | Legacy boundary, `GX_LIB` lookup, and optional-read fallback (`GX_CAPTURE=0`, `capture=partial (reference-unavailable)`) stay in core; producer/span/correction/receipts rules and phase table move |
+| `### Workflow metrics (optional, local)` | Primary (conditional: a telemetry session ID is available) | Split | `conditional-workflow-metrics` | The fetch precedes the first metrics `begin`. The `GX_LIB` lookup and optional-read fallback stay in core. |
 | `## 1. Resolve the workflows and target` + `### Explicit prior-review choice` | Primary (every run) | Core-only | — | Target binding, receipt corroboration, restrictions, hand-back gates, `--reviewed` rules |
 | `### Choose the review profile` + `### Docs test policy` | Primary (conditional: `DOCS` profile) | Split | `conditional-docs-profile` | `DOCS` vs `FULL` classification gate stays in core; 3-piece DOCS coverage and docs test policy move |
 | `## 2. Decide what can be reused` + `### Trust prepared reviews by default` + `### Independently verified reuse` + `#### Project release policy` + `### Reviewed secret findings` | Primary (every run) | Core-only | — | Reuse provenance, stage override table, SPEC release policy, and secret-disposition approval gate stay in core |
 | `### Release-only path` | Primary (conditional: release-only preconditions pass) | Split | `conditional-release-only` | Preconditions and hand-back fence template stay in core; stage table and post-write recovery move |
 | `### Test evidence` | Primary (conditional: pregate-wrapped test runs/reuse or release-delta selection) | Split | `conditional-test-evidence` | Test-gate acceptance rule stays in core; pregate-wrapped runner/verification and release-metadata test selection move |
-| `### Shared review execution (DOCS and FULL)` | Primary (conditional: Step 2 marks any review stage RUN) | Split | `conditional-shared-review` | Reader/severity/delta/structured-output gate summary and `<state-root>` definition stay in core; detailed execution rules move |
-| `### Greptile and new feedback` | Primary (conditional: Greptile applies or new feedback arrives) | Split | `conditional-greptile-feedback` | Applicability, config repair, veto check, and single-run allowance stay in core; gate trigger/monitoring/new-feedback triage move |
+| `### Shared review execution (DOCS and FULL)` | Primary (conditional: review dispatch, new feedback or fix-delta review) | Split | `conditional-shared-review` | Entry covers late feedback after full reuse. Reader, severity, delta and structured-output gates stay in core. |
+| `### Greptile and new feedback` | Primary (conditional: Greptile applies) | Split | `conditional-greptile-feedback` | Applicability, config repair, veto, once-per-PR rules and the applicable pre-landing hold stay in core. Trigger, monitoring and feedback procedures move. |
 | `## 3. Execute ship and verify its final changes` | Primary (every run) | Core-only | — | Ship execution, bookkeeping distinction, compact PR receipt, supplementary artifact storage |
 | `### Commit without co-author trailers` | Primary (conditional: after each ship commit / before push) | Split | `conditional-trailer-check` | Trailer rule and `BLOCKED` stop stay in core; bash trailer-stripping script moves |
 | `## 4. Land and verify` + `### Stage line` + `### Telemetry finish` | Primary (every run) | Core-only | — | Evidence adapters, merge approval, auto-merge/queue readback, stage line, `SHARED:telemetry-finish` |
@@ -325,11 +325,12 @@ Measured on `mmm/f0a413c8` against base `ce16f48524d6d41ab812157125aa0f5971fc32d
 | `## Phase 0: Deploy Discovery` (Step 1, Step 3, Step 4) | Primary (Init) | Core-only | — | Recipe check, ask user, and save recipe (contains nested markdown fence) stay in core |
 | `### Step 2: Discover deploy patterns` + `### Step 3: Generate grouped test plan` + `### Step 3.2: Merge co-observable items` + `### Step 3.4: Order for one pass through the app` | Primary (conditional: Phase 1 Init) | Split | `conditional-init-plan` | Sizing/human-judgment/Check-ID gates stay in core; pattern discovery, three-line authoring rules, merge test, and ordering rules move |
 | `### Step 4: Present and approve` + `### Step 5: Write state` + `## Phase 2: Test Execution Loop` (`Lookahead`, `Prepare the item`, `Present the next item`, `On PASS`, `On FAIL`, `On SKIP`, `On ADD ITEM`, `Group completion`) | Primary (every run) | Core-only | — | Core testing loop, isolation/tracked-file blocker guards, recovery, AskUserQuestion contract |
-| `### On FIX NOW` | Primary (conditional: user chooses "Fix now") | Split | `conditional-fix-flow` | Checkpoint/reproduce/commit/rebuild/verify gate summary stays in core; full fix cycle and bash blocks move |
-| `### On PARK` + `### On BATCH` | Primary (conditional: user parks bug or selects batch) | Split | `conditional-park-and-batch` | Park trigger, no-classify-at-park rule, and batch index-order/shared-state gate stay in core; detailed park and batch flows move |
+| `### On ADD ITEM` | Primary (conditional: user adds an item) | Split | `conditional-init-plan` | Fetches the authoring and merge rules on entry, including after resume. |
+| `### On FIX NOW` | Primary (conditional: user chooses "Fix now" or resumes a recorded item fix) | Split | `conditional-fix-flow` | Checkpoint, reproduction and verification gates stay in core. The full fix cycle moves. |
+| `### On PARK` + `### On BATCH` | Primary (conditional: user parks bug or selects batch) | Split | `conditional-park-and-batch` | Parked-bug record format stays in core for automatic linked parking. The interactive description and batch procedures move. |
 | `### Group completion triage` + `## Phase 2.5: Post-Testing Fix Queue` | Primary (conditional: PARKED bugs exist) | Split | `conditional-triage-and-queue` | Linked-item retest rule and triage gate summary stay in core; triage prompts, parked-bug fix flow, and `[pair-review:...]` TODOS format move |
 | `## Phase 3: Resume` (`Step 1`, `Step 2`) | Resume entry point | Split | `resume-session` | Step 3 continue/status-only routing stays in core; state lookup and dashboard template move |
-| `## Phase 4: Completion` (`Step 1`, `Step 3`) | Primary (conditional: completion / `/pair-review done`) | Split | `conditional-completion-routing` | Early-termination check, Step 2 save rules, and H-C `paused`/`closed-paused`/`lookup-failure` route templates stay in core; report template, paused-check bash/jq script, and ordinary routing move |
+| `## Phase 4: Completion` (`Step 1`, `Step 3`) | Primary (conditional: completion / `/pair-review done`) | Split | `conditional-completion-routing` | The report template and paused-PR lookup move. The hold routes and subsequent ordinary routing stay in core in their original order. |
 | `## Stage line` + `## Active Session Guard` + `## Error Handling` + `## Conversational Interface` + `## Completion Status Protocol` + `## Confusion Protocol` + `## GSTACK REVIEW REPORT` + `### Telemetry finish` | Primary (every run) | Core-only | — | Stage line, guarded Archive block (L7 lock), error handling, SHARED blocks |
 
 ### Preregistered behavior probes (PR B)
@@ -368,14 +369,17 @@ Original cores are from `ce16f48`. Every slimmed core and reference meets all by
 
 | Skill | Before core (B) | After core (B) | Codex rendering (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `roadmap` | 132,635 | 99,823 | 99,711 | 110,592 | 39,311 (5) | 110,778 | 99,823 |
-| `ship-and-land` | 114,290 | 76,513 | 76,361 | 86,016 | 45,985 (8) | 103,471 | 110,271 |
-| `pair-review` | 90,667 | 65,418 | 65,306 | 73,728 | 31,645 (6) | 76,378 | 65,418 |
+| `roadmap` | 132,635 | 102,934 | 102,822 | 110,592 | 36,469 (5) | 112,234 | 102,934 |
+| `ship-and-land` | 114,290 | 76,886 | 76,734 | 86,016 | 46,196 (8) | 110,812 | 110,812 |
+| `pair-review` | 90,667 | 68,088 | 67,976 | 73,728 | 29,520 (6) | 77,814 | 68,088 |
+
+The representative paths count each reference body once. The by-hand ship path
+includes release test evidence even when preparation supplied the full-suite result.
 
 Conservation check output at `ce16f48`:
-- `CONSERVATION roadmap: ok=true blocks=9 dropped=0 base=132635B core=99823B`
-- `CONSERVATION ship-and-land: ok=true blocks=13 dropped=0 base=114290B core=76513B`
-- `CONSERVATION pair-review: ok=true blocks=14 dropped=0 base=90667B core=65418B`
+- `CONSERVATION roadmap: ok=true blocks=8 dropped=0 base=132635B core=102934B`
+- `CONSERVATION ship-and-land: ok=true blocks=13 dropped=0 base=114290B core=76886B`
+- `CONSERVATION pair-review: ok=true blocks=13 dropped=0 base=90667B core=68088B`
 
 ### Navigation edits in moved text (PR B)
 
@@ -383,8 +387,12 @@ Conservation check output at `ce16f48`:
 |---|---|---|
 | `roadmap` / `delegate-progress-append` | `the rules above` | `the destination rules in **Step 4: PROGRESS.md staleness check**` |
 | `roadmap` / `delegate-progress-append` | `the STOP above` | `the Step 4 destination STOP in **Step 4: PROGRESS.md staleness check**` |
-| `roadmap` / `delegate-progress-append` | `the bootstrap rule above` | `the bootstrap rule in **Step 4: PROGRESS.md staleness check**` |
-| `ship-and-land` / `conditional-workflow-metrics` | `the literal status line below` | `the core metrics status line` |
+| `roadmap` / `conditional-layout-plan` | `the **Refusal format** below` | `the **Refusal format** for **Execution (apply path)**` |
+| `ship-and-land` / `conditional-workflow-metrics` | `the literal status line below` | `the status line in the metrics receipt instructions` |
+| `ship-and-land` / `conditional-workflow-metrics` | `the run `begin` (below)` | The run `begin` under **Workflow metrics (optional, local)** in the core |
+| `ship-and-land` / `conditional-release-only` | `provenance and binding checks above`, `stage-table rows below` | **Release-only path** and **Ship overrides** in the core |
+| `ship-and-land` / `conditional-test-evidence` | `installed permitted age above` | **Independently verified reuse** in the core |
+| `ship-and-land` / `conditional-docs-profile` | `test gate's requirements above`, `ordinary test gate above` | **Test evidence** in the core |
 | `ship-and-land` / `conditional-release-only` | `Stop and hand back, naming the finding:` | `Stop and hand back using the release-only hand-back template in **Release-only path** in the core, naming the finding.` |
 
 ### Pre-merge scratch load checks (PR B)
@@ -400,7 +408,12 @@ Five unique nonces (start, 25%, 50%, 75%, end) were inserted into scratch copies
 
 ### Base-versus-candidate behavior probe results (PR B)
 
-All 15 preregistered probes ran on Claude Code 2.1.330 and Codex 0.171.0 against base `ce16f48` and the PR B candidate in disposable scratch checkouts with no remote; a representative 6-probe subset (`RM-1`, `RM-5`, `SL-2`, `SL-5`, `PR-2`, `PR-5`) also ran on Muse Code 1.4.25. Each row records the sanitized outcome and reference fetched, without raw transcripts.
+The implementation ran the first 15 probe cases on Claude Code 2.1.330 and
+Codex 0.171.0 against base `ce16f48` and the initial PR B content in scratch
+checkouts with no remote. A six-case subset (`RM-1`, `RM-5`, `SL-2`, `SL-5`,
+`PR-2`, `PR-5`) also ran on Muse Code 1.4.25. Review added eight cases at
+`9819959` to cover the remaining moved clusters and resumed Add Item. Their
+outcomes are tracked separately from the implementation's initial runs.
 
 - **Probe-caught navigation fix (`SL-2`):** On the first Codex run of `SL-2`, the candidate read `conditional-release-only` and refused the code edit with `next: review-and-prep; status: stopped`, but reported that the hand-back template's opening line was omitted from the reference (the template stayed in core while the moved text still ended with `Stop and hand back, naming the finding:`). Adding the navigation edit pointing to **Release-only path** in the core resolved the gap; the rerun on both Claude Code and Codex matched base parity and printed the exact hand-back opening line.
 

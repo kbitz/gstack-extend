@@ -39,8 +39,7 @@ incomplete coverage, never a clean pass.
 For `DOCS`, derive docs-contract, link, generated-doc and other affected checks
 from project instructions/CI. Honor explicit project requirements to run locally.
 Otherwise run the documented docs lane locally and let the configured full-suite
-CI lane be the full test gate; its check-run must meet the test gate's
-requirements above. Verify that lane actually runs the required suite
+CI lane be the full test gate; its check-run must meet the requirements under **Test evidence** in the core. Verify that lane actually runs the required suite
 on the final PR head; an empty required-check list, absent CI, a docs path filter
 that skips the suite, or a selected-test job is not full-suite coverage. If that
 gate cannot be established, run the repository's required test command locally
@@ -65,6 +64,6 @@ report it as pending, never passed. Wait on it within land's CI wait bound, even
 when it is not a required check; if it has not completed by then, run the
 required test command locally once. A passing local run then satisfies this gate;
 report the CI lane as still pending. CI failures use the installed triage rules.
-`FULL` keeps the ordinary test gate above.
+`FULL` keeps the ordinary gate under **Test evidence** in the core.
 
 <!-- end of skills/references/ship-and-land/conditional-docs-profile.md -->

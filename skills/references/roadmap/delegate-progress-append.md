@@ -75,21 +75,4 @@ inbox drain we just did), and wait for its report.
 > report the failure to the delegating agent and make no further edits. Do not
 > stage or commit anything. Report what you appended in <100 words."
 
-Right after the subagent reports, before Step 5, the parent compares
-docs/PROGRESS.md with the saved baseline using `diff -U0`: no baseline line was
-removed or rewritten, every added line is a row of the destination table, after
-its delimiter row and before the first non-table line that followed it in the
-baseline, the added rows are exactly the requested versions, every Acceptance
-section is byte-identical, and HEAD, the file's index entry and every other
-path match the pre-delegation record. Rerun the baseline block's git commands
-to compare. A failed check, a missing report, or a returned failure or STOP
-report is a failed append. If nothing differs from the baseline record, surface
-the failure and continue. Otherwise stop before Step 5 without changing any
-file, and show the user the baseline path, the diff and every changed path;
-continue only after the user restores or accepts them. On success, Step 6 stages
-the appended file (or an immediately-following sibling commit carries it) so
-the user sees one cohesive change. A parent-created bootstrap is checked against
-the bootstrap rule in **Step 4: PROGRESS.md staleness check**; the append after it is checked against the baseline
-as usual.
-
 <!-- end of skills/references/roadmap/delegate-progress-append.md -->

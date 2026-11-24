@@ -198,7 +198,8 @@ separating prerequisite gathering, reading, agent execution and human understand
 
 Verify land-time identity, approved scope/acceptance and raw archive receipts before recycling any ID. Use the attributable historical release version (or bare `✓ Shipped` with `release version unknown`).
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 6bc0d22a4929b553` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect c093705d67907572` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
+
 Resolve the project root before Step 1's audit using its rule: an explicit audit
 directory when supplied, otherwise Git top-level or the directory being audited.
 Run this block there; for an explicit directory replace the first assignment
@@ -211,12 +212,39 @@ case "$_ROADMAP_ROOT" in /*) ;; *) echo 'Absolute project root required' >&2; ex
 printf '_ROADMAP_ROOT=%q\n' "$_ROADMAP_ROOT"
 ```
 
+Print the actual project cap next; every separate
+shell call starts with the literal `_EXTEND_ROOT=…` printed by the preamble
+and `_ROADMAP_ROOT=…` for that project. Commands published to the user replace
+variables with those observed literal absolute paths, including draft/script paths.
+
+```bash
+# First paste both resolved root assignments as described above.
+bun -e 'const extendDir = process.argv[1]; const repoRoot = process.argv[2]; const { buildAuditCtx } = await import(extendDir + "/src/audit/cli.ts"); const ctx = buildAuditCtx({ repoRoot, extendDir, argv: { repoRoot, scanState: false, futureIndex: false, prompt: null } }); const { fillCap } = await import(extendDir + "/src/audit/lib/pack.ts"); console.log("PROJECT_ROOT:", repoRoot, "EXTEND_ROOT:", extendDir, "PARALLELISM_CAP:", fillCap(ctx.parallelismCap));' -- "$_EXTEND_ROOT" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"
+"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin <<'MD'
+## Current Plan
+### Group 23: Repacked remainder
+_Depends on: none_
+#### Track 23A: Second remaining
+_1 task . ~50 LOC . low risk_
+_touches: src/b.ts_
+- Finish the second task (~50 lines).
+#### Track 23B: Third remaining
+_1 task . ~50 LOC . low risk_
+_touches: src/c.ts_
+- Finish the third task (~50 lines).
+MD
+```
+
+Draft `--from` / `--stdin` packing skips archive merge: raw history reservations
+are a separate lookup, never an allocator feature of the packer. Empty stdin
+falls back to the live file; use a **nonempty full state scaffold** even for an
+empty remainder. This snippet proves packing only, not the whole audit gate.
 
 ### Complete-candidate validation
 
 Validate the complete candidate outside the workspace against real Git/version/cap/scaffold metadata before either write; test stub metadata and live write-and-restore are insufficient.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 6bc0d22a4929b553` before validating a complete active/archive candidate before any live write.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect c093705d67907572` before validating a complete active/archive candidate before any live write.
 
 After copying the script to its actual absolute path, invoke it with Bun and
 the four observed absolute paths as quoted arguments. Inspect **every blocking
@@ -230,7 +258,7 @@ and pin feasibility remain mandatory agent gates. Incomplete proof means no writ
 
 Incomplete proof, unresolved raw duplicates, incompatible pins, or Hold candidates that change the unfinished partition or dependencies refuse writes and keep active/archive unchanged.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 6bc0d22a4929b553` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect c093705d67907572` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
 
 Use the existing [Escalation](#escalation) REASON/ATTEMPTED/RECOMMENDATION fields
 for every reconciliation refusal. DONE_WITH_CONCERNS reuses those fields in the
@@ -559,7 +587,7 @@ bullets into `docs/roadmap-future.md` (Default split or Migration shortcut). The
 migration only appends; every existing character stays. The migration is not a
 reassessment: it never promotes, kills, rewrites or reorders an entry.
 
-Append-only migration: never promote, kill, rewrite, or reorder entries, and validate every approved bullet through the Future index before the first write.
+Append-only migration: never promote, kill, rewrite, or reorder entries, and validate every approved bullet through the Future index before the first write. A failure blocks before the first write.
 
 Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-deferred-migration --expect 1a12aed11b0c5e4f` before running a legacy trigger migration when the owner selects the batch and this run does not move Future bullets.
 
@@ -581,6 +609,7 @@ visibility immediately before filing; a change stops filing and asks again.
 Recheck repo visibility immediately before filing, pass title/body/query from files in a private `mktemp -d` directory, and keep pending or failed filings in the inbox or Future with full richness.
 
 Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-deferred-migration --expect 1a12aed11b0c5e4f` before filing deferred items to a user-selected GitHub backlog after Apply's freshness check passes.
+
 Do not automatically import all open issues into the execution plan.
 
 ### Plain-English outcomes
@@ -969,9 +998,26 @@ AskUserQuestion: "PROGRESS.md is N versions behind (missing X.Y.Z, …). Append 
 Options: ["Yes, append rows", "Skip — I'll run /document-release later", "Skip — not relevant"]
 ```
 
-Resolve the destination outside `## Acceptance` before saving the baseline. After the foreground subagent reports, verify with `diff -U0` and the baseline git commands that only the requested version rows were added to the destination table and every Acceptance section is byte-identical; on unexpected changes stop before Step 5 without editing any file.
+Give the foreground subagent the exact read command next, the inputs in its quoted prompt, and the required `REFERENCE_READ` reply header from the core reference rule. The child executes only its quoted prompt. Verify the header against the trailer you read. Use the inline fallback on a host denial. An absent or mismatched acknowledgment counts as a missing report under the append check in this step.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref delegate-progress-append --expect 5dc776a1146c29db` before saving the baseline and delegating the PROGRESS.md append when the user chooses "Yes, append rows".
+Run `~/.gstack-extend/bin/preamble roadmap --ref delegate-progress-append --expect 03e3a3de62fd48f5` before saving the baseline and delegating the PROGRESS.md append when the user chooses "Yes, append rows".
+
+Right after the subagent reports, before Step 5, the parent compares
+docs/PROGRESS.md with the saved baseline using `diff -U0`: no baseline line was
+removed or rewritten, every added line is a row of the destination table, after
+its delimiter row and before the first non-table line that followed it in the
+baseline, the added rows are exactly the requested versions, every Acceptance
+section is byte-identical, and HEAD, the file's index entry and every other
+path match the pre-delegation record. Rerun the baseline block's git commands
+to compare. A failed check, a missing report, or a returned failure or STOP
+report is a failed append. If nothing differs from the baseline record, surface
+the failure and continue. Otherwise stop before Step 5 without changing any
+file, and show the user the baseline path, the diff and every changed path;
+continue only after the user restores or accepts them. On success, Step 6 stages
+the appended file (or an immediately-following sibling commit carries it) so
+the user sees one cohesive change. A parent-created bootstrap is checked against
+the bootstrap rule above; the append after it is checked against the baseline
+as usual.
 
 ## Step 5: Version Recommendation
 
@@ -1237,11 +1283,13 @@ Manual invocation also works: the user can say "scaffold the layout" or "fix the
 
 ### Plan presentation (single batch confirm)
 
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-layout-apply --expect fa912d733740fd25` before running the read-only Layout Scaffolding preflight when preparing the batch plan.
+
 Build a plan from the audit output. While preparing it, run the audited-root binding and preflight steps 1–5 below read-only. Create and move nothing in this phase.
 
 Run audited-root binding and preflight read-only before asking. **A) Apply** never authorizes external targets; unauthorizable refusals print with zero writes and exit without asking.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-layout-plan --expect 583c2b4f2f81901f` before building and presenting the Layout Scaffolding batch plan when Trigger detection fires or the user explicitly requests layout scaffolding.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-layout-plan --expect d8d0a05820f511db` before building and presenting the Layout Scaffolding batch plan when Trigger detection fires or the user explicitly requests layout scaffolding.
 
 ### Execution (apply path)
 

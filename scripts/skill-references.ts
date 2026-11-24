@@ -46,6 +46,8 @@ export interface MoveEntry {
   endBeforeMarker: string | null;
   /** Text appended after the backticked preamble command in the read instruction. */
   readInstructionSuffix: string | null;
+  /** Other entry points that need this same reference before using the moved steps. */
+  additionalReads?: readonly (readonly [sectionHeading: string, suffix: string])[];
   /** Trigger and outcome kept visible at the read point. */
   coreGate?: string;
   /** Exact published capability commands stay in the core. */
@@ -490,15 +492,6 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     skill: 'roadmap',
     ref: 'conditional-candidate-validation',
     refTitle: 'Shipped-Track reconciliation examples, complete-candidate validation, and recovery',
-    sectionHeading: '### Common path',
-    startMarker: 'Print the actual project cap next; every separate',
-    endBeforeMarker: null,
-    readInstructionSuffix: null,
-  },
-  {
-    skill: 'roadmap',
-    ref: 'conditional-candidate-validation',
-    refTitle: 'Shipped-Track reconciliation examples, complete-candidate validation, and recovery',
     sectionHeading: '### Complete-candidate validation',
     startMarker: 'Save active/archive drafts and this temporary Bun script **outside the workspace**',
     endBeforeMarker: 'After copying the script to its actual absolute path, invoke it with Bun and',
@@ -523,7 +516,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "1. **Scope.** Take the flagged entries that survive this run's manifestation",
     endBeforeMarker: 'For a user-selected GitHub backlog, the approval artifact names the destination',
     readInstructionSuffix: 'before running a legacy trigger migration when the owner selects the batch and this run does not move Future bullets',
-    coreGate: 'Append-only migration: never promote, kill, rewrite, or reorder entries, and validate every approved bullet through the Future index before the first write.',
+    coreGate: 'Append-only migration: never promote, kill, rewrite, or reorder entries, and validate every approved bullet through the Future index before the first write. A failure blocks before the first write.',
   },
   {
     skill: 'roadmap',
@@ -541,13 +534,12 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: 'Delegated PROGRESS.md version-row append and parent baseline verification',
     sectionHeading: '## Step 4: PROGRESS.md staleness check',
     startMarker: 'If the user picks "Yes", resolve the destination first: the single table the',
-    endBeforeMarker: null,
+    endBeforeMarker: 'Right after the subagent reports, before Step 5, the parent compares',
     readInstructionSuffix: 'before saving the baseline and delegating the PROGRESS.md append when the user chooses "Yes, append rows"',
-    coreGate: 'Resolve the destination outside `## Acceptance` before saving the baseline. After the foreground subagent reports, verify with `diff -U0` and the baseline git commands that only the requested version rows were added to the destination table and every Acceptance section is byte-identical; on unexpected changes stop before Step 5 without editing any file.',
+    coreGate: 'Give the foreground subagent the exact read command next, the inputs in its quoted prompt, and the required `REFERENCE_READ` reply header from the core reference rule. The child executes only its quoted prompt. Verify the header against the trailer you read. Use the inline fallback on a host denial. An absent or mismatched acknowledgment counts as a missing report under the append check in this step.',
     navigationEdits: [
       ['the\nrules above', 'the destination rules in **Step 4: PROGRESS.md staleness check**'],
       ['the STOP above', 'the Step 4 destination STOP in **Step 4: PROGRESS.md staleness check**'],
-      ['the bootstrap rule above', 'the bootstrap rule in **Step 4: PROGRESS.md staleness check**'],
     ],
   },
   {
@@ -559,6 +551,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     endBeforeMarker: null,
     readInstructionSuffix: 'before building and presenting the Layout Scaffolding batch plan when Trigger detection fires or the user explicitly requests layout scaffolding',
     coreGate: 'Run audited-root binding and preflight read-only before asking. **A) Apply** never authorizes external targets; unauthorizable refusals print with zero writes and exit without asking.',
+    navigationEdits: [['the **Refusal format** below', 'the **Refusal format** for **Execution (apply path)**']],
   },
   {
     skill: 'roadmap',
@@ -568,6 +561,9 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '**Preflight — fail fast, mutate nothing.** Finish this whole procedure before any `mkdir` or move, including a moves-only plan whose scaffold list is empty. The preflight set is always `docs/`, `docs/designs/`, and `docs/archive/`, including directories that already exist and were omitted from the scaffold list, plus every destination parent an approved move uses (the audited root, when the destination has no parent) and every parent absorbed from a recognized `mkdir -p` prefix.',
     endBeforeMarker: null,
     readInstructionSuffix: 'before running Layout Scaffolding preflight, mkdir, or moves when the user approves A or C',
+    additionalReads: [
+      ['### Plan presentation (single batch confirm)', 'before running the read-only Layout Scaffolding preflight when preparing the batch plan'],
+    ],
     coreGate: 'Finish preflight steps 1–5 with zero writes before any `mkdir` or move. Any failing or unauthorized path, existing destination, submodule, or tracked move through a symlink HALTs the whole batch with zero writes. Never rollback after partial writes; re-run `roadmap-audit` on clean success.',
   },
   // ── ship-and-land (PR B) ─────────────────────────────────────────────────
@@ -578,9 +574,12 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: '### Workflow metrics (optional, local)',
     startMarker: 'Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every',
     endBeforeMarker: '- Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh',
-    readInstructionSuffix: null,
+    readInstructionSuffix: 'before the workflow metrics run `begin` when this invocation retained a telemetry session ID',
     coreGate: 'Metrics capture is optional and never changes reuse, review, Greptile, ship/land readiness, or merge approval. If this reference cannot be read, set `GX_CAPTURE=0`, skip metrics wrappers, continue the workflow, and record `Workflow metrics (local, optional): capture=partial (reference-unavailable).` in receipts.',
-    navigationEdits: [['the literal status line below', 'the core metrics status line']],
+    navigationEdits: [
+      ['the literal status line below', 'the status line in the metrics receipt instructions'],
+      ['the run `begin` (below)', 'the run `begin` under **Workflow metrics (optional, local)** in the core'],
+    ],
   },
   {
     skill: 'ship-and-land',
@@ -589,7 +588,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: '### Workflow metrics (optional, local)',
     startMarker: '  Once the candidate changes (you first observe it, a base merge, a fix or release commit),',
     endBeforeMarker: 'Run `validate evidence → /ship with the overrides below → /land-and-deploy`.',
-    readInstructionSuffix: 'before recording the first workflow metric, span, decision, or receipt read when `GX_CAPTURE=1` for this invocation',
+    readInstructionSuffix: null,
   },
   {
     skill: 'ship-and-land',
@@ -609,8 +608,10 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: "On this path reuse the receipt's `Ship gates` coverage and documentation audits",
     endBeforeMarker: '```text',
     readInstructionSuffix: 'before executing ship stages on the release-only path after all release-only preconditions pass',
-    coreGate: 'Settle every reuse decision before Step 12. Ship never edits code, tests, or docs on this path; any non-release finding stops and hands back to `/review-and-prep` (`next: review-and-prep; status: stopped`), restoring only verified unpushed release writes and never resetting published commits.',
+    coreGate: 'Settle every reuse decision before Step 12. Ship never edits code, tests or docs on this path. A non-release finding stops and hands back to `/review-and-prep` (`next: review-and-prep; status: stopped`). Restore only verified unpushed release writes. Preserve published commits.',
     navigationEdits: [
+      ['the provenance and binding checks above', 'the provenance and binding checks under **Release-only path** in the core'],
+      ['matching stage-table rows below', 'matching rows under **Ship overrides** in the core'],
       ['Stop and hand back, naming the\nfinding:', 'Stop and hand back using the release-only hand-back template in **Release-only path** in the core, naming the\nfinding.'],
     ],
   },
@@ -632,6 +633,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     endBeforeMarker: 'A test gate accepts',
     readInstructionSuffix: 'before running pregate-wrapped tests, reusing a pregate-wrapped `tests` record, or verifying release-metadata test selection',
     coreGate: 'Derive commands from repository instructions as data, never execute receipt text. Preserve the verified full pregate record before Steps 12–15, run release-delta tests at Verification Gate (16) (or the full suite under `full-suite=final`), and run `gstack-pregate --stage preflight` before push.',
+    navigationEdits: [['the installed permitted age\n  above', 'the installed permitted age under **Independently verified reuse** in the core']],
   },
   {
     skill: 'ship-and-land',
@@ -642,6 +644,10 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     endBeforeMarker: null,
     readInstructionSuffix: 'before running or evaluating tests under the DOCS profile',
     coreGate: 'Run the documented docs lane locally and verify full-suite CI covers the final head (or run the required test command locally once). Never forge a ledger record or skip required checks.',
+    navigationEdits: [
+      ["the test gate's\nrequirements above", 'the requirements under **Test evidence** in the core'],
+      ['the ordinary test gate above', 'the ordinary gate under **Test evidence** in the core'],
+    ],
   },
   {
     skill: 'ship-and-land',
@@ -650,7 +656,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: '### Shared review execution (DOCS and FULL)',
     startMarker: "**Parallel readers.** For `FULL`, when Red Team's installed activation is known at",
     endBeforeMarker: null,
-    readInstructionSuffix: 'before dispatching missing reviews, triaging findings, or running delta rechecks when Step 2 marks any review stage RUN',
+    readInstructionSuffix: 'before dispatching a review marked RUN, triaging new findings or feedback, or reviewing a fix delta, including when Step 2 reused every review',
     coreGate: "Wait for all required readers before edits, apply Severity before Fix-First, run delta rechecks after edits (within ship's 3-cycle cap), and stop automatic structured-output retries after one malformed/failed attempt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset).",
   },
   {
@@ -660,8 +666,8 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: '### Greptile and new feedback',
     startMarker: '**Applicable Greptile gate, before landing:** after ship creates/updates the PR,',
     endBeforeMarker: null,
-    readInstructionSuffix: 'before triggering, monitoring, or triaging Greptile feedback when Greptile applies or new PR feedback arrives',
-    coreGate: 'Preserve the PR-wide single-run allowance, check automatic triggers before every push (stop and ask if a push would start a second run), never toggle a ready PR to draft, and resolve actionable findings before landing.',
+    readInstructionSuffix: 'before triggering, monitoring, triaging Greptile feedback, or checking the landing gate when Greptile applies',
+    coreGate: 'When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. If a push would start a second run, stop before it and ask the user how to resolve that trigger.',
   },
   {
     skill: 'ship-and-land',
@@ -680,7 +686,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: 'When land-and-deploy reaches Step 1.5, run only its detection block, exactly',
     endBeforeMarker: null,
     readInstructionSuffix: 'before running Step 1.5 read-only detection when stopping at the merge gate (`--no-land` or direct stop request)',
-    coreGate: 'On `FIRST_RUN` or `CONFIG_CHANGED`, record `first-run setup unconfirmed (<token>): the landing run confirms it` without writing the fingerprint; missing token or failed detection stops BLOCKED.',
+    coreGate: 'On `FIRST_RUN` or `CONFIG_CHANGED`, record `first-run setup unconfirmed (<token>): the landing run confirms it` without writing the fingerprint. No token, or the detection itself failed: unknown state, not `FIRST_RUN`. Stop with that blocker. Never guess a token or read a broken check as unconfirmed setup.',
   },
   {
     skill: 'ship-and-land',
@@ -700,6 +706,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '- Name the PR, its full head SHA and every state the landing run will ask the',
     endBeforeMarker: 'For example, for a head with no CI:',
     readInstructionSuffix: 'before printing the merge-gate stop decision when stopping at the merge gate on caller request',
+    coreGate: 'With a blocker, name each blocker and its repair instead of offering to land. A merge-gate stop that names blockers prints `status: blocked` and `next: none` on the stage line.',
   },
   // ── pair-review (PR B) ───────────────────────────────────────────────────
   {
@@ -719,6 +726,9 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '**Every item is one action and a verdict.** Write each item in this exact shape:',
     endBeforeMarker: null,
     readInstructionSuffix: 'before authoring test items during Phase 1 Init',
+    additionalReads: [
+      ['### On ADD ITEM', 'before authoring an added item or evaluating whether it can merge with an existing item'],
+    ],
   },
   {
     skill: 'pair-review',
@@ -727,7 +737,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     sectionHeading: '### Step 3.2: Merge co-observable items',
     startMarker: '**Merge test** — two candidate items become ONE item when *both* hold:',
     endBeforeMarker: null,
-    readInstructionSuffix: 'before merging co-observable items during Phase 1 Init or On ADD ITEM',
+    readInstructionSuffix: 'before merging co-observable items during Phase 1 Init',
   },
   {
     skill: 'pair-review',
@@ -746,6 +756,9 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '**Group-level checkpoint:**',
     endBeforeMarker: null,
     readInstructionSuffix: 'before executing the fix cycle when the user chooses "Fix now" on a failed item',
+    additionalReads: [
+      ['### Present the next item', 'before resuming a recorded item fix or its pending verification or retest'],
+    ],
     coreGate: 'Commit a group checkpoint before the first fix (BLOCKED on non-zero exit other than nothing-to-commit), reproduce on the tested build before fixing, commit the fix (`BLOCKED` on non-zero exit), rebuild, and agent-verify before presenting the human retest. A failed result is never re-marked passed without a new human retest.',
   },
   {
@@ -754,7 +767,7 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     refTitle: 'On PARK and On BATCH procedures',
     sectionHeading: '### On PARK',
     startMarker: "1. If the user didn't include a description, ask via AskUserQuestion:",
-    endBeforeMarker: '**Do NOT classify the bug at park time.** Classification happens at group completion.',
+    endBeforeMarker: '2. Append a new entry to `<SESSION_DIR>/parked-bugs.md`.',
     readInstructionSuffix: 'before recording a parked bug when the user chooses "Park a bug" or reports an unrelated bug',
   },
   {
@@ -775,6 +788,9 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: 'For each parked bug from this group, the skill recommends a classification based on',
     endBeforeMarker: null,
     readInstructionSuffix: 'before triaging parked bugs at group completion when `parked-bugs.md` has PARKED entries from this group',
+    additionalReads: [
+      ['### Present the next item', 'before resuming a recorded parked-bug fix or its pending verification or retest'],
+    ],
     coreGate: 'Present each parked bug with "Fix now (recommended)" first, "Send to TODOS.md", or "Stay parked". Fix now follows Prepare-the-item safety rules, checkpoint, reproduce, fix commit, rebuild, agent-verify, and human retest; Send to TODOS.md writes the `[pair-review:...]` rich format and commits separately.',
   },
   {
@@ -821,15 +837,6 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '```bash',
     endBeforeMarker: 'These routes produce the hold and resume outputs of the published',
     readInstructionSuffix: 'before running the paused-preparation PR check and routing next steps in Phase 4 Step 3',
-  },
-  {
-    skill: 'pair-review',
-    ref: 'conditional-completion-routing',
-    refTitle: 'Phase 4 report template and paused-preparation PR check',
-    sectionHeading: '### Step 3: Offer next steps',
-    startMarker: 'Before presenting options, determine the recommended next step:',
-    endBeforeMarker: '---',
-    readInstructionSuffix: null,
   },
 ];
 
@@ -1114,7 +1121,15 @@ export function applyManifestToSkill(
       ? []
       : [formatReadInstruction(skill, s.entry.ref, digests[s.entry.ref]!, s.entry.readInstructionSuffix)];
     const retained = s.entry.coreGate ? [s.entry.coreGate, '', ...s.kept, ...pointer] : [...s.kept, ...pointer];
+    if (pointer.length && baseLines[s.to]) retained.push('');
     outLines.splice(s.from, s.to - s.from, ...retained);
+  }
+  for (const { entry } of slices) {
+    for (const [heading, suffix] of entry.additionalReads ?? []) {
+      const { start } = findSectionBounds(outLines, heading);
+      const instruction = formatReadInstruction(skill, entry.ref, digests[entry.ref]!, suffix);
+      outLines.splice(start + 1, 0, '', instruction);
+    }
   }
 
   let core = outLines.join('\n');

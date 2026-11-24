@@ -20,23 +20,6 @@
    reproducible — verify before fixing` for the repro. Move on. The
    re-verify guidance in the promoted TODO will surface the gap later if
    the bug ever needs to be fixed.
-2. Append a new entry to `<SESSION_DIR>/parked-bugs.md`.
-   Determine N by reading the file and incrementing the highest existing number
-   (or 1 if the file is empty/new).
-   ```markdown
-   ## <N>. <Bug title — short phrase>
-   - Noticed during: <current group slug>, item <current item number>
-   - Timestamp: <ISO 8601 UTC>
-   - Symptom: <what the user observed — one or two sentences>
-   - Repro: <numbered steps, or "not reliably reproducible — verify before fixing">
-   - Status: PARKED
-   ```
-   If `parked-bugs.md` doesn't exist yet, create it with a `# Parked Bugs` header.
-   If parking before any testing starts, use "before testing" for "Noticed during."
-3. Update session.yaml `parked_bugs.total` count
-4. Write to disk
-5. Return to whatever was in progress. The next AskUserQuestion receipt will
-   read: "Parked bug #N." followed by the current test item or fix prompt.
 
 ## From On BATCH
 

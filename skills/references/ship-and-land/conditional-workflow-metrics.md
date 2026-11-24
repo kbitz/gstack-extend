@@ -26,7 +26,7 @@ timestamp. Never mint a fresh `event_id` for a replay.
 Issue metrics calls one at a time from this session, never as parallel tool
 calls or from subagents: the run lock never waits, so concurrent calls drop
 as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
-nothing further in this invocation and use the core metrics status line in
+nothing further in this invocation and use the status line in the metrics receipt instructions in
 its receipts. If context compaction loses the retained IDs or a pending
 payload, that capture stays unknown; never guess an ID. When a metrics call
 shares a tool call with other work, capture that work's exit first
@@ -69,7 +69,7 @@ library and both call forms are in
   across its `begin`, `end` and governing `decision`; a pass and an attempt keep
   theirs; a replay keeps its `event_id`.
 - Spans use `bin/lib/workflow-span.sh`, resolved once by the call that records
-  the run `begin` (below). Same-call form, for a foreground command; the shell is
+  the run `begin` under **Workflow metrics (optional, local)** in the core. Same-call form, for a foreground command; the shell is
   new every call, so set the retained values first:
 
   ```bash

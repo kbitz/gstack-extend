@@ -76,13 +76,13 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
     defaultByHandBytes: 53_248,
   },
   'pair-review': {
-    coreBytes: 73_728, // 65,418 * 1.10 = 71,960 -> 72 KiB (slimmed in PR B)
+    coreBytes: 73_728, // 68,088 B core with headroom up to 72 KiB.
     // Default by-hand Init -> all-pass loop -> Phase 4 completion.
     defaultByHandRefs: [
       'conditional-init-plan',
       'conditional-completion-routing',
     ],
-    defaultByHandBytes: 86_016, // 76,378 * 1.10 = 84,016 -> 84 KiB
+    defaultByHandBytes: 86_016, // 77,814 B representative path with headroom.
   },
   'plan-track': {
     coreBytes: 32_768, // 27,135 * 1.10 = 29,849 -> 32 KiB
@@ -113,23 +113,24 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
     ],
   },
   roadmap: {
-    coreBytes: 110_592, // 99,823 * 1.10 = 109,805 -> 108 KiB (slimmed in PR B)
+    coreBytes: 110_592, // 102,934 B core with headroom up to 108 KiB.
     // Representative regeneration with shipped-Track candidate validation.
     defaultByHandRefs: [
       'conditional-candidate-validation',
     ],
-    defaultByHandBytes: 122_880, // 110,778 * 1.10 = 121,856 -> 120 KiB
+    defaultByHandBytes: 122_880, // 112,234 B representative path with headroom.
   },
   'ship-and-land': {
-    coreBytes: 86_016, // 76,513 * 1.10 = 84,164 -> 84 KiB (slimmed in PR B)
-    // Release-only path with metrics active, trailer check, and landing adapters.
+    coreBytes: 86_016, // 76,886 B core with headroom up to 84 KiB.
+    // Prepared release-only path with metrics, test evidence and landing checks.
     defaultByHandRefs: [
       'conditional-workflow-metrics',
       'conditional-release-only',
+      'conditional-test-evidence',
       'conditional-trailer-check',
       'conditional-land-adapters',
     ],
-    defaultByHandBytes: 114_688, // 103,471 * 1.10 = 113,818 -> 112 KiB
+    defaultByHandBytes: 114_688, // 110,812 B representative path with headroom.
     orchestratedDefaultRefs: [
       'conditional-workflow-metrics',
       'conditional-release-only',

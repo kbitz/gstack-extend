@@ -733,7 +733,12 @@ describe('Track 23D paused-check fence', () => {
     expect(pausedFence).toBe(PAUSED_CHECK);
     expect(stateBashFences(pairSkill).some(f => f.body.includes('PR_CLASS='))).toBe(false);
     expect(pairCompletionRef.indexOf(pausedFence)).toBeGreaterThan(-1);
-    expect(pairCompletionRef.indexOf(pausedFence)).toBeLessThan(pairCompletionRef.indexOf('gstack-review-read'));
+    const readAt = pairNext.indexOf('--ref conditional-completion-routing');
+    const routeAt = pairNext.indexOf('Route by `PR_CLASS`');
+    expect(readAt).toBeGreaterThan(-1);
+    expect(routeAt).toBeGreaterThan(readAt);
+    expect(pairNext.indexOf('gstack-review-read')).toBeGreaterThan(routeAt);
+    expect(pairCompletionRef).not.toContain('gstack-review-read');
     expect(pauseProgram).not.toContain("'");
     const allow = new Set('split rtrimstr contains startswith map select sort_by last any length explode all ascii_downcase join if then else end and or not true false null def as reduce foreach'.split(' '));
     const code = pauseProgram.replace(/"(?:\\.|[^"\\])*"/g, '')
@@ -963,8 +968,7 @@ const ORDINARY_PAIR_ROUTING = [
 
 describe('Track 23D routing, archive callers and tag clauses', () => {
   test('ordinary no-github/no-pr/no-pause routing is byte-preserved', () => {
-    const ordinaryStart = pairCompletionRef.indexOf('Before presenting options');
-    expect(pairCompletionRef.slice(ordinaryStart).split('\n<!-- end of ')[0]!.trimEnd()).toBe(ORDINARY_PAIR_ROUTING);
+    expect(pairNext.slice(pairNext.indexOf('Before presenting options')).split('\n---\n')[0]!.trimEnd()).toBe(ORDINARY_PAIR_ROUTING);
     expect(flatProse(pairNext)).toContain('**`no-github`, `no-pr`, `no-pause`:** use the ordinary routing below unchanged.'.replaceAll('**', ''));
   }, TIMEOUT_23D);
 

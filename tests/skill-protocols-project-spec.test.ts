@@ -139,7 +139,8 @@ describe('project-spec composition drift-locks', () => {
     const step4Ref = referenceText('roadmap', 'delegate-progress-append');
     const coreLines = section(roadmap, '## Step 4: PROGRESS.md staleness check', '## Step 5:', false).split('\n');
     const refLines = step4Ref.split('\n');
-    const prose = norm([...coreLines, ...refLines].filter(line => !line.startsWith('>')).join('\n')).trim();
+    const prose = norm(coreLines.filter(line => !line.startsWith('>')).join('\n')).trim();
+    const procedure = norm(refLines.filter(line => !line.startsWith('>')).join('\n')).trim();
     const prompt = norm(refLines.filter(line => line.startsWith('>')).map(line => line.replace(/^>\s?/, '')).join('\n')).trim();
     expect(prose, 'Step 4 prose is non-empty').not.toBe('');
     expect(prompt, 'Step 4 prompt is non-empty').not.toBe('');
@@ -157,7 +158,7 @@ describe('project-spec composition drift-locks', () => {
     expect(mapRows[0], 'S7 map row has four cells').toHaveLength(4);
 
     const surfaces: Record<string, string> = {
-      prose, prompt, comment: norm(comment!), owner: mapRows[0]![3]!,
+      prose, procedure, prompt, comment: norm(comment!), owner: mapRows[0]![3]!,
     };
     const locks = [
       { id: 'S1', extractions: ['prose', 'prompt'], sentence: "New version rows go only in the release-history table: the `## Release history` section when present, otherwise the `## Version history` table. Match the destination table's existing columns and row format." },
@@ -170,7 +171,7 @@ describe('project-spec composition drift-locks', () => {
       { id: 'S8', extractions: ['prose', 'prompt'], sentence: 'STOP (Step 4 destination): no release-history table was identified in docs/PROGRESS.md, so nothing was written. Add a `## Release history` or `## Version history` heading with its table, or tell me which existing table to use for this run.' },
       { id: 'S9', extractions: ['prompt'], sentence: changelogRule },
       { id: 'S10', extractions: ['prose'], sentence: "Right after the subagent reports, before Step 5, the parent compares docs/PROGRESS.md with the saved baseline using `diff -U0`: no baseline line was removed or rewritten, every added line is a row of the destination table, after its delimiter row and before the first non-table line that followed it in the baseline, the added rows are exactly the requested versions, every Acceptance section is byte-identical, and HEAD, the file's index entry and every other path match the pre-delegation record." },
-      { id: 'S11', extractions: ['prose'], sentence: "Save the baseline only after the destination is resolved and after any Step 3 writes or bootstrap; a retry saves a new baseline after the user's fix." },
+      { id: 'S11', extractions: ['procedure'], sentence: "Save the baseline only after the destination is resolved and after any Step 3 writes or bootstrap; a retry saves a new baseline after the user's fix." },
       { id: 'S12', extractions: ['prose'], sentence: 'A failed check, a missing report, or a returned failure or STOP report is a failed append. If nothing differs from the baseline record, surface the failure and continue. Otherwise stop before Step 5 without changing any file, and show the user the baseline path, the diff and every changed path; continue only after the user restores or accepts them.' },
     ];
     for (const { id, extractions, sentence } of locks) {
@@ -218,13 +219,13 @@ describe('project-spec composition drift-locks', () => {
       'The migration is not a reassessment: it never promotes, kills, rewrites or reorders an entry.',
       'except adding a missing inline trigger to an entry the approved proposal reassessed or migrated',
       'confirm `FUTURE_TRIGGERS_MISSING` equals the count the approved proposal predicted',
+      'A failure blocks before the first write.',
     ];
     for (const lock of coreLocks) expect(roadmapN).toContain(lock);
     const deferredLocks = [
       'grep -nF -f "$DIR/titles"',
       'never invent a trigger',
       'so the index can read it',
-      'A failure blocks before the first write.',
       'formatFutureIndex(parseRoadmap(await Bun.file(draftPath).text()).value.futureBullets)',
     ];
     for (const lock of deferredLocks) expect(deferredRef).toContain(lock);

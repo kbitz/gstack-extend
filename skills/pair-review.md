@@ -437,7 +437,7 @@ Before writing the plan, pass over each group and merge.
 Never merge items carrying different `Check:` IDs; this also applies to On ADD
 ITEM. Preserve separately traceable outcomes for every handoff requirement.
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before merging co-observable items during Phase 1 Init or On ADD ITEM.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before merging co-observable items during Phase 1 Init.
 
 ### Step 3.4: Order for one pass through the app
 
@@ -554,6 +554,10 @@ action.
 
 ### Present the next item
 
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before resuming a recorded parked-bug fix or its pending verification or retest.
+
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-fix-flow --expect 4b10d77803484a36` before resuming a recorded item fix or its pending verification or retest.
+
 Before selecting an UNTESTED item, recover interrupted fixes and pending human
 retests from all group files, including `completed_groups`. A deliberately
 parked or deferred fix is not interrupted work; leave it parked until the user
@@ -659,6 +663,8 @@ failed attempt with a skip. For an UNTESTED item, append
 
 ### On ADD ITEM
 
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before authoring an added item or evaluating whether it can merge with an existing item.
+
 1. Ask: which group? what's the test item?
 
    Whatever the user says, write it to disk in the Step 3 three-line shape:
@@ -682,7 +688,25 @@ Available anytime during Phase 2 (testing loop) and FIX NOW flows. When the user
 says something like "park this", "note a bug", "not related but...", or describes
 a bug that is clearly unrelated to the current test item:
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-park-and-batch --expect 2dcc4a7705381071` before recording a parked bug when the user chooses "Park a bug" or reports an unrelated bug.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-park-and-batch --expect 95c47edbe6ee537b` before recording a parked bug when the user chooses "Park a bug" or reports an unrelated bug.
+
+2. Append a new entry to `<SESSION_DIR>/parked-bugs.md`.
+   Determine N by reading the file and incrementing the highest existing number
+   (or 1 if the file is empty/new).
+   ```markdown
+   ## <N>. <Bug title — short phrase>
+   - Noticed during: <current group slug>, item <current item number>
+   - Timestamp: <ISO 8601 UTC>
+   - Symptom: <what the user observed — one or two sentences>
+   - Repro: <numbered steps, or "not reliably reproducible — verify before fixing">
+   - Status: PARKED
+   ```
+   If `parked-bugs.md` doesn't exist yet, create it with a `# Parked Bugs` header.
+   If parking before any testing starts, use "before testing" for "Noticed during."
+3. Update session.yaml `parked_bugs.total` count
+4. Write to disk
+5. Return to whatever was in progress. The next AskUserQuestion receipt will
+   read: "Parked bug #N." followed by the current test item or fix prompt.
 
 **Do NOT classify the bug at park time.** Classification happens at group completion.
 
@@ -707,7 +731,7 @@ once and show one `Prepared:` line under the batch header.
 
 Keep index-ordered consecutive UNTESTED items that share one prepared state (minimum 2 items, else stay in single mode). Batch renders action + PASS only; any FAIL runs the standard FAIL flow in item order.
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-park-and-batch --expect 2dcc4a7705381071` before presenting a batch when the user chooses "Batch: next 3".
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-park-and-batch --expect 95c47edbe6ee537b` before presenting a batch when the user chooses "Batch: next 3".
 
 ### Group completion
 
@@ -802,7 +826,7 @@ bugs as Status: SKIPPED and proceed.
 
 ### Step 1: Generate report
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-completion-routing --expect 765c5cdf5d735250` before generating the Phase 4 Pair Review Report.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-completion-routing --expect 984da1fae585ba2c` before generating the Phase 4 Pair Review Report.
 
 ### Step 2: Save report
 
@@ -819,7 +843,7 @@ status and pause signals; it never prints bodies or comment text. The published
 stage-handoff contract (`docs/workflow-handoffs.md`) owns the canonical
 hold/resume rules; a detector built on it may replace this check.
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-completion-routing --expect 765c5cdf5d735250` before running the paused-preparation PR check and routing next steps in Phase 4 Step 3.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-completion-routing --expect 984da1fae585ba2c` before running the paused-preparation PR check and routing next steps in Phase 4 Step 3.
 
 These routes produce the hold and resume outputs of the published
 [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
@@ -873,6 +897,23 @@ Route by `PR_CLASS`; a failed lookup is never no pause:
   /review option and do not run the ordinary routing below.
 - **`no-github`, `no-pr`, `no-pause`:** use the ordinary routing below unchanged.
 
+Before presenting options, determine the recommended next step:
+
+1. Run `gstack-review-read` and check its output.
+2. If the output is **not** "NO_REVIEWS", a review exists for this branch — recommend `/ship`.
+3. If the output **is** "NO_REVIEWS", check the diff size: run `git diff --stat main...HEAD` and count changed lines (insertions + deletions).
+   - **≤ 30 lines changed** (trivial): recommend `/ship` — the changes are minor enough to skip review.
+   - **> 30 lines changed**: recommend `/review` first.
+
+Present via AskUserQuestion:
+
+**If recommending `/review`:**
+- Question: "**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\n\n[One-line summary of parked bug outcomes if any]\n\nYou haven't run `/review` on this branch yet and there are meaningful code changes — worth a quick review before shipping."
+- Options: ["Continue to /review", "Skip review, continue to /ship", "Commit the report to the repo", "Done for now"]
+
+**If recommending `/ship`:**
+- Question: "**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\n\n[One-line summary of parked bug outcomes if any]"
+- Options: ["Continue to /ship", "Commit the report to the repo", "Done for now"]
 
 ---
 

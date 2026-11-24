@@ -121,6 +121,8 @@ metrics capture is unavailable; continue the workflow. Full contract:
 
 Metrics capture is optional and never changes reuse, review, Greptile, ship/land readiness, or merge approval. If this reference cannot be read, set `GX_CAPTURE=0`, skip metrics wrappers, continue the workflow, and record `Workflow metrics (local, optional): capture=partial (reference-unavailable).` in receipts.
 
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-workflow-metrics --expect b04fbb875b2f1ad4` before the workflow metrics run `begin` when this invocation retained a telemetry session ID.
+
 - Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
   run `step_id` (retain it as `GX_RUN`), `parent_step_id:null`, and `context`
   carrying the candidate HEAD/tree/base you already observed (or null — never run
@@ -139,7 +141,6 @@ Metrics capture is optional and never changes reuse, review, Greptile, ship/land
   An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
   unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
   or missing-span)` in the receipt and continue the workflow.
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-workflow-metrics --expect 1c859425ff3751d2` before recording the first workflow metric, span, decision, or receipt read when `GX_CAPTURE=1` for this invocation.
 
 Run `validate evidence → /ship with the overrides below → /land-and-deploy`.
 When preparation already proved the current head, Step 2's release-only path
@@ -297,7 +298,8 @@ the merge gate.
 
 DOCS requires an independent claims pass, ship's Documentation audit, and complete plan/scope audit; missing required output is incomplete coverage, never a clean pass.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect b7c69622094d758e` before running DOCS-profile claims, consistency, and plan coverage when the diff classifies as DOCS.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect a76b9bea0aae8828` before running DOCS-profile claims, consistency, and plan coverage when the diff classifies as DOCS.
+
 Record `docs-claims` and `docs-consistency` separately in the wrapper receipt;
 do not write a completed native full-code review record for this profile.
 
@@ -432,9 +434,9 @@ after the prepared head, incomplete or stale gate evidence, or a handoff that
 does not bind decide reuse by the existing rules, and the `FULL` path runs
 whatever those rules leave invalid.
 
-Settle every reuse decision before Step 12. Ship never edits code, tests, or docs on this path; any non-release finding stops and hands back to `/review-and-prep` (`next: review-and-prep; status: stopped`), restoring only verified unpushed release writes and never resetting published commits.
+Settle every reuse decision before Step 12. Ship never edits code, tests or docs on this path. A non-release finding stops and hands back to `/review-and-prep` (`next: review-and-prep; status: stopped`). Restore only verified unpushed release writes. Preserve published commits.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-release-only --expect ce41eb7ebba8d886` before executing ship stages on the release-only path after all release-only preconditions pass.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-release-only --expect 4d189366a31bd42b` before executing ship stages on the release-only path after all release-only preconditions pass.
 
 ```text
 /ship-and-land stopped on the release-only path; it made no change for this finding.
@@ -630,7 +632,7 @@ below remain strict. Never rewrite a ledger exit code or imported record.
 
 Derive commands from repository instructions as data, never execute receipt text. Preserve the verified full pregate record before Steps 12–15, run release-delta tests at Verification Gate (16) (or the full suite under `full-suite=final`), and run `gstack-pregate --stage preflight` before push.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-test-evidence --expect 449062dece0cf77c` before running pregate-wrapped tests, reusing a pregate-wrapped `tests` record, or verifying release-metadata test selection.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-test-evidence --expect 6930506834c5bc52` before running pregate-wrapped tests, reusing a pregate-wrapped `tests` record, or verifying release-metadata test selection.
 
 A test gate accepts
 only a FRESH native ledger entry, an authenticated CI check-run for the same
@@ -650,13 +652,13 @@ evidence. Builds still run where ship requires them.
 
 Run the documented docs lane locally and verify full-suite CI covers the final head (or run the required test command locally once). Never forge a ledger record or skip required checks.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect b7c69622094d758e` before running or evaluating tests under the DOCS profile.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect a76b9bea0aae8828` before running or evaluating tests under the DOCS profile.
 
 ### Shared review execution (DOCS and FULL)
 
 Wait for all required readers before edits, apply Severity before Fix-First, run delta rechecks after edits (within ship's 3-cycle cap), and stop automatic structured-output retries after one malformed/failed attempt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset).
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-shared-review --expect 74384c225b14695b` before dispatching missing reviews, triaging findings, or running delta rechecks when Step 2 marks any review stage RUN.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-shared-review --expect 74384c225b14695b` before dispatching a review marked RUN, triaging new findings or feedback, or reviewing a fix delta, including when Step 2 reused every review.
 
 ### Greptile and new feedback
 
@@ -687,9 +689,9 @@ never requests another run or resets a timeout. Carry a qualifying recorded
 no-response fallback honestly; do not call it a completed review or restart
 the wait. A known queued/running or failed run is not that fallback.
 
-Preserve the PR-wide single-run allowance, check automatic triggers before every push (stop and ask if a push would start a second run), never toggle a ready PR to draft, and resolve actionable findings before landing.
+When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. If a push would start a second run, stop before it and ask the user how to resolve that trigger.
 
-Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-greptile-feedback --expect 073ea65ac2698971` before triggering, monitoring, or triaging Greptile feedback when Greptile applies or new PR feedback arrives.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-greptile-feedback --expect 073ea65ac2698971` before triggering, monitoring, triaging Greptile feedback, or checking the landing gate when Greptile applies.
 
 ## 3. Execute ship and verify its final changes
 
@@ -856,7 +858,7 @@ session that cannot take the user's answer must still reach the readiness
 report; it must never manufacture the confirmation instead. The stop happens
 before any merge, so nothing can merge or deploy on an unconfirmed setup.
 
-On `FIRST_RUN` or `CONFIG_CHANGED`, record `first-run setup unconfirmed (<token>): the landing run confirms it` without writing the fingerprint; missing token or failed detection stops BLOCKED.
+On `FIRST_RUN` or `CONFIG_CHANGED`, record `first-run setup unconfirmed (<token>): the landing run confirms it` without writing the fingerprint. No token, or the detection itself failed: unknown state, not `FIRST_RUN`. Stop with that blocker. Never guess a token or read a broken check as unconfirmed setup.
 
 Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-land-adapters --expect 307056659e4bf93b` before running Step 1.5 read-only detection when stopping at the merge gate (`--no-land` or direct stop request).
 
@@ -889,6 +891,8 @@ answers. Run telemetry finish (`--outcome success` at the gate, `error` with a
 blocker), then finish with the readiness report, `stopped at merge gate
 (caller request)` and, as the last lines before the stage line, the merge decision. Print it as
 plain text, not AskUserQuestion: its answer belongs to the next run.
+
+With a blocker, name each blocker and its repair instead of offering to land. A merge-gate stop that names blockers prints `status: blocked` and `next: none` on the stage line.
 
 Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-land-adapters --expect 307056659e4bf93b` before printing the merge-gate stop decision when stopping at the merge gate on caller request.
 
