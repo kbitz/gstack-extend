@@ -86,6 +86,30 @@
 - **Revisit when:** A Track changes the telemetry fixture guard or its resolver inventory.
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=skills/review-and-prep.md|skills/references/review-and-prep/conditional-pregate-and-final-repair.md] Test gap: Exercise narrowed pregate after a matching external pass
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The anchor and command tests verify the text that enables narrowing. They leave execution with a matching external pass and covered test lanes unverified.
+- **Hypothesis (untested):** With a disposable candidate and an accepted full-suite result, verify that qualified anchors select `pregate-preflight` and that the receipt names the omitted lanes.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `skills/review-and-prep.md`, **Narrow the pregate after an accepted pass**.
+- **Evidence:** The Track 96A coverage audit traced the protocol tests and live anchor outputs. No failed workflow execution was observed.
+- **Context:** Track 96A review at `73aa356` (2026-11-24).
+- **Revisit when:** A Track changes pregate narrowing or qualifies this workflow on an installed host.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|skills/references/review-and-prep/conditional-pregate-and-final-repair.md] Test gap: Exercise ordinary pregate when a narrowing anchor fails
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** CLI fixtures cover anchor drift and its reported effect. They leave the workflow's exact-once check and ordinary pregate fallback unverified after a matching external pass.
+- **Hypothesis (untested):** In isolated fixtures with an otherwise eligible external pass, try the prior registry text, an absent anchor and a duplicate anchor. Verify the inactive receipt and ordinary pregate command for each case.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `skills/review-and-prep.md`, **Activation (narrowed pregate)**.
+- **Evidence:** The Track 96A coverage audit traced the CLI fallback diagnostics and the workflow instructions. No failed fallback execution was observed.
+- **Context:** Track 96A review at `73aa356` (2026-11-24).
+- **Revisit when:** A Track changes the narrowing anchor rules or adds a workflow fixture for external passes.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
