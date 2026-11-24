@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { spawnSync } from './helpers/child-stdio.ts';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
-import { UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
-import { ANCHORS_QUALIFIED, ATTACKER_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, attackerInventory, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory, type Anchor } from '../src/upstream-check/cli';
+import { UPSTREAM_DISPLAY_PATH_ANCHORS, UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
+import { ANCHORS_QUALIFIED, ATTACKER_QUALIFIED, DELEGATE_QUALIFIED, DISPLAY_PATH_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, attackerInventory, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory, type Anchor } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 108; // root, 8 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 21 delegate + 18 fold + 8 overlap + 9 attacker + 2 finding-location anchors, 3 exports, 4 classifier cases
+const CHECKS = 109; // root, 8 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 21 delegate + 18 fold + 8 overlap + 9 attacker + 2 finding-location + 1 display-path anchors, 3 exports, 4 classifier cases
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 // Each check builds a fixture tree under `scratch`; cleanup took 17.4 s under load, so allow 30 s for removal.
 afterAll(() => rmSync(scratch, { recursive: true, force: true }), 30000);
@@ -79,6 +79,7 @@ const pregateBinText = () => `# gstack-pregate\n\n${PREGATE_NARROW.bin.join('\n'
 const pregateIndexText = () => `// index\n\n${PREGATE_NARROW.index.join('\n')}\n`;
 const pregateLanesText = () => `// lanes\n\n${PREGATE_NARROW.lanes.join('\n')}\n`;
 const pregateSecretsText = () => `// secrets\n\n${UPSTREAM_FINDING_ANCHORS.join('\n')}\n`;
+const pregateAllowlistText = () => `// allowlist\n\n${UPSTREAM_DISPLAY_PATH_ANCHORS.join('\n')}\n`;
 
 interface Fixture { root: string; skills: string; files: Record<string, string> }
 /** A minimal installed upstream that satisfies every check, in either layout. */
@@ -107,10 +108,12 @@ function upstream(layout: 'nested' | 'sibling', label = layout, wording: Dispatc
   files.pregateIndex = join(root, 'lib', 'pregate', 'index.ts');
   files.pregateLanes = join(root, 'lib', 'pregate', 'checks', 'lanes.ts');
   files.pregateSecrets = join(root, 'lib', 'pregate', 'checks', 'secrets.ts');
+  files.pregateAllowlist = join(root, 'lib', 'pregate', 'allowlist.ts');
   put(files.pregateBin, pregateBinText());
   put(files.pregateIndex, pregateIndexText());
   put(files.pregateLanes, pregateLanesText());
   put(files.pregateSecrets, pregateSecretsText());
+  put(files.pregateAllowlist, pregateAllowlistText());
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
@@ -372,7 +375,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + ATTACKER_ANCHORS + UPSTREAM_FINDING_ANCHORS.length); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, twenty-one delegate anchors, eighteen fold anchors, eight overlap anchors, nine attacker anchors, two finding-location anchors
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + ATTACKER_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + UPSTREAM_DISPLAY_PATH_ANCHORS.length); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, twenty-one delegate anchors, eighteen fold anchors, eight overlap anchors, nine attacker anchors, two finding-location anchors, one display-path anchor
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -384,6 +387,7 @@ describe('a healthy installation', () => {
       `INFO inspected test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`,
       `INFO inspected pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`,
       `INFO inspected finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`,
+      `INFO inspected display-path ${DISPLAY_PATH_QUALIFIED.revision} ${DISPLAY_PATH_QUALIFIED.version}`,
       `INFO inspected delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`,
       `INFO inspected fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`,
       `INFO inspected overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`,
@@ -1475,13 +1479,108 @@ describe('drift', () => {
   }, 30000);
 
   const LOCATION_EFFECT = '  effect: bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked';
+  const DISPLAY_PATH_EFFECT = '  effect: bin/secret-dispositions: upstream displayPath() quoting diverged from the local copy, so a newly-quoted path could be dropped or let a suffix-colliding file borrow an approval';
   // Value: protects=the two spans of installed secrets.ts that produce the finding location the evaluator reads; fails_when=a span is edited, dropped or reordered without the drift check following; why_new=bin/secret-dispositions reads upstream's rendered location grammar; seam=none
   test('locks the finding-location anchors exactly', () => {
     expect(UPSTREAM_FINDING_ANCHORS).toEqual([
-      "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${f.file}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`",
+      "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${displayPath(f.file)}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`",
       'fileLine: !!part.keep',
     ]);
   });
+
+  // Value: protects=the four-line displayPath implementation in installed allowlist.ts; fails_when=the anchored body is edited or weakened without tests noticing; why_new=AC 5 raw-byte display-path anchor; seam=none
+  test('locks the display-path anchor exactly', () => {
+    expect(UPSTREAM_DISPLAY_PATH_ANCHORS).toEqual([
+      [
+        'export function displayPath(file: string): string {',
+        '  const unsafe = /[\\x00-\\x1f\\x7f-\\x9f\\u202a-\\u202e\\u2066-\\u2069]/g;',
+        "  return unsafe.test(file) ? JSON.stringify(file).replace(unsafe, (c) => `\\\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`) : file;",
+        '}',
+      ].join('\n'),
+    ]);
+  });
+
+  test.each(['nested', 'sibling'] as const)('pre-1.103.0.0 raw f.file template in %s layout drifts secret-dispositions.location.1 only', async (layout) => {
+    const f = upstream(layout);
+    const path = f.files.pregateSecrets!;
+    const current = UPSTREAM_FINDING_ANCHORS[0]!;
+    const old = "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${f.file}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`";
+    // Baseline current 1.103+ template is OK.
+    const okRun = await check(rootArgs(f));
+    expect(okRun.code).toBe(0);
+    expect(okRun.lines).toContain('OK anchor secret-dispositions.location.1');
+    // Replacing with pre-1.103.0.0 template drifts only location.1.
+    writeFileSync(path, readFileSync(path, 'utf8').replace(current, () => old));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith('DRIFT anchor secret-dispositions.location.1 '));
+    expect(at).toBeGreaterThan(-1);
+    expect(r.lines[at + 1]).toBe(LOCATION_EFFECT);
+    expect(r.lines).toContain('OK anchor secret-dispositions.location.2');
+    expect(r.lines).toContain('OK anchor secret-dispositions.display-path.1');
+  }, 40000);
+
+  test.each([
+    ['nested', 'char-class', (s: string) => s.replace('\\u2066-\\u2069]', '\\u2066-\\u2069\\u200e]')],
+    ['nested', 'quoting-return', (s: string) => s.replace('JSON.stringify(file)', 'JSON.stringify(String(file))')],
+    ['sibling', 'char-class', (s: string) => s.replace('\\u2066-\\u2069]', '\\u2066-\\u2069\\u200e]')],
+    ['sibling', 'quoting-return', (s: string) => s.replace('JSON.stringify(file)', 'JSON.stringify(String(file))')],
+  ] as const)('mutating allowlist.ts displayPath (%s, %s) drifts secret-dispositions.display-path.1 only', async (layout, _kind, mutate) => {
+    const f = upstream(layout);
+    const path = f.files.pregateAllowlist!;
+    const before = readFileSync(path, 'utf8');
+    const mutated = mutate(before);
+    expect(mutated).not.toBe(before);
+    writeFileSync(path, mutated);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith('DRIFT anchor secret-dispositions.display-path.1 '));
+    expect(at).toBeGreaterThan(-1);
+    expect(r.lines[at + 1]).toBe(DISPLAY_PATH_EFFECT);
+    expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
+    expect(r.lines).toContain('OK anchor secret-dispositions.location.1');
+    expect(r.lines).toContain('OK anchor secret-dispositions.location.2');
+  }, 30000);
+
+  test.each(['nested', 'sibling'] as const)('a missing pregate allowlist file in the %s layout drifts secret-dispositions.display-path.1 only', async (layout) => {
+    const f = upstream(layout);
+    const path = f.files.pregateAllowlist!;
+    rmSync(path);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(['secret-dispositions.display-path.1']);
+    expect(drifts(r.lines)[0]).toContain(`pregate allowlist helper not found: ${path}`);
+    expect(r.lines.filter((l) => l.startsWith('INFO file pregate.allowlist '))).toEqual([]);
+  }, 30000);
+
+  test('the pregate allowlist file is read from the gstack root, reported as INFO, not run on missing root, and never modified', async () => {
+    for (const layout of ['nested', 'sibling'] as const) {
+      const f = upstream(layout);
+      const path = f.files.pregateAllowlist!;
+      const bytes = readFileSync(path);
+      const r = await check(rootArgs(f));
+      expect(r.code).toBe(0);
+      expect(r.lines).toContain(`INFO file pregate.allowlist ${realpathSync(join(f.root, 'lib', 'pregate', 'allowlist.ts'))}`);
+      expect(r.lines).toContain('OK anchor secret-dispositions.display-path.1');
+      expect(readFileSync(path).equals(bytes)).toBe(true);
+      // Drifted run also leaves allowlist.ts bytes unchanged.
+      writeFileSync(path, readFileSync(path, 'utf8').replace('\\u2066-\\u2069]', '\\u2066-\\u2069\\u200e]'));
+      const driftedBytes = readFileSync(path);
+      const dr = await check(rootArgs(f));
+      expect(dr.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+      expect(readFileSync(path).equals(driftedBytes)).toBe(true);
+    }
+    const missing = await check(['--gstack-root', join(scratch, 'does-not-exist-display-path')]);
+    const dpDrifts = drifts(missing.lines).filter((l) => l.startsWith('DRIFT anchor secret-dispositions.display-path.'));
+    expect(dpDrifts).toHaveLength(UPSTREAM_DISPLAY_PATH_ANCHORS.length);
+    for (const line of dpDrifts) expect(line).toContain('not run: gstack root unavailable');
+  }, 40000);
 
   // Value: protects=a changed finding-location span drifts exactly its own anchor, names its stage cost and docs link, and leaves every other gate OK; fails_when=a changed span passes, reports another gate's effect or turns another gate off; why_new=fifth upstream gate, one installed file in two layouts; seam=none
   test.each([
@@ -1544,9 +1643,13 @@ describe('drift', () => {
   test('the finding-location anchors report after the pregate-narrowing anchors and before the export checks', async () => {
     const r = await check(rootArgs(upstream('nested')));
     const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
-    expect(ids.filter((id) => id.startsWith('anchor secret-dispositions.'))).toEqual(UPSTREAM_FINDING_ANCHORS.map((_, i) => `anchor secret-dispositions.location.${i + 1}`));
+    expect(ids.filter((id) => id.startsWith('anchor secret-dispositions.'))).toEqual([
+      ...UPSTREAM_FINDING_ANCHORS.map((_, i) => `anchor secret-dispositions.location.${i + 1}`),
+      ...UPSTREAM_DISPLAY_PATH_ANCHORS.map((_, i) => `anchor secret-dispositions.display-path.${i + 1}`),
+    ]);
     expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
-    expect(ids.indexOf('anchor secret-dispositions.location.2')).toBeLessThan(ids.indexOf('export outside-review.runClaudeCode'));
+    expect(ids.indexOf('anchor secret-dispositions.location.2')).toBeLessThan(ids.indexOf('anchor secret-dispositions.display-path.1'));
+    expect(ids.indexOf('anchor secret-dispositions.display-path.1')).toBeLessThan(ids.indexOf('export outside-review.runClaudeCode'));
   }, 30000);
 
   // Value: protects=the check stays read-only on a healthy and on a drifted secrets.ts; fails_when=a run adds, removes or rewrites a file under the root; why_new=the check reads one more installed file; seam=none
@@ -2229,6 +2332,7 @@ describe('installed upstream', () => {
   test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the finding-location anchors match the root named by GSTACK_OUTSIDE_TEST_ROOT, whatever else drifts', async () => {
     const r = await check(['--gstack-root', process.env.GSTACK_OUTSIDE_TEST_ROOT!]);
     for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor secret-dispositions.location.${n}`);
+    expect(r.lines).toContain('OK anchor secret-dispositions.display-path.1');
   }, 30000);
 
   test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the root named by GSTACK_OUTSIDE_TEST_ROOT passes every check', async () => {
@@ -2363,7 +2467,7 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Delegation anchors|Fold anchors|Overlap anchors|Attacker-part anchors|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Secret-finding display-path anchor[^|]*|Delegation anchors|Fold anchors|Overlap anchors|Attacker-part anchors|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
@@ -2371,6 +2475,7 @@ describe('docs and wiring', () => {
     ['Test-gap anchors', TEST_GAP_QUALIFIED.revision, TEST_GAP_QUALIFIED.version],
     ['Pregate-narrowing anchors', PREGATE_NARROW_QUALIFIED.revision, PREGATE_NARROW_QUALIFIED.version],
     ['Secret-finding location anchors', FINDING_LOCATION_QUALIFIED.revision, FINDING_LOCATION_QUALIFIED.version],
+    ['Secret-finding display-path anchor', DISPLAY_PATH_QUALIFIED.revision, DISPLAY_PATH_QUALIFIED.version],
     ['Delegation anchors', DELEGATE_QUALIFIED.revision, DELEGATE_QUALIFIED.version],
     ['Fold anchors', FOLD_QUALIFIED.revision, FOLD_QUALIFIED.version],
     ['Overlap anchors', OVERLAP_QUALIFIED.revision, OVERLAP_QUALIFIED.version],

@@ -27,7 +27,10 @@ export const TEST_GAP_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7c
 export const PREGATE_NARROW_QUALIFIED = { revision: '0d6cc1be56136706854e40dccf417e008e5c69ab', version: '1.103.0.0' } as const;
 
 /** Upstream revision at which the anchors behind the secret-finding location grammar were qualified in both layouts. */
-export const FINDING_LOCATION_QUALIFIED = { revision: '2512dd7624a474fee036326989ea0c6bb8470e69', version: '1.92.55.0' } as const;
+export const FINDING_LOCATION_QUALIFIED = { revision: 'f7402213a04d720eed5c50557c0ba528a69af4bd', version: '1.103.1.0' } as const;
+
+/** Upstream revision at which the raw-byte anchor for `lib/pregate/allowlist.ts`'s `displayPath()` was qualified in both layouts. */
+export const DISPLAY_PATH_QUALIFIED = { revision: 'f7402213a04d720eed5c50557c0ba528a69af4bd', version: '1.103.1.0' } as const;
 
 /** Upstream revision at which the anchors behind `delegate=<part>` were qualified in the nested checkout and the Cursor and Codex sibling copies generated from it; the sibling copies' own revision is unknown. */
 export const DELEGATE_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
@@ -48,7 +51,7 @@ export const ATTACKER_QUALIFIED = { revision: 'b3323f47b8cb6ec074bc755d3b108983a
  */
 export const EXEMPTIONS: readonly { file: string; includes: string; reason: string }[] = [
   { file: 'src/secret-dispositions/cli.ts', includes: "join(root, 'lib'",
-    reason: 'the helper imports fail closed at call time with "incompatible installed pregate helpers"; only the finding-location anchors are in the launch contracts in docs/upstream-check.md' },
+    reason: 'the helper imports fail closed at call time with "incompatible installed pregate helpers"; only the finding-location and display-path anchors are in the launch contracts in docs/upstream-check.md' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'final-gate-repair=tests-docs'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy key, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'full-suite=external'",
@@ -459,6 +462,7 @@ const STAGE = {
   attacker: '/review-and-prep: the red-team step and delegate=adversarial|red-team are inactive, so the red team and the adversarial pass run on the host as today and the receipt says so',
   attackerList: '/review-and-prep: the attacker-part anchors cannot be listed, so the red-team step and delegate=adversarial|red-team are unverified and stay inactive',
   findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
+  displayPath: 'bin/secret-dispositions: upstream displayPath() quoting diverged from the local copy, so a newly-quoted path could be dropped or let a suffix-colliding file borrow an approval',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
   notReady: 'bin/outside-review: a reviewer\'s own not-ready verdict with only advisory findings is credited clean, so the stage may proceed past it',
@@ -503,6 +507,7 @@ interface Layout {
   pregateIndex: string;
   pregateLanes: string;
   pregateSecrets: string;
+  pregateAllowlist: string;
 }
 
 function chooseLayout(root: string, skillsDir: string): Layout {
@@ -512,7 +517,7 @@ function chooseLayout(root: string, skillsDir: string): Layout {
     design: join(root, 'review', 'design-checklist.md') };
   const redTeam = join(root, 'review', 'specialists', 'red-team.md');
   // The pregate lives under the gstack root in both layouts.
-  const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts'), pregateSecrets: join(root, 'lib', 'pregate', 'checks', 'secrets.ts') };
+  const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts'), pregateSecrets: join(root, 'lib', 'pregate', 'checks', 'secrets.ts'), pregateAllowlist: join(root, 'lib', 'pregate', 'allowlist.ts') };
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
     return { name: 'nested', review: join(root, 'review', 'SKILL.md'), adversarial: join(root, 'review', 'sections', 'adversarial.md'), redTeam,
       checklist: join(root, 'review', 'checklist.md'),
@@ -678,7 +683,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const layout = chooseLayout(options.root, options.skillsDir);
   if (layout.name === 'sibling') rejectRootInsideRepo(options.skillsDir, io.cwd, '--skills-dir');
   // Keep extension-owned loader failures inside main's internal-error boundary.
-  const [{ INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }, { UPSTREAM_FINDING_ANCHORS }] = await Promise.all([
+  const [{ INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }, { UPSTREAM_DISPLAY_PATH_ANCHORS, UPSTREAM_FINDING_ANCHORS }] = await Promise.all([
     import('../outside-review/cli.ts'), import('./probe.ts'), import('../secret-dispositions/evaluate.ts'),
   ]);
 
@@ -697,6 +702,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`);
   info('inspected', `pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`);
   info('inspected', `finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`);
+  info('inspected', `display-path ${DISPLAY_PATH_QUALIFIED.revision} ${DISPLAY_PATH_QUALIFIED.version}`);
   info('inspected', `delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
   info('inspected', `fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`);
   info('inspected', `overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`);
@@ -866,6 +872,11 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     const secrets = rootOk ? readOnce(layout.pregateSecrets, 'pregate secrets check', 'pregate.secrets') : undefined;
     const refused = { effect: STAGE.findingLocation, fix: UPGRADE_FIX };
     UPSTREAM_FINDING_ANCHORS.forEach((anchor, i) => checkAnchor(`secret-dispositions.location.${i + 1}`, secrets, anchor, undefined, refused));
+  }
+  {
+    const allowlist = rootOk ? readOnce(layout.pregateAllowlist, 'pregate allowlist helper', 'pregate.allowlist') : undefined;
+    const diverged = { effect: STAGE.displayPath, fix: UPGRADE_FIX };
+    UPSTREAM_DISPLAY_PATH_ANCHORS.forEach((anchor, i) => checkAnchor(`secret-dispositions.display-path.${i + 1}`, allowlist, anchor, undefined, diverged));
   }
 
   // Exports and classifier cases, in one bounded child process.

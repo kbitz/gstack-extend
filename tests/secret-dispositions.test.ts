@@ -4,8 +4,9 @@ import { cpSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { makeEmptyRepo } from './helpers/fixture-repo';
-import { BINARY_PART_ERROR, DISPOSITIONS, evaluate, parseEntries, PART_SHAPE_ERROR, readPart, sha256, type Check, type Entry, type Part } from '../src/secret-dispositions/evaluate';
+import { BINARY_PART_ERROR, DISPOSITIONS, displayPath, evaluate, parseEntries, PART_SHAPE_ERROR, readPart, sha256, type Check, type Entry, type Part } from '../src/secret-dispositions/evaluate';
 import { countsFor, decide, eligibleComponent, exitFor, isDelimitedAfter, knownComponents, maskComponents, offsetOf, type ScanFinding } from '../src/secret-dispositions/scan-text';
+import { DISPLAY_PATH_QUALIFIED, FINDING_LOCATION_QUALIFIED } from '../src/upstream-check/cli';
 
 const root = resolve(import.meta.dir, '..');
 const temp = mkdtempSync(join(tmpdir(), 'secret-dispositions-'));
@@ -316,6 +317,228 @@ describe('installed texts part shape and refusals', () => {
     expect(okWithBinary.satisfied).toBe(true);
     expect(okWithBinary.matched).toHaveLength(3);
   });
+
+  test('readPart and evaluate pin all added-line part type guards (AC 3)', () => {
+    const invalidParts: unknown[] = [
+      null,
+      undefined,
+      42,
+      'str',
+      true,
+      [],
+      { text: 'x' },
+      { file: 123, text: 'x' },
+      { file: null, text: 'x' },
+      { file: 'a.py', text: 123 },
+      { file: 'a.py', text: null },
+      { file: 'a.py', texts: 'not-array' },
+      { file: 'a.py', texts: null },
+      { file: 'a.py', text: 'x', keep: 'not-array' },
+      { file: 'a.py', text: 'x', keep: null },
+      { file: 'a.py', text: 'x', keep: undefined },
+      { file: 'a.py', text: 'x', keep: [1.5] },
+      { file: 'a.py', text: 'x', keep: ['1'] },
+      { file: 'a.py', text: 'x', binary: undefined },
+    ];
+    for (const bad of invalidParts) {
+      expect(() => readPart(bad)).toThrow(PART_SHAPE_ERROR);
+      expect(() => evaluate(check(), [bad as Part], entries, sources())).toThrow(PART_SHAPE_ERROR);
+    }
+    for (const badCollection of [null, {}, 'parts'] as unknown[]) {
+      expect(() => evaluate(check(), badCollection as Part[], entries, sources())).toThrow(PART_SHAPE_ERROR);
+    }
+  });
+});
+
+describe('displayPath quoting and anti-approval-borrowing', () => {
+  const AMBIGUOUS = 'finding path is missing or ambiguous';
+  const RESOLVE = 'finding does not resolve to an exact current source line';
+  const makeRecord = (ps: Part[], found: string[]): Check => ({
+    id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+    inputs: { added_lines: sha256(JSON.stringify(ps)) },
+    detail: `${found.length} credential finding(s) in added lines (${found.map(() => 'env.kv').join(', ')})`,
+    lines: found,
+  });
+
+  test('displayPath mirrors upstream allowlist.ts edge cases and is stateless across repeated calls', () => {
+    // Plain ASCII and non-ASCII non-bidi unchanged, including literal " and \ without unsafe chars.
+    for (const clean of ['src/app.ts', 'café/über.py', 'file"quote.txt', 'dir\\name.txt', 'space \x20 ok', 'tilde \x7e ok', 'nbsp \xa0 ok']) {
+      expect(displayPath(clean)).toBe(clean);
+    }
+    // Literal " and \ ARE JSON-escaped when an unsafe character triggers quoting.
+    expect(displayPath('a"b\\c\u202e.py')).toBe('"a\\"b\\\\c\\u202e.py"');
+    // Boundary characters: C0 (\x00, \x1f), DEL (\x7f), C1 (\x80, \x9f), bidi (\u202a, \u202e, \u2066, \u2069).
+    expect(displayPath('a\x00b')).toBe('"a\\u0000b"');
+    expect(displayPath('a\x1fb')).toBe('"a\\u001fb"');
+    expect(displayPath('a\x7fb')).toBe('"a\\u007fb"');
+    expect(displayPath('a\x80b')).toBe('"a\\u0080b"');
+    expect(displayPath('a\x9fb')).toBe('"a\\u009fb"');
+    expect(displayPath('a\u202ab')).toBe('"a\\u202ab"');
+    expect(displayPath('a\u202eb')).toBe('"a\\u202eb"');
+    expect(displayPath('a\u2066b')).toBe('"a\\u2066b"');
+    expect(displayPath('a\u2069b')).toBe('"a\\u2069b"');
+    // JSON shorthands (\b, \f, \n, \r, \t) stay JSON-escaped inside quotes.
+    expect(displayPath('a\b\f\n\r\tb')).toBe('"a\\b\\f\\n\\r\\tb"');
+    // Multiple unsafe characters in one path.
+    expect(displayPath('\x85mid\u202eend\u2069')).toBe('"\\u0085mid\\u202eend\\u2069"');
+    // Repeated-call statelessness (no shared /g lastIndex bug).
+    const bidi = 'src/evil\u202e.py';
+    for (let i = 0; i < 5; i++) {
+      expect(displayPath(bidi)).toBe('"src/evil\\u202e.py"');
+    }
+  });
+
+  test('quoted C1/bidi/C0 look-alike filenames cannot borrow a suffix-colliding approval (same-kind)', () => {
+    const safeFile = 'safe.txt"';
+    for (const lookAlike of ['evil\u202e (safe.txt', 'evil\x85 (safe.txt', 'evil\t (safe.txt']) {
+      const ps = [
+        { file: safeFile, texts: [examples[1]!.text] },
+        { file: lookAlike, texts: [examples[2]!.text] },
+      ] satisfies Part[];
+      const rendered = ps.map(p => `MEDIUM env.kv [secret]: assignment (${displayPath(p.file)}, added line 1)`);
+      // displayPath(lookAlike) ends with ` (safe.txt"`, colliding with safeFile's suffix.
+      expect(displayPath(lookAlike)).toEndWith(` (${safeFile}`);
+      const approved: Entry[] = [{ ...entries[1]!, path: safeFile }];
+      const srcs = new Map(ps.map(p => [p.file, p.texts[0]!]));
+      const result = evaluate(makeRecord(ps, rendered), ps, approved, srcs);
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain(AMBIGUOUS);
+      expect(result.matched).toHaveLength(1);
+      expect(result.matched[0]!.finding.path).toBe(safeFile);
+    }
+  });
+
+  test('raw and quoted suffix collisions fail closed regardless of keep', () => {
+    // Pre-1.103.0.0 unquoted borrowing: safe.txt + evil\u202e (safe.txt
+    const rawPs = [
+      { file: 'safe.txt', text: examples[1]!.text },
+      { file: 'evil\u202e (safe.txt', text: examples[2]!.text },
+    ] satisfies Part[];
+    const rawRendered = rawPs.map(p => `MEDIUM env.kv [secret]: assignment (${p.file}, added line 1)`);
+    const rawResult = evaluate(
+      makeRecord(rawPs, rawRendered),
+      rawPs,
+      [{ ...entries[1]!, path: 'safe.txt' }],
+      new Map(rawPs.map(p => [p.file, p.text])),
+    );
+    expect(rawResult.satisfied).toBe(false);
+    expect(rawResult.errors).toContain(AMBIGUOUS);
+    expect(rawResult.matched).toHaveLength(1);
+
+    // A literal filename matches another part's displayed suffix; keep never breaks ties.
+    const collidingSafe = 'x.py"';
+    const suffixBidi = 'y\u202e (x.py';
+    for (const [keepA, keepB] of [[undefined, undefined], [[1], undefined], [[1], [1]]] as const) {
+      const ps = [
+        { file: collidingSafe, texts: [examples[1]!.text], ...(keepA ? { keep: [...keepA] } : {}) },
+        { file: suffixBidi, texts: [examples[2]!.text], ...(keepB ? { keep: [...keepB] } : {}) },
+      ] satisfies Part[];
+      const kindA = keepA ? 'line' : 'added line';
+      const kindB = keepB ? 'line' : 'added line';
+      const found = [
+        `MEDIUM env.kv [secret]: assignment (${displayPath(collidingSafe)}, ${kindA} 1)`,
+        `MEDIUM env.kv [secret]: assignment (${displayPath(suffixBidi)}, ${kindB} 1)`,
+      ];
+      const approvals: Entry[] = [
+        { ...entries[1]!, path: collidingSafe },
+        { ...entries[2]!, path: suffixBidi },
+      ];
+      const res = evaluate(makeRecord(ps, found), ps, approvals, new Map(ps.map(p => [p.file, p.texts[0]!])));
+      expect(res.satisfied).toBe(false);
+      expect(res.errors).toContain(AMBIGUOUS);
+      expect(res.matched).toHaveLength(1);
+    }
+  });
+
+  test('single-file C1 and bidi filenames match under both quoted and raw finding forms; C0/DEL still fails safePath', () => {
+    for (const name of ['dir/c1\x85.txt', 'dir/c1\x9b.txt', 'dir/bidi\u202e.py', 'dir/bidi\u2066.py']) {
+      for (const quoted of [true, false]) {
+        const renderedName = quoted ? displayPath(name) : name;
+        const addedPart: Part = { file: name, texts: [examples[1]!.text] };
+        const addedLine = `MEDIUM env.kv [secret]: assignment (${renderedName}, added line 1)`;
+        const addedRes = evaluate(
+          makeRecord([addedPart], [addedLine]),
+          [addedPart],
+          [{ ...entries[1]!, path: name }],
+          new Map([[name, examples[1]!.text]]),
+        );
+        expect(addedRes.errors).toEqual([]);
+        expect(addedRes.satisfied).toBe(true);
+        expect(addedRes.matched).toHaveLength(1);
+        expect(addedRes.matched[0]!.finding.path).toBe(name);
+
+        const wholePart: Part = { file: name, texts: [`# ctx\n${examples[1]!.text}\n`], keep: [2] };
+        const wholeLine = `MEDIUM env.kv [secret]: assignment (${renderedName}, line 2)`;
+        const wholeRes = evaluate(
+          makeRecord([wholePart], [wholeLine]),
+          [wholePart],
+          [{ ...entries[1]!, path: name }],
+          new Map([[name, `# ctx\n${examples[1]!.text}\n`]]),
+        );
+        expect(wholeRes.errors).toEqual([]);
+        expect(wholeRes.satisfied).toBe(true);
+        expect(wholeRes.matched).toHaveLength(1);
+        expect(wholeRes.matched[0]!.finding.added_line).toBe(2);
+      }
+    }
+    // Repeated findings in one check confirm statelessness inside evaluate().
+    const multiParts = [
+      { file: 'dir/a\u202e.txt', texts: [examples[1]!.text] },
+      { file: 'dir/b\u2066.txt', texts: [examples[2]!.text] },
+    ] satisfies Part[];
+    const multiLines = multiParts.map(p => `MEDIUM env.kv [secret]: assignment (${displayPath(p.file)}, added line 1)`);
+    const multiEntries: Entry[] = [
+      { ...entries[1]!, path: multiParts[0]!.file },
+      { ...entries[2]!, path: multiParts[1]!.file },
+    ];
+    const multiRes = evaluate(
+      makeRecord(multiParts, multiLines),
+      multiParts,
+      multiEntries,
+      new Map(multiParts.map(p => [p.file, p.texts[0]!])),
+    );
+    expect(multiRes.errors).toEqual([]);
+    expect(multiRes.satisfied).toBe(true);
+    expect(multiRes.matched).toHaveLength(2);
+
+    // C0/DEL filenames still fail safePath() when alone.
+    for (const c0 of ['dir/tab\t.txt', 'dir/del\x7f.txt']) {
+      const part: Part = { file: c0, texts: [examples[1]!.text] };
+      const line = `MEDIUM env.kv [secret]: assignment (${displayPath(c0)}, added line 1)`;
+      const res = evaluate(makeRecord([part], [line]), [part], [], new Map([[c0, examples[1]!.text]]));
+      expect(res.satisfied).toBe(false);
+      expect(res.errors).toContain(RESOLVE);
+    }
+
+    // Validate the doc JSON example ("dir/file\u202e.py") parses cleanly through parseEntries().
+    const docJson = JSON.parse(`{
+      "version": 1,
+      "entries": [{
+        "path": "dir/file\\u202e.py",
+        "rule": "env.kv",
+        "line_sha256": "${sha256(examples[1]!.text)}",
+        "reason": "Synthetic test fixture in a bidi-named file, not a credential.",
+        "approved_by": "Fixture reviewer",
+        "approved_at": "2026-11-24T12:00:00Z"
+      }]
+    }`);
+    const parsed = parseEntries(docJson);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.path).toBe('dir/file\u202e.py');
+    // Double-escaped backslash fails safePath() as documented.
+    const badDocJson = JSON.parse(`{
+      "version": 1,
+      "entries": [{
+        "path": "dir/file\\\\u202e.py",
+        "rule": "env.kv",
+        "line_sha256": "${sha256(examples[1]!.text)}",
+        "reason": "Bad double-escaped path.",
+        "approved_by": "Fixture reviewer",
+        "approved_at": "2026-11-24T12:00:00Z"
+      }]
+    }`);
+    expect(() => parseEntries(badDocJson)).toThrow('invalid disposition entry 0');
+  });
 });
 
 function write(file: string, content: string) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, content); }
@@ -490,6 +713,75 @@ describe('read-only CLI gate', () => {
     expect(binOut.satisfied).toBe(false);
     expect(binOut.errors).toContain(BINARY_PART_ERROR);
   });
+
+  test('hermetic CLI gate refuses bidi-quoted borrowing collision and approves single-file raw path', () => {
+    const safeFile = 'src/safe.txt"';
+    const evilFile = 'src/evil\u202e (src/safe.txt';
+
+    // (a) Borrowing collision: safeFile approved, evilFile unapproved -> exit 1 with ambiguity error.
+    const repoA = makeEmptyRepo(temp);
+    const baseA = git(repoA, 'rev-parse', 'HEAD');
+    git(repoA, 'update-ref', 'refs/remotes/origin/main', baseA);
+    write(join(repoA, safeFile), `${examples[1]!.text}\n`);
+    write(join(repoA, evilFile), `${examples[2]!.text}\n`);
+    write(join(repoA, DISPOSITIONS), JSON.stringify({ version: 1, entries: [{ ...entries[1]!, path: safeFile }] }, null, 2) + '\n');
+    git(repoA, 'add', '.'); git(repoA, 'commit', '-qm', 'bidi collision fixture');
+    const headA = git(repoA, 'rev-parse', 'HEAD');
+    const partsA = [
+      { file: safeFile, texts: [examples[1]!.text] },
+      { file: evilFile, texts: [examples[2]!.text] },
+    ];
+    const upA = join(temp, `fake-upstream-bidi-collide-${crypto.randomUUID()}`);
+    cpSync(upstream, upA, { recursive: true });
+    write(join(upA, 'lib/pregate/checks/secrets.ts'), `export const addedLines = () => ${JSON.stringify(partsA)};`);
+    const recA = join(temp, `raw-bidi-collide-${crypto.randomUUID()}.json`);
+    const secA = {
+      id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+      inputs: { added_lines: sha256(JSON.stringify(partsA)) },
+      detail: '2 credential finding(s) in added lines (env.kv, env.kv)',
+      lines: partsA.map(p => `MEDIUM env.kv [secret]: sensitive assignment (${displayPath(p.file)}, added line 1)`),
+    };
+    write(recA, JSON.stringify({
+      schema_version: 1, tree: 'a'.repeat(40), head: headA, base: `origin/main@${baseA.slice(0, 12)}`, verdict: 'fail',
+      checks: ids.map(id => id === 'secrets' ? secA : { id, status: 'pass' }), requires_remote: [],
+    }));
+    const resA = run(repoA, upA, recA), outA = JSON.parse(resA.stdout);
+    expect(resA.status).toBe(1);
+    expect(outA.satisfied).toBe(false);
+    expect(outA.errors).toContain('finding path is missing or ambiguous');
+    expect(outA.matched).toHaveLength(1);
+    expect(outA.matched[0].finding.path).toBe(safeFile);
+
+    // (b) Single-file raw-path approval for bidi filename -> exit 0.
+    const repoB = makeEmptyRepo(temp);
+    const baseB = git(repoB, 'rev-parse', 'HEAD');
+    git(repoB, 'update-ref', 'refs/remotes/origin/main', baseB);
+    write(join(repoB, evilFile), `${examples[1]!.text}\n`);
+    write(join(repoB, DISPOSITIONS), JSON.stringify({ version: 1, entries: [{ ...entries[1]!, path: evilFile }] }, null, 2) + '\n');
+    git(repoB, 'add', '.'); git(repoB, 'commit', '-qm', 'single bidi file fixture');
+    const headB = git(repoB, 'rev-parse', 'HEAD');
+    const partsB = [{ file: evilFile, texts: [examples[1]!.text] }];
+    const upB = join(temp, `fake-upstream-bidi-single-${crypto.randomUUID()}`);
+    cpSync(upstream, upB, { recursive: true });
+    write(join(upB, 'lib/pregate/checks/secrets.ts'), `export const addedLines = () => ${JSON.stringify(partsB)};`);
+    const recB = join(temp, `raw-bidi-single-${crypto.randomUUID()}.json`);
+    const secB = {
+      id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+      inputs: { added_lines: sha256(JSON.stringify(partsB)) },
+      detail: '1 credential finding(s) in added lines (env.kv)',
+      lines: [`MEDIUM env.kv [secret]: sensitive assignment (${displayPath(evilFile)}, added line 1)`],
+    };
+    write(recB, JSON.stringify({
+      schema_version: 1, tree: 'a'.repeat(40), head: headB, base: `origin/main@${baseB.slice(0, 12)}`, verdict: 'fail',
+      checks: ids.map(id => id === 'secrets' ? secB : { id, status: 'pass' }), requires_remote: [],
+    }));
+    const resB = run(repoB, upB, recB), outB = JSON.parse(resB.stdout);
+    expect(resB.status).toBe(0);
+    expect(outB.errors).toEqual([]);
+    expect(outB.satisfied).toBe(true);
+    expect(outB.matched).toHaveLength(1);
+    expect(outB.matched[0].finding.path).toBe(evilFile);
+  });
 });
 
 test('both wrapper instructions require user approval and preserve failed test evidence', () => {
@@ -511,6 +803,10 @@ test('the disposition document states both location forms, their files and the r
   for (const phrase of ['`line N`', '`added line N`', '`added_line`', '`.py`, `.pyi`, `.dart`',
     'finding location does not match upstream added-line selection', 'cannot be satisfied by any entry', '`engine.` finding',
     'accepted location form', PART_SHAPE_ERROR, BINARY_PART_ERROR]) expect(text).toContain(phrase);
+  for (const qualified of [FINDING_LOCATION_QUALIFIED, DISPLAY_PATH_QUALIFIED]) {
+    expect(text).toContain(qualified.revision);
+    expect(text).toContain(qualified.version);
+  }
 });
 
 const installed = process.env.GSTACK_SECRET_DISPOSITIONS_INTEGRATION_ROOT;
@@ -584,6 +880,87 @@ test.skipIf(!installed)('actual installed pregate: an added line of a tracked Py
   expect(output.matched[0].finding.path).toBe(f.file);
   expect(output.matched[0].finding.added_line).toBe(3);
   expect(readFileSync(record, 'utf8')).toBe(raw);
+}, 180_000);
+
+test.skipIf(!installed)('actual installed pregate: quoted bidi path blocks borrowing, passes single-file and .py whole-file, and detects stale edits', () => {
+  const safeFile = 'src/safe.txt"';
+  const evilFile = 'src/evil\u202e (src/safe.txt';
+  const scanIn = (repo: string, record: string) => spawnSync(
+    join(installed!, 'bin/gstack-pregate'),
+    ['--base', 'main', '--stage', 'preflight', '--out', record],
+    { cwd: repo, encoding: 'utf8', timeout: 120_000, env: { ...process.env, GSTACK_STATE_ROOT: join(temp, 'gstack-state') } },
+  );
+
+  // (a) Borrowing collision: both under src/ (no strays failure) and non-Python/Dart (both render `added line 1`).
+  const repoA = makeEmptyRepo(temp);
+  const baseA = git(repoA, 'rev-parse', 'HEAD');
+  git(repoA, 'update-ref', 'refs/remotes/origin/main', baseA);
+  write(join(repoA, safeFile), `${examples[1]!.text}\n`);
+  write(join(repoA, evilFile), `${examples[2]!.text}\n`);
+  write(join(repoA, DISPOSITIONS), JSON.stringify({ version: 1, entries: [{ ...entries[1]!, path: safeFile }] }, null, 2) + '\n');
+  git(repoA, 'add', '.'); git(repoA, 'commit', '-qm', 'live bidi collision');
+  const recA = join(temp, `live-quoted-collide-${crypto.randomUUID()}.json`);
+  expect(scanIn(repoA, recA).status).toBe(1);
+  const secA = JSON.parse(readFileSync(recA, 'utf8')).checks.find((c: Check) => c.id === 'secrets') as Check;
+  expect(secA.status).toBe('fail');
+  expect(secA.lines?.some(l => l.endsWith(`(${displayPath(safeFile)}, added line 1)`))).toBe(true);
+  expect(secA.lines?.some(l => l.endsWith(`(${displayPath(evilFile)}, added line 1)`))).toBe(true);
+  const evalA = run(repoA, installed!, recA, 'preflight'), outA = JSON.parse(evalA.stdout);
+  expect(evalA.stderr).toBe('');
+  expect(evalA.status).toBe(1);
+  expect(outA.errors).toContain('finding path is missing or ambiguous');
+  expect(outA.matched).toHaveLength(1);
+  expect(outA.matched[0].finding.path).toBe(safeFile);
+
+  // (b) Single-file raw-path approval for bidi filename + stale detection after edit and pregate rerun.
+  const repoB = makeEmptyRepo(temp);
+  const baseB = git(repoB, 'rev-parse', 'HEAD');
+  git(repoB, 'update-ref', 'refs/remotes/origin/main', baseB);
+  write(join(repoB, evilFile), `${examples[1]!.text}\n`);
+  write(join(repoB, DISPOSITIONS), JSON.stringify({ version: 1, entries: [{ ...entries[1]!, path: evilFile }] }, null, 2) + '\n');
+  git(repoB, 'add', '.'); git(repoB, 'commit', '-qm', 'live single bidi');
+  const recB = join(temp, `live-quoted-single-${crypto.randomUUID()}.json`);
+  expect(scanIn(repoB, recB).status).toBe(1);
+  const secB = JSON.parse(readFileSync(recB, 'utf8')).checks.find((c: Check) => c.id === 'secrets') as Check;
+  expect(secB.lines).toHaveLength(1);
+  expect(secB.lines![0]).toEndWith(`(${displayPath(evilFile)}, added line 1)`);
+  const evalB = run(repoB, installed!, recB, 'preflight'), outB = JSON.parse(evalB.stdout);
+  expect(evalB.stderr).toBe('');
+  expect(outB.errors).toEqual([]);
+  expect(evalB.status).toBe(0);
+  expect(outB.matched).toHaveLength(1);
+  expect(outB.matched[0].finding.path).toBe(evilFile);
+
+  // (c) Edit the flagged line, re-run gstack-pregate, and verify stale + unmatched refusal.
+  write(join(repoB, evilFile), `${examples[1]!.text} # edited\n`);
+  expect(scanIn(repoB, recB).status).toBe(1);
+  const evalStale = run(repoB, installed!, recB, 'preflight'), outStale = JSON.parse(evalStale.stdout);
+  expect(evalStale.status).toBe(1);
+  expect(outStale.stale.map((e: Entry) => e.path)).toEqual([evilFile]);
+  expect(outStale.unmatched.map((u: { path: string }) => u.path)).toEqual([evilFile]);
+
+  // Separate whole-file Python case verifying `line N` quoting on `src/evil\u202e.py`.
+  const pyFile = 'src/evil\u202e.py';
+  const repoC = makeEmptyRepo(temp);
+  write(join(repoC, pyFile), `# existing\n${examples[2]!.text}\n`);
+  git(repoC, 'add', '.'); git(repoC, 'commit', '-qm', 'base bidi py');
+  const baseC = git(repoC, 'rev-parse', 'HEAD');
+  git(repoC, 'update-ref', 'refs/remotes/origin/main', baseC);
+  write(join(repoC, pyFile), `# existing\n${examples[2]!.text}\n${examples[1]!.text}\n`);
+  write(join(repoC, DISPOSITIONS), JSON.stringify({ version: 1, entries: [{ ...entries[1]!, path: pyFile }] }, null, 2) + '\n');
+  git(repoC, 'add', '.'); git(repoC, 'commit', '-qm', 'add bidi py line');
+  const recC = join(temp, `live-quoted-py-${crypto.randomUUID()}.json`);
+  expect(scanIn(repoC, recC).status).toBe(1);
+  const secC = JSON.parse(readFileSync(recC, 'utf8')).checks.find((c: Check) => c.id === 'secrets') as Check;
+  expect(secC.lines).toHaveLength(1);
+  expect(secC.lines![0]).toEndWith(`(${displayPath(pyFile)}, line 3)`);
+  const evalC = run(repoC, installed!, recC, 'preflight'), outC = JSON.parse(evalC.stdout);
+  expect(evalC.stderr).toBe('');
+  expect(outC.errors).toEqual([]);
+  expect(evalC.status).toBe(0);
+  expect(outC.matched).toHaveLength(1);
+  expect(outC.matched[0].finding.path).toBe(pyFile);
+  expect(outC.matched[0].finding.added_line).toBe(3);
 }, 180_000);
 
 const tsReal = ['2026', '1111', '-', '1605', '31'].join('');

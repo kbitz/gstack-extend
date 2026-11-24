@@ -77,14 +77,41 @@ export function parseEntries(value: unknown): Entry[] {
   });
 }
 
+const DISPLAY_UNSAFE = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/;
+
+/**
+ * Mirrors upstream `lib/pregate/allowlist.ts:78-81` (GST-3528): JSON-quotes and escapes
+ * control, C1, and bidi-override characters in rendered finding paths without a shared `/g` regex.
+ */
+export function displayPath(file: string): string {
+  return DISPLAY_UNSAFE.test(file)
+    ? JSON.stringify(file).replace(new RegExp(DISPLAY_UNSAFE.source, 'g'), c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+    : file;
+}
+
 /**
  * The text in installed `lib/pregate/checks/secrets.ts` that produces the finding location this evaluator
- * reads: the render template (its `line N` and `added line N` forms) and the flag that picks between them.
- * `upstream-check` reports DRIFT when either changes; the evaluator fails closed on any line it cannot read.
+ * reads: the render template (its `displayPath(f.file)`, `line N` and `added line N` forms) and the flag
+ * that picks between them. `upstream-check` reports DRIFT when either changes; the evaluator fails closed
+ * on any line it cannot read.
  */
 export const UPSTREAM_FINDING_ANCHORS: readonly string[] = [
-  "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${f.file}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`",
+  "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${displayPath(f.file)}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`",
   'fileLine: !!part.keep',
+];
+
+/**
+ * The exact `displayPath()` implementation in installed `lib/pregate/allowlist.ts:78-81` that `secrets.ts`
+ * calls when formatting finding locations. `upstream-check` reports DRIFT if its character class or quoting
+ * changes so this file's local `displayPath()` cannot silently diverge.
+ */
+export const UPSTREAM_DISPLAY_PATH_ANCHORS: readonly string[] = [
+  [
+    'export function displayPath(file: string): string {',
+    '  const unsafe = /[\\x00-\\x1f\\x7f-\\x9f\\u202a-\\u202e\\u2066-\\u2069]/g;',
+    "  return unsafe.test(file) ? JSON.stringify(file).replace(unsafe, (c) => `\\\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`) : file;",
+    '}',
+  ].join('\n'),
 ];
 
 /** No writes or approval inference. Source texts include unchanged lines for stale detection. */
@@ -96,7 +123,10 @@ export function evaluate(check: Check, parts: Part[], entries: Entry[], sources:
   const errors: string[] = [];
   if (check.status === 'pass' || check.status === 'warn') return { satisfied: true, matched, unmatched, stale, errors };
   if (!Array.isArray(parts)) throw new Error(PART_SHAPE_ERROR);
-  const readParts = parts.map(readPart);
+  const readParts = parts.map(p => {
+    const parsed = readPart(p);
+    return { ...parsed, display: displayPath(parsed.file) };
+  });
   if (check.status !== 'fail' || check.code !== 'PREGATE_SECRETS') errors.push('secrets scan is not a completed credential-finding failure');
   if (check.inputs?.added_lines !== sha256(JSON.stringify(parts))) errors.push('added-line input hash differs from the raw pregate record');
   const count = /^(\d+) credential finding\(s\) in added lines \(([^)]*)\)$/.exec(check.detail ?? '');
@@ -113,7 +143,12 @@ export function evaluate(check: Check, parts: Part[], entries: Entry[], sources:
     // Descriptions and filenames may contain parentheses. Never guess a path
     // from a greedy regex: a suffix collision must not borrow another approval.
     // `keep` never breaks a tie: ambiguity is decided before the location form.
-    const candidates = readParts.filter(p => line.endsWith(` (${p.file}, ${kind} ${number})`));
+    // Match both upstream's `displayPath(file)` form and the raw `file` form (for pre-1.103.0.0)
+    // so a quoted C1/bidi filename cannot drop out and let a suffix-colliding path borrow an approval.
+    const candidates = readParts.filter(p =>
+      line.endsWith(` (${p.display}, ${kind} ${number})`)
+      || (p.display !== p.file && line.endsWith(` (${p.file}, ${kind} ${number})`)),
+    );
     if (candidates.length !== 1) { errors.push('finding path is missing or ambiguous'); continue; }
     const part = candidates[0]!, file = part.file;
     if (part.binary) { errors.push(BINARY_PART_ERROR); continue; }
