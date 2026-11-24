@@ -2,6 +2,18 @@
 
 ## Unprocessed
 
+### [review:files=src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Test gap: Refuse a finding with no matching part
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The matching tests cover one candidate, ambiguous candidates, malformed locations and source-line mismatches. They do not isolate a well-formed finding with zero candidates in an otherwise valid record.
+- **Hypothesis (untested):** Extend the evaluator fixture with a finding on an absent path. Check that evaluation stays unsatisfied, reports the path refusal and produces no match.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `src/secret-dispositions/evaluate.ts`, `evaluate`.
+- **Evidence:** The coverage audit traced the candidate check and the existing tests. It demonstrated no runtime failure.
+- **Context:** Review of quoted secret finding paths at `925b776` (2026-11-24).
+- **Revisit when:** A Track changes finding-path matching or the evaluator fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Keep multiple machine-read clauses from one move
 
 - **ID:** wi-c748a0

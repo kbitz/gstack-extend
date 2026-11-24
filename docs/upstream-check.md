@@ -158,7 +158,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified; repair-review=behavior-changing is also inactive, so every edited pass repeats as today and the receipt says so
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=108 drift=1
+RESULT drift checks=109 drift=1
 ```
 
 ## What it checks
@@ -311,16 +311,26 @@ The inventory comes from this extension's own source, never a second copy:
   the section's runtime independence judgment covers them.
 - **Secret-finding location anchors.** Two spans of the installed
   `lib/pregate/checks/secrets.ts`, read as raw bytes from the root in both
-  layouts: the template that renders a finding's location, which writes
-  `line N` for a file upstream scanned whole and `added line N` for any other,
-  and the `fileLine: !!part.keep` flag that picks between them. They are the
-  exported `UPSTREAM_FINDING_ANCHORS` list in
-  `src/secret-dispositions/evaluate.ts`, beside the grammar they protect, not a
-  list in a skill, so there is no inventory check for them. Anchor IDs read
-  `secret-dispositions.location.<n>`. A healthy file prints
+  layouts: the template that renders a finding's location using
+  `displayPath(f.file)`, which writes `line N` for a file upstream scanned
+  whole and `added line N` for any other, and the `fileLine: !!part.keep` flag
+  that picks between them. They are the exported `UPSTREAM_FINDING_ANCHORS`
+  list in `src/secret-dispositions/evaluate.ts`, beside the grammar they
+  protect, not a list in a skill, so there is no inventory check for them.
+  Anchor IDs read `secret-dispositions.location.<n>`. A healthy file prints
   `INFO file pregate.secrets <path>`. The evaluator reads both forms (see
   [secret dispositions](secret-dispositions.md#finding-locations)); its other
   imports of upstream helpers fail closed when it runs and are not anchors.
+- **Secret-finding display-path anchor.** The four-line `displayPath()`
+  implementation in the installed `lib/pregate/allowlist.ts`, read as raw bytes
+  from the root in both layouts (no runtime upstream import). It is the
+  exported `UPSTREAM_DISPLAY_PATH_ANCHORS` list in
+  `src/secret-dispositions/evaluate.ts`, beside the local `displayPath()` copy
+  it protects, so there is no inventory check for it. The anchor ID is
+  `secret-dispositions.display-path.1`, and a healthy file prints
+  `INFO file pregate.allowlist <path>`. Any change to `displayPath`'s character
+  class or quoting expression reports `DRIFT` rather than silently diverging
+  from `evaluate.ts`.
 - **Exports.** `runClaudeCode`, `resolveClaudeCommand` and
   `classifyOutsideReview`, from the one list (`UPSTREAM_HELPERS`) that
   `src/outside-review/cli.ts` itself loads before any dispatch. Each module is
@@ -402,7 +412,18 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   says so, with no upstream file edited. For the two secret-finding
   location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
   secret finding as unrecognized, so the pregate gate stays blocked; nothing is
-  approved in its place and no upstream file is edited.
+  approved in its place and no upstream file is edited. On older upstream
+  installations (`< 1.103.0.0`), `secret-dispositions.location.1` and
+  `secret-dispositions.display-path.1` report drift because upstream does not
+  yet quote paths with `displayPath`: upgrade upstream gstack to clear the
+  drift (the evaluator's dual-form matcher still accepts unquoted findings). On
+  newer upstream installations where `location.1` or `location.2` drifts, run
+  `/gstack-extend-upgrade` and rerun, or hold the stage. For the
+  `secret-dispositions.display-path.1` anchor, upstream `displayPath()` quoting
+  diverged from the local copy in `evaluate.ts`, so a newly-quoted path could
+  drop out of candidate matching or let a suffix-colliding file borrow another
+  path's approval: run `/gstack-extend-upgrade` and rerun, or hold the stage
+  until requalified.
 
 <a id="drift-inventory"></a>
 - **`inventory`.** This extension's own files are damaged or edited: the
@@ -494,6 +515,16 @@ and the test-gap routing value.
    `src/outside-review/cli.ts` must agree with the documents (a test checks).
 3. If a check still drifts, decide to proceed with the stated cost or hold.
 
+Secret-dispositions compatibility against qualified upstream revision
+`f7402213a04d720eed5c50557c0ba528a69af4bd` (`1.103.1.0`). The table covers
+the secret-finding anchors. The overall verdict also depends on the other checks.
+
+| Installed upstream gstack | Accepted finding syntax in `evaluate.ts` | Expected secret-finding anchor result |
+|---|---|---|
+| Pre-`1.103.0.0` (unquoted `${f.file}`) | Accepted (dual-form matcher retains raw path fallback) | `DRIFT` on `secret-dispositions.location.1` and `secret-dispositions.display-path.1` |
+| `1.103.0.0`–`1.103.1.0` (`displayPath(f.file)`) | Accepted (qualified at `f7402213a04d720eed5c50557c0ba528a69af4bd` / `1.103.1.0`) | `OK` for the location and display-path anchors |
+| Future `displayPath()` character-class or quoting edit | May diverge on newly-quoted paths; hold until requalified | `DRIFT` on `secret-dispositions.display-path.1` (exit `4`) |
+
 ## What it does not do
 
 - It does not gate any skill. No skill calls it in this release; callers run it
@@ -511,7 +542,8 @@ and the test-gap routing value.
 | Fix-First anchors | `959c8a6a4fdafabf1186e407b76082b7f07e9f24` | 1.91.327.0 |
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Pregate-narrowing anchors | `0d6cc1be56136706854e40dccf417e008e5c69ab` | 1.103.0.0 |
-| Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
+| Secret-finding location anchors | `f7402213a04d720eed5c50557c0ba528a69af4bd` | 1.103.1.0 |
+| Secret-finding display-path anchor | `f7402213a04d720eed5c50557c0ba528a69af4bd` | 1.103.1.0 |
 | Delegation anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Fold anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Overlap anchors | `b3323f47b8cb6ec074bc755d3b108983a816007a` | 1.102.2.0 |
@@ -521,9 +553,10 @@ and the test-gap routing value.
 The pregate-narrowing registry anchor now expects `policyFloorCheck`, a
 preflight check present in gstack 1.103.0.0. If the installed registry lacks
 that entry, `/review-and-prep` uses ordinary pregate selection after an
-accepted external pass. On gstack 1.103.0.0, the separate
-`secret-dispositions.location.1` anchor still reports drift because the
-upstream location template now formats the path with `displayPath`.
+accepted external pass. On gstack 1.103.1.0, both
+`secret-dispositions.location.1` (`displayPath(f.file)` in `secrets.ts`) and
+`secret-dispositions.display-path.1` (`displayPath()` in `allowlist.ts`) are
+qualified and report `OK`.
 
 ## Measured startup profile
 
