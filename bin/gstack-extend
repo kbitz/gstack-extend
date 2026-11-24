@@ -946,13 +946,15 @@ EOF
   else
     # A fresh path has no documents or history. Mint before scaffolding so a
     # launcher failure cannot leave a partially initialized project.
-    local id_root="$target_abs" empty_root="" mint_status=0
+    local id_root="$target_abs" mint_dir="$target_abs" empty_root="" mint_status=0
     if [ ! -d "$id_root" ]; then
       empty_root=$(mktemp -d "${TMPDIR:-/tmp}/gstack-init-id.XXXXXXXX") || return 1
       id_root="$empty_root"
+      mint_dir="${target_abs%/*}"
+      mint_dir="${mint_dir:-/}"
     fi
-    init_todo_id=$(with_audit_bun "$id_root" "$BUN_PREREQ_RAW_PATH" "$REPO_ROOT/bin/roadmap-id" mint "$id_root") || mint_status=$?
-    if [ -n "$empty_root" ]; then rmdir -- "$empty_root" || return 1; fi
+    init_todo_id=$(with_audit_bun "$mint_dir" "$BUN_PREREQ_RAW_PATH" "$REPO_ROOT/bin/roadmap-id" mint "$id_root") || mint_status=$?
+    if [ -n "$empty_root" ]; then rm -r -- "$empty_root" || return 1; fi
     if [ "$mint_status" != "0" ] || ! [[ "$init_todo_id" =~ ^wi-[0-9a-f]{6,8}$ ]]; then
       echo "gstack-extend init: could not mint the starter work-item ID" >&2
       return 1
