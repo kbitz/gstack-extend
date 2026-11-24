@@ -543,7 +543,9 @@ describe('scripts/skill-references.ts conservation fixtures (Track 94I)', () => 
     expect(result.errors).toContain('unexpected core edits or read-instruction placement in skills/sample.md');
   });
 
-  test('MOVE_MANIFEST has at least one entry for review-and-prep', () => {
-    expect(MOVE_MANIFEST.some((m) => m.skill === 'review-and-prep')).toBe(true);
+  test('MOVE_MANIFEST has entries for all four slimmed skills', () => {
+    for (const skill of ['review-and-prep', 'roadmap', 'ship-and-land', 'pair-review']) {
+      expect(MOVE_MANIFEST.some((m) => m.skill === skill), `missing MOVE_MANIFEST for ${skill}`).toBe(true);
+    }
   });
 });

@@ -362,16 +362,74 @@ Each probe runs in a scratch repository with no remote, given only scenario inpu
 | PR-7 | `pair-review` | The group is complete with a linked parked bug, and the user chooses Fix now | `conditional-triage-and-queue` | Follows checkpoint, reproduction and verification before asking for the original human retest |
 | PR-8 | `pair-review` | Add Item is the first action after resuming, with co-observable and distinct-Check-ID cases | `conditional-init-plan` | Uses the three-line item shape, merges a co-observable item when IDs allow it, and preserves items with distinct IDs |
 
+### Before / after sizes (PR B)
+
+Original cores are from `ce16f48`. Every slimmed core and reference meets all byte, line, and numbered-output caps (`scripts/skill-references.ts check --base ce16f48` passed with `dropped=0` on all three skills).
+
+| Skill | Before core (B) | After core (B) | Codex rendering (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `roadmap` | 132,635 | 99,823 | 99,711 | 110,592 | 39,311 (5) | 110,778 | 99,823 |
+| `ship-and-land` | 114,290 | 76,513 | 76,361 | 86,016 | 45,985 (8) | 103,471 | 110,271 |
+| `pair-review` | 90,667 | 65,418 | 65,306 | 73,728 | 31,645 (6) | 76,378 | 65,418 |
+
+Conservation check output at `ce16f48`:
+- `CONSERVATION roadmap: ok=true blocks=9 dropped=0 base=132635B core=99823B`
+- `CONSERVATION ship-and-land: ok=true blocks=13 dropped=0 base=114290B core=76513B`
+- `CONSERVATION pair-review: ok=true blocks=14 dropped=0 base=90667B core=65418B`
+
+### Navigation edits in moved text (PR B)
+
+| Skill / Reference | Original direction | Destination |
+|---|---|---|
+| `roadmap` / `delegate-progress-append` | `the rules above` | `the destination rules in **Step 4: PROGRESS.md staleness check**` |
+| `roadmap` / `delegate-progress-append` | `the STOP above` | `the Step 4 destination STOP in **Step 4: PROGRESS.md staleness check**` |
+| `roadmap` / `delegate-progress-append` | `the bootstrap rule above` | `the bootstrap rule in **Step 4: PROGRESS.md staleness check**` |
+| `ship-and-land` / `conditional-workflow-metrics` | `the literal status line below` | `the core metrics status line` |
+| `ship-and-land` / `conditional-release-only` | `Stop and hand back, naming the finding:` | `Stop and hand back using the release-only hand-back template in **Release-only path** in the core, naming the finding.` |
+
+### Pre-merge scratch load checks (PR B)
+
+Five unique nonces (start, 25%, 50%, 75%, end) were inserted into scratch copies only; installed copies and real `$HOME` were untouched.
+
+| Exercised combination | Harness version | `roadmap` | `ship-and-land` | `pair-review` |
+|---|---|---|---|---|
+| Claude-format scratch skill | Claude Code 2.1.330 | 5/5 load markers | 5/5 load markers | 5/5 load markers |
+| Codex-format scratch skill | Codex 0.171.0 | 5/5 load markers | 5/5 load markers | 5/5 load markers |
+| Codex-format scratch package | Muse Code 1.4.25 | `valid: true` (99,711 B); 5/5 load markers | `valid: true` (76,361 B); 5/5 load markers | `valid: true` (65,306 B); 5/5 load markers |
+| Disposable-home skill package | Grok 1.0.92 alpha | Listed by `grok inspect` | Listed by `grok inspect` | Listed by `grok inspect` |
+
+### Base-versus-candidate behavior probe results (PR B)
+
+All 15 preregistered probes ran on Claude Code 2.1.330 and Codex 0.171.0 against base `ce16f48` and the PR B candidate in disposable scratch checkouts with no remote; a representative 6-probe subset (`RM-1`, `RM-5`, `SL-2`, `SL-5`, `PR-2`, `PR-5`) also ran on Muse Code 1.4.25. Each row records the sanitized outcome and reference fetched, without raw transcripts.
+
+- **Probe-caught navigation fix (`SL-2`):** On the first Codex run of `SL-2`, the candidate read `conditional-release-only` and refused the code edit with `next: review-and-prep; status: stopped`, but reported that the hand-back template's opening line was omitted from the reference (the template stayed in core while the moved text still ended with `Stop and hand back, naming the finding:`). Adding the navigation edit pointing to **Release-only path** in the core resolved the gap; the rerun on both Claude Code and Codex matched base parity and printed the exact hand-back opening line.
+
+| Probe ID | Skill | Claude Code 2.1.330 (base vs candidate) | Codex 0.171.0 (base vs candidate) | Muse Code 1.4.25 (subset) |
+|---|---|---|---|---|
+| RM-1 | `roadmap` | Parity: fetched `conditional-candidate-validation` (`REFERENCE_END` verified); refused Hold, kept active/archive unchanged, required full regeneration | Parity: fetched `conditional-candidate-validation` (`REFERENCE_END` verified); refused Hold, kept active/archive unchanged, required full regeneration | Pass: fetched `conditional-candidate-validation` (`REFERENCE_END` verified); refused Hold, kept active/archive unchanged, required full regeneration |
+| RM-2 | `roadmap` | Parity: fetched `conditional-deferred-migration` (`REFERENCE_END` verified); classified `needs owner trigger`, left unchanged, cited `formatFutureIndex` check | Parity: fetched `conditional-deferred-migration` (`REFERENCE_END` verified); classified `needs owner trigger`, left unchanged, cited `parseRoadmap`/`formatFutureIndex` | — |
+| RM-3 | `roadmap` | Parity: fetched `delegate-progress-append` (`REFERENCE_END` verified); resolved destination outside Acceptance, saved baseline before delegating, ran `diff -U0` parent check | Parity: fetched `delegate-progress-append` (`REFERENCE_END` verified); resolved destination outside Acceptance, saved baseline before delegating, ran `diff -U0` parent check | — |
+| RM-4 | `roadmap` | Parity: fetched `conditional-layout-apply` (`REFERENCE_END` verified); halted with zero writes, `A) Apply` never authorizes external targets, printed refusal | Parity: fetched `conditional-layout-apply` (`REFERENCE_END` verified); halted with zero writes, `A) Apply` never authorizes external targets, printed refusal | — |
+| RM-5 | `roadmap` | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-layout-apply` verbatim; stopped blocked with zero writes | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-layout-apply` verbatim; stopped blocked with zero writes | Pass: observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-layout-apply` verbatim; stopped blocked |
+| SL-1 | `ship-and-land` | Pass (candidate-only): observed exit 1 `SKILL_REFERENCE_MISSING` for optional `conditional-workflow-metrics`; set `GX_CAPTURE=0`, recorded `capture=partial (reference-unavailable)` and continued to Step 1 | Pass (candidate-only): observed exit 1 `SKILL_REFERENCE_MISSING` for optional `conditional-workflow-metrics`; set `GX_CAPTURE=0`, recorded `capture=partial (reference-unavailable)` and continued to Step 1 | — |
+| SL-2 | `ship-and-land` | Parity: fetched `conditional-release-only` (`REFERENCE_END` verified); refused code edit, emitted exact hand-back opening line, stage tokens `next: review-and-prep; status: stopped` | Parity (after navigation-edit rerun): fetched `conditional-release-only` (`REFERENCE_END` verified); refused code edit, emitted exact hand-back opening line, stage tokens `next: review-and-prep; status: stopped` | Pass: fetched `conditional-release-only` (`REFERENCE_END` verified); refused code edit, emitted exact hand-back opening line and `next: review-and-prep; status: stopped` |
+| SL-3 | `ship-and-land` | Parity: fetched `conditional-docs-profile` (`REFERENCE_END` verified); required claims + Documentation audit + plan/scope; ran required test command locally once | Parity: fetched `conditional-docs-profile` (`REFERENCE_END` verified); required claims + Documentation audit + plan/scope; ran required test command locally once | — |
+| SL-4 | `ship-and-land` | Parity: fetched `conditional-land-adapters` (`REFERENCE_END` verified); did not write `land-deploy-confirmed`, recorded exact `FIRST_RUN` note, stopped at merge gate | Parity: fetched `conditional-land-adapters` (`REFERENCE_END` verified); did not write `land-deploy-confirmed`, recorded exact `FIRST_RUN` note, stopped at merge gate | — |
+| SL-5 | `ship-and-land` | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-release-only` verbatim; stopped before any ship stage | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-release-only` verbatim; stopped before any ship stage | Pass: observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-release-only` verbatim; stopped |
+| PR-1 | `pair-review` | Parity: fetched `conditional-init-plan` (`REFERENCE_END` verified); used action/PASS/FAIL three-line shape, merged simultaneous toggles, placed destructive item last | Parity: fetched `conditional-init-plan` (`REFERENCE_END` verified); used action/PASS/FAIL three-line shape, merged simultaneous toggles, placed destructive item last | — |
+| PR-2 | `pair-review` | Parity: fetched `conditional-fix-flow` (`REFERENCE_END` verified); appended `agent did not reproduce`, kept `Status: FAILED`, linked parked bug, did not fix | Parity: fetched `conditional-fix-flow` (`REFERENCE_END` verified); appended `agent did not reproduce`, kept `Status: FAILED`, linked parked bug, did not fix | Pass: fetched `conditional-fix-flow` (`REFERENCE_END` verified); appended `agent did not reproduce`, kept `Status: FAILED`, linked parked bug, did not fix |
+| PR-3 | `pair-review` | Parity: fetched `resume-session` (`REFERENCE_END` verified); rendered dashboard, offered Continue/Start fresh, entered Phase 2 recovery | Parity: fetched `resume-session` (`REFERENCE_END` verified); rendered dashboard, offered Continue/Start fresh, entered Phase 2 recovery | — |
+| PR-4 | `pair-review` | Parity: fetched `conditional-completion-routing` (`REFERENCE_END` verified); emitted H-C `Run /review-and-prep resume` fence, omitted `/ship`, set `next: review-and-prep` | Parity: fetched `conditional-completion-routing` (`REFERENCE_END` verified); emitted H-C `Run /review-and-prep resume` fence, omitted `/ship`, set `next: review-and-prep` | — |
+| PR-5 | `pair-review` | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass: observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped with blocked stage line and `--outcome error` |
+
 ## Open verification
 
-- `eval: not run (no spend authorized by docs/SPEC.md)`. The table records the
+- `eval: not run (no spend authorized by docs/SPEC.md)`. The tables record
   subscription-backed scratch probes. Full-workflow parity and measured context
   savings require recorded runs.
 - After merge, run the installed-copy load checks and observe the first real
-  by-hand run on each available harness, using the plan's acceptance rows.
+  by-hand run on each available harness, using the plan's acceptance rows, for
+  `/review-and-prep`, `/roadmap`, `/ship-and-land`, and `/pair-review`.
   A full measured by-hand read sequence remains open.
 - Tracks 96A and 97A must widen their `_touches` to the relevant
   `skills/references/review-and-prep/*.md` files when changing moved sections.
-- Track 94I PR B starts from a fresh base after PR A merges. Its scope is
-  slimming `skills/roadmap.md`, `skills/ship-and-land.md`, and
-  `skills/pair-review.md` with their own budgets and verification.

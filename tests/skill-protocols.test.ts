@@ -1585,8 +1585,8 @@ describe('Track 24A workflow metrics drift-locks', () => {
       'Greptile and new feedback', '3. Execute ship and verify its final changes', '4. Land and verify'],
   };
   const metricsBodyOf = (skill: string) =>
-    skill === 'review-and-prep'
-      ? referenceText('review-and-prep', 'conditional-workflow-metrics')
+    skill === 'review-and-prep' || skill === 'ship-and-land'
+      ? referenceText(skill, 'conditional-workflow-metrics')
       : readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
   for (const [skill, anchors] of Object.entries(wrappers)) {
     test(`${skill} carries metrics outside SHARED with every anchor and gate guard`, () => {
@@ -1657,7 +1657,7 @@ describe('Track 24A workflow metrics drift-locks', () => {
   const spanDocs = DOCS.slice(DOCS.indexOf('<a id="workflow-metrics-span"></a>'), DOCS.indexOf('### Diagnostic reasons'));
   const strip = (text: string) => text.replace(/`/g, '').trim();
   const metricsOf = (skill: string) => {
-    if (skill === 'review-and-prep') return referenceText('review-and-prep', 'conditional-workflow-metrics');
+    if (skill === 'review-and-prep' || skill === 'ship-and-land') return referenceText(skill, 'conditional-workflow-metrics');
     const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
     const at = content.indexOf('### Workflow metrics (optional, local)');
     return content.slice(at, content.indexOf('<!-- SHARED:telemetry-finish -->'));

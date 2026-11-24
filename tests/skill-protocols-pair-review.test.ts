@@ -32,6 +32,7 @@ import {
 } from './helpers/extend-root.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import {
+  referenceText,
   skillSection,
   flatProse,
   type Clause,
@@ -214,7 +215,7 @@ describe('pair-review Track 74A: fix reproduction and verification before retest
   const content = readFileSync(file, 'utf8');
 
   test('On FIX NOW orders reproduce, fix commit, verify, and retest prompt', () => {
-    const fixNow = skillSection(content, '### On FIX NOW');
+    const fixNow = referenceText('pair-review', 'conditional-fix-flow');
     const reproIdx = fixNow.indexOf('**Reproduce first:**');
     const commitIdx = fixNow.indexOf('git commit -m "fix: <description> (pair-review item <N>)"');
     const verifyIdx = fixNow.indexOf('**Verify before any retest:**');
@@ -226,7 +227,7 @@ describe('pair-review Track 74A: fix reproduction and verification before retest
   });
 
   test('failed results stay on record in Attempts and unobservable failures park', () => {
-    const fixNow = flatProse(skillSection(content, '### On FIX NOW'));
+    const fixNow = flatProse(referenceText('pair-review', 'conditional-fix-flow'));
     expect(fixNow).toContain(
       'A failed result is never re-marked passed. Keep it, its evidence and its build in `Attempts:`. Only a new human retest of the verified fix can pass the item, recorded beside the failure, never in its place.',
     );
@@ -239,14 +240,15 @@ describe('pair-review Track 74A: fix reproduction and verification before retest
   });
 
   test('parked-bug Fix now flows reproduce before fixing and verify before asking the user', () => {
-    const groupTriage = flatProse(skillSection(content, '### Group completion triage'));
+    const triageRef = referenceText('pair-review', 'conditional-triage-and-queue');
+    const groupTriage = flatProse(skillSection(triageRef, '## From Group completion triage'));
     expect(groupTriage).toContain(
       'Reproduce the bug per its `Repro:` steps before fixing and record the reproduction in its `parked-bugs.md` entry (a bug that does not reproduce is recorded as not reproduced and is not fixed).',
     );
     expect(groupTriage).toContain(
       "Verify the fix per `Repro:` after the rebuild and record the verification in the bug's `parked-bugs.md` entry; ask the user to verify only a verified fix",
     );
-    const phase25 = flatProse(skillSection(content, '## Phase 2.5: Post-Testing Fix Queue'));
+    const phase25 = flatProse(skillSection(triageRef, '## From Phase 2.5: Post-Testing Fix Queue'));
     expect(phase25).toContain(
       "reproduce per the bug's `Repro:` before fixing (a bug that does not reproduce is recorded as not reproduced and is not fixed)",
     );
@@ -259,6 +261,10 @@ describe('pair-review Track 74A: fix reproduction and verification before retest
 describe('pair-review Track 74A: observation and completion boundaries', () => {
   const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
   const normalized = flatProse(content);
+  const fixRef = flatProse(referenceText('pair-review', 'conditional-fix-flow'));
+  const triageRef = flatProse(referenceText('pair-review', 'conditional-triage-and-queue'));
+  const parkBatchRef = flatProse(referenceText('pair-review', 'conditional-park-and-batch'));
+  const resumeRef = referenceText('pair-review', 'resume-session');
 
   // Value: protects=handoff identity and safe observation/rollup instructions;
   // fails_when=an observation bypasses isolation or loses a check or failed result;
@@ -284,8 +290,8 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(prep).toContain('Clear it only after every listed path is clean');
     expect(prep).toContain('Confirmation with dirty paths keeps the blocker set');
     expect(prep).toContain('These safety rules apply to every agent-driven preparation, reproduction, rebuild and verification');
-    expect(normalized).toContain('Apply the Prepare-the-item safety rules to this observation');
-    expect(normalized).toContain('Apply the Prepare-the-item safety rules throughout this parked-bug flow');
+    expect(fixRef).toContain('Apply the Prepare-the-item safety rules to this observation');
+    expect(triageRef).toContain('Apply the Prepare-the-item safety rules throughout this parked-bug flow');
   });
 
   test('the rendered prepared state attaches current evidence from an owned build', () => {
@@ -298,14 +304,12 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(prep).toContain('A mismatch or uncertain freshness requires a rebuild, never reading credentials to establish reuse');
     expect(prep).toContain('HEAD alone never proves unchanged source');
     expect(prep).toContain('Inspect the recipe destinations before running it; execute only owned local steps');
-    const fix = flatProse(skillSection(content, '### On FIX NOW'));
-    expect(fix).toContain('Refresh `Prepared:` and `Agent evidence:` on the verified build before presenting the retest');
+    expect(fixRef).toContain('Refresh `Prepared:` and `Agent evidence:` on the verified build before presenting the retest');
   });
 
   test('an unobservable failure remains failed and linked to a parked bug, never a passing fix', () => {
-    const fix = flatProse(skillSection(content, '### On FIX NOW'));
-    expect(fix).toContain('Keep `Status: FAILED`, link the item and parked bug in both directions, record the blocked observation in `Attempts:`, and continue to the next UNTESTED item');
-    expect(normalized).toContain('Unavailable observation is not non-reproduction');
+    expect(fixRef).toContain('Keep `Status: FAILED`, link the item and parked bug in both directions, record the blocked observation in `Attempts:`, and continue to the next UNTESTED item');
+    expect(fixRef).toContain('Unavailable observation is not non-reproduction');
     const completion = flatProse(skillSection(content, '### Group completion'));
     expect(completion).toContain('A `Fix:` field alone or a pending human retest never completes an item');
     expect(completion).toContain('A FAILED item with a linked parked bug remains unresolved');
@@ -326,29 +330,27 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
     expect(present).toContain('moving any nonterminal group back to `active_groups`');
     expect(resume).toContain("Present the next item's interrupted-fix and pending-retest recovery before selecting the next untested item");
     expect(normalized).toContain('After every result or retest, recompute `session.yaml` summary counts from each item\'s latest status');
-    expect(content).toContain('1 failed (awaiting retest)');
+    expect(resumeRef).toContain('1 failed (awaiting retest)');
   });
 
   test('declined rebuilds and retests stay parked while unavailable verification never refixes', () => {
     const recovery = flatProse(skillSection(content, '### Present the next item'));
     const errors = flatProse(skillSection(content, '## Error Handling'));
-    const fix = flatProse(skillSection(content, '### On FIX NOW'));
     const skip = flatProse(skillSection(content, '### On SKIP'));
     expect(errors).toContain('If "Skip rebuild, continue testing" is chosen during a fix, keep the item FAILED and link a parked bug with the build-failure reason');
     expect(recovery).toContain('A deliberately parked or deferred fix is not interrupted work; leave it parked until the user selects Fix now');
-    expect(fix).toContain('agent verification unavailable at <build>: <reason>');
-    expect(fix).toContain('unavailability never triggers another fix or counts toward escalation');
-    expect(fix).toContain('confirm the intervening changes leave its failure path and prepared state unchanged');
-    expect(fix).toContain('Record both build identities and the comparison in `Attempts:`');
+    expect(fixRef).toContain('agent verification unavailable at <build>: <reason>');
+    expect(fixRef).toContain('unavailability never triggers another fix or counts toward escalation');
+    expect(fixRef).toContain('confirm the intervening changes leave its failure path and prepared state unchanged');
+    expect(fixRef).toContain('Record both build identities and the comparison in `Attempts:`');
     expect(skip).toContain('On a skipped retest, keep `Status: FAILED`, link a parked bug and record the declined retest in `Attempts:`');
     expect(skip).toContain('For an UNTESTED item, append `SKIPPED at <build> (<time>)`');
   });
 
   test('batch individual results append history and batching offers require shared state', () => {
-    const batch = flatProse(skillSection(content, '### On BATCH'));
-    expect(batch).toContain('Apply the ordinary PASS, FAIL or SKIP recording to each item, including appending each result to `Attempts:`');
-    expect(batch).toContain('No consecutive items share a prepared state — staying in single mode');
-    expect(batch).toContain('offer another batch only when the next consecutive items share one prepared state');
+    expect(parkBatchRef).toContain('Apply the ordinary PASS, FAIL or SKIP recording to each item, including appending each result to `Attempts:`');
+    expect(parkBatchRef).toContain('No consecutive items share a prepared state — staying in single mode');
+    expect(parkBatchRef).toContain('offer another batch only when the next consecutive items share one prepared state');
   });
 });
 
@@ -371,6 +373,12 @@ describe('pair-review Track 74A: observation and completion boundaries', () => {
 describe('pair-review item shape: three-line contract', () => {
   const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
   const normalized = content.replace(/\s+/g, ' ');
+  const initPlanRef = referenceText('pair-review', 'conditional-init-plan');
+  const initPlanRefN = initPlanRef.replace(/\s+/g, ' ');
+  const fixRef = referenceText('pair-review', 'conditional-fix-flow');
+  const fixRefN = fixRef.replace(/\s+/g, ' ');
+  const parkBatchRef = referenceText('pair-review', 'conditional-park-and-batch');
+  const parkBatchRefN = parkBatchRef.replace(/\s+/g, ' ');
 
   test('Pass/Fail/Context fields exist in the item-format spec block', () => {
     expect(content).toContain('- Pass: <observable state that means it worked>');
@@ -391,18 +399,18 @@ describe('pair-review item shape: three-line contract', () => {
   test('FAIL-is-not-negation-of-PASS rule present', () => {
     // Without this, FAIL lines collapse to "not the above", which tells the
     // human nothing about what to watch for.
-    expect(content).toContain('**FAIL is not the negation of PASS.**');
+    expect(initPlanRef).toContain('**FAIL is not the negation of PASS.**');
   });
 
   test('no-background-in-item rule present', () => {
-    expect(content).toContain('**No background in the item.**');
-    expect(normalized).toContain('never rendered in a prompt');
+    expect(initPlanRef).toContain('**No background in the item.**');
+    expect(initPlanRefN).toContain('never rendered in a prompt');
   });
 
   test('unwritable-PASS forcing function present', () => {
     // The rule that converts vague items into either a dropped item or a
     // rewritten one, instead of shipping them and hoping.
-    expect(normalized).toContain(
+    expect(initPlanRefN).toContain(
       'if you cannot write a one-line observable PASS, it is not a manual test item',
     );
   });
@@ -440,20 +448,20 @@ describe('pair-review item shape: three-line contract', () => {
   // reintroduces the muddiness the three-line shape exists to prevent.
 
   test('retest-after-fix prompt renders action + PASS + FAIL', () => {
-    expect(content).toContain(
+    expect(fixRef).toContain(
       "**[Group] [N]/[Total]:** [Action line]\\n\\nPASS: [item's Pass field]\\nFAIL: [item's Fail field]",
     );
-    expect(normalized).toContain(
+    expect(fixRefN).toContain(
       'Do not append an explanation of the fix to this prompt',
     );
   });
 
   test('BATCH prompt renders action + PASS per item, Fail omitted on purpose', () => {
-    expect(content).toContain('[N]. [Action line]\\n    PASS: [Pass field]');
-    expect(content).toContain('_Next up: [N+3]. [Post-batch action line]_');
+    expect(parkBatchRef).toContain('[N]. [Action line]\\n    PASS: [Pass field]');
+    expect(parkBatchRef).toContain('_Next up: [N+3]. [Post-batch action line]_');
     // The omission must stay documented as deliberate, or a future reader
     // "fixes" it by re-adding FAIL and the batch block stops being scannable.
-    expect(normalized).toContain(
+    expect(parkBatchRefN).toContain(
       'Batch mode renders **action + PASS only** — the `Fail:` field is omitted on purpose',
     );
   });
@@ -469,6 +477,8 @@ describe('pair-review item shape: three-line contract', () => {
 describe('pair-review merge gate (Step 3.2)', () => {
   const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
   const normalized = content.replace(/\s+/g, ' ');
+  const initPlanRef = referenceText('pair-review', 'conditional-init-plan');
+  const initPlanRefN = initPlanRef.replace(/\s+/g, ' ');
 
   test('merge step exists and is ordered before Step 3.4 and Step 4', () => {
     const mergeIdx = content.indexOf('### Step 3.2: Merge co-observable items');
@@ -480,22 +490,22 @@ describe('pair-review merge gate (Step 3.2)', () => {
   });
 
   test('merge test names the no-additional-action condition', () => {
-    expect(normalized).toContain(
+    expect(initPlanRefN).toContain(
       'A single user action puts both properties on screen at the same moment',
     );
-    expect(normalized).toContain('no navigation, no click, no scroll, no opening a panel');
+    expect(initPlanRefN).toContain('no navigation, no click, no scroll, no opening a panel');
   });
 
   test('merged-item ceiling is judged (FAIL ambiguity), not counted', () => {
     // Learning [qualitative-judgment-not-numeric-thresholds]: a hard "max 4"
     // encodes a programmatic decision where judgment belongs. The rule must
     // stay framed on whether a FAIL would be ambiguous; the count is a guide.
-    expect(content).toContain('**Ceiling — judged, not counted**');
-    expect(normalized).toContain('Judge the ambiguity, not the count');
+    expect(initPlanRef).toContain('**Ceiling — judged, not counted**');
+    expect(initPlanRefN).toContain('Judge the ambiguity, not the count');
   });
 
   test('inspection checks are excluded as agent checks', () => {
-    expect(normalized).toContain(
+    expect(initPlanRefN).toContain(
       '**Inspection checks are not items.** A property confirmed only by inspecting a cookie, a log line, a DB row or a network request is an agent check (Step 3), never a second item linked to the first.',
     );
   });
@@ -507,7 +517,8 @@ describe('pair-review merge gate (Step 3.2)', () => {
 
 describe('pair-review ordering (Step 3.4)', () => {
   const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
-  const normalized = content.replace(/\s+/g, ' ');
+  const initPlanRef = referenceText('pair-review', 'conditional-init-plan');
+  const initPlanRefN = initPlanRef.replace(/\s+/g, ' ');
 
   test('ordering step exists between merge and Step 4', () => {
     expect(content).toContain('### Step 3.4: Order for one pass through the app');
@@ -517,17 +528,17 @@ describe('pair-review ordering (Step 3.4)', () => {
   });
 
   test('three ordering rules named', () => {
-    expect(content).toContain('**State locality first**');
-    expect(content).toContain('**Risk breaks ties**');
-    expect(content).toContain('**Destructive last**');
+    expect(initPlanRef).toContain('**State locality first**');
+    expect(initPlanRef).toContain('**Risk breaks ties**');
+    expect(initPlanRef).toContain('**Destructive last**');
   });
 
   test('ordering precedes index assignment', () => {
-    expect(normalized).toContain('Item indices are assigned **after** this ordering');
+    expect(initPlanRefN).toContain('Item indices are assigned **after** this ordering');
   });
 
   test('destructive-last takes precedence over risk-first', () => {
-    expect(content).toContain('Rule 3 wins over rule 2.');
+    expect(initPlanRef).toContain('Rule 3 wins over rule 2.');
   });
 });
 
@@ -630,9 +641,11 @@ const PAUSED_CHECK = [
 
 const pairSkill = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
 
+const pairCompletionRef = referenceText('pair-review', 'conditional-completion-routing');
+
 const pairNext = skillSection(skillSection(pairSkill, '## Phase 4: Completion'), '### Step 3: Offer next steps');
 
-const pausedFence = extractFences(pairNext).find(f => f.body.includes('PR_CLASS=lookup-failure'))!.body.trimEnd();
+const pausedFence = extractFences(pairCompletionRef).find(f => f.body.includes('PR_CLASS=lookup-failure'))!.body.trimEnd();
 
 const pauseProgram = /--jq '([\s\S]*?)' >/.exec(pausedFence)![1]!;
 
@@ -719,7 +732,8 @@ describe('Track 23D paused-check fence', () => {
   test('the complete read-only fence and jq program are locked literally', () => {
     expect(pausedFence).toBe(PAUSED_CHECK);
     expect(stateBashFences(pairSkill).some(f => f.body.includes('PR_CLASS='))).toBe(false);
-    expect(pairNext.indexOf(pausedFence)).toBeLessThan(pairNext.indexOf('gstack-review-read'));
+    expect(pairCompletionRef.indexOf(pausedFence)).toBeGreaterThan(-1);
+    expect(pairCompletionRef.indexOf(pausedFence)).toBeLessThan(pairCompletionRef.indexOf('gstack-review-read'));
     expect(pauseProgram).not.toContain("'");
     const allow = new Set('split rtrimstr contains startswith map select sort_by last any length explode all ascii_downcase join if then else end and or not true false null def as reduce foreach'.split(' '));
     const code = pauseProgram.replace(/"(?:\\.|[^"\\])*"/g, '')
@@ -949,7 +963,8 @@ const ORDINARY_PAIR_ROUTING = [
 
 describe('Track 23D routing, archive callers and tag clauses', () => {
   test('ordinary no-github/no-pr/no-pause routing is byte-preserved', () => {
-    expect(pairNext.slice(pairNext.indexOf('Before presenting options')).split('\n---\n')[0]!.trimEnd()).toBe(ORDINARY_PAIR_ROUTING);
+    const ordinaryStart = pairCompletionRef.indexOf('Before presenting options');
+    expect(pairCompletionRef.slice(ordinaryStart).split('\n<!-- end of ')[0]!.trimEnd()).toBe(ORDINARY_PAIR_ROUTING);
     expect(flatProse(pairNext)).toContain('**`no-github`, `no-pr`, `no-pause`:** use the ordinary routing below unchanged.'.replaceAll('**', ''));
   }, TIMEOUT_23D);
 
@@ -1017,9 +1032,13 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
   }, TIMEOUT_23D);
 
   const tagRule = '`[`, `]`, `,`, `;`, `|`, a backtick or `$(`';
-  for (const heading of ['### Group completion triage', '## Phase 2.5: Post-Testing Fix Queue']) {
+  const triageRef = referenceText('pair-review', 'conditional-triage-and-queue');
+  for (const [heading, refHeading] of [
+    ['### Group completion triage', '## From Group completion triage'],
+    ['## Phase 2.5: Post-Testing Fix Queue', '## From Phase 2.5: Post-Testing Fix Queue'],
+  ] as const) {
     test(`tag values are safe and self-contained: ${heading}`, () => {
-      const section = skillSection(pairSkill, heading);
+      const section = skillSection(triageRef, refHeading);
       expect(section).toContain(tagRule);
       expect(flatProse(section)).toContain("Take `group=` and `item=` values from the bug's own parked-bugs.md `Noticed during:` field.");
       expect(flatProse(section)).toContain('Tags carry no `files=` key; file paths stay in the entry body.');
@@ -1036,7 +1055,7 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
     expect(pairSkill).not.toContain('docs/source-tag-contract.md');
     expect(flatProse(pairSkill)).not.toContain('lets /roadmap route the bug back to the Group');
     expect(flatProse(pairSkill)).not.toContain('route to PRIMARY in-flight');
-    expect(flatProse(pairSkill)).toContain('`group=` names the test group that surfaced the bug; `pre-test` records that it was parked before testing.');
+    expect(flatProse(triageRef)).toContain('`group=` names the test group that surfaced the bug; `pre-test` records that it was parked before testing.');
   }, TIMEOUT_23D);
 });
 
