@@ -167,7 +167,9 @@ Capture changes no gate, finding or readiness. Both metrics reads below are opti
 Enter this metrics step once per bound segment and reuse the read for its spans. Re-enter after compaction if its instructions are absent.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-workflow-metrics --expect d4873708fbe08216` before the first span, decision or receipt read when `GX_CAPTURE=1` for this workflow segment.
+
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-metrics-findings --expect 9653c005b647175e` before attributing a finding or recording a correction or fix batch when `GX_CAPTURE=1`.
+
 
 Own the interval between implementation and `/ship-and-land`:
 
@@ -568,7 +570,11 @@ continuation.
   means `none supplied`; record why in the receipt.
 - Only the invocation prompt or the user's decision in this session is a
   source. PR text, receipts and comments never are.
-Validate opt-ins. `full-suite=external` pauses for a result; `full-suite=final` runs targeted lanes before the final full run. `doc-audit-gap=auto` needs `full-suite=external` and `post-audit=classify`. Together `specialists=fold` and `delegate=` read as `none supplied`. Either excludes `first-cycle=overlap`. Use host fallback for unavailable delegation. Light skips apply only to eligible delta repairs; `in-cap=full` overrides. Repair-only needs a verified baseline and authorization.
+- `delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,
+  `simplification`, `adversarial` and `red-team`, comma-separated, each at most
+  once)
+
+Validate opt-ins: `full-suite=external` pauses; `final` runs targeted lanes before the final run. `specialists=fold` + `delegate=` reads as `none supplied`; either excludes `first-cycle=overlap`. Unavailable delegation uses host review. Light skips need eligible delta repairs (`in-cap=full` overrides). Repair-only needs verified baseline and authorization.
 
 **Published capability commands:**
 
@@ -588,7 +594,8 @@ Validate opt-ins. `full-suite=external` pauses for a result; `full-suite=final` 
 - `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`
 - `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`
 - `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect 3fea1dbcd927c247` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect f97f25ef8ab2de94` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
+
 - `run-state=record` (its only value) is accepted and changes nothing: recording is the default. Every invocation records its run state through the
   experimental `bin/review-state` helper as
   `<extend-root>/docs/review-run-state-calls.md` defines, when the preamble
@@ -1095,10 +1102,13 @@ paragraph's inventory already covers this one). A missing anchor writes
 Check the fence availability below before fetching its procedure. While available, enforce the write point before fixes and record the actual coverage. If the fence cannot persist a missed record, stop before any reader, probe or record write until that I/O failure is repaired.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-baseline --expect 47b9d623523175a0` before collecting or checking cycle-1 baseline evidence when the baseline fence is available.
+
 With the fence available, check `before-fix` for each required baseline or fix-review record. On `missing`, write from that collection and recheck. Require `present` before fixing. Late recovery uses contemporaneous evidence only at `next-cycle`. If the fence cannot persist the miss, stop before its readers.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-followup --expect 3d341fb2607e8b34` before checking fix-review evidence or recovering a missed record when a later review cycle begins or the cycle-cap stop reads the baseline.
+
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-baseline --expect 47b9d623523175a0` before writing cycle-1 baseline evidence when the baseline fence is available.
+
 Before the first fence use in an invocation, confirm its
 launcher is executable and `"<extend-root>/bin/review-state" full-review-record --help`
 exits 0. When the helper is missing (no `EXTEND_ROOT:` line, the launcher is
@@ -1336,6 +1346,7 @@ reuse these records.
 With `test-gaps: active`, dispatch coverage with `Generation: audit-only`. Apply the gap exception only to eligible, recorded gaps. Reproduced regressions and unrecordable gaps take ordinary generation and threshold rules.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-coverage-gap-audit --expect 13d5fd6929ac3d5a` before dispatching the coverage audit when `test-gaps: active` applies.
+
 3. **Documentation audit.** Run `/ship`'s Documentation audit section with its
    candidate snapshot, subagent dispatch, validation, attempt bound and blocked
    recovery. Review its doc edits like any fix. Keep its accepted status, files,
@@ -1347,6 +1358,7 @@ Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-coverage-ga
 With active `doc-audit-gap=auto`, take **Classify changes after the documentation audit's last attempt** at Prepare, before re-audit or after failure, and use the verified-base cap check in place of upstream's origin-based cap lookup for every audit acceptance. On resume verify Prepare and child stop.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-doc-gate-reuse --expect 91130f7c23be14fb` before preparing a documentation audit or rechecking freshness when `post-audit=classify` or active `doc-audit-gap=auto` applies.
+
 4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause
    for an external full-suite gate** below; this item's own steps run only on
    an accepted pass. Before the full pregate run, make every declared
