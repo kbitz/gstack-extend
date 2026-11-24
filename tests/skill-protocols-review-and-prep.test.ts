@@ -1364,9 +1364,10 @@ describe('ship-and-land drift-locks', () => {
   test('consumes the marker and procedures review-and-prep emits', () => {
     expect(prep).toContain(MARKER_RECEIPT);
     expect(content).toContain(MARKER_RECEIPT);
+    const greptileRef = referenceText('ship-and-land', 'conditional-greptile-feedback').replace(/\s+/g, ' ');
     for (const heading of ['## 4. Trigger once and await Greptile', '## 5. Triage, fix, and verify locally']) {
       expect(prep).toContain(heading);
-      expect(normalized).toContain(`"${heading.replace(/^##\s+\d+\.\s+/, '')}"`);
+      expect(greptileRef).toContain(`"${heading.replace(/^##\s+\d+\.\s+/, '')}"`);
     }
     expect(content).toContain('`/review-and-prep resume`');
     expect(content).toContain('`## Ship and land`');
