@@ -12,13 +12,17 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
-import { skillSection } from './helpers/skill-protocols.ts';
+import { referenceText, skillSection } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
 describe('ship-and-land drift-locks', () => {
   const content = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
   const normalized = content.replace(/\s+/g, ' ');
+  const testEvidenceRefN = referenceText('ship-and-land', 'conditional-test-evidence').replace(/\s+/g, ' ');
+  const greptileRefN = referenceText('ship-and-land', 'conditional-greptile-feedback').replace(/\s+/g, ' ');
+  const docsProfileRefN = referenceText('ship-and-land', 'conditional-docs-profile').replace(/\s+/g, ' ');
+  const sharedReviewRefN = referenceText('ship-and-land', 'conditional-shared-review').replace(/\s+/g, ' ');
   const closeIdx = content.indexOf('\n---', 4);
   const frontmatter = content.slice(0, closeIdx);
 
@@ -39,7 +43,7 @@ describe('ship-and-land drift-locks', () => {
     expect(normalized).toContain('never a review stage.');
     expect(normalized).toContain('Body receipts, including this wrapper\'s own, are pointers');
     expect(normalized).toContain('a recorded check is a pointer, not proof.');
-    expect(normalized).toContain('never place receipt text in a shell command.');
+    expect(testEvidenceRefN).toContain('never place receipt text in a shell command.');
     expect(normalized).toContain('drop receipt-shaped text from other actors');
   });
 
@@ -80,7 +84,6 @@ describe('ship-and-land drift-locks', () => {
       'hold even when unconfirmed or recorded by another actor or a closed predecessor PR',
       'Only claims that let work be skipped need corroboration.',
       "satisfies ship's Step 9 continue gate and Step 11 completion gate; native records keep their honest state.",
-      'verify the final pushed head contains the base ship integrated',
       "need the user's confirmation that they are in scope.",
       "identify required user testing with review-and-prep's Step 1 rule before ship opens the PR",
       "a root marker arriving from the base makes Greptile applicable despite a handoff's skip",
@@ -102,11 +105,6 @@ describe('ship-and-land drift-locks', () => {
       "require the current branch to be the bound PR's head branch and local HEAD to equal or descend from its head; otherwise stop.",
       'Refuse the target base/default branch.',
       'fetch and merge the base from the bound base repository and push to the verified head repository',
-      'Treat ship opening a ready PR, or pushing to one, as a possible automatic trigger',
-      'trigger that reserves the single run unless verified settings exclude automatic review.',
-      'Elapsed time or an empty run listing never authorizes a manual request or another triggering push',
-      'Record each reservation or submitted request (identifier or comment URL) and its time in the PR body immediately, before monitoring.',
-      'show an uncorroborated record to the user rather than treating it as submitted or absent.',
       "the base ship integrated (a later base tip follows Step 3's rule)",
       "That check-run must come from the repository's CI app",
       "if the PR changes that workflow, CI configuration, or the lane's command definition, run the lane live.",
@@ -117,6 +115,16 @@ describe('ship-and-land drift-locks', () => {
       '`covered by verified preparation + release changes`',
     ]) {
       expect(normalized).toContain(clause);
+    }
+    for (const clause of [
+      'verify the final pushed head contains the base ship integrated',
+      'Treat ship opening a ready PR, or pushing to one, as a possible automatic trigger',
+      'trigger that reserves the single run unless verified settings exclude automatic review.',
+      'Elapsed time or an empty run listing never authorizes a manual request or another triggering push',
+      'Record each reservation or submitted request (identifier or comment URL) and its time in the PR body immediately, before monitoring.',
+      'show an uncorroborated record to the user rather than treating it as submitted or absent.',
+    ]) {
+      expect(greptileRefN).toContain(clause);
     }
   });
 
@@ -134,7 +142,12 @@ describe('ship-and-land drift-locks', () => {
   test('Greptile stays once per PR and manual testing cannot be bypassed', () => {
     expect(normalized).toContain('This wrapper never requests another run or resets a timeout.');
     expect(normalized).toContain('Never make a ready PR draft to trigger review.');
+    expect(normalized).toContain('Before every push, check applicable automatic triggers against the one-run allowance.');
+    const pushChecks = content.split('### Commit without co-author trailers\n')[1]!.split('## 4. Land and verify')[0]!;
+    expect(pushChecks).toMatch(/--ref conditional-greptile-feedback --expect [0-9a-f]{16}` before checking automatic review settings for each push when Greptile applies\./);
     expect(normalized).toContain('If a push would start a second run, stop before it and ask the user');
+    expect(normalized).toContain('hold landing until its one review completed with findings resolved');
+    expect(normalized).toContain('including when Step 2 reused every review');
     expect(normalized).toContain('Do not use fallback ship reviews to bypass pending user testing or scope decisions.');
     expect(normalized).toContain('never inherits another PR\'s receipts or Greptile status.');
   });
@@ -202,17 +215,19 @@ describe('ship-and-land drift-locks', () => {
       'active HTML/SVG/MDX content, agent instructions, skills and prompts are behavioral even in Markdown or a docs directory.',
       'Changes to the classification/review policy itself use `FULL`.',
       'If a recheck moves `DOCS` to `FULL`, rows that were N/A only under `DOCS` become RUN for the behavioral delta',
-      "The claims pass and documentation audit remain required with a marked handoff or `--reviewed`: preparation's code review does not fact-check prose",
-      'Missing required output is incomplete coverage, never a clean pass.',
       "DOCS runs/reuses this invocation's single claims pass",
     ]) {
       expect(normalized).toContain(clause);
     }
+    expect(docsProfileRefN).toContain('Missing required output is incomplete coverage, never a clean pass.');
+    expect(docsProfileRefN).toContain(
+      "The claims pass and documentation audit remain required with a marked handoff or `--reviewed`: preparation's code review does not fact-check prose",
+    );
   });
 
   test('DOCS test policy still requires authenticated full-suite coverage', () => {
     for (const clause of [
-      "let the configured full-suite CI lane be the full test gate; its check-run must meet the test gate's requirements above.",
+      'let the configured full-suite CI lane be the full test gate; its check-run must meet the requirements under **Test evidence** in the core.',
       'an empty required-check list, absent CI, a docs path filter that skips the suite, or a selected-test job is not full-suite coverage.',
       "run the repository's required test command locally once; do not assume CI will supply it.",
       'blocks landing until it passes on the final head; report it as pending, never passed.',
@@ -220,7 +235,7 @@ describe('ship-and-land drift-locks', () => {
       'A passing local run then satisfies this gate; report the CI lane as still pending.',
       'do not use an extension allow-list as proof.',
     ]) {
-      expect(normalized).toContain(clause);
+      expect(docsProfileRefN).toContain(clause);
     }
   });
 
@@ -255,7 +270,7 @@ describe('ship-and-land drift-locks', () => {
       'Do not retry merely to get formatting, and do not call prose a clean structured result.',
       'a structured/P1 gate the user or project instructions explicitly require blocks until repaired or explicitly waived by the user.',
     ]) {
-      expect(normalized).toContain(clause);
+      expect(sharedReviewRefN).toContain(clause);
     }
   });
 
@@ -277,6 +292,10 @@ describe('release-only ship path', () => {
   const shipN = ship.replace(/\s+/g, ' ');
   const releaseOnly = skillSection(ship, '### Release-only path');
   const releaseOnlyN = releaseOnly.replace(/\s+/g, ' ');
+  const releaseOnlyRef = referenceText('ship-and-land', 'conditional-release-only');
+  const releaseOnlyRefN = releaseOnlyRef.replace(/\s+/g, ' ');
+  const landAdaptersRef = referenceText('ship-and-land', 'conditional-land-adapters');
+  const landAdaptersRefN = landAdaptersRef.replace(/\s+/g, ' ');
 
   test('the path applies only to a bound, unchanged FULL head and otherwise leaves today\'s path alone', () => {
     for (const clause of [
@@ -285,15 +304,17 @@ describe('release-only ship path', () => {
       'its prepared HEAD equals the bound PR head and local HEAD: no commit follows it and no intended work is uncommitted.',
       "The fetched base tip is the handoff's reviewed base, so ship's base merge changes nothing.",
       'Otherwise continue with the rest of this file unchanged.',
-      '| Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |',
     ]) expect(releaseOnlyN).toContain(clause);
+    expect(releaseOnlyRefN).toContain('| Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |');
   });
 
   test('ship runs no suite or audit again and changes only release metadata', () => {
     for (const clause of [
-      '| Run tests / Eval Suites (5–6) | No suite runs.',
       "Every required test lane has FRESH ledger evidence under the test gate below, and required evals have reusable recorded results for the prepared tree.",
       "Preparation's full pregate record matches its recorded SHA-256 and policy source, and `gstack-pregate verify --out <that copy>` passes before any release write, or the **Reviewed secret findings** evaluator below satisfies the wrapper gate for that current full record, including cleared requires-remote obligations.",
+    ]) expect(releaseOnlyN).toContain(clause);
+    for (const clause of [
+      '| Run tests / Eval Suites (5–6) | No suite runs.',
       "Missing evidence selects the existing FULL path before release writes.",
       "| Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |",
       '| TODOs (14) | Edit nothing.',
@@ -305,7 +326,7 @@ describe('release-only ship path', () => {
       'pass `--allow-paths` naming only the release-metadata files this run changed.',
       "Before Step 17's push, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree with preparation's policy source, so publication has a current record.",
       "cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record.",
-    ]) expect(releaseOnlyN).toContain(clause);
+    ]) expect(releaseOnlyRefN).toContain(clause);
     expect(shipN).toContain(
       "Reuse preparation's policy source only while its pin files are unchanged.",
     );
@@ -314,7 +335,7 @@ describe('release-only ship path', () => {
   test('a finding that needs a non-release change hands back instead of being fixed in ship', () => {
     for (const clause of [
       'Settle every reuse decision and check-only run before Step 12, so no release write precedes a finding.',
-      'Ship never edits code, tests or docs on this path. Stop and hand back, naming the finding:',
+      'Ship never edits code, tests or docs on this path. Stop and hand back using the release-only hand-back template in **Release-only path** in the core, naming the finding.',
       'A post-write failure, such as a build, a release check or the final preflight, stops before the push.',
       "verify the intervening commits are only this invocation's unpushed release commits, then use `git reset --keep <prepared HEAD>`.",
       "Check its exit status, HEAD equality and the complete working-tree status before claiming restoration.",
@@ -322,7 +343,9 @@ describe('release-only ship path', () => {
       "This routing also applies to new feedback and non-release findings during later ship or land readiness checks.",
       "use `git restore --source=<prepared HEAD> --staged --worktree -- <owned paths>`.",
       "If ownership is uncertain, preserve the changes and report them.",
-    ]) expect(releaseOnlyN).toContain(clause);
+    ]) expect(releaseOnlyRefN).toContain(clause);
+    expect(releaseOnlyN).toContain('Ship never edits code, tests or docs on this path.');
+    expect(releaseOnlyN).toContain('A non-release finding stops and hands back to `/review-and-prep`');
     const handBack =
       Array.from(releaseOnly.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '').find((b) => b.includes('Finding:')) ?? '';
     const flat = handBack.replace(/\s+/g, ' ');
@@ -355,12 +378,17 @@ describe('release-only ship path', () => {
       "Do not ask land's no-CI, check-exclusion or merge-approval questions: this run cannot act on the answers.",
       'Run telemetry finish (`--outcome success` at the gate, `error` with a blocker), then finish with the readiness report, `stopped at merge gate (caller request)` and, as the last lines before the stage line, the merge decision.',
       'Print it as plain text, not AskUserQuestion: its answer belongs to the next run.',
+    ]) expect(stopN).toContain(clause);
+    for (const clause of [
       'Name the PR, its full head SHA and every state the landing run will ask the user to accept on that head: the CI verdict (`NO_CHECKS`, or each named non-required failing or pending check), an unconfirmed first-run setup, each readiness warning and any deployment the merge triggers.',
       "Ask whether to land it or leave the PR open. To land, give the exact command that starts the landing run: `/ship-and-land <PR URL>`, plus this invocation's verification URL when the user passed one.",
       'Never fill in `--reviewed`: when this invocation accepted it, say to add it only if the user still accepts the prior review for that head.',
       'When this invocation validated a marked handoff, tell them to paste the same handoff again with it.',
       'Say that run rechecks the head, asks for each acceptance and the merge approval, then merges and reports.',
-      'With a blocker, name each blocker and its repair instead of offering to land.',
+      'Leaving the PR open needs no action.',
+    ]) expect(landAdaptersRefN).toContain(clause);
+    expect(stopN).toContain('With a blocker, name each blocker and its repair instead of offering to land.');
+    for (const clause of [
       'The answer is never approval, and nothing merges in this run.',
       'starts the landing run as a new invocation for the same PR and verification URL.',
       'Like the printed command, it carries `--reviewed` only when the reply explicitly accepts the prior review again, and a marked handoff only when the reply pastes it again.',
@@ -368,10 +396,10 @@ describe('release-only ship path', () => {
       'Any other reply asking for more work, such as fixing a blocker, starts a new invocation that keeps the stop request unless the reply asks to land.',
       'Each new invocation runs this skill from Step 1, with its own telemetry start, start time and fresh evidence, and its own acceptance and merge-approval questions on the head it finds.',
       // Value: protects=leaving the PR open is a no-op, both in the decision rule and when the user replies to leave it open; fails_when=the leave-open rule or its reply handling is dropped or gains an action; why_new=only the example's leave-open line was locked, not the rule or a leave-open reply; seam=none; no_claim=agent behavior (static prose lock)
-      'Leaving the PR open needs no action.',
       'A reply that leaves the PR open needs nothing further.',
     ]) expect(stopN).toContain(clause);
     expect(stopN).not.toContain('arguments minus the stop request');
+    expect(landAdaptersRefN).not.toContain('arguments minus the stop request');
     const example = Array.from(stop.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '').find((b) => b.includes('Land it, or leave it open?')) ?? '';
     const lines = example.split('\n');
     expect(lines[0]).toBe('stopped at merge gate (caller request)');
@@ -385,7 +413,7 @@ describe('release-only ship path', () => {
 
   // Value: protects=the receipt and finish line name the path taken, so readiness can tell release-only reuse from a full ship; fails_when=the path clause is dropped from the receipt or the finish line; why_new=the other tests lock gates and recovery, not the path record; seam=none; no_claim=agent behavior (static prose lock)
   test('the receipt and finish line record the path taken', () => {
-    expect(releaseOnlyN).toContain('The receipt records `path: release-only`, each reused record with its source, and every check-only run.');
+    expect(releaseOnlyRefN).toContain('The receipt records `path: release-only`, each reused record with its source, and every check-only run.');
     expect(shipN).toContain('scope hash, profile and path (release-only or why not)');
     expect(shipN).toContain('a brief reused-versus-run summary, the path taken, the wall time from the invocation start to the merge gate');
   });
@@ -393,7 +421,8 @@ describe('release-only ship path', () => {
   describe('co-author trailer check', () => {
     const PLACEHOLDER = '<full SHA: local HEAD bound in Step 1, or the last tip this invocation pushed>';
     const section = skillSection(ship, '### Commit without co-author trailers');
-    const fences = extractFences(section).filter((f) => f.body.includes('TRAILERS:'));
+    const trailerRef = referenceText('ship-and-land', 'conditional-trailer-check');
+    const fences = extractFences(trailerRef).filter((f) => f.body.includes('TRAILERS:'));
     const block = fences[0]?.body ?? '';
     const tmp = makeBaseTmp('skill-protocols-trailers-');
     afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -624,10 +653,13 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
   const shipN = ship.replace(/\s+/g, ' ');
   const firstRunN = skillSection(ship, '### First-run setup when stopping at the merge gate').replace(/\s+/g, ' ');
   const noDeployN = skillSection(ship, '### Projects with no deploy target').replace(/\s+/g, ' ');
+  const landAdaptersRef = referenceText('ship-and-land', 'conditional-land-adapters');
+  const landAdaptersRefN = landAdaptersRef.replace(/\s+/g, ' ');
 
   // Value: protects=a --no-land run with no land-deploy-confirmed file reaches the readiness report, records the unconfirmed setup and stops at the merge gate; fails_when=the adapter stops at Step 1.5, reads the dry-run section or drops the record; why_new=the merge-gate test locks only the stop line and wall time; seam=none; no_claim=agent behavior (static prose lock)
   test('a merge-gate stop runs first-run detection read-only and records an unconfirmed setup', () => {
     expect(firstRunN.length).toBeGreaterThan(0);
+    expect(firstRunN).toContain('nothing can merge or deploy on an unconfirmed setup.');
     for (const clause of [
       "run only its detection block, exactly as installed in the discovered copy: the read-only comparison against the `land-deploy-confirmed` fingerprint.",
       '`CONFIRMED`: continue exactly as land directs; this adapter changes nothing.',
@@ -637,8 +669,7 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
       'An unconfirmed setup is not a blocker on this path.',
       "continue through land's CI gate, version-drift check and readiness report to the merge gate",
       'Other blockers keep their installed behavior and are reported at the gate; only the first-run stop is replaced.',
-      'nothing can merge or deploy on an unconfirmed setup.',
-    ]) expect(firstRunN).toContain(clause);
+    ]) expect(landAdaptersRefN).toContain(clause);
     expect(shipN).toContain('When first-run setup is unconfirmed under the merge-gate adapter, record that note in the same receipt update.');
     expect(shipN).toContain('run land-and-deploy with these adapters — Step 1.5 read-only, never confirmed — through its readiness report');
     expect(shipN).toContain('`stopped at merge gate (caller request)`');
@@ -648,18 +679,18 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
   });
 
   test('a failed first-run detection is unknown state, never an unconfirmed setup', () => {
-    expect(firstRunN).toContain('No token, or the detection itself failed: unknown state, not `FIRST_RUN`.');
-    expect(firstRunN).toContain('Never guess a token or read a broken check as unconfirmed setup.');
+    expect(shipN).toContain('No token, or the detection itself failed: unknown state, not `FIRST_RUN`.');
+    expect(shipN).toContain('Never guess a token or read a broken check as unconfirmed setup.');
   });
 
   // Value: protects=a landing run still gets the full first-run confirmation and nothing writes the fingerprint without the user; fails_when=the read-only path leaks into landing or the wrapper gains a fingerprint write; why_new=no earlier lock covers Step 1.5 at all; seam=none; no_claim=agent behavior (static prose lock)
   test('a landing run keeps the full first-run confirmation and the wrapper never writes the fingerprint', () => {
     expect(shipN).toContain("only the user's own answer there writes the `land-deploy-confirmed` fingerprint, and this wrapper never writes it or answers for the user.");
-    expect(firstRunN).toContain('runs the full first-run confirmation before any merge, unchanged.');
-    expect(firstRunN).toContain('This path leaves the fingerprint absent or unchanged.');
-    expect(firstRunN).toContain('Once setup is confirmed, replace any earlier unconfirmed note in the readiness report and receipt with the actual confirmed status.');
+    expect(landAdaptersRefN).toContain('runs the full first-run confirmation before any merge, unchanged.');
+    expect(landAdaptersRefN).toContain('This path leaves the fingerprint absent or unchanged.');
+    expect(landAdaptersRefN).toContain('Once setup is confirmed, replace any earlier unconfirmed note in the readiness report and receipt with the actual confirmed status.');
     expect(shipN).toContain('first-run setup validation (full confirmation on a landing run; read-only only when this invocation stops at the merge gate)');
-    expect(noDeployN).toContain("a landing run on a no-deploy project still runs Step 1.5's full confirmation until the user confirms the recorded setup.");
+    expect(landAdaptersRefN).toContain("a landing run on a no-deploy project still runs Step 1.5's full confirmation until the user confirms the recorded setup.");
     expect(ship).not.toMatch(/echo[^\n]*>[^\n]*land-deploy-confirmed/);
     expect(ship).not.toContain('mkdir -p "$GSTACK_STATE_ROOT"');
   });
@@ -667,8 +698,8 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
   // Value: protects=an all-none Deploy Configuration lands as MERGED — NO DEPLOY NEEDED with no URL, staging or canary question; fails_when=the skip list or verdict drifts, or an observed deploy can be erased; why_new=no earlier lock covers the deploy route; seam=none; no_claim=agent behavior (static prose lock)
   test('a no-deploy project skips the route, staging and canary questions after merge', () => {
     expect(noDeployN.length).toBeGreaterThan(0);
+    expect(noDeployN).toContain("That recorded configuration is the user's explicit no-deploy confirmation.");
     for (const clause of [
-      "That recorded configuration is the user's explicit no-deploy confirmation.",
       'Deployment facts record no deploy target, from that configuration, not "deployment unknown".',
       "skip land's production-route question, the staging offer, the deploy wait and canary verification.",
       'verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`.',
@@ -678,19 +709,18 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
       'Failed or unknown detection stays unknown and follows land\'s installed handling; it cannot authorize `NOT_NEEDED`.',
       'Only after successful detection with no observed or expected deployment and no explicit verification URL',
       'A `none` configuration cannot erase an observed or expected deployment.',
-    ]) expect(noDeployN).toContain(clause);
+    ]) expect(landAdaptersRefN).toContain(clause);
     expect(shipN).toContain("`NO_DEPLOY` is the explicit no-deploy confirmation land's verdicts already accept. Anything else keeps land's steps exactly as installed.");
   });
 
   test('anything short of an all-none configuration keeps land exactly as installed', () => {
-    expect(noDeployN).toContain('every field value is exactly `none` (trimmed, case-insensitive), except `Merge method`, `Project type` and `Pre-merge`, which describe the merge, not a deploy target.');
-    expect(noDeployN).toContain('A missing file or section, a missing `Platform`, an empty field value, or any other value');
-    expect(noDeployN).toContain("prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.");
+    expect(landAdaptersRefN).toContain('every field value is exactly `none` (trimmed, case-insensitive), except `Merge method`, `Project type` and `Pre-merge`, which describe the merge, not a deploy target.');
+    expect(landAdaptersRefN).toContain('A missing file or section, a missing `Platform`, an empty field value, or any other value');
+    expect(landAdaptersRefN).toContain("prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.");
   });
 
   describe('no-deploy classifier', () => {
-    const section = skillSection(ship, '### Projects with no deploy target');
-    const fences = extractFences(section).filter((f) => f.body.includes('NOT_NO_DEPLOY'));
+    const fences = extractFences(landAdaptersRef).filter((f) => f.body.includes('NOT_NO_DEPLOY'));
     const block = fences[0]?.body ?? '';
     const tmp = makeBaseTmp('skill-protocols-no-deploy-');
     afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -768,6 +798,8 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
 
 describe('release-metadata test selection', () => {
   const shipN = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8').replace(/\s+/g, ' ');
+  const testEvidenceRefN = referenceText('ship-and-land', 'conditional-test-evidence').replace(/\s+/g, ' ');
+  const releaseOnlyRefN = referenceText('ship-and-land', 'conditional-release-only').replace(/\s+/g, ' ');
 
   // Value: protects=a release delta reruns only what it selects, and full-suite=final still gets a full final run;
   //   fails_when=the selection paragraph, its full-suite exception, the release-only row pointer or the receipt clause is dropped;
@@ -778,28 +810,35 @@ describe('release-metadata test selection', () => {
       'After the release commit, at Verification Gate (16), run what the release delta selects on the final head under a distinct ledger label, selecting against the prepared head the way the project\'s instructions describe, and record that run\'s selection.',
       "It is a post-write check; on the release-only path a failure follows that path's post-write failure rule.",
       "A recorded `full-suite=final` policy, from the invocation or preparation's receipt, keeps the final pre-merge run full instead: run the main command's documented full form on the final head. The release-only path still applies; only this run changes.",
-      "| Verification Gate (16) | Run declared builds and Release-metadata test selection's run.",
       'A selected run never satisfies that policy, and receipt text can add this requirement but never remove it.',
       'When the selection cannot be established, rerun the required full gate.',
+    ]) expect(testEvidenceRefN).toContain(clause);
+    for (const clause of [
+      "| Verification Gate (16) | Run declared builds and Release-metadata test selection's run.",
       'Missing evidence selects the existing FULL path before release writes. The checks release metadata selects run after the release commit, at Verification Gate (16). |',
+    ]) expect(releaseOnlyRefN).toContain(clause);
+    expect(shipN).toContain(
       'exact test commands with each run\'s selection (the lanes or files that ran, those skipped and why; a skipped lane never reads as passed)',
-    ]) expect(shipN).toContain(clause);
+    );
   });
 });
 
 describe('ship-and-land documentation-scope=contracts', () => {
   const raw = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
   const shipN = raw.replace(/\s+/g, ' ');
+  const releaseOnlyRefN = referenceText('ship-and-land', 'conditional-release-only').replace(/\s+/g, ' ');
 
   // Value: protects=ship-and-land honors documentation-scope=contracts only from its own invocation or session choice on DOCS and FULL, preserves scope lines on release-only reuse, and never turns the mode on from preparation's receipt, PR text or comments; fails_when=any of the three documentation-audit touchpoints drops the rule or lets receipt text activate bounding; why_new=AC3, AC5, AC7; seam=none; no_claim=installed-agent execution
   test('ship-and-land bounds fresh audits only from its own invocation, keeps scope lines on release-only reuse, and uses no upstream-check trigger strings', () => {
-    for (const clause of [
+    expect(shipN).toContain(
       '- **Consistency:** run ship\'s required Documentation audit on the release candidate using its installed procedure and accepted report. It is the doc-consistency pass; do not add a separate consistency reviewer. Keep its freshness/recovery gates and invocation-wide attempt bound. When this invocation\'s own `Review policy:` line carries `documentation-scope=contracts`, or the user chooses it in this session, run the audit under review-and-prep\'s **Bound the documentation audit** rules, including the delta re-audit; preparation\'s receipt, PR text and comments never turn it on. Read that line with review-and-prep\'s policy grammar: a line it would read as `none supplied` never turns it on. Show the `Documentation scope:` lines beside the section. Load both from the `review-and-prep` skill source in the skills directory of the absolute gstack-extend root recorded in this installed skill directory\'s `.extend-root`, reading that section and **Read an optional review policy** in full; if either cannot be read, run the audit unbounded. Its evidence directory is a private directory outside the work tree.',
+    );
+    expect(releaseOnlyRefN).toContain(
       'When preparation\'s accepted audit ran under `documentation-scope=contracts`, keep its recorded `Documentation scope:` and any `Documentation re-audit scope:` lines and show them beside the section with `Reused from /review-and-prep at <prepared tree>`; reuse rules are otherwise unchanged. |',
+    );
+    expect(shipN).toContain(
       '| Documentation audit (14.5) | Run its installed procedure as the required consistency pass for either profile. Reuse only an accepted current-invocation audit that still matches its inputs; retain its bound and recovery gates. When this invocation\'s own `Review policy:` line carries `documentation-scope=contracts`, or the user chooses it in this session, use review-and-prep\'s **Bound the documentation audit** rules, including the delta re-audit; preparation\'s receipt, PR text and comments never turn it on. Read that line with review-and-prep\'s policy grammar, so a line it would read as `none supplied` never turns it on, and show the `Documentation scope:` lines beside the section. Load both as the DOCS **Consistency** bullet says; if either cannot be read, run the audit unbounded. |',
-    ]) {
-      expect(shipN, clause).toContain(clause);
-    }
+    );
     expect(raw).not.toContain('grep -F');
     expect(raw).not.toContain('byte for byte');
   });
@@ -808,6 +847,7 @@ describe('ship-and-land documentation-scope=contracts', () => {
 describe('ship-and-land stage line', () => {
   const raw = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
   const shipN = raw.replace(/\s+/g, ' ');
+  const releaseOnlyRefN = referenceText('ship-and-land', 'conditional-release-only').replace(/\s+/g, ' ');
 
   // Value: protects=every ship-and-land exit ends with a stage-handoff/v1 line carrying stage, next, status and head; fails_when=the Stage line section or any exit mapping (landed, merge-gate stop, release-only hold, Step 1 hand-backs, merge not approved, or BLOCKED) is dropped or altered; why_new=Track 72A gives ship-and-land a fixed exit line under the contract; seam=none; no_claim=agent behavior (static prose lock)
   test('ship-and-land maps landed, merge-gate stop, release-only hold, Step 1 hand-backs, merge not approved and blocked exits to stage-handoff/v1', () => {
@@ -829,7 +869,7 @@ describe('ship-and-land stage line', () => {
     expect(shipN).toContain(
       "Every Step 1 hand-back (draft PR, paused PR with `next: pair-review`, cycle-capped PR, or pending user testing before ship opens a PR) ends with the stage line in Step 4's **Stage line** subsection (`status: stopped`).",
     );
-    expect(shipN).toContain(
+    expect(releaseOnlyRefN).toContain(
       "Print the stage line after the hand-back fence (`next: review-and-prep; status: stopped`, `head` set to the fence's `head:`).",
     );
   });

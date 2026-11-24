@@ -13,7 +13,7 @@ import { computeRenames, formatRenamesTable } from '../src/audit/lib/renames-dif
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
-import { resolverSkillText } from './helpers/skill-protocols.ts';
+import { referenceText, resolverSkillText } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -58,15 +58,15 @@ const BLOCK_LAYOUT_INBOX_BLOCK_REASON = 'inbox content typically wants merge, no
 
 const BLOCK_LAYOUT_IDEMPOTENT_NOTE = 'Idempotent re-run';
 
-const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
+const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string; inLayoutApply?: boolean }> = [
   { block: BLOCK_ROADMAP_PROPOSAL_PATH, label: 'proposal-artifact-path' },
   { block: BLOCK_ROADMAP_PROPOSAL_HELPER_CALL, label: 'proposal-artifact-helper-call' },
   { block: BLOCK_ROADMAP_DISCHARGE_SUMMARY, label: 'drain-discharge-summary' },
   { block: BLOCK_ROADMAP_DISCHARGE_SHA, label: 'drain-discharge-sha' },
   { block: BLOCK_ROADMAP_REDERIVE, label: 'regen-rederive-not-reemit' },
   { block: BLOCK_LAYOUT_SCAFFOLDING_HEADING, label: 'layout-scaffolding-section' },
-  { block: BLOCK_LAYOUT_GIT_REV_PARSE, label: 'layout-git-rev-parse-preflight' },
-  { block: BLOCK_LAYOUT_GIT_LS_FILES, label: 'layout-git-ls-files-tracked-check' },
+  { block: BLOCK_LAYOUT_GIT_REV_PARSE, label: 'layout-git-rev-parse-preflight', inLayoutApply: true },
+  { block: BLOCK_LAYOUT_GIT_LS_FILES, label: 'layout-git-ls-files-tracked-check', inLayoutApply: true },
   { block: BLOCK_LAYOUT_INBOX_BLOCK_REASON, label: 'layout-inbox-block-reason' },
   { block: BLOCK_LAYOUT_IDEMPOTENT_NOTE, label: 'layout-idempotent-re-run' },
 ];
@@ -83,9 +83,11 @@ describe('roadmap-only verbatim blocks', () => {
   } catch {
     return;
   }
-  for (const { block, label } of ROADMAP_VERBATIM_BLOCKS) {
+  const layoutApplyRef = referenceText('roadmap', 'conditional-layout-apply');
+  for (const { block, label, inLayoutApply } of ROADMAP_VERBATIM_BLOCKS) {
     test(`roadmap contains verbatim block: ${label}`, () => {
-      if (!content.includes(block)) {
+      const target = inLayoutApply ? layoutApplyRef : content;
+      if (!target.includes(block)) {
         throw new Error(
           `roadmap drift in '${label}' — propagate canonical text from tests/skill-protocols-roadmap.test.ts`,
         );

@@ -168,6 +168,35 @@ describe('skill size budgets (Track 94I)', () => {
 });
 
 describe('pointer integrity and reference structure (Track 94I)', () => {
+  test('roadmap loads layout preflight both before the approval prompt and before applying', () => {
+    const core = readFileSync(skillPath('roadmap'), 'utf8');
+    const planning = core.split('### Plan presentation (single batch confirm)\n')[1]!.split('### Execution (apply path)')[0]!;
+    const execution = core.split('### Execution (apply path)\n')[1]!.split('### Idempotent re-run')[0]!;
+    expect(parseReadInstructions(planning).map(({ ref }) => ref)).toEqual([
+      'conditional-layout-apply', 'conditional-layout-plan',
+    ]);
+    expect(parseReadInstructions(execution).map(({ ref }) => ref)).toContain('conditional-layout-apply');
+  });
+
+  test('ship-and-land loads the metrics contract before a fresh run begin', () => {
+    const core = readFileSync(skillPath('ship-and-land'), 'utf8');
+    const [read] = parseReadInstructions(core).filter(({ ref }) => ref === 'conditional-workflow-metrics');
+    expect(read?.suffix).toContain('when this invocation retained a telemetry session ID');
+    expect(core.indexOf(read!.line)).toBeLessThan(core.indexOf('- Once, before other metrics:'));
+    expect(core.slice(0, core.indexOf(read!.line))).toContain('capture=partial (reference-unavailable)');
+  });
+
+  test('pair-review fetches the moved procedures at Add Item and interrupted-fix recovery', () => {
+    const core = readFileSync(skillPath('pair-review'), 'utf8');
+    const add = core.split('### On ADD ITEM\n')[1]!.split('### On PARK')[0]!;
+    const recover = core.split('### Present the next item\n')[1]!.split('### On PASS')[0]!;
+    expect(parseReadInstructions(add).map(({ ref }) => ref)).toEqual(['conditional-init-plan']);
+    expect(parseReadInstructions(recover).map(({ ref }) => ref).sort()).toEqual([
+      'conditional-fix-flow', 'conditional-triage-and-queue',
+    ]);
+    expect(core).toContain('If `parked-bugs.md` doesn\'t exist yet, create it with a `# Parked Bugs` header.');
+  });
+
   test('the core binds workflow metrics before its single per-segment reference read', () => {
     const core = readFileSync(skillPath('review-and-prep'), 'utf8');
     const instructions = parseReadInstructions(core).filter(({ ref }) => ref === 'conditional-workflow-metrics');
@@ -543,7 +572,9 @@ describe('scripts/skill-references.ts conservation fixtures (Track 94I)', () => 
     expect(result.errors).toContain('unexpected core edits or read-instruction placement in skills/sample.md');
   });
 
-  test('MOVE_MANIFEST has at least one entry for review-and-prep', () => {
-    expect(MOVE_MANIFEST.some((m) => m.skill === 'review-and-prep')).toBe(true);
+  test('MOVE_MANIFEST has entries for all four slimmed skills', () => {
+    for (const skill of ['review-and-prep', 'roadmap', 'ship-and-land', 'pair-review']) {
+      expect(MOVE_MANIFEST.some((m) => m.skill === skill), `missing MOVE_MANIFEST for ${skill}`).toBe(true);
+    }
   });
 });

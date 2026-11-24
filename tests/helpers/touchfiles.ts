@@ -234,7 +234,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // names, so a skill change selects exactly the suites that read it.
   'tests/skill-protocols-full-review.test.ts': [skill('full-review'), 'bin/lib/session-paths.sh'],
   'tests/skill-protocols-implement.test.ts': [skill('implement')],
-  'tests/skill-protocols-pair-review.test.ts': [skill('pair-review'), 'bin/lib/session-paths.sh'],
+  'tests/skill-protocols-pair-review.test.ts': [skill('pair-review'), skillRefs('pair-review'), 'bin/lib/session-paths.sh'],
   // Reads the docs and setup list that document the skill.
   'tests/skill-protocols-plan-track.test.ts': [
     skill('plan-track'),
@@ -248,7 +248,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/skill-protocols-project-spec.test.ts': [
     skill('project-spec'),
     // The composition locks check that these consumers keep the spec's clauses.
-    skill('roadmap'), skill('implement'), skill('review-and-prep'), skill('ship-and-land'),
+    skill('roadmap'), skillRefs('roadmap'), skill('implement'), skill('review-and-prep'), skill('ship-and-land'),
     'scripts/init-templates/PROGRESS.md.tmpl',
   ],
   'tests/skill-protocols-review-and-prep.test.ts': [
@@ -256,6 +256,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skillRefs('review-and-prep'),
     // Producer-side locks for the ship-and-land handoff read the consumer too.
     skill('ship-and-land'),
+    skillRefs('ship-and-land'),
     'docs/telemetry.md',
     'docs/review-run-state-calls.md',
     // The Resume/D14 lock reads the design doc (tests/skill-protocols-review-and-prep.test.ts:4444).
@@ -264,8 +265,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'CLAUDE.md',
   ],
   // The routing test runs bin/roadmap-route, which sources source-tag.sh.
-  'tests/skill-protocols-roadmap.test.ts': [skill('roadmap'), 'bin/roadmap-route', 'bin/lib/source-tag.sh'],
-  'tests/skill-protocols-ship-and-land.test.ts': [skill('ship-and-land')],
+  'tests/skill-protocols-roadmap.test.ts': [skill('roadmap'), skillRefs('roadmap'), 'bin/roadmap-route', 'bin/lib/source-tag.sh'],
+  'tests/skill-protocols-ship-and-land.test.ts': [skill('ship-and-land'), skillRefs('ship-and-land')],
   'tests/audit-compliance.test.ts': [
     'skills/**',
     'setup',

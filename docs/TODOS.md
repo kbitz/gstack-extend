@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Refuse a missing secondary reference entry heading
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The migration tests cover secondary reference reads in the shipped skills. The generation fixtures do not cover a secondary read whose named core heading has been removed.
+- **Hypothesis (untested):** Apply a manifest with a removed secondary entry heading and check that the command names the missing heading and refuses generation.
+- **Upstream severity:** INFORMATIONAL.
+- **Found in:** `scripts/skill-references.ts`, `applyManifestToSkill`.
+- **Evidence:** The live migration and reference integrity checks pass. The additional-read loop resolves its entry point via the existing heading lookup.
+- **Context:** Track 94I PR B coverage audit at `02bd1eb`. Revisit when a change next touches secondary reference routing.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=setup|bin/gstack-extend|tests/bun-prereq.test.ts] Test gap: Cover additional setup and init refusals
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.

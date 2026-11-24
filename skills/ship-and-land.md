@@ -35,6 +35,15 @@ If the shell cannot run `~/.gstack-extend/bin/preamble` (exit 127 or 126), tell 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
 
+### Reference files and mid-run upgrades
+
+Read conditional instructions from the verified gstack-extend checkout with the named `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command.
+
+- **On step entry.** Run the named command on every entry, even after compaction. Verify the `REFERENCE_END` digest and contiguous numbered lines 1 through `lines=<N>`. If the trailer was elided, get it with `--lines 1-1`, then fetch missing lines with bounded ranges. If verification fails, report `SKILL_REFERENCE_INCOMPLETE` with step, reference, harness and version and take the failure exit.
+- **On failure.** Relay `SKILL_REFERENCE_*` verbatim; for `PREAMBLE_USAGE` or a missing launcher relay the start-command fix. Never use moved instructions from memory. Record only the cause and repository-relative reference path in receipts and PR bodies. Use the core's explicit fallback for optional reads. Otherwise preserve inline holds and finish telemetry with `--outcome error`. Where applicable end with `Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Resume the existing work.
+- **Host subagents.** Fetch each needed reference and start the reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
+- **Mid-run upgrade.** If **Inline upgrade flow** printed `UPGRADE_OK` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.
+
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
 
@@ -110,104 +119,10 @@ and never start a new legacy run to feed metrics. If the ID is unavailable,
 metrics capture is unavailable; continue the workflow. Full contract:
 [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
-Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
-producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
-with one JSON object (`v:1`, `stage:"ship-and-land"`, the retained
-`session_id`, a fresh lowercase UUID `event_id` you keep stable for that
-event) on stdin. Every ID you mint is lowercase and random (below).
-The launcher always exits 0: inspect the JSON envelope's `status` for capture
-state and preserve the wrapped work's own exit status separately. A disabled,
-unavailable, conflicting or unconfirmed capture is capture state only — it
-never changes a reuse decision, a review requirement, Greptile applicability,
-ship/land readiness, merge approval, or any outward action, and never delays
-the fresh checks that precede one. Never rerun completed work to manufacture
-telemetry. For an `unconfirmed` or missing envelope of a `decision`, `pass` or
-`correction`, keep the exact payload and `event_id`, run
-`metrics read --session-id <id> --event-id <event_id>`, and replay that
-identical payload at most once when the read reports the event present or
-safely absent; on conflict/partial/unknown stop and leave capture unknown. A
-`begin` or `end` is never replayed later: the span library reconciles it once
-in its own call (`match` counts it as written; `absent` leaves the boundary
-missing), and no interval is derived from a `decision`, `pass` or `correction`
-timestamp. Never mint a fresh `event_id` for a replay.
+Metrics capture is optional and never changes reuse, review, Greptile, ship/land readiness, or merge approval. If this reference cannot be read, set `GX_CAPTURE=0`, skip metrics wrappers, continue the workflow, and record `Workflow metrics (local, optional): capture=partial (reference-unavailable).` in receipts.
 
-Issue metrics calls one at a time from this session, never as parallel tool
-calls or from subagents: the run lock never waits, so concurrent calls drop
-as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
-nothing further in this invocation and use the literal status line below in
-its receipts. If context compaction loses the retained IDs or a pending
-payload, that capture stays unknown; never guess an ID. When a metrics call
-shares a tool call with other work, capture that work's exit first
-(`rc=$?`), report it, and use it for the step's `outcome`; the launcher's own
-exit is always 0.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-workflow-metrics --expect b04fbb875b2f1ad4` before the workflow metrics run `begin` when this invocation retained a telemetry session ID.
 
-Emit each record at its boundary, never afterward. The rules, the shell
-library and both call forms are in
-[docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics-span):
-
-- Boundary: a step's `begin` goes in the tool call that starts its work, ahead of
-  that work's first command. Its `end` goes in the same call right after the
-  command returns, or in the first tool call after a subagent, background command
-  or external result returns. Work with no command of its own (completion audit,
-  scope reading, triage) gets its `begin` and `end` in short dedicated calls,
-  immediately before the work starts and right after its result is decided. When
-  several voices are dispatched together, their `begin` records go one after
-  another in a single Bash call immediately before the one dispatch message,
-  never inside it. Each voice's `end` goes in the first tool call after that
-  voice's own result arrives; voices whose results arrive together end together,
-  parent-observed. A pass `started` precedes the dispatch of its voices. Each
-  `attempt` and `voice-complete` is emitted as that voice's result is consumed,
-  and `completed` when the round closes. Every phase visit this workflow
-  executes gets a span, except a `tests` lane inside a pregate run. A RUN-decided
-  visit with no span reads unknown by design.
-- Never backfill: never write a `begin` or `end` for a boundary that has already
-  passed or has not happened yet. A missed `begin` leaves only the phase's
-  `decision`; if a step's `begin` was not `recorded`, `replayed` or reconciled,
-  emit no `end` for it. A missed `end` leaves the step open. A wait is ended
-  `paused` only at an actual pause. A command that fails, or hits its own
-  timeout inside the call, ends `failed` in that call; work the user stops ends
-  `cancelled`. If the host kills the tool call so the same-call `end` never runs,
-  the step stays open.
-- Mint IDs at random: mint each new `event_id`, `step_id`, `pass_id` and
-  `attempt_id` from a random generator
-  (`python3 -B -I -c 'import uuid;print(uuid.uuid4())'` or `uuidgen | tr A-Z a-z`) in
-  the tool call that first uses it, and print it for later reference. Never
-  derive an ID from the session ID, a counter, another ID or a typed pattern.
-  Never reuse an ID for a different event or entity: a step keeps its `step_id`
-  across its `begin`, `end` and governing `decision`; a pass and an attempt keep
-  theirs; a replay keeps its `event_id`.
-- Spans use `bin/lib/workflow-span.sh`, resolved once by the call that records
-  the run `begin` (below). Same-call form, for a foreground command; the shell is
-  new every call, so set the retained values first:
-
-  ```bash
-  GX_STAGE='ship-and-land'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1; GX_LIB='<retained library path>'; GX_RUN='<run step_id>'
-  [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
-  gx_span_begin PHASE "$GX_RUN" phase
-  GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
-  gx_span_end "${GX_STEP:-}" "$rc"
-  (exit "$rc")
-  ```
-
-  Cross-call form, for a background command, a subagent return, work with no
-  command of its own or any command that may outlast the host's tool-call
-  timeout (the table marks the long sites): the first call runs the first three
-  lines, `gx_span_begin PHASE "$GX_RUN" phase`, and prints a `SPAN` line, then
-  ends; the first call after the result arrives sets the same first two lines and
-  runs `gx_span_end 'STEP-FROM-THE-SPAN-LINE' "$rc" 'BEGIN-FROM-THE-SPAN-LINE'`.
-  Set `rc` explicitly from the observed completion result in that new shell
-  (0 for success, nonzero for failure); if the result is unknown, leave the span
-  open. An empty or nonnumeric `rc` emits no end. Never use the same-call form under background execution: its `end` would race
-  the run lock and drop. `GX_CAPTURE` is `1` only when the run `begin` was
-  `recorded` or `replayed`, else `0`, and the work still runs with no launcher
-  call. `WORK` is written inline, never through `eval`; it runs in a subshell,
-  so a variable or `cd` it makes does not persist. `gx_span_begin_wait CATEGORY
-  "$GX_RUN"` opens a wait and emits no decision; a fourth argument to
-  `gx_span_end` sets the outcome to `paused` or `cancelled`; `NODECISION=1` skips the
-  decision for a second step in the same phase visit. Quote the `SPAN` lines
-  in later calls; any `begin=`, `end=` or `decision=` value other than
-  `recorded`, `replayed`, `match`, `pending` or `skipped` makes the receipt carry
-  `capture=partial (<reason>)`.
 - Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
   run `step_id` (retain it as `GX_RUN`), `parent_step_id:null`, and `context`
   carrying the candidate HEAD/tree/base you already observed (or null — never run
@@ -226,89 +141,6 @@ library and both call forms are in
   An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
   unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
   or missing-span)` in the receipt and continue the workflow.
-  Once the candidate changes (you first observe it, a base merge, a fix or release commit),
-  every later step `begin` and pass `started` carries a `context` override with
-  the new HEAD/tree/base (the fourth argument of `gx_span_begin`); their ends,
-  attempts and voice records inherit it.
-- One governing `decision` per executed phase visit, recorded under the phase of
-  the work decided about: `gx_span_begin` emits it (`RUN`, reason `required`
-  unless `GX_REASON` names another controlled reason) and shares its `step_id`
-  with the step's `begin`. A reused phase records a `REUSE` decision through the
-  raw `decision` producer with a fresh `step_id` and no interval (a reused review
-  is `local-pass`, reused tests are `tests`; `reuse` labels only the reuse
-  evaluation itself), and trusted or release-only reuse records decisions without
-  new work intervals. A reached-but-inapplicable phase is `N/A` with its
-  controlled reason; unreached phases emit nothing and stay unknown. A `tests`
-  decision made inside a pregate run carries the enclosing `pregate` step's
-  `step_id` (send it with the raw `decision` producer in the call that begins the
-  pregate span, using `$GX_STEP`). Each execution has its own `step_id`; phase
-  names are labels only.
-  Parent review intervals enclose their parallel voice intervals; under parallel
-  dispatch those are parent-observed, not per-voice runtime, and a voice step
-  sets `NODECISION=1`.
-- Any local review actually run here as `pass` records (one round over one
-  candidate; required voices declared, attempts separate, one selected attempt
-  or an explicit policy-authorized `N/A` per voice; findings as allowlisted
-  IDs/severities/dispositions only, never bodies, prompts or command output;
-  an empty array means zero; `model_context` only when supplied, with an
-  out-of-grammar identifier null and `unknown_reason:"unsupported"`; a
-  `finding_id` unique within an attempt, duplicates declared on the finding
-  with `duplicate_of`). A fix batch actually run here is a `kind:"fix"` step,
-  counted separately from passes. Greptile is `scope:"greptile"` with its own
-  count and its once-per-PR rule unchanged; a reused Greptile result is a
-  `REUSE` decision with no new pass and no new request, and metrics never
-  triggers one.
-- Corrections, appended as they happen: `correction_kind:"finding"` with the
-  finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
-  resolution or adjudication changes after its attempt was recorded (a fix
-  lands: `resolution:"fixed"`; a later change to the same finding names the
-  previous correction in `supersedes_event_id`); `retry` or `fallback` with
-  the new `attempt_id` when a voice attempt is retried or replaced; and
-  `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
-  batch closes.
-- Waits as `kind:"wait"` steps (`gx_span_begin_wait`; `human` while a question
-  to the user, such as merge approval, is open; `external-review`, `checks`,
-  `deploy`) only for waits actually performed, each ended `paused` only at an
-  actual pause. Unlabeled time stays unclassified;
-  elapsed wall time is never model/inference time, and every duration is
-  clock-sensitive (`clock_basis=utc-wall`).
-- Receipts: immediately before writing the wrapper receipt and the landing
-  readiness report, run `metrics read --session-id <id>` and include that
-  snapshot's `receipt_text` (at most 2 KiB), or, when the read is
-  unavailable, the literal line
-  `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
-  with the actual status. An open run reads as in progress; that is expected.
-  If any metrics call after the run `begin` ended without `recorded` or
-  `replayed` and was not reconciled, also add the literal line
-  `Workflow metrics (local, optional): capture=partial (<reason>).` beside
-  the snapshot, since the read cannot see a dropped call.
-  The metrics line precedes the readiness report's merge decision, which
-  stays last. `end` the run step just before the legacy telemetry finish.
-  Never write or edit a PR body, comment or report only to refresh metrics,
-  and never after the merge. Existing receipt, handoff and readiness labels
-  are unchanged; the metrics line cannot authorize landing or merge. An
-  interrupted run that produces no receipt needs none for metrics.
-
-Phase mapping and span sites (stable metric phase IDs, anchored to this file's
-headings — the owner of a wrapper change updates this mapping in the same
-change). The Spans column is the closed list of span sites: a phase visit at an
-anchor not listed there is a change to this table first. `(cross-call)` marks
-the long sites that use the cross-call form. A `none` row supplies guidance
-only: it emits no separate `RUN` decision or span; the executing site owns both.
-
-| Anchor in this skill | Metric phases | Spans |
-|---|---|---|
-| `1. Resolve the workflows and target` | `handoff`, `evidence` | `handoff`, `evidence` |
-| `2. Decide what can be reused`, `Independently verified reuse` | `reuse`, plus `REUSE` decisions under each reused phase | `reuse` |
-| `Release-only path` | `reuse`, `pregate`, `tests`, plus `REUSE` decisions under each reused phase | `reuse`, `pregate` (cross-call), `tests` (cross-call) |
-| `Project release policy` | `completion`, `coverage`, `documentation` | `completion`, `coverage`, `documentation` |
-| `Reviewed secret findings` | `pregate` | `pregate` (cross-call) |
-| `Test evidence` | `pregate`, `tests` | `pregate` (cross-call), `tests` (cross-call) |
-| `Docs test policy` | `tests` | `tests` |
-| `Shared review execution (DOCS and FULL)` | `local-pass`, `voice`, `fix`, `coverage`, `documentation` | `local-pass`, `voice`, `fix`, `coverage`, `documentation` |
-| `Greptile and new feedback` | `external-review` decision; wait `external-review` only if actually awaited | `external-review` (cross-call), wait `external-review` (cross-call), only when actually performed |
-| `3. Execute ship and verify its final changes` | `release`, `ship`, `publication` | `release`, `ship`, `publication` |
-| `4. Land and verify` | `readiness`, `landing`, wait `deploy`, wait `human` | `readiness`, `landing`, wait `deploy`, wait `human` |
 
 Run `validate evidence → /ship with the overrides below → /land-and-deploy`.
 When preparation already proved the current head, Step 2's release-only path
@@ -464,15 +296,10 @@ Verified release bookkeeping alone does not end `DOCS`.
 A docs-only PR can use `/docs-ship` instead of this skill; it takes the PR to
 the merge gate.
 
-For `DOCS`, require these three pieces of coverage:
+DOCS requires an independent claims pass, ship's Documentation audit, and complete plan/scope audit; missing required output is incomplete coverage, never a clean pass.
 
-- **Claims:** one independent, read-only adversarial pass against the repo, covering
-  the whole intended docs diff. Check commands, paths, historical claims, artifact
-  locations and whether stated rules are enforceable. Read the relevant source or
-  history, not just the prose. Return each concrete error with its changed claim,
-  repository evidence and impact, or an explicit no-findings conclusion. This
-  single pass satisfies the docs portion of both Pre-Landing Review and Adversarial
-  review; do not dispatch a second Red Team, code specialists or structured pass.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect eb2b6689bafd5581` before running DOCS-profile claims and plan coverage when the diff classifies as DOCS.
+
 - **Consistency:** run ship's required Documentation audit on the release candidate
   using its installed procedure and accepted report. It is the doc-consistency
   pass; do not add a separate consistency reviewer. Keep its freshness/recovery
@@ -488,13 +315,6 @@ For `DOCS`, require these three pieces of coverage:
   directory's `.extend-root`, reading that section and **Read an optional review
   policy** in full; if either cannot be read, run the audit unbounded. Its
   evidence directory is a private directory outside the work tree.
-- **Plan and scope:** retain the complete approved-scope audit, verification and
-  reconciliation, including required user testing and recorded deferrals.
-
-The claims pass and documentation audit remain required with a marked handoff or
-`--reviewed`: preparation's code review does not fact-check prose, so run or
-reuse an equivalent claims pass from this invocation. Missing required output is
-incomplete coverage, never a clean pass.
 Record `docs-claims` and `docs-consistency` separately in the wrapper receipt;
 do not write a completed native full-code review record for this profile.
 
@@ -629,27 +449,9 @@ after the prepared head, incomplete or stale gate evidence, or a handoff that
 does not bind decide reuse by the existing rules, and the `FULL` path runs
 whatever those rules leave invalid.
 
-On this path reuse the receipt's `Ship gates` coverage and documentation audits
-only after the provenance and binding checks above; pregate and test lanes keep
-their own evidence rules. These rows replace the matching stage-table rows below.
-Other rows keep their wrapper behavior:
+Settle every reuse decision before Step 12. Ship never edits code, tests or docs on this path. A non-release finding stops and hands back to `/review-and-prep` (`next: review-and-prep; status: stopped`). Restore only verified unpushed release writes. Preserve published commits.
 
-| Installed ship stage | Release-only behavior |
-|---|---|
-| Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |
-| Run tests / Eval Suites (5–6) | No suite runs. Reuse the FRESH test/eval evidence and verified full pregate copy that qualified this path. Missing evidence selects the existing FULL path before release writes. The checks release metadata selects run after the release commit, at Verification Gate (16). |
-| Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |
-| TODOs (14) | Edit nothing. List detected completions and follow-ups in the PR body, as ship does when a TODO write is skipped. |
-| Documentation audit (14.5) | When `git diff --name-only <prepared tree> <current tree>` lists only release metadata, reuse preparation's accepted audit for the reviewed base with its accepted status. Alternatively reuse the user's recorded named-risk decision for that same content; only that case keeps `Documentation: blocked` with its reason and scope. Use the hash-verified documentation section, unchanged, as ship's section file, with `Reused from /review-and-prep at <prepared tree>` beside it, not inside it. For Steps 18–19 this replaces the upstream rule against reusing another invocation's audit. Any legacy documentation-sync stage is read-only on this path; drift uses the same hand-back. When preparation's accepted audit ran under `documentation-scope=contracts`, keep its recorded `Documentation scope:` and any `Documentation re-audit scope:` lines and show them beside the section with `Reused from /review-and-prep at <prepared tree>`; reuse rules are otherwise unchanged. |
-| Commit (15) | Commit release metadata only, then run Step 3's trailer check. |
-| Verification Gate (16) | Run declared builds and Release-metadata test selection's run. Check the release-metadata delta directly in place of stages 2–3. In stage 4, pass `--allow-paths` naming only the release-metadata files this run changed. Before Step 17's push, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree with preparation's policy source, so publication has a current record. That record has no lanes; cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record. |
-
-Settle every reuse decision and check-only run before Step 12, so no release
-write precedes a finding. A finding that needs any other change is preparation
-work: documentation drift, a coverage gap the threshold decision does not accept,
-a pregate or test failure, a missing plan item, or actionable review feedback.
-Ship never edits code, tests or docs on this path. Stop and hand back, naming the
-finding:
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-release-only --expect 4d189366a31bd42b` before executing ship stages on the release-only path after all release-only preconditions pass.
 
 ```text
 /ship-and-land stopped on the release-only path; it made no change for this finding.
@@ -664,25 +466,6 @@ Greptile stays once per PR. To repair during shipping instead, rerun
 /ship-and-land and ask for the full path.
 ```
 
-Print the stage line after the hand-back fence (`next: review-and-prep; status: stopped`, `head` set to the fence's `head:`). A post-write failure, such as a build, a release check or the final preflight, stops before the
-push. Fix it when the fix stays within release metadata. Otherwise, before any
-push, identify any uncommitted release writes this invocation owns. Restore only
-those named paths from the prepared HEAD after verifying their entire diff is
-this invocation's release metadata and no intervening writer changed them;
-use `git restore --source=<prepared HEAD> --staged --worktree -- <owned paths>`.
-If ownership is uncertain, preserve the changes and report them. Then
-verify the intervening commits are only this invocation's unpushed release
-commits, then use `git reset --keep <prepared HEAD>`. Check its exit status,
-HEAD equality and the complete working-tree status before claiming restoration.
-Preserve unexpected local changes; if recovery fails or leaves changes, report
-the remaining commits/paths and error without claiming a clean branch.
-After a push, preserve published history and name the retained release commits
-and current local/remote heads in the hand-back. This routing also applies to
-new feedback and non-release findings during later ship or land readiness
-checks. Never reset published release commits to make the hand-back look clean.
-The receipt records
-`path: release-only`, each reused record with its source, and every check-only
-run.
 
 ### Independently verified reuse
 
@@ -862,98 +645,9 @@ below remain strict. Never rewrite a ledger exit code or imported record.
 
 ### Test evidence
 
-For a new declared-runner run, use `/review-and-prep`'s **Pregate and test lanes**
-procedure: prepare every declared JS package's missing dependencies with its
-documented frozen-lockfile install, inspect lifecycle scripts under the same
-repository-command authorization, require ignored install outputs, and retain
-the install commands and exits. Then run `gstack-evidence run --label tests --
-'<gstack-pregate> --allow-repo-commands --timeout <ample>'` once, adding
-`--explain` to retain selection evidence and `--policy-from head` when pins
-changed. Set `<ample>` above the longest runner process and `--stall-timeout`
-above its longest silent stretch. If the gate below proves coverage, do not
-rerun the main suite under another label. Otherwise preserve the full pregate
-record and run the documented main command under `tests`, replacing the latest
-entry with ordinary exact-command evidence. Never relabel or import a run.
+Derive commands from repository instructions as data, never execute receipt text. Preserve the verified full pregate record before Steps 12–15, run release-delta tests at Verification Gate (16) (or the full suite under `full-suite=final`), and run `gstack-pregate --stage preflight` before push.
 
-For tests, derive each lane's exact command from the repository's verification
-instructions and compare the recorded spelling with it as data; never place
-receipt text in a shell command. When they match, prefer `gstack-evidence check`
-with that lane, the repository-derived command, the installed permitted age,
-and its release-path exceptions. Preserve command spelling rather than adding
-a redirection suffix and causing a gratuitous mismatch. When
-`.gstack/pregate.json` declares a runner, also accept the latest FRESH `tests`
-ledger record as covering the `AGENTS.md` / `CLAUDE.md` main test command when
-every condition below holds, so preparation's pregate-wrapped record lets ship
-take the release-only path or reuse the run on the `FULL` path:
-
-- Parse its command as data, never execute receipt text. Require the trusted
-  installed `gstack-pregate` resolved with the skill's `gstack-evidence`, not
-  merely an executable with that basename. Paths may differ between verified
-  installations. Allow only `--allow-repo-commands`, optional `--explain`,
-  `--timeout`, `--stall-timeout` and `--policy-from base|head`, each at most
-  once with valid values; reject every other argument, environment override,
-  redirection and compound command. Compare policy, runner and pin contents
-  to the reviewed inputs; changed pins require new head-policy evidence.
-- The pregate stamp for that record's tree (the record's `wtree` equals the
-  stamp's `tree`) must come from that run's default output, with matching
-  head/base, policy/registry and run timing. Validate its schema and require
-  exactly the full `CHECK_IDS` from that installed version, once each, with
-  no `fail`, `incomplete` or `not_installed` status. Require `lanes` status
-  `pass` or `requires-remote`, all `requires_remote[].receipt` values present,
-  and a verdict consistent with the installed `verdictOf` implementation.
-  Run `gstack-pregate verify --out <stamp>` while its tree is still current;
-  copy it outside the worktree and record its SHA-256 before any release write
-  or later pregate can replace it. A hash-verified preserved copy stays bound
-  to the tested tree; never claim that `verify` passes on a later tree.
-- Derive the complete non-empty test set the documented main command would
-  execute, including its selection policy. Compare it to the full selection
-  retained from the run and inspect the expanded runner, flags and working
-  directory: every required test must actually be covered. Matching runner
-  names or `inputs.selection` hashes alone do not establish equivalence.
-  Require positive executed-test evidence from the lane log or verified remote
-  receipt; empty selection, unknown counts or partial coverage do not qualify.
-  For missing base-policy selection evidence only, a non-executing probe is
-  `gstack-pregate --stage tests --explain --out <temp-path>` without
-  `--allow-repo-commands`, with `<temp-path>` outside the worktree. Bind its
-  selection hash, base and unchanged policy to the original stamp. Never use
-  that probe for head policy: it requires permission to execute lanes. Use
-  selection retained from the original head-policy run, or take the ordinary
-  exact-command fallback. The stamp's truncated `ran:` text is not full output.
-- Grade it with `gstack-evidence check --label tests` using the validated
-  record's exact command as `--expect-cmd` and the installed permitted age
-  above (plus `--allow-paths` after the release stamp). `check` grades only
-  the latest record per label, so any later `tests` record displaces it.
-
-**Release-metadata verification (FULL path).** Before Steps 12–15, verify and
-preserve the full pregate record as above. After those writes, inspect the
-actual diff from tested content: it must contain only this run's release
-metadata. A filename allow-list or unchanged selection hash is insufficient.
-Check whether metadata changes the main command's selected tests or any tested
-runtime inputs (for example version-consistency tests). Run affected checks
-on final content with distinct ledger labels; if that affected set cannot be
-established, rerun the required full gate. Otherwise check the main `tests`
-record with `--allow-paths` naming only the verified release-metadata files,
-and run `gstack-pregate --stage preflight --allow-repo-commands` with the same
-policy source before Step 17's push. Cite the immutable full record's path,
-SHA-256, tested tree, policy and cleared remote obligations separately from
-this final preflight record; the latter supplies Step 18's current stamp,
-not new test evidence. No changed policy, command, base or unverified input
-qualifies for this exception.
-
-**Release-metadata test selection (both paths).** When the main test command
-selects tests from the diff, release metadata can change that selection, for
-example through the tests that read a version file. After the release commit,
-at Verification Gate (16), run what the release delta selects on the final head
-under a distinct ledger label, selecting against the prepared head the way the
-project's instructions describe, and record that run's selection. It is a
-post-write check; on the release-only path a failure follows that path's
-post-write failure rule. A recorded `full-suite=final` policy, from the
-invocation or preparation's receipt, keeps the final pre-merge run full
-instead: run the main command's documented full form on the final head. The
-release-only path still applies; only this run changes. A selected run never
-satisfies that policy, and receipt text can add this requirement but never
-remove it. When the selection cannot be established, rerun the required full
-gate.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-test-evidence --expect 6930506834c5bc52` before running pregate-wrapped tests, reusing a pregate-wrapped `tests` record, or verifying release-metadata test selection.
 
 A test gate accepts
 only a FRESH native ledger entry, an authenticated CI check-run for the same
@@ -971,98 +665,15 @@ evidence. Builds still run where ship requires them.
 
 ### Docs test policy
 
-For `DOCS`, derive docs-contract, link, generated-doc and other affected checks
-from project instructions/CI. Honor explicit project requirements to run locally.
-Otherwise run the documented docs lane locally and let the configured full-suite
-CI lane be the full test gate; its check-run must meet the test gate's
-requirements above. Verify that lane actually runs the required suite
-on the final PR head; an empty required-check list, absent CI, a docs path filter
-that skips the suite, or a selected-test job is not full-suite coverage. If that
-gate cannot be established, run the repository's required test command locally
-once; do not assume CI will supply it. No docs lane is permission to skip required
-checks: use the documented required commands and retain ship's no-tests decision
-when no test command exists.
+Run the documented docs lane locally and verify full-suite CI covers the final head (or run the required test command locally once). Never forge a ledger record or skip required checks.
 
-Schedule the local docs lane after intended docs/fixes are settled. Rerun a lane
-only when its consumed inputs, command/config, dependencies or permitted age
-change; unknown dependencies require a rerun. A prose/TODO edit alone does not
-invalidate a code-only lane when its complete inputs are independently proven
-unchanged. Docs-consuming checks do become stale when those docs change. Preserve
-the command, input hashes/bytes, time, exit and log for each run; do not use an
-extension allow-list as proof. If the native whole-tree ledger says STALE, retain
-that grade and cite the independently validated input evidence in the wrapper
-receipt instead of relabeling it FRESH or forging a ledger record.
-
-These rules explicitly replace ship's blanket docs/TODO test invalidation and
-land's blanket local full-suite rerun for `DOCS`. A pending full-suite CI gate may
-wait until after the push, but blocks landing until it passes on the final head;
-report it as pending, never passed. Wait on it within land's CI wait bound, even
-when it is not a required check; if it has not completed by then, run the
-required test command locally once. A passing local run then satisfies this gate;
-report the CI lane as still pending. CI failures use the installed triage rules.
-`FULL` keeps the ordinary test gate above.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-docs-profile --expect eb2b6689bafd5581` before running or evaluating tests under the DOCS profile.
 
 ### Shared review execution (DOCS and FULL)
 
-**Parallel readers.** For `FULL`, when Red Team's installed activation is known at
-dispatch (its diff-size gate), dispatch it alongside the first available specialist
-batch, rather than after specialist synthesis; when only a specialist's CRITICAL
-finding activates it, dispatch it as soon as that finding arrives. Each reads the same
-frozen diff/tree/base independently; it need not wait for the others' findings.
-Schedule within the host's concurrency limit. Wait for all required outputs and
-confirm every reader/writer is terminal before edits, then deduplicate/synthesize
-once. Pass these overrides and the project's Shell Rules to every subagent.
-Record each reader in `voices.jsonl` as `/review-and-prep`'s evidence rules
-describe (Reviewer join file in `docs/telemetry.md`): local only, never in a
-receipt or the PR body. Use a unique branch/invocation subdirectory under an
-existing `<state-root>/projects/<slug>/ship-and-land/`, otherwise
-`~/scratch/ship-and-land/`. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. A
-failed required reader still needs coverage; a peer's output is not its substitute.
-Re-dispatch only that reader once on the same frozen snapshot, keeping completed
-peers' outputs; if it fails again, record incomplete coverage and ask the user.
+Wait for all required readers before edits, apply Severity before Fix-First, run delta rechecks after edits (within ship's 3-cycle cap), and stop automatic structured-output retries after one malformed/failed attempt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset).
 
-**Severity before Fix-First.** Apply this gate to all sources, including queued
-outside/Greptile findings, before AUTO-FIX or ASK. Defer informational suggestions
-with a recorded `deferred-informational` disposition and reason; do not edit, ask
-about, or repeat a pass merely to clear them. If a nominally informational finding
-proves a factual error or reproducible defect, make it actionable with repository
-or reproduction evidence and classify its impact. Critical findings and verified
-defects use installed fix/user-decision rules. Requests for changes from authorized
-human reviewers and known completion/test blockers retain their own gates. Record
-automatic deferrals in the wrapper receipt; never fabricate an explicit user Skip.
-A deferred Greptile finding still gets review-and-prep's evidence-based reply,
-which resolves it for the Greptile gate.
-
-**Delta rechecks.** Retain completed reader outputs on the pre-fix snapshot or
-completed coverage from a marked handoff. After actual edits,
-obtain an independent read-only check
-of the fix delta plus the context needed to detect regressions, using the affected
-reviewers/methodology. New claims need repo evidence; code fixes need relevant
-callers, contracts and tests. Do not repeat every specialist, core, Red Team and
-outside pass on the whole branch. Preserve unaffected coverage with unchanged
-approved scope and a verified before/after chain. A bounded base-integration or
-behavioral delta gets the same affected-reviewer/regression check; a base change
-alone does not force every full-scope pass. Unknown dependencies, missing initial
-output, changed approved scope or an unbounded regression requires fresh affected
-full-scope coverage.
-
-Only a critical finding or verified factual/behavioral defect triggers another
-fixing cycle. Keep ship's invocation-wide
-three-fixing-cycle cap and scoped user decisions; require a final independent
-zero-edit check of changed inputs with no unresolved blocking findings. Combine
-original coverage, dispositions and completed delta checks in the wrapper receipt.
-A delta check is a partial native pass, not a new completed full review record.
-
-**Structured output, one attempt.** For any applicable Codex/outside structured
-pass, request recognized severity tags or an explicit no-findings marker. On the
-first malformed output, timeout or tool failure, record `unavailable`, its source/
-phase and reason, then stop automatic attempts on unchanged inputs. Do not retry
-merely to get formatting, and do not call prose a clean structured result. Retain
-any independently supported concrete defect for severity triage. An optional pass
-is reported as unavailable and does not block by itself; a structured/P1 gate the
-user or project instructions explicitly require blocks until repaired or
-explicitly waived by the user. This
-rule does not waive required native review or DOCS claims/consistency coverage.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-shared-review --expect 74384c225b14695b` before dispatching a review marked RUN, triaging new findings or feedback, or reviewing a fix delta, including when Step 2 reused every review.
 
 ### Greptile and new feedback
 
@@ -1093,45 +704,9 @@ never requests another run or resets a timeout. Carry a qualifying recorded
 no-response fallback honestly; do not call it a completed review or restart
 the wait. A known queued/running or failed run is not that fallback.
 
-**Applicable Greptile gate, before landing:** after ship creates/updates the PR,
-require its one completed review with resolved findings, or review-and-prep's
-qualifying no-response fallback/acknowledged configuration exclusion. Read that
-skill's Steps 4–5 ("Trigger once and await Greptile" and "Triage, fix, and
-verify locally") for the first-request, monitoring, provenance and triage
-procedure; this wrapper owns the gate without invoking preparation's draft/ready
-transitions or draft-only base-merge loop. Use the existing PR state. If no
-submitted request/run exists, verify the final pushed head contains the base
-ship integrated (record it; a later tip follows Step 3's rule) and required user
-testing is complete, then request the first review with the installed MCP trigger or
-review-and-prep's comment procedure and `review-and-prep:greptile` marker, using
-the bot mention Greptile documents for the PR's draft/ready state. Never make a
-ready PR draft to trigger review. Check automatic requests before sending one.
-Treat ship opening a ready PR, or pushing to one, as a possible automatic
-trigger that reserves the single run unless verified settings exclude automatic
-review. Elapsed time or an empty run listing never authorizes a manual request
-or another triggering push after such an operation; if no run becomes visible,
-ask the user. Record each reservation or submitted request (identifier or
-comment URL) and its time in the PR body immediately, before monitoring. A rerun
-corroborates that record through run metadata or an unedited running-account
-trigger comment; show an uncorroborated record to the user rather than treating
-it as submitted or absent.
-If the same run is queued/running, keep monitoring it; if failed/cancelled, stop
-without retrying. Missing/ambiguous evidence never counts as completed. Use the
-same ten-minute no-response fallback only under its documented conditions.
-This gate also applies when ship's early triage had no PR/comments to inspect.
+When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. Before every push, check applicable automatic triggers against the one-run allowance. If a push would start a second run, stop before it and ask the user how to resolve that trigger.
 
-Verify prior dispositions against current content; do not reply again to
-unchanged findings. Compare comment/review IDs and updated content, including
-summaries and resolved/outdated threads, to catch later feedback. API failures
-are not zero comments. Use installed triage instructions for new feedback and
-the shared severity/delta rules, with ship's cycle cap, when fixes are needed. Before every push, including
-ship's release push and doc-sync's, check applicable automatic triggers against
-the one-run rule. If a push would start a second run, stop before it and ask the
-user how to resolve that trigger; never silently change repository settings.
-Apply first-run findings locally, then return through affected ship tests/reviews,
-push and PR updates before landing. Keep the original request/run; fixes do not
-authorize another review. Preserve actual reviewed SHA/base and later local
-verification in the wrapper's receipt.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-greptile-feedback --expect 073ea65ac2698971` before triggering, monitoring, triaging Greptile feedback, or checking the landing gate when Greptile applies.
 
 ## 3. Execute ship and verify its final changes
 
@@ -1157,6 +732,8 @@ ordinary test invalidation (including docs/TODO inputs consumed by the lane).
 
 ### Commit without co-author trailers
 
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-greptile-feedback --expect 073ea65ac2698971` before checking automatic review settings for each push when Greptile applies.
+
 Drop the `Co-Authored-By` line from ship's commit template. Some hosts' commit
 wrappers append a trailer anyway; Cursor adds `Co-authored-by: Cursor`, even on
 `--amend`. Run this check after each ship step that commits and before every
@@ -1169,36 +746,7 @@ those unpushed commits without co-author lines, keeping each tree, author,
 committer and second parent, and moves the branch only if HEAD has not moved
 since the check began:
 
-```bash
-_SINCE="<full SHA: local HEAD bound in Step 1, or the last tip this invocation pushed>"
-_BASE="<full SHA: fetched base tip>"
-_BASE=$(git rev-parse --verify "$_BASE^{commit}") || exit 1
-_HEAD=$(git rev-parse --verify HEAD) || exit 1
-_BRANCH=$(git symbolic-ref --quiet --short HEAD) || { echo "TRAILERS: BLOCKED — detached HEAD"; exit 1; }
-git merge-base --is-ancestor "$_SINCE" "$_HEAD" || { echo "TRAILERS: BLOCKED — HEAD does not descend from $_SINCE"; exit 1; }
-_COMMITS=$(git rev-list --reverse --first-parent "$_SINCE..$_HEAD") || exit 1
-if [ -n "$_COMMITS" ]; then
-  _FIRST=$(printf '%s\n' "$_COMMITS" | sed -n '1p')
-  [ "$(git rev-parse --verify "$_FIRST^1")" = "$_SINCE" ] || { echo "TRAILERS: BLOCKED — starting point is not on the first-parent chain"; exit 1; }
-fi
-_BAD=$(git log --no-show-signature --first-parent --format=%H --regexp-ignore-case --grep='^co-authored-by:' "$_SINCE..$_HEAD" "^$_BASE") || exit 1
-if [ -z "$_BAD" ]; then echo "TRAILERS: CLEAN"; exit 0; fi
-_TIP=$_SINCE
-for _C in $(printf '%s\n' "$_COMMITS"); do
-  git merge-base --is-ancestor "$_C" "$_BASE"
-  _ANCESTOR=$?
-  if [ "$_ANCESTOR" -eq 0 ]; then _TIP=$_C; continue; fi
-  [ "$_ANCESTOR" -eq 1 ] || exit 1
-  _OLD=$(git rev-parse --verify "$_C^1") || exit 1
-  _NEW=$(git cat-file commit "$_C" | awk -v op="parent $_OLD" -v np="parent $_TIP" 'BEGIN { h = 1 } h { if (!d && $(0) == op) { $(0) = np; d = 1 } print; if ($(0) == "") h = 0; next } tolower($(0)) ~ /^co-authored-by:/ { next } { l[++n] = $(0) } END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' | git hash-object -t commit -w --stdin) || exit 1
-  if [ "$_NEW" != "$_C" ] && git cat-file commit "$_C" | sed '/^$/q' | grep -q '^gpgsig'; then echo "TRAILERS: BLOCKED — $_C is signed; a rewrite would invalidate its signature"; exit 1; fi
-  [ -n "$(git log -1 --no-show-signature --format=%s "$_NEW")" ] || { echo "TRAILERS: BLOCKED — $_C would have an empty message"; exit 1; }
-  _TIP=$_NEW
-done
-[ "$(git rev-parse "$_TIP^{tree}")" = "$(git rev-parse "$_HEAD^{tree}")" ] || { echo "TRAILERS: BLOCKED — the rewrite changed the tree"; exit 1; }
-git update-ref -m "ship-and-land: drop co-author trailers" "refs/heads/$_BRANCH" "$_TIP" "$_HEAD" || { echo "TRAILERS: BLOCKED — $_BRANCH moved during the check"; exit 1; }
-echo "TRAILERS: STRIPPED $_HEAD -> $_TIP"
-```
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-trailer-check --expect e3dbbd2ae086513e` before stripping or verifying co-author trailers after each ship commit and before every push.
 
 `BLOCKED` stops the push. Report it with the named commit; never rewrite
 pushed history or invalidate a signature to clear it.
@@ -1327,29 +875,9 @@ session that cannot take the user's answer must still reach the readiness
 report; it must never manufacture the confirmation instead. The stop happens
 before any merge, so nothing can merge or deploy on an unconfirmed setup.
 
-When land-and-deploy reaches Step 1.5, run only its detection block, exactly
-as installed in the discovered copy: the read-only comparison against the
-`land-deploy-confirmed` fingerprint. Act on its printed token:
+On `FIRST_RUN` or `CONFIG_CHANGED`, record `first-run setup unconfirmed (<token>): the landing run confirms it` without writing the fingerprint. No token, or the detection itself failed: unknown state, not `FIRST_RUN`. Stop with that blocker. Never guess a token or read a broken check as unconfirmed setup.
 
-- `CONFIRMED`: continue exactly as land directs; this adapter changes nothing.
-- `FIRST_RUN` or `CONFIG_CHANGED`: do not stop. Do not read or execute the
-  first-run validation section, do not present its dry-run confirmation, and do
-  not write, create or refresh the fingerprint. Record
-  `first-run setup unconfirmed (<token>): the landing run confirms it`, with
-  the actual token, in the readiness report and in the `Ship and land`
-  receipt. An unconfirmed setup is not a blocker on this path. Then continue
-  through land's CI gate, version-drift check and readiness report to the
-  merge gate, with the other adapters above. Other blockers keep their
-  installed behavior and are reported at the gate; only the first-run stop is
-  replaced.
-- No token, or the detection itself failed: unknown state, not `FIRST_RUN`.
-  Stop with that blocker. Never guess a token or read a broken check as
-  unconfirmed setup.
-
-This path leaves the fingerprint absent or unchanged. A later landing run
-detects setup again and runs the full first-run confirmation before any merge,
-unchanged. Once setup is confirmed, replace any earlier unconfirmed note in
-the readiness report and receipt with the actual confirmed status.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-land-adapters --expect 307056659e4bf93b` before running Step 1.5 read-only detection when stopping at the merge gate (`--no-land` or direct stop request).
 
 ### Projects with no deploy target
 
@@ -1359,77 +887,9 @@ as `/setup-deploy` writes for a project with no deploy target. That recorded
 configuration is the user's explicit no-deploy confirmation. Land must not
 re-ask it after merge as a production-URL question.
 
-Classify the configuration with this read-only check. Set `_DEPLOY_DOC` to the
-bound checkout's CLAUDE.md. It prints one token; act on the token:
+`NO_DEPLOY` requires `## Deploy Configuration` with `Platform: none` and every deploy field `none`; still run post-merge deploy detection, and finish `MERGED — NO DEPLOY NEEDED` (`NOT_NEEDED`) only when no deployment is observed or expected.
 
-```bash
-_DEPLOY_DOC="<bound checkout CLAUDE.md>"
-if [ ! -f "$_DEPLOY_DOC" ]; then
-  echo "NOT_NO_DEPLOY"
-else
-  awk '
-    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-    {
-      line = trim($(0))
-      if (match(line, /^(```+|~~~+)/)) {
-        delimiter = substr(line, 1, RLENGTH)
-        if (!fence) { fence = substr(delimiter, 1, 1); fence_len = length(delimiter) }
-        else if (substr(delimiter, 1, 1) == fence && length(delimiter) >= fence_len && trim(substr(line, RLENGTH + 1)) == "") fence = ""
-        next
-      }
-      if (fence) next
-      if ($(0) ~ /^## Deploy Configuration([ \t]*$| \(configured by \/setup-deploy\)[ \t]*$)/) { insec = 1; seen = 1; next }
-      if ($(0) ~ /^##? /) insec = 0
-      if (!insec) next
-      sub(/^- /, "", line)
-      i = index(line, ":")
-      if (i == 0) next
-      key = trim(substr(line, 1, i - 1))
-      gsub(/\*/, "", key)
-      lk = tolower(trim(key))
-      if (lk == "") next
-      if (lk == "merge method" || lk == "project type" || lk == "pre-merge") next
-      if (lk == "platform") pseen = 1
-      if (tolower(trim(substr(line, i + 1))) != "none") fail = 1
-    }
-    END { print (seen && pseen && !fail) ? "NO_DEPLOY" : "NOT_NO_DEPLOY" }
-  ' "$_DEPLOY_DOC"
-fi
-```
-
-`NO_DEPLOY` requires all of: the section exists; a `Platform` field is present;
-and every field value is exactly `none` (trimmed, case-insensitive), except
-`Merge method`, `Project type` and `Pre-merge`, which describe the merge, not
-a deploy target. A missing file or section, a missing `Platform`, an empty
-field value, or any other value — a production URL, a deploy workflow, a
-deploy trigger, a status command, a health check, or any unlisted field —
-prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.
-Only the exact section heading (optionally suffixed with
-`(configured by /setup-deploy)`) counts; fenced examples do not record setup.
-
-When the check prints `NO_DEPLOY`, apply this adapter on a landing run:
-
-- Deployment facts record no deploy target, from that configuration, not
-  "deployment unknown". Still inspect current workflows and platform files
-  as land requires; the recorded configuration cannot override those facts.
-  Do not promise a post-merge URL question when no deployment is expected.
-- After the merge, still run land's post-merge deploy-run detection. A
-  matching triggered deploy, an expected deployment whose run has not appeared,
-  or an explicit verification URL from the caller takes precedence and
-  restores land's steps as installed. Poll expected deployments under land's
-  existing deadline. Failed or unknown detection stays unknown and follows
-  land's installed handling; it cannot authorize `NOT_NEEDED`. A `none`
-  configuration cannot erase an observed or expected deployment.
-- Only after successful detection with no observed or expected deployment
-  and no explicit verification URL, skip land's production-route question, the staging offer, the
-  deploy wait and canary verification. Finish at land's deploy report with
-  verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`. That
-  verdict does not claim any deployment happened or was verified.
-
-This adapter does not change first-run setup: a landing run on a no-deploy
-project still runs Step 1.5's full confirmation until the user confirms the
-recorded setup. Merge approval, merge/queue handling and every pre-merge gate
-also stay as installed.
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-land-adapters --expect 307056659e4bf93b` before classifying `## Deploy Configuration` or applying the `NO_DEPLOY` landing adapter.
 
 On every path, when land reaches its readiness report and merge-approval gate,
 record the measured wall time from invocation start in the PR's `Ship and land`
@@ -1449,19 +909,9 @@ blocker), then finish with the readiness report, `stopped at merge gate
 (caller request)` and, as the last lines before the stage line, the merge decision. Print it as
 plain text, not AskUserQuestion: its answer belongs to the next run.
 
-- Name the PR, its full head SHA and every state the landing run will ask the
-  user to accept on that head: the CI verdict (`NO_CHECKS`, or each named
-  non-required failing or pending check), an unconfirmed first-run setup, each
-  readiness warning and any deployment the merge triggers.
-- Ask whether to land it or leave the PR open. To land, give the exact command
-  that starts the landing run: `/ship-and-land <PR URL>`, plus this
-  invocation's verification URL when the user passed one. Never fill in
-  `--reviewed`: when this invocation accepted it, say to add it only if the
-  user still accepts the prior review for that head. When this invocation
-  validated a marked handoff, tell them to paste the same handoff again with
-  it. Say that run rechecks the head, asks for each acceptance and the merge
-  approval, then merges and reports. Leaving the PR open needs no action.
-- With a blocker, name each blocker and its repair instead of offering to land. A merge-gate stop that names blockers prints `status: blocked` and `next: none` on the stage line.
+With a blocker, name each blocker and its repair instead of offering to land. A merge-gate stop that names blockers prints `status: blocked` and `next: none` on the stage line.
+
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-land-adapters --expect 307056659e4bf93b` before printing the merge-gate stop decision when stopping at the merge gate on caller request.
 
 For example, for a head with no CI:
 

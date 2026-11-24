@@ -33,6 +33,15 @@ If the shell cannot run `~/.gstack-extend/bin/preamble` (exit 127 or 126), tell 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
 
+### Reference files and mid-run upgrades
+
+Read conditional instructions from the verified gstack-extend checkout with the named `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>` command.
+
+- **On step entry.** Run the named command on every entry, even after compaction. Verify the `REFERENCE_END` digest and contiguous numbered lines 1 through `lines=<N>`. If the trailer was elided, get it with `--lines 1-1`, then fetch missing lines with bounded ranges. If verification fails, report `SKILL_REFERENCE_INCOMPLETE` with step, reference, harness and version and take the failure exit.
+- **On failure.** Relay `SKILL_REFERENCE_*` verbatim; for `PREAMBLE_USAGE` or a missing launcher relay the start-command fix. Never use moved instructions from memory. Record only the cause and repository-relative reference path in receipts and PR bodies. Use the core's explicit fallback for optional reads. Otherwise preserve inline holds and finish telemetry with `--outcome error`. Where applicable end with `Stage handoff: stage-handoff/v1; stage: <token from the final stage template>; next: none; status: blocked; head: <HEAD or none>; plan-sha256: <plan SHA-256 or none>`. Resume the existing work.
+- **Host subagents.** Fetch each needed reference and start the reply with `REFERENCE_READ <skill>/<file> lines=<N> digest=<digest>`. A missing header or wrong digest means incomplete-reviewer or missing coverage. If the host denies the command, the primary fetches and passes the text inline for that host. Helper-run delegates keep their code-built prompts.
+- **Mid-run upgrade.** If **Inline upgrade flow** printed `UPGRADE_OK` in this run, tell the user the upgrade finished and to rerun this skill so the loaded instructions match the updated checkout. Run Telemetry finish and stop before Step 1.
+
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
 
@@ -320,24 +329,7 @@ Phase 1.
 
 ### Step 2: Discover deploy patterns
 
-If no recipe exists, search for common patterns using Glob:
-
-```
-Glob patterns (check each):
-  Makefile
-  package.json
-  docker-compose.{yml,yaml}
-  *.xcodeproj
-  *.xcworkspace
-```
-
-For each pattern found:
-- **Makefile:** `grep -E '^(dev|run|serve|start):' Makefile` for dev targets
-- **package.json:** `grep -E '"(dev|start|serve)"' package.json` for npm scripts
-- **docker-compose:** `docker compose up` is the likely command
-- **Xcode project:** `xcodebuild -scheme <scheme> -configuration Debug build`
-
-If patterns found, propose the recipe and ask for confirmation.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before discovering project deploy patterns when no deploy recipe exists.
 
 ### Step 3: Ask the user
 
@@ -436,37 +428,7 @@ authorizing a destructive action against a shared environment. Exercising a
 flow, observing an interaction or reading a visible result is an agent check,
 not an item. Do NOT include anything automated tests already cover.
 
-**Every item is one action and a verdict.** Write each item in this exact shape:
-
-```
-<Imperative action — one line, verb-first, readable at a glance>
-PASS: <the observable state that means it worked>
-FAIL: <the concrete wrong behavior you expect if it's broken>
-```
-
-Authoring rules for the three lines:
-
-- **Action is a single instruction.** "Sign in with a wrong password." Not
-  "Test the login error path" (too vague to act on), and not "Verify that the
-  login form, which now uses the new validation hook, shows an error" (buries
-  the instruction in background).
-- **PASS and FAIL describe what the eye sees**, not intent or correctness.
-  Write "PASS: inline red text under the password field reads 'Incorrect
-  password'" — never "PASS: error handling works correctly."
-- **FAIL is not the negation of PASS.** Name the specific wrong behavior, so the
-  human knows what to watch for: "FAIL: the page reloads, or the error shows as
-  a toast instead of inline." If the only FAIL you can write is "not the above,"
-  the PASS line isn't observable enough — rewrite it.
-- **No background in the item.** No file paths, no commit hashes, no "this
-  changed because…", no explanation of the implementation, no justification for
-  why it's worth testing. If context genuinely matters, put it in the item's
-  optional `Context:` field — written to disk and **never rendered in a prompt**.
-  If the user asks "why am I testing this?", answer then, in a separate message.
-
-**Forcing function**: if you cannot write a one-line observable PASS, it is not
-a manual test item. Either an automated test already covers it (drop it) or it's
-underspecified (rewrite it until you can). Do not ship a vague item and hope the
-human infers the intent.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before authoring test items during Phase 1 Init.
 
 ### Step 3.2: Merge co-observable items
 
@@ -475,60 +437,14 @@ Before writing the plan, pass over each group and merge.
 Never merge items carrying different `Check:` IDs; this also applies to On ADD
 ITEM. Preserve separately traceable outcomes for every handoff requirement.
 
-**Merge test** — two candidate items become ONE item when *both* hold:
-
-1. A single user action puts both properties on screen at the same moment, AND
-2. The human needs to do **nothing additional** — no navigation, no click, no
-   scroll, no opening a panel — to judge the second after judging the first.
-
-If "would they have to do anything else to see it?" is no, merge. Adjacency on
-one screen is the common case: two fields in the same form, a button and its
-label, a header and the list beneath it, a toggle and the state it controls.
-
-**Merged item shape** — one action, several pass conditions:
-
-```
-Open the settings screen.
-PASS: header reads "Settings"; both toggles render off; Save is disabled.
-FAIL: header still reads "Preferences", a toggle renders on, or Save is
-      enabled with no changes made.
-```
-
-Keep the action line singular. If merging forces it into "do X, then do Y", the
-merge was wrong — split it back.
-
-**Ceiling — judged, not counted**: merge only while a FAIL would still be
-unambiguous. The test is "if they say it failed, do I know which condition
-broke?" When the answer is no, split. In practice that lands around three or
-four conditions, but a merged item with six tightly-related visual checks on
-one screen can be fine and one with two unrelated ones can already be too many.
-Judge the ambiguity, not the count.
-
-**Inspection checks are not items.** A property confirmed only by inspecting a
-cookie, a log line, a DB row or a network request is an agent check (Step 3),
-never a second item linked to the first.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before merging co-observable items during Phase 1 Init.
 
 ### Step 3.4: Order for one pass through the app
 
 Item order is the other half of session speed. Order within each group so the
 human walks the app once instead of bouncing between screens.
 
-1. **State locality first** — consecutive items should share the same screen or
-   app state. All the settings-screen items together, then all the home-screen
-   items. Every state change between consecutive items is dead time.
-2. **Risk breaks ties** — when two items are equally cheap to reach, put the
-   higher-blast-radius one first. Sessions get abandoned partway; the important
-   verification should already be done when that happens.
-3. **Destructive last** — items that delete data, sign out, or reset state go at
-   the end of their group, or they invalidate the setup for everything after.
-
-Rule 3 wins over rule 2. A destructive item that is also the highest-risk one
-still goes last: putting it first would invalidate the state every other item
-needs, which costs more than the early signal is worth.
-
-Group order follows the same logic one level up: highest-risk group first.
-
-Item indices are assigned **after** this ordering. Ordering does not run again.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before ordering test items and groups during Phase 1 Init.
 
 ### Step 4: Present and approve
 
@@ -638,6 +554,10 @@ action.
 
 ### Present the next item
 
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before resuming a recorded parked-bug fix or its pending verification or retest.
+
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-fix-flow --expect 4b10d77803484a36` before resuming a recorded item fix or its pending verification or retest.
+
 Before selecting an UNTESTED item, recover interrupted fixes and pending human
 retests from all group files, including `completed_groups`. A deliberately
 parked or deferred fix is not interrupted work; leave it parked until the user
@@ -720,127 +640,9 @@ unchanged, then continue to the next UNTESTED item; parking never passes it.
 
 ### On FIX NOW
 
-**Group-level checkpoint:**
+Commit a group checkpoint before the first fix (BLOCKED on non-zero exit other than nothing-to-commit), reproduce on the tested build before fixing, commit the fix (`BLOCKED` on non-zero exit), rebuild, and agent-verify before presenting the human retest. A failed result is never re-marked passed without a new human retest.
 
-If this is the first fix in the current group, commit a checkpoint:
-
-```bash
-git add -u
-_OUT=$(git commit -m "test: checkpoint before fix (<group> group)" 2>&1)
-_RC=$?
-if [ $_RC -ne 0 ]; then
-  echo "$_OUT"
-  if ! printf '%s' "$_OUT" | grep -q "nothing to commit"; then
-    echo "BLOCKED: checkpoint commit failed. Do NOT proceed."
-    exit 1
-  fi
-fi
-```
-
-If the bash block exits zero, record the checkpoint commit hash in session.yaml.
-If `$_OUT` contains "nothing to commit" (clean tree, no test changes since the
-last checkpoint), skip the checkpoint entry — note "working tree clean" in
-session.yaml and proceed. If the block exits non-zero (BLOCKED case),
-**STOP**: do NOT record a checkpoint hash in session.yaml, do NOT proceed to
-the fix step. Report BLOCKED to the user with the printed `$_OUT` tail
-(pre-commit hook reject, missing `user.email`, detached HEAD, etc.).
-
-**Reproduce first:**
-
-On the build the human tested, under the item's prepared state, drive the
-reported failure and record `agent reproduced at <build>: <observation>; <evidence path>`
-in `Attempts:`; for a judgment failure, capture the state the human judged and
-name the property the fix will change. If that build was replaced, a current
-owned build may stand in only after you confirm the intervening changes leave
-its failure path and prepared state unchanged. Record both build identities and
-the comparison in `Attempts:`; uncertain equivalence parks the failure instead
-of checking out another commit. When the agent cannot observe the failure
-directly (a device it cannot drive, an account only the user holds), use the
-closest check it can run: a simulator or emulator, a failing automated test, or
-the built artifact's own output. If no check observes it, park the bug with that
-reason in the On PARK format instead of asking for a retest.
-Apply the Prepare-the-item safety rules to this observation. Keep `Status:
-FAILED`, link the item and parked bug in both directions, record the blocked
-observation in `Attempts:`, and continue to the next UNTESTED item when no
-observing check exists. Unavailable observation is not non-reproduction; the
-human's failed result remains unchanged.
-If an observing check runs but the failure does not reproduce, append
-`agent did not reproduce at <build>: <observation>; <evidence path>` to
-`Attempts:`. Keep the item FAILED, link a parked bug with that reason, and do
-not implement a fix or claim verification; continue to the next UNTESTED item.
-
-**Implement the fix:**
-
-The agent writes the code fix. This is pair testing: the human found the bug,
-the agent fixes it.
-
-**Commit the fix:**
-
-```bash
-git add -u
-_OUT=$(git commit -m "fix: <description> (pair-review item <N>)" 2>&1)
-_RC=$?
-if [ $_RC -ne 0 ]; then
-  echo "$_OUT"
-  echo "BLOCKED: fix commit failed. Do NOT proceed."
-  exit 1
-fi
-```
-
-This keeps the existing `grep "pair-review item"` pattern working.
-
-If the bash block exits zero, record the fix commit hash in `Fix: <commit>` and
-append `fix <commit>` to `Attempts:`. If the block exits non-zero (BLOCKED case
-— including "nothing to commit," which at fix-commit time means the agent's fix
-did not actually modify any tracked files), **STOP**: do NOT record a fix commit
-hash, do NOT mark the item as fixed, do NOT proceed to rebuild/redeploy. Report
-BLOCKED to the user with the printed `$_OUT` tail (pre-commit hook reject,
-missing `user.email`, detached HEAD, fix never staged, etc.).
-
-**Rebuild/redeploy:**
-
-Read deploy.md and execute the build/run commands. A build failure goes to Error
-Handling "Deploy fails", never to a retest.
-
-**Verify before any retest:**
-
-Repeat the same observation on a build made from the fix commit. The reported
-behavior must be gone; for a judgment failure, the named property must have
-changed as intended. Record `agent verified at <build>: <observation>; <evidence path>`
-or `agent verification failed at <build>: <observation>` in `Attempts:`. A failed
-verification is recorded, and the agent fixes again without asking the human; it
-counts toward the existing escalation after three fix attempts.
-If verification cannot run, append `agent verification unavailable at <build>:
-<reason>`, keep the item FAILED and link a parked bug. Mark that fix deliberately
-deferred; unavailability never triggers another fix or counts toward escalation.
-Apply the Prepare-the-item safety rules to the rebuild and verification too.
-At escalation, retain the failed verification and link an unresolved parked bug;
-a fix commit is never evidence of a passing item.
-
-**Update state:**
-
-A failed result is never re-marked passed. Keep it, its evidence and its build in
-`Attempts:`. Only a new human retest of the verified fix can pass the item,
-recorded beside the failure, never in its place. Write `Fix: <commit>` and the
-updated `Attempts:` to disk while keeping `Status: FAILED` until the human
-retests.
-
-**Continue testing:**
-
-Present the retest only after a verified fix via AskUserQuestion:
-Refresh `Prepared:` and `Agent evidence:` on the verified build before
-presenting the retest, using Prepare the item; retain the earlier observations
-in `Attempts:`.
-- Question: "Fixed in [commit]; reproduced and verified on build [build]. Retest:\n\n**[Group] [N]/[Total]:** [Action line]\n\nPASS: [item's Pass field]\nFAIL: [item's Fail field]\nPrepared: [item's Prepared field]"
-- Options: ["Pass", "Fail", "Skip", "Park a bug", "Add item"]
-
-Do not append an explanation of the fix to this prompt. The human retests the
-same observable criteria; what changed underneath is not their input.
-
-If the retest passes, record `PASSED at <build> (<time>)` in `Attempts:` and
-update `Status: PASSED`. If it fails again, append the new failure to `Attempts:`
-and repeat the fix cycle. Recompute `session.yaml` summary counts after either
-result; a retested pass replaces the latest failed tally, not its history.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-fix-flow --expect 4b10d77803484a36` before executing the fix cycle when the user chooses "Fix now" on a failed item.
 
 ### On SKIP
 
@@ -860,6 +662,8 @@ failed attempt with a skip. For an UNTESTED item, append
    AskUserQuestion with item N+2 as the new lookahead preview. Receipt: "Item N skipped."
 
 ### On ADD ITEM
+
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-init-plan --expect 2fffcccd6bfa1b72` before authoring an added item or evaluating whether it can merge with an existing item.
 
 1. Ask: which group? what's the test item?
 
@@ -884,24 +688,8 @@ Available anytime during Phase 2 (testing loop) and FIX NOW flows. When the user
 says something like "park this", "note a bug", "not related but...", or describes
 a bug that is clearly unrelated to the current test item:
 
-1. If the user didn't include a description, ask via AskUserQuestion:
-   - Question: "**What's the bug, and how do you reproduce it?** A short
-     symptom + numbered repro steps. Repro is what makes this fixable later
-     without re-deriving the bug from a vague memory."
-   - Options: ["Let me describe it"]
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-park-and-batch --expect 95c47edbe6ee537b` before recording a parked bug when the user chooses "Park a bug" or reports an unrelated bug.
 
-   The user's response should give you both a symptom and repro steps. If
-   they only describe the symptom (no repro), gently ask once more for the
-   steps. If they push back ("can't repro reliably" / "saw it once"), accept
-   that and record `Repro: not reliably reproducible — verify before fixing`.
-   Do NOT insist past one nudge.
-
-   **Ambiguous-response fallback:** if after one nudge the response is still
-   vague, contradictory, or you genuinely cannot extract numbered steps,
-   record what you have for `Symptom:` and write `Repro: not reliably
-   reproducible — verify before fixing` for the repro. Move on. The
-   re-verify guidance in the promoted TODO will surface the gap later if
-   the bug ever needs to be fixed.
 2. Append a new entry to `<SESSION_DIR>/parked-bugs.md`.
    Determine N by reading the file and incrementing the highest existing number
    (or 1 if the file is empty/new).
@@ -941,46 +729,9 @@ in ways that interact badly with checkpoints and group-completion logic.
 Batch only consecutive UNTESTED items that share one prepared state; prepare it
 once and show one `Prepared:` line under the batch header.
 
-1. Read the group file. Collect the next 2-3 consecutive UNTESTED items in index
-   order that share one prepared state (or fewer if the group is nearly done).
-   Prepare that state once. Also identify the item after the batch (the
-   post-batch lookahead).
-2. Present all items in a single AskUserQuestion:
-   - **Question:** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\nPrepared: [shared Prepared field]\n\n[N]. [Action line]\n    PASS: [Pass field]\n[N+1]. [Action line]\n    PASS: [Pass field]\n[N+2]. [Action line]\n    PASS: [Pass field]\n\n_Next up: [N+3]. [Post-batch action line]_\n\nReport results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
-   - **Options:** ["All pass", "Report results", "Park a bug", "Back to single mode"]
+Keep index-ordered consecutive UNTESTED items that share one prepared state (minimum 2 items, else stay in single mode). Batch renders action + PASS only; any FAIL runs the standard FAIL flow in item order.
 
-   Batch mode renders **action + PASS only** — the `Fail:` field is omitted on
-   purpose to keep three items scannable in one block. If the user asks what a
-   failure would look like for a batched item, give them that item's `Fail:`
-   line and re-present the batch unchanged. `Context:` is never rendered here
-   either.
-
-3. **On "All pass"**: Mark every batched item `PASSED`, write `Build: <HEAD>` +
-   `Tested: <now>`, and append `PASSED at <HEAD> (<now>)` to each item's
-   `Attempts:`. Update `session.yaml` summary counts.
-
-4. **On "Report results"**: The user clicked a button, so you don't have results yet.
-   Ask a follow-up via AskUserQuestion:
-   - Question: "Enter results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
-   - Options: ["Submit"]
-   Parse the user's free-text response. Map each item to PASS, FAIL (with evidence),
-   or SKIP. For any FAILs, follow the standard FAIL flow (ask "Fix now or continue
-   testing?") one at a time in item order after recording all results.
-   Apply the ordinary PASS, FAIL or SKIP recording to each item, including
-   appending each result to `Attempts:`; never record a reported FAIL twice.
-
-5. **On "Back to single mode"**: Return to single-item presentation with lookahead
-   at the next UNTESTED item.
-
-**Minimum threshold:** If fewer than 2 consecutive UNTESTED items share a
-prepared state when "Batch: next 3" is selected, stay in single-item mode. Tell
-the user: "Only N item(s) left — staying in single mode."
-If enough items remain but their states differ, say "No consecutive items share
-a prepared state — staying in single mode" instead.
-
-After a batch, offer another batch only when the next consecutive items share
-one prepared state and at least 3 UNTESTED items remain. Otherwise fall back to
-single-item presentation with lookahead.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-park-and-batch --expect 95c47edbe6ee537b` before presenting a batch when the user chooses "Batch: next 3".
 
 ### Group completion
 
@@ -1015,117 +766,9 @@ including after it becomes FIXED; that status alone never passes an item.
 After the group summary, check `parked-bugs.md` for entries with Status: PARKED that
 were noticed during the just-completed group. If none, skip triage silently.
 
-For each parked bug from this group, the skill recommends a classification based on
-whether the bug relates to the branch's changes or upcoming test groups. Present each
-bug via AskUserQuestion:
+Present each parked bug with "Fix now (recommended)" first, "Send to TODOS.md", or "Stay parked". Fix now follows Prepare-the-item safety rules, checkpoint, reproduce, fix commit, rebuild, agent-verify, and human retest; Send to TODOS.md writes the `[pair-review:...]` rich format and commits separately.
 
-- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [Bug title]\n[Symptom from parked-bugs.md, one line]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']\n\n**This bug surfaced during [group] testing. Fixing before [group] ships keeps the Group closure tight. Defer only if it's truly cross-branch.**"
-- Options: ["Fix now (recommended)", "Send to TODOS.md", "Stay parked"]
-
-**Defer nudge (E4):** "Fix now" is listed first intentionally — the default
-framing biases toward closing out the Group that surfaced the bug. Deferral to
-TODOS.md is an escape hatch for genuinely cross-branch bugs, not the easy path.
-
-Behavior for each option:
-- **Fix now** — blocks upcoming groups or relates to current area.
-  Apply the Prepare-the-item safety rules throughout this parked-bug flow.
-  If observation is unavailable, record the reason, keep the bug parked and
-  retain any linked FAILED item; do not label it not reproduced or implement
-  an unverified fix. An observed non-reproduction is a separate result.
-  1. Checkpoint (skip if working tree is clean):
-
-     ```bash
-     git add -u
-     _OUT=$(git commit -m "test: checkpoint before parked bug fix" 2>&1)
-     _RC=$?
-     if [ $_RC -ne 0 ]; then
-       echo "$_OUT"
-       if ! printf '%s' "$_OUT" | grep -q "nothing to commit"; then
-         echo "BLOCKED: checkpoint commit failed. Do NOT proceed."
-         exit 1
-       fi
-     fi
-     ```
-
-     If `$_OUT` mentions "nothing to commit," that's the clean-tree case —
-     proceed without recording a checkpoint. If the bash block exits
-     non-zero (BLOCKED case), **STOP**: do NOT proceed to step 2. Report
-     BLOCKED to the user with the printed `$_OUT` tail.
-  2. Reproduce the bug per its `Repro:` steps before fixing and record the
-     reproduction in its `parked-bugs.md` entry (a bug that does not reproduce is
-     recorded as not reproduced and is not fixed). Then the agent implements the
-     fix.
-  3. Commit:
-
-     ```bash
-     git add -u
-     _OUT=$(git commit -m "fix: <description> (pair-review parked bug #<N>)" 2>&1)
-     _RC=$?
-     if [ $_RC -ne 0 ]; then
-       echo "$_OUT"
-       echo "BLOCKED: fix commit failed. Do NOT proceed."
-       exit 1
-     fi
-     ```
-
-     If the block exits non-zero (BLOCKED case — including "nothing to
-     commit," which at fix-commit time means the agent's fix did not
-     actually modify any tracked files), **STOP**: do NOT proceed to
-     step 4 (rebuild/redeploy), step 5 (verify), or step 6 (mark FIXED).
-     Report BLOCKED to the user with the printed `$_OUT` tail.
-  4. Rebuild/redeploy using deploy.md
-  5. Verify the fix per `Repro:` after the rebuild and record the verification in
-     the bug's `parked-bugs.md` entry; ask the user to verify only a verified fix
-  6. Update the bug's status to `FIXED` and record the fix commit hash
-     only after agent verification and a passing human retest. A linked item's
-     failed attempt stays; only a human retest of its own criteria can pass it.
-- **Send to TODOS.md** — cross-branch bug, fix on another branch later.
-  Append the bug to the `## Unprocessed` section of TODOS.md (root or docs/,
-  whichever exists). If no `## Unprocessed` section exists, create it at the
-  end of the file. Use this rich format:
-
-  ```markdown
-  ## Unprocessed
-
-  ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
-  - **Symptom:** <Symptom field from parked-bugs.md>
-  - **Repro:** <Repro field from parked-bugs.md, verbatim>
-  - **Noticed during:** <group>, item <item>
-  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review. Re-verify the bug per the repro steps before implementing a fix; if it no longer reproduces, close as resolved instead of guessing at a fix.
-  - **Effort:** ? (user triages in /roadmap)
-  ```
-
-  Take `group=` and `item=` values from the bug's own parked-bugs.md
-  `Noticed during:` field. No value may contain `[`, `]`, `,`, `;`, `|`, a backtick or `$(`.
-  For bugs parked before testing, use `### [pair-review:group=pre-test] <Bug title>`
-  with no `item=` key. For an unsafe group slug, use
-  `### [pair-review:item=<item-index>] <Bug title>` and keep the group name in
-  **Noticed during:**. Use only a safe item index in `item=`.
-  Tags carry no `files=` key; file paths stay in the entry body.
-  `group=` names the test group that surfaced the bug; `pre-test` records that
-  it was parked before testing. Neither promises Roadmap Group routing.
-
-  If the section already exists with other items, append the new item to it
-  (new `###` heading block at the end). Do NOT attempt to classify or organize
-  the bug into Groups/Tracks — that is /roadmap's job during triage mode.
-
-  Commit the TODOS.md change separately: stage the TODOS.md file you wrote to
-  (root or docs/, whichever you used) then commit:
-
-  ```bash
-  _OUT=$(git commit -m "chore: add parked bug to TODOS.md (<description>)" 2>&1)
-  _RC=$?
-  if [ $_RC -ne 0 ]; then echo "$_OUT"; fi
-  ```
-
-  The captured `$_OUT` surfaces any real failure (pre-commit hook reject,
-  missing `user.email`, detached HEAD, etc.) instead of swallowing it.
-  Update the bug's status to `DEFERRED_TO_TODOS`.
-- **Stay parked** — this-branch, non-blocking. Remains for Phase 2.5.
-
-Update `session.yaml` parked_bugs counts after each triage decision. Write to disk.
-
----
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before triaging parked bugs at group completion when `parked-bugs.md` has PARKED entries from this group.
 
 ## Phase 2.5: Post-Testing Fix Queue
 
@@ -1135,36 +778,7 @@ they were noticed during, including bugs parked before testing started).
 
 If none remain, skip to Phase 4.
 
-If parked bugs remain, present each via AskUserQuestion (same format as group-completion
-triage):
-
-- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [Bug title]\n[Symptom from parked-bugs.md, one line]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]\n\n**Deferring this bug keeps it in the roadmap's closure debt for [group]. Fix now if it's on-branch or blocks the current Group's ship.**"
-- Options: ["Fix now (recommended for on-branch bugs)", "Send to TODOS.md", "Skip"]
-
-Behavior for each option:
-- **Fix now** — apply the Prepare-the-item safety rules throughout this parked-bug flow; checkpoint, reproduce per the bug's `Repro:` before fixing (a bug that does not reproduce is recorded as not reproduced and is not fixed), agent implements fix, commit, rebuild, verify after the rebuild, record both steps in the bug's `parked-bugs.md` entry, ask the user to verify only a verified fix, mark FIXED only after a passing human retest. Unavailable observation is not non-reproduction: keep the bug parked with its reason and any linked FAILED item unchanged.
-- **Send to TODOS.md** — cross-branch, append to `## Unprocessed` section of TODOS.md
-  using this rich format:
-  ```markdown
-  ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
-  - **Symptom:** <Symptom field from parked-bugs.md>
-  - **Repro:** <Repro field from parked-bugs.md, verbatim>
-  - **Noticed during:** <group>, item <item>
-  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review Phase 2.5. Re-verify the bug per the repro steps before implementing a fix; if it no longer reproduces, close as resolved instead of guessing at a fix.
-  - **Effort:** ? (user triages in /roadmap)
-  ```
-  Take `group=` and `item=` values from the bug's own parked-bugs.md
-  `Noticed during:` field. No value may contain `[`, `]`, `,`, `;`, `|`, a backtick or `$(`.
-  For bugs parked before testing, use `### [pair-review:group=pre-test] <Bug title>`
-  with no `item=` key. For an unsafe group slug, use
-  `### [pair-review:item=<item-index>] <Bug title>` and keep the group name in
-  **Noticed during:**. Use only a safe item index in `item=`.
-  Tags carry no `files=` key; file paths stay in the entry body.
-  Create the section if it doesn't exist. Commit separately, mark DEFERRED_TO_TODOS.
-- **Skip** — not worth fixing now, mark SKIPPED
-
-If a fix fails (build error), use the existing deploy error handling: present the
-error via AskUserQuestion with options: ["Fix the build issue", "Skip this bug"].
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before running Phase 2.5 when PARKED bugs remain after all groups complete.
 
 After all parked bugs are processed (or the user says to stop), proceed to Phase 4.
 
@@ -1176,39 +790,11 @@ When `/pair-review resume` or `/pair-review status` is invoked.
 
 ### Step 1: Find existing state
 
-`SESSION_DIR` is already keyed by the current branch (resolved by
-`session_dir pair-review "$BRANCH"`), so sessions on other branches live at
-sibling paths and are not visible here — that is by design. Use the Glob tool
-to check for an existing session on the current branch:
-
-```
-Glob pattern: <SESSION_DIR>/session.yaml
-```
-
-If the file exists, read it and proceed to Step 2.
-
-If no state found: "No active test session found. Want to start a new one?"
-
-If the user wants to see sessions on other branches, list `<PROJECT_DIR>/branches/`
-— each sibling there is another branch's active session.
+Run `~/.gstack-extend/bin/preamble pair-review --ref resume-session --expect 84194215083c75ee` before locating an existing branch session on `/pair-review resume` or `/pair-review status`.
 
 ### Step 2: Render dashboard
 
-Read session.yaml and all group files. Display:
-
-```
-TEST SESSION: <project>
-Branch: <branch> | Build: <commit> | Started: <date>
-
-<GROUP1> (active):     3/7 passed, 1 failed (awaiting retest), 0 skipped, 3 untested
-<GROUP2> (active):     0/4 tested
-<GROUP3>:              not started (5 items)
-
-PARKED: <N> bugs parked (<M> triaged, <K> remaining)
-NEXT: <what to test next>
-DEPLOY: <build command from deploy.md>
-CHECKPOINTS: <N> saved
-```
+Run `~/.gstack-extend/bin/preamble pair-review --ref resume-session --expect 84194215083c75ee` before rendering the session dashboard on `/pair-review resume` or `/pair-review status`.
 
 ### Step 3: Continue or status-only
 
@@ -1240,45 +826,7 @@ bugs as Status: SKIPPED and proceed.
 
 ### Step 1: Generate report
 
-```markdown
-## Pair Review Report
-
-Branch: <branch>
-Date: <date>
-Duration: <time from started to now>
-
-### Summary
-- Total items: N
-- Passed: N
-- Failed + fixed: N
-- Skipped: N
-- Checks left off as agent checks: <list, or none>
-
-### Groups
-
-#### <Group 1>
-| # | Check | Item | Status | Evidence | Notes |
-|---|-------|------|--------|----------|-------|
-| 1 | <matrix ID or none> | <description> | PASSED | <Agent evidence path> | |
-| 2 | <matrix ID or none> | <description> | PASSED (failed at <build>: <evidence>; fixed in abc123) | <Agent evidence path> | <notes> |
-...
-
-### Fixes Applied
-| Commit | Item | Verified Build | Description |
-|--------|------|----------------|-------------|
-| abc123 | Auth #2 | def456 | Fixed loading state transition |
-...
-
-### Skipped Items
-| Item | Reason |
-|------|--------|
-| <description> | <reason> |
-
-### Parked Bugs
-| # | Bug | Noticed During | Outcome |
-|---|-----|----------------|---------|
-| 1 | <description> | <group>, item <N> | FIXED (abc123) / DEFERRED_TO_TODOS / SKIPPED |
-```
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-completion-routing --expect 984da1fae585ba2c` before generating the Phase 4 Pair Review Report.
 
 ### Step 2: Save report
 
@@ -1295,72 +843,7 @@ status and pause signals; it never prints bodies or comment text. The published
 stage-handoff contract (`docs/workflow-handoffs.md`) owns the canonical
 hold/resume rules; a detector built on it may replace this check.
 
-```bash
-PR_CLASS=lookup-failure
-PR_REASON=
-if [ -z "$(git remote)" ]; then
-  PR_CLASS=no-github
-elif ! command -v gh >/dev/null 2>&1; then
-  PR_REASON=gh-missing
-elif [ -z "$(git branch --show-current)" ]; then
-  PR_REASON=detached
-else
-  _PR_ERR=$(mktemp) || { printf 'PR_CLASS=lookup-failure\nPR_REASON=api\n'; exit 0; }
-  trap 'rm -f "$_PR_ERR" "${_PR_OUT:-}"' EXIT
-  _PR_OUT=$(mktemp) || { printf 'PR_CLASS=lookup-failure\nPR_REASON=api\n'; exit 0; }
-  gh pr view --json state,isDraft,url,body,comments --jq '
-(.comments // [] | map(select(.viewerDidAuthor == true and
-  (.body | contains("<!-- review-and-prep:paused:") or contains("<!-- review-and-prep:receipt:"))))
-  | sort_by(.createdAt)) as $markers
-| ($markers | map(select(.body | contains("<!-- review-and-prep:paused:"))) | last) as $pause
-| (($markers | last | .body // "" | contains("<!-- review-and-prep:paused:"))
-   or (.isDraft == true and $pause != null)) as $comment_paused
-| (.body // "" | split("\n") | map(rtrimstr("\r"))
-   | reduce .[] as $line ({active: false, paused: false};
-     if $line == "## Review and prep" then .active = true
-     else if ($line | startswith("## ")) then .active = false
-     else if .active and ($line | contains("PAUSED") and contains("manual testing required"))
-       then .paused = true else . end end end)) as $section
-| ($pause.body // "" | split("<!-- review-and-prep:paused:")[1] // ""
-   | split(" ")[0] // "" | split("\n")[0] // "" | split("-->")[0] // "") as $candidate
-| (if ($candidate | length) == 40 and
-       ($candidate | explode | all((. >= 48 and . <= 57) or (. >= 97 and . <= 102)))
-   then $candidate else "" end) as $sha
-| "PR_STATE=\(.state)", "PR_DRAFT=\(.isDraft == true)", "PR_URL=\(.url)",
-  "BODY_PAUSED=\($section.paused == true)", "COMMENT_PAUSED=\($comment_paused == true)", "PAUSE_SHA=\($sha)"
-' >"$_PR_OUT" 2>"$_PR_ERR"
-  PR_VIEW_RC=$?
-  cat "$_PR_ERR" >&2
-  printf 'PR_VIEW_RC=%s\n' "$PR_VIEW_RC"
-  if [ "$PR_VIEW_RC" -ne 0 ]; then
-    _PR_ERROR=$(LC_ALL=C tr '[:upper:]' '[:lower:]' < "$_PR_ERR")
-    case "$_PR_ERROR" in
-      *'of the git remotes configured for this repository point to a known github host'*|*'no git remotes found'*) PR_CLASS=no-github ;;
-      *'no pull requests found for branch'*) PR_CLASS=no-pr ;;
-      *) if [ "$PR_VIEW_RC" -eq 4 ] || case "$_PR_ERROR" in *'gh auth login'*) true ;; *) false ;; esac; then PR_REASON=auth; else PR_REASON=api; fi ;;
-    esac
-  elif LC_ALL=C awk '
-    NR == 1 && /^PR_STATE=(OPEN|CLOSED|MERGED)$/ {next}
-    NR == 2 && /^PR_DRAFT=(true|false)$/ {next}
-    NR == 3 && /^PR_URL=https?:\/\/[^[:space:]]+$/ {next}
-    NR == 4 && /^BODY_PAUSED=(true|false)$/ {next}
-    NR == 5 && /^COMMENT_PAUSED=(true|false)$/ {next}
-    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($(0)) == 50)) {next}
-    {bad = 1}
-    END {exit (bad || NR != 6)}' "$_PR_OUT"; then
-    awk '{print}' "$_PR_OUT"
-    if grep -Eq '^(BODY_PAUSED|COMMENT_PAUSED)=true$' "$_PR_OUT"; then
-      if grep -qx 'PR_STATE=OPEN' "$_PR_OUT"; then PR_CLASS=paused; else PR_CLASS=closed-paused; fi
-    else
-      PR_CLASS=no-pause
-    fi
-  else
-    PR_REASON=unreadable
-  fi
-fi
-printf 'PR_CLASS=%s\n' "$PR_CLASS"
-if [ -n "$PR_REASON" ]; then printf 'PR_REASON=%s\n' "$PR_REASON"; fi
-```
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-completion-routing --expect 984da1fae585ba2c` before running the paused-preparation PR check and routing next steps in Phase 4 Step 3.
 
 These routes produce the hold and resume outputs of the published
 [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
