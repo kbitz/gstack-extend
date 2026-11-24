@@ -383,6 +383,35 @@ describe('machine-read capability literals and inbound anchors (Track 94I)', () 
     }
   });
 
+  const DELEGATE_PART_LIST_CLAUSE =
+    '`delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,\n  `simplification`, `adversarial` and `red-team`, comma-separated, each at most\n  once)';
+
+  test('delegate part-list clause stays verbatim in review-and-prep core, is not duplicated in reference, and appears in generated host copies', () => {
+    const core = readFileSync(skillPath('review-and-prep'), 'utf8');
+    expect(core.split(DELEGATE_PART_LIST_CLAUSE).length - 1).toBe(1);
+
+    const refPath = join(ROOT, 'skills', 'references', 'review-and-prep', 'conditional-policy-values.md');
+    const refText = readFileSync(refPath, 'utf8');
+    expect(refText).not.toContain(DELEGATE_PART_LIST_CLAUSE);
+    expect(refText).not.toContain('`testing`, `maintainability`, `performance`');
+    expect(refText).not.toContain('`simplification`, `adversarial` and `red-team`');
+    expect(refText).toContain('(parts listed in **Read an optional review policy** in the core)');
+
+    for (const host of ['codex', 'claude'] as const) {
+      const home = mkdtempSync(join(baseTmp, `delegate-clause-${host}-`));
+      const r = spawnSync(SETUP, ['--host', host, '--quiet'], {
+        env: scopedEnv(home),
+        encoding: 'utf8',
+      });
+      expect(r.status, r.stderr).toBe(0);
+      const installed = readFileSync(
+        join(home, host === 'codex' ? '.codex' : '.claude', 'skills', 'review-and-prep', 'SKILL.md'),
+        'utf8',
+      );
+      expect(installed, `${host} copy missing delegate part-list clause`).toContain(DELEGATE_PART_LIST_CLAUSE);
+    }
+  });
+
   test('every skills/<skill>.md#<anchor> link in docs/ and tests/ resolves to a heading in that core', () => {
     const anchorsBySkill = new Map<string, Set<string>>();
     for (const skill of SKILLS) {
@@ -570,6 +599,51 @@ describe('scripts/skill-references.ts conservation fixtures (Track 94I)', () => 
     const changedCore = applied.core.replace(`${instruction!.line}\n`, '') + `\n${instruction!.line}\n`;
     const result = checkConservation('sample', sampleBase, changedCore, applied.references, sampleManifest);
     expect(result.errors).toContain('unexpected core edits or read-instruction placement in skills/sample.md');
+  });
+
+  test('keepMachineReadClauses keeps the exact clause in core, replaces it with a pointer in the reference, and enforces conservation', () => {
+    const clause = '`opt=<a>` (`x`, `y` and `z`)';
+    const pointer = '`opt=<a>` (values listed in core)';
+    const clauseBase = sampleBase.replace('Moved block A line 1.', `- ${clause} enables option A.`);
+    const manifest = [
+      {
+        ...sampleManifest[0]!,
+        startMarker: `- ${clause} enables option A.`,
+        keepMachineReadClauses: [[clause, pointer]] as const,
+      },
+      sampleManifest[1]!,
+    ];
+    const applied = applyManifestToSkill('sample', clauseBase, manifest);
+    expect(applied.core).toContain(`- ${clause}`);
+    expect(applied.references['conditional-sample']).toContain(`- ${pointer} enables option A.`);
+    expect(applied.references['conditional-sample']).not.toContain(clause);
+
+    const res = checkConservation('sample', clauseBase, applied.core, applied.references, manifest);
+    expect(res.ok, res.errors.join('\n')).toBe(true);
+    expect(res.droppedLines).toEqual([]);
+
+    expect(() =>
+      applyManifestToSkill('sample', clauseBase.replace(clause, '`opt=other`'), [
+        {
+          ...manifest[0]!,
+          startMarker: '- `opt=other` enables option A.',
+        },
+        manifest[1]!,
+      ]),
+    ).toThrow('Expected one kept clause');
+
+    expect(() =>
+      applyManifestToSkill(
+        'sample',
+        clauseBase.replace('Moved block A line 2.', `Repeated ${clause}.`),
+        manifest,
+      ),
+    ).toThrow('Expected one kept clause');
+
+    const removedCore = applied.core.replace(`- ${clause}\n`, '');
+    expect(checkConservation('sample', clauseBase, removedCore, applied.references, manifest).ok).toBe(false);
+    const mutatedCore = applied.core.replace('`z`', '`w`');
+    expect(checkConservation('sample', clauseBase, mutatedCore, applied.references, manifest).ok).toBe(false);
   });
 
   test('MOVE_MANIFEST has entries for all four slimmed skills', () => {
