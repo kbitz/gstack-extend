@@ -1779,7 +1779,7 @@ describe('execution provenance', () => {
       model: 'grok-4.7',
       effort: 'medium',
       run_mode: 'unknown',
-      run_mode_source: 'harness-unqualified',
+      run_mode_source: 'entrypoint-unavailable',
     });
   }, 30_000);
 
@@ -2026,7 +2026,7 @@ describe('execution provenance', () => {
       effort: 'high',
       effort_source: 'detected',
       run_mode: 'unknown',
-      run_mode_source: 'harness-unqualified',
+      run_mode_source: 'entrypoint-unavailable',
     });
     expect(validRow(paseoGrok)).toBe(true);
     const missingNamed = provenanceRun(fix, { GROK_SESSION_ID: 'missing_session_id', PASEO_AGENT_ID: 'paseo-grok-2' }, undefined, [], work).row;
@@ -2038,7 +2038,7 @@ describe('execution provenance', () => {
       effort: null,
       effort_source: 'unknown',
       run_mode: 'unknown',
-      run_mode_source: 'harness-unqualified',
+      run_mode_source: 'entrypoint-unavailable',
     });
     expect(validRow(missingNamed)).toBe(true);
 
@@ -2061,7 +2061,7 @@ describe('execution provenance', () => {
       effort: null,
       effort_source: 'unknown',
       run_mode: 'unknown',
-      run_mode_source: 'harness-unqualified',
+      run_mode_source: 'entrypoint-unavailable',
     });
     expect(validRow(invalidWithGrokAgent)).toBe(true);
 
@@ -2982,7 +2982,7 @@ describe('handoff adoption', () => {
     expectRefusal(foreignGrok.stderr, 'handoff from another session');
     expect(runHelper({ ...grok.env, GROK_SESSION_ID: 'grok-session-1' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(grok.readLedger()).toHaveLength(1);
-    expect(grok.readLedger()[0]).toMatchObject({ agent: 'grok', agent_source: 'detected', run_mode: 'unknown', run_mode_source: 'harness-unqualified' });
+    expect(grok.readLedger()[0]).toMatchObject({ agent: 'grok', agent_source: 'detected', run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
 
     const invalidGrok = makeTelemetryFixture('community', 'stub');
     runHelper({ ...invalidGrok.env, GROK_SESSION_ID: '../bad' }, ['start', '--skill', 'extend:roadmap']);
@@ -5345,16 +5345,16 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'no-harness',
       },
       {
-        name: 'grok markers only gives harness-unqualified',
+        name: 'grok markers only without session log gives entrypoint-unavailable',
         finishEnv: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-1' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'entrypoint-unavailable',
       },
       {
-        name: 'grok session id only under Paseo gives harness-unqualified',
+        name: 'grok session id only under Paseo without session log gives entrypoint-unavailable',
         finishEnv: { GROK_SESSION_ID: 'grok-rm-paseo', PASEO_AGENT_ID: 'paseo-grok-rm' },
         mode: 'unknown',
-        source: 'harness-unqualified',
+        source: 'entrypoint-unavailable',
       },
       {
         name: 'codex markers under Paseo without rollout gives entrypoint-unavailable',
@@ -5416,9 +5416,21 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         }),
       ]);
     };
+    const grokSessionPath = (sid: string) =>
+      join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(process.cwd())), sid);
+    const writeGrokContext = (sid: string, context: object, summary?: object) => {
+      const dir = grokSessionPath(sid);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(context, null, 2) + '\n');
+      if (summary !== undefined) {
+        writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+      }
+    };
     writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
     writeCodexMeta('codex-rm-tui', 'codex-tui', 'vscode');
     writeCodexMeta('codex-rm-sub', 'codex_cli_rs', { subagent: 'review' });
+    writeGrokContext('grok-audit-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-audit-term' } });
+    writeGrokContext('grok-audit-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-audit-headless' }, session_kind: 'headless' });
     writeMuseOpen('muse-rm-host', 'paseo');
     writeMuseOpen('muse-rm-nocli', null);
 
@@ -5483,7 +5495,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
       '    src = inspect.getsource(fn)',
       '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl"):',
       '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
@@ -5498,6 +5510,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
       'assert list(telemetry.head_records(pathlib.Path(sys.argv[3]), telemetry.codex_home_dir()))',
+      'assert isinstance(telemetry.head_json(pathlib.Path(sys.argv[4]), telemetry.grok_home_dir()), dict)',
       'assert telemetry.claude_launch_surface() == "terminal"',
       'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-term", "PASEO_AGENT_ID": "paseo-codex-rm"}, clear=False):',
       '    assert telemetry.codex_launch_surface() == "terminal"',
@@ -5508,6 +5521,15 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-sub"}, clear=False):',
       '    assert telemetry.codex_launch_surface() == "other"',
       '    assert telemetry.run_mode("codex", "codex", None) == ("unknown", "entrypoint-unqualified")',
+      'with mock.patch.dict(telemetry.os.environ, {"GROK_AGENT": "1", "GROK_SESSION_ID": "grok-audit-term"}, clear=False):',
+      '    assert telemetry.grok_launch_surface() == "terminal"',
+      '    assert telemetry.run_mode("grok", "grok", None) == ("user-directed", "terminal-session")',
+      'with mock.patch.dict(telemetry.os.environ, {"GROK_AGENT": "1", "GROK_SESSION_ID": "grok-audit-headless"}, clear=False):',
+      '    assert telemetry.grok_launch_surface() == "other"',
+      '    assert telemetry.run_mode("grok", "grok", None) == ("unknown", "entrypoint-unqualified")',
+      'with mock.patch.dict(telemetry.os.environ, {"GROK_SESSION_ID": "grok-audit-missing"}, clear=False):',
+      '    assert telemetry.grok_launch_surface() is None',
+      '    assert telemetry.run_mode("grok", "grok", None) == ("unknown", "entrypoint-unavailable")',
       'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-host"}, clear=False):',
       '    assert telemetry.muse_launch_surface() == "host-app"',
       '    assert telemetry.run_mode("muse", "muse", None) == ("user-directed", "host-app-session")',
@@ -5530,7 +5552,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
       'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 4, "signals": signals}))',
     ].join('\n');
-    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend'), codexRolloutPath('codex-rm-term')], {
+    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend'), codexRolloutPath('codex-rm-term'), join(grokSessionPath('grok-audit-term'), 'prompt_context.json')], {
       env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
       encoding: 'utf8',
       timeout: 10_000,
@@ -5560,6 +5582,19 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       museLog(fix.home, sid, records);
     };
 
+    const grokPlace = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(process.cwd())));
+    const writeGrokSession = (sid: string, context: object | null, summary?: object, padBytes = 0) => {
+      const dir = join(grokPlace, sid);
+      mkdirSync(dir, { recursive: true });
+      if (context !== null) {
+        const body = padBytes > 0 ? { ...context, pad: 'x'.repeat(padBytes) } : context;
+        writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(body, null, 2) + '\n');
+      }
+      if (summary !== undefined) {
+        writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+      }
+    };
+
     writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
     writeCodexMeta('codex-rm-exec', 'codex_exec', 'exec');
     // The link's target names the linked thread, so only the leaf no-follow open can refuse it.
@@ -5567,6 +5602,15 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     writeJsonl(codexSymTarget, [{ timestamp: iso(1790000000), type: 'session_meta', payload: { id: 'codex-rm-sym', originator: 'codex_cli_rs', source: 'vscode' } }]);
     symlinkSync(codexSymTarget, codexRolloutPath('codex-rm-sym'));
     writeCodexMeta('codex-rm-over', 'codex_cli_rs', 'vscode', 70_000);
+
+    writeGrokSession('grok-rm-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-rm-term' }, current_model_id: 'grok-4.7-build-fast', reasoning_effort: 'high' });
+    writeGrokSession('grok-rm-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-rm-headless' }, session_kind: 'headless' });
+    writeGrokSession('grok-rm-subagent', { audience: 'subagent', is_non_interactive: false }, { info: { id: 'grok-rm-subagent' }, session_kind: 'subagent' });
+    writeGrokSession('grok-rm-kind-override', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-rm-kind-override' }, session_kind: 'headless' });
+    const grokSymDir = join(grokPlace, 'grok-rm-sym');
+    mkdirSync(grokSymDir, { recursive: true });
+    symlinkSync(join(grokPlace, 'grok-rm-term', 'prompt_context.json'), join(grokSymDir, 'prompt_context.json'));
+    writeGrokSession('grok-rm-over', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-rm-over' } }, 70_000);
 
     writeMuseOpen('muse-rm-host', 'paseo');
     writeMuseOpen('muse-rm-case', 'Paseo');
@@ -5631,6 +5675,19 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         overBound: { CODEX_THREAD_ID: 'codex-rm-over' },
       },
       {
+        harness: 'grok',
+        overrideAgent: 'claude',
+        terminal: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-term' },
+        other: [
+          { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-headless' },
+          { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-subagent' },
+          { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-kind-override' },
+        ],
+        missing: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-missing' },
+        symlinked: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-sym' },
+        overBound: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-rm-over' },
+      },
+      {
         harness: 'muse',
         overrideAgent: 'claude',
         hostApp: { MUSE_SESSION_ID: 'muse-rm-host', PASEO_AGENT_ID: 'paseo-muse-rm' },
@@ -5682,6 +5739,18 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
           finishEnv: { ...byHandEnv, GSTACK_SESSION_KIND: 'spawned', GSTACK_EXTEND_WORK_ITEM: `item-${q.harness}-1` },
           mode: 'orchestrated',
           source: 'session-kind',
+        },
+        {
+          name: `${q.harness} qualified evidence + unattended gives session-kind`,
+          finishEnv: { ...byHandEnv, GSTACK_SESSION_KIND: 'unattended' },
+          mode: 'orchestrated',
+          source: 'session-kind',
+        },
+        {
+          name: `${q.harness} qualified evidence + work item alone gives work-item`,
+          finishEnv: { ...byHandEnv, GSTACK_EXTEND_WORK_ITEM: `item-${q.harness}-alone` },
+          mode: 'orchestrated',
+          source: 'work-item',
         },
         {
           name: `${q.harness} qualified evidence + GSTACK_EXTEND_WORKSPACE_OWNER gives host-managed-workspace`,
@@ -5791,6 +5860,281 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       );
       expect(finish.status, tc.name).toBe(0);
       const row = fix.readLedger().at(-1)!;
+      expect(row.run_mode, tc.name).toBe(tc.mode);
+      expect(row.run_mode_source, tc.name).toBe(tc.source);
+      expect(validRow(row), tc.name).toBe(true);
+    }
+  }, 60_000);
+
+  test('Grok launch-surface reader handles Paseo, active-session fallback, and security/validation edge cases', () => {
+    const fix = makeTelemetryFixture('off');
+    const makeWork = (name: string) => {
+      const work = join(fix.home, name);
+      mkdirSync(work, { recursive: true });
+      const encoded = encodeURIComponent(realpathSync(work));
+      const place = join(fix.home, '.grok/sessions', encoded);
+      return { work, encoded, place };
+    };
+    const writeGrokDir = (
+      place: string,
+      sid: string,
+      opts: {
+        context?: object | string | null;
+        summary?: object | string | null;
+        events?: object[];
+        eventsMtime?: number;
+      },
+    ) => {
+      const dir = join(place, sid);
+      mkdirSync(dir, { recursive: true });
+      if (opts.context !== undefined && opts.context !== null) {
+        writeFileSync(
+          join(dir, 'prompt_context.json'),
+          typeof opts.context === 'string' ? opts.context : JSON.stringify(opts.context, null, 2) + '\n',
+        );
+      }
+      if (opts.summary !== undefined && opts.summary !== null) {
+        writeFileSync(
+          join(dir, 'summary.json'),
+          typeof opts.summary === 'string' ? opts.summary : JSON.stringify(opts.summary, null, 2) + '\n',
+        );
+      }
+      if (opts.events !== undefined) {
+        const log = join(dir, 'events.jsonl');
+        writeJsonl(log, opts.events);
+        if (opts.eventsMtime !== undefined) {
+          utimesSync(log, opts.eventsMtime, opts.eventsMtime);
+        }
+      }
+      return dir;
+    };
+
+    // Paseo Grok launch: GROK_SESSION_ID + PASEO_AGENT_ID (without GROK_AGENT=1) with concurrent sibling probes/subagents.
+    const paseo = makeWork('grok-paseo-work');
+    const paseoRow = provenanceRun(
+      fix,
+      { GROK_SESSION_ID: 'grok-paseo-1', PASEO_AGENT_ID: 'paseo-agent-grok' },
+      () => {
+        writeGrokDir(paseo.place, 'grok-paseo-1', {
+          context: { audience: 'primary', is_non_interactive: false },
+          summary: { info: { id: 'grok-paseo-1' }, current_model_id: 'grok-4.7-build-fast', reasoning_effort: 'high' },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7-build-fast' }],
+        });
+        writeGrokDir(paseo.place, 'grok-probe-sibling', {
+          context: { audience: 'primary', is_non_interactive: true },
+          summary: { info: { id: 'grok-probe-sibling' }, session_kind: 'headless' },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-probe' }],
+        });
+        writeGrokDir(paseo.place, 'grok-subagent-sibling', {
+          context: { audience: 'subagent', is_non_interactive: false },
+          summary: { info: { id: 'grok-subagent-sibling' }, session_kind: 'subagent' },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-sub' }],
+        });
+      },
+      [],
+      paseo.work,
+    ).row;
+    expect(paseoRow).toMatchObject({
+      agent: 'grok',
+      model: 'grok-4.7-build-fast',
+      effort: 'high',
+      run_mode: 'user-directed',
+      run_mode_source: 'terminal-session',
+    });
+    expect(validRow(paseoRow)).toBe(true);
+
+    // Terminal GROK_AGENT=1 without GROK_SESSION_ID: single fresh interactive session -> user-directed / terminal-session.
+    const activeTerm = makeWork('grok-active-term');
+    const activeTermRow = provenanceRun(
+      fix,
+      { GROK_AGENT: '1' },
+      start => {
+        writeGrokDir(activeTerm.place, 'stale-session', {
+          context: { audience: 'primary', is_non_interactive: true },
+          events: [{ ts: iso(start - 100), type: 'turn_started', model_id: 'grok-old' }],
+          eventsMtime: start - 50,
+        });
+        writeGrokDir(activeTerm.place, 'fresh-term', {
+          context: { audience: 'primary', is_non_interactive: false },
+          summary: { info: { id: 'fresh-term' }, current_model_id: 'grok-4.7', reasoning_effort: 'medium' },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }],
+        });
+      },
+      [],
+      activeTerm.work,
+    ).row;
+    expect(activeTermRow).toMatchObject({ agent: 'grok', run_mode: 'user-directed', run_mode_source: 'terminal-session' });
+
+    // Single fresh headless and single fresh subagent without GROK_SESSION_ID -> entrypoint-unqualified.
+    const activeHeadless = makeWork('grok-active-headless');
+    const activeHeadlessRow = provenanceRun(
+      fix,
+      { GROK_AGENT: '1' },
+      () => {
+        writeGrokDir(activeHeadless.place, 'fresh-headless', {
+          context: { audience: 'primary', is_non_interactive: true },
+          summary: { info: { id: 'fresh-headless' }, session_kind: 'headless' },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }],
+        });
+      },
+      [],
+      activeHeadless.work,
+    ).row;
+    expect(activeHeadlessRow).toMatchObject({ agent: 'grok', run_mode: 'unknown', run_mode_source: 'entrypoint-unqualified' });
+
+    const activeSubagent = makeWork('grok-active-subagent');
+    const activeSubagentRow = provenanceRun(
+      fix,
+      { GROK_AGENT: '1' },
+      () => {
+        writeGrokDir(activeSubagent.place, 'fresh-subagent', {
+          context: { audience: 'subagent', is_non_interactive: false },
+          summary: { info: { id: 'fresh-subagent' }, session_kind: 'subagent' },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }],
+        });
+      },
+      [],
+      activeSubagent.work,
+    ).row;
+    expect(activeSubagentRow).toMatchObject({ agent: 'grok', run_mode: 'unknown', run_mode_source: 'entrypoint-unqualified' });
+
+    // Zero fresh sessions (only stale) -> entrypoint-unavailable.
+    const onlyStale = makeWork('grok-only-stale');
+    const onlyStaleRow = provenanceRun(
+      fix,
+      { GROK_AGENT: '1' },
+      start => {
+        writeGrokDir(onlyStale.place, 'stale-only', {
+          context: { audience: 'primary', is_non_interactive: false },
+          events: [{ ts: iso(start - 100), type: 'turn_started', model_id: 'grok-old' }],
+          eventsMtime: start - 50,
+        });
+      },
+      [],
+      onlyStale.work,
+    ).row;
+    expect(onlyStaleRow).toMatchObject({ agent: 'grok', run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
+
+    // Two fresh sessions (concurrent probe/subagent) -> entrypoint-unavailable.
+    const twoFresh = makeWork('grok-two-fresh');
+    const twoFreshRow = provenanceRun(
+      fix,
+      { GROK_AGENT: '1' },
+      () => {
+        writeGrokDir(twoFresh.place, 'fresh-a', {
+          context: { audience: 'primary', is_non_interactive: false },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }],
+        });
+        writeGrokDir(twoFresh.place, 'fresh-b', {
+          context: { audience: 'primary', is_non_interactive: false },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }],
+        });
+      },
+      [],
+      twoFresh.work,
+    ).row;
+    expect(twoFreshRow).toMatchObject({ agent: 'grok', run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
+
+    // Non-empty invalid GROK_SESSION_ID alongside a single fresh interactive sibling -> entrypoint-unavailable (never falls back).
+    const invalidSid = makeWork('grok-invalid-sid-edge');
+    const invalidSidRow = provenanceRun(
+      fix,
+      { GROK_AGENT: '1', GROK_SESSION_ID: '../bad' },
+      () => {
+        writeGrokDir(invalidSid.place, 'fresh-interactive', {
+          context: { audience: 'primary', is_non_interactive: false },
+          events: [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }],
+        });
+      },
+      [],
+      invalidSid.work,
+    ).row;
+    expect(invalidSidRow).toMatchObject({ agent: 'grok', run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
+
+    // Security and validation edge cases.
+    const sec = makeWork('grok-sec-edge');
+    // 1. Exact 64 KiB (LOG_HEAD_BYTES) prompt_context.json -> user-directed / terminal-session.
+    const headBytes = 64 * 1024;
+    const baseExact = JSON.stringify({ audience: 'primary', is_non_interactive: false, pad: '' });
+    const exactJson = JSON.stringify({ audience: 'primary', is_non_interactive: false, pad: 'x'.repeat(headBytes - baseExact.length) });
+    expect(Buffer.byteLength(exactJson, 'utf8')).toBe(headBytes);
+    writeGrokDir(sec.place, 'exact-64k', { context: exactJson });
+
+    // 2. prompt_context.json without summary.json -> user-directed / terminal-session.
+    writeGrokDir(sec.place, 'no-summary', { context: { audience: 'primary', is_non_interactive: false } });
+
+    // 3. Symlinked GROK_HOME itself (trusted home) -> user-directed / terminal-session.
+    const realGrokHome = join(fix.home, '.grok');
+    const linkedGrokHomeRoot = join(fix.home, 'grok-home-link');
+    symlinkSync(realGrokHome, linkedGrokHomeRoot, 'dir');
+
+    // 4. Symlinked sessions/, symlinked <encoded-cwd>/, symlinked <session-id>/, and symlinked summary.json inside GROK_HOME.
+    const linkedSessionsHome = join(fix.home, 'grok-linked-sessions');
+    mkdirSync(linkedSessionsHome);
+    symlinkSync(join(realGrokHome, 'sessions'), join(linkedSessionsHome, 'sessions'), 'dir');
+
+    const linkedPlaceHome = join(fix.home, 'grok-linked-place');
+    mkdirSync(join(linkedPlaceHome, 'sessions'), { recursive: true });
+    symlinkSync(sec.place, join(linkedPlaceHome, 'sessions', sec.encoded), 'dir');
+
+    symlinkSync(join(sec.place, 'no-summary'), join(sec.place, 'linked-session-dir'), 'dir');
+
+    const linkedSummaryDir = writeGrokDir(sec.place, 'linked-summary', {
+      context: { audience: 'primary', is_non_interactive: false },
+    });
+    const externalSummary = join(fix.home, 'external-grok-summary.json');
+    writeFileSync(externalSummary, JSON.stringify({ info: { id: 'linked-summary' } }) + '\n');
+    symlinkSync(externalSummary, join(linkedSummaryDir, 'summary.json'));
+
+    // 5. Validation failures: non-boolean is_non_interactive, missing/unclean audience, malformed JSON, malformed/over-bound/mismatched summary.json.
+    writeGrokDir(sec.place, 'nonbool-zero', { context: { audience: 'primary', is_non_interactive: 0 } });
+    writeGrokDir(sec.place, 'nonbool-str', { context: { audience: 'primary', is_non_interactive: 'false' } });
+    writeGrokDir(sec.place, 'missing-audience', { context: { is_non_interactive: false } });
+    writeGrokDir(sec.place, 'padded-audience', { context: { audience: ' primary', is_non_interactive: false } });
+    writeGrokDir(sec.place, 'unclean-audience', { context: { audience: 'primary\n', is_non_interactive: false } });
+    writeGrokDir(sec.place, 'blank-audience', { context: { audience: '   ', is_non_interactive: false } });
+    writeGrokDir(sec.place, 'malformed-context', { context: '{not valid json' });
+    writeGrokDir(sec.place, 'malformed-summary', {
+      context: { audience: 'primary', is_non_interactive: false },
+      summary: '{bad summary',
+    });
+    writeGrokDir(sec.place, 'overbound-summary', {
+      context: { audience: 'primary', is_non_interactive: false },
+      summary: { info: { id: 'overbound-summary' }, pad: 'x'.repeat(70_000) },
+    });
+    writeGrokDir(sec.place, 'mismatched-summary-id', {
+      context: { audience: 'primary', is_non_interactive: false },
+      summary: { info: { id: 'other-session-id' } },
+    });
+
+    const secCases: Array<{
+      name: string;
+      env: Record<string, string>;
+      mode: 'user-directed' | 'unknown';
+      source: string;
+    }> = [
+      { name: 'exact 64 KiB prompt_context.json qualifies', env: { GROK_SESSION_ID: 'exact-64k' }, mode: 'user-directed', source: 'terminal-session' },
+      { name: 'prompt_context.json without summary.json qualifies', env: { GROK_SESSION_ID: 'no-summary' }, mode: 'user-directed', source: 'terminal-session' },
+      { name: 'symlinked GROK_HOME itself is trusted', env: { GROK_HOME: linkedGrokHomeRoot, GROK_SESSION_ID: 'no-summary' }, mode: 'user-directed', source: 'terminal-session' },
+      { name: 'symlinked sessions/ inside GROK_HOME fails closed', env: { GROK_HOME: linkedSessionsHome, GROK_SESSION_ID: 'no-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'symlinked <encoded-cwd>/ inside GROK_HOME fails closed', env: { GROK_HOME: linkedPlaceHome, GROK_SESSION_ID: 'no-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'symlinked <session-id>/ inside GROK_HOME fails closed', env: { GROK_SESSION_ID: 'linked-session-dir' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'symlinked summary.json inside GROK_HOME fails closed', env: { GROK_SESSION_ID: 'linked-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'relative GROK_HOME fails closed', env: { GROK_HOME: relative(sec.work, realGrokHome), GROK_SESSION_ID: 'no-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'relative HOME without GROK_HOME fails closed', env: { HOME: relative(sec.work, fix.home), GROK_SESSION_ID: 'no-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'non-boolean is_non_interactive=0 fails closed', env: { GROK_SESSION_ID: 'nonbool-zero' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'non-boolean is_non_interactive="false" fails closed', env: { GROK_SESSION_ID: 'nonbool-str' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'missing audience fails closed', env: { GROK_SESSION_ID: 'missing-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'padded audience fails closed', env: { GROK_SESSION_ID: 'padded-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'unclean audience (newline) fails closed', env: { GROK_SESSION_ID: 'unclean-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'blank audience fails closed', env: { GROK_SESSION_ID: 'blank-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'malformed prompt_context.json fails closed', env: { GROK_SESSION_ID: 'malformed-context' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'malformed summary.json fails closed', env: { GROK_SESSION_ID: 'malformed-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'over-bound summary.json fails closed', env: { GROK_SESSION_ID: 'overbound-summary' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+      { name: 'mismatched summary.json info.id fails closed', env: { GROK_SESSION_ID: 'mismatched-summary-id' }, mode: 'unknown', source: 'entrypoint-unavailable' },
+    ];
+    for (const tc of secCases) {
+      const row = provenanceRun(fix, tc.env, undefined, [], sec.work).row;
       expect(row.run_mode, tc.name).toBe(tc.mode);
       expect(row.run_mode_source, tc.name).toBe(tc.source);
       expect(validRow(row), tc.name).toBe(true);

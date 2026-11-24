@@ -1063,6 +1063,47 @@ def head_records(path, home):
             yield record
 
 
+_MISSING = object()
+
+
+def head_json(path, home, missing=None):
+    """Read a single UTF-8 JSON object within LOG_HEAD_BYTES under a trusted home without following links below it."""
+    if path is None or not home.is_absolute():
+        return None
+    try:
+        parts = path.relative_to(home).parts
+    except ValueError:
+        return None
+    if not parts or ".." in parts:
+        return None
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY
+    try:
+        with ExitStack() as opened:
+            directory = os.open(home, directory_flags)
+            opened.callback(os.close, directory)
+            for part in parts[:-1]:
+                directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
+                opened.callback(os.close, directory)
+            try:
+                descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            except FileNotFoundError:
+                return missing
+            opened.callback(os.close, descriptor)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                chunk = stream.read(LOG_HEAD_BYTES + 1)
+    except OSError:
+        return None
+    if len(chunk) > LOG_HEAD_BYTES:
+        return None
+    try:
+        record = json.loads(chunk.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
 def tail_records(path):
     # JSON objects from the last LOG_TAIL_BYTES of a JSONL log; a line cut by the seek is dropped.
     # Regular files only: a FIFO or device named like a transcript blocks in open(). A bounded read keeps a
@@ -1298,8 +1339,12 @@ def codex_turns(thread_id):
     return turns
 
 
+def grok_home_dir(grok_home=None):
+    return Path(grok_home or os.environ.get("GROK_HOME") or Path.home() / ".grok")
+
+
 def grok_logs(root, cwd=None, grok_home=None, session_id=None):
-    sessions = Path(grok_home or os.environ.get("GROK_HOME") or Path.home() / ".grok") / "sessions"
+    sessions = grok_home_dir(grok_home) / "sessions"
     places = {quote(cwd or os.getcwd(), safe="")} | ({quote(root, safe="")} if root else set())
     named = session_id if session_id is not None else os.environ.get("GROK_SESSION_ID", "")
     # The shell exports the session id. Use that file only; sibling sessions (subagents) are not this run.
@@ -1580,14 +1625,100 @@ def muse_launch_surface():
     return None
 
 
+def grok_launch_surface(root=None, begin=None):
+    home = grok_home_dir()
+    # A relative GROK_HOME (or relative HOME without GROK_HOME) would resolve against the checkout.
+    if not home.is_absolute():
+        return None
+    places = {quote(os.getcwd(), safe="")}
+    if root and os.path.isabs(root):
+        places.add(quote(root, safe=""))
+    named = os.environ.get("GROK_SESSION_ID", "")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY
+    if valid_session(named):
+        candidates = []
+        for place in places:
+            try:
+                with ExitStack() as opened:
+                    directory = os.open(home, directory_flags)
+                    opened.callback(os.close, directory)
+                    for part in ("sessions", place, named):
+                        directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
+                        opened.callback(os.close, directory)
+                candidates.append(home / "sessions" / place / named)
+            except OSError:
+                continue
+        if len(candidates) != 1:
+            return None
+        session_dir = candidates[0]
+    elif named:
+        return None
+    else:
+        if os.environ.get("GROK_AGENT") != "1" or begin is None:
+            return None
+        active = []
+        for place in places:
+            try:
+                with ExitStack() as opened:
+                    directory = os.open(home, directory_flags)
+                    opened.callback(os.close, directory)
+                    for part in ("sessions", place):
+                        directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
+                        opened.callback(os.close, directory)
+                    for name in os.listdir(directory):
+                        try:
+                            entry_stat = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                            if not stat.S_ISDIR(entry_stat.st_mode):
+                                continue
+                            sid_fd = os.open(name, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
+                            try:
+                                events_stat = os.stat("events.jsonl", dir_fd=sid_fd, follow_symlinks=False)
+                            finally:
+                                os.close(sid_fd)
+                            if stat.S_ISREG(events_stat.st_mode) and events_stat.st_mtime >= begin:
+                                active.append(home / "sessions" / place / name)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        if len(active) != 1:
+            return None
+        session_dir = active[0]
+
+    context = head_json(session_dir / "prompt_context.json", home)
+    if context is None:
+        return None
+    audience = clean(context.get("audience"))
+    if audience is None or audience != audience.strip():
+        return None
+    non_interactive = context.get("is_non_interactive")
+    if not isinstance(non_interactive, bool):
+        return None
+
+    summary = head_json(session_dir / "summary.json", home, missing=_MISSING)
+    if summary is None:
+        return None
+    if summary is not _MISSING:
+        info = summary.get("info")
+        if isinstance(info, dict) and "id" in info and info.get("id") != session_dir.name:
+            return None
+        if summary.get("session_kind") is not None:
+            return "other"
+
+    if non_interactive is True or audience != "primary":
+        return "other"
+    return "terminal"
+
+
 LAUNCH_SURFACE_READERS = {
     "claude": claude_launch_surface,
     "codex": codex_launch_surface,
+    "grok": grok_launch_surface,
     "muse": muse_launch_surface,
 }
 
 
-def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
+def run_mode(detected_agent="claude", agent="claude", saved_work_item=None, root=None, begin=None):
     """Return (run_mode, run_mode_source) from consumer-neutral launcher signals and interactive entrypoints."""
     session_kind = os.environ.get("GSTACK_SESSION_KIND")
     if session_kind in ("spawned", "unattended"):
@@ -1633,7 +1764,7 @@ def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
     if reader is None:
         return "unknown", "harness-unqualified"
     try:
-        surface = reader()
+        surface = reader(root=root, begin=begin) if detected_agent == "grok" else reader()
     except Exception:
         surface = None
     if surface is None:
@@ -1733,7 +1864,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
         if "--work-item" in values
         else clean(finish_env_item)
     )
-    mode, mode_source = run_mode(detected_agent, agent, saved_for_mode)
+    mode, mode_source = run_mode(detected_agent, agent, saved_for_mode, root=root, begin=begin)
     signal_end = now if begin <= now < begin + max(0, duration) + 1 else begin + max(0, duration)
     if mode == "orchestrated":
         questions, user_wait_s, resumes, signals_source = None, None, None, "orchestrated"

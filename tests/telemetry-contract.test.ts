@@ -2530,10 +2530,10 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'entrypoint-unavailable',
       },
       {
-        name: 'Grok session id without GROK_AGENT=1 yields harness-unqualified',
+        name: 'Grok session id without GROK_AGENT=1 and without session log yields entrypoint-unavailable',
         env: { GROK_SESSION_ID: 'grok-session-contract', PASEO_AGENT_ID: 'paseo-agent-contract' },
         expectedMode: 'unknown',
-        expectedSource: 'harness-unqualified',
+        expectedSource: 'entrypoint-unavailable',
       },
       {
         name: 'Cursor markers under Paseo are no longer classified and yield no-harness',
@@ -2573,6 +2573,19 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       writeLines(museSessionFile(sid), records);
     };
 
+    const grokPlace = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(repo)));
+    const writeGrokSession = (sid: string, context: object | null, summary?: object, padBytes = 0) => {
+      const dir = join(grokPlace, sid);
+      mkdirSync(dir, { recursive: true });
+      if (context !== null) {
+        const body = padBytes > 0 ? { ...context, pad: 'x'.repeat(padBytes) } : context;
+        writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(body, null, 2) + '\n');
+      }
+      if (summary !== undefined) {
+        writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+      }
+    };
+
     writeCodexMeta('codex-contract-term', 'codex_cli_rs', 'vscode');
     writeCodexMeta('codex-contract-exec', 'codex_exec', 'exec');
     writeCodexMeta('codex-contract-sub', 'codex_cli_rs', { subagent: 'review' });
@@ -2581,6 +2594,15 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
     writeLines(codexSymTarget, [{ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: 'codex-contract-sym', originator: 'codex_cli_rs', source: 'vscode' } }]);
     symlinkSync(codexSymTarget, codexRollout('codex-contract-sym'));
     writeCodexMeta('codex-contract-over', 'codex_cli_rs', 'vscode', 70_000);
+
+    writeGrokSession('grok-contract-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-term' }, current_model_id: 'grok-4.7-build-fast', reasoning_effort: 'high' });
+    writeGrokSession('grok-contract-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-contract-headless' }, session_kind: 'headless' });
+    writeGrokSession('grok-contract-subagent', { audience: 'subagent', is_non_interactive: false }, { info: { id: 'grok-contract-subagent' }, session_kind: 'subagent' });
+    writeGrokSession('grok-contract-kind-override', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-kind-override' }, session_kind: 'headless' });
+    const grokSymDir = join(grokPlace, 'grok-contract-sym');
+    mkdirSync(grokSymDir, { recursive: true });
+    symlinkSync(join(grokPlace, 'grok-contract-term', 'prompt_context.json'), join(grokSymDir, 'prompt_context.json'));
+    writeGrokSession('grok-contract-over', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-over' } }, 70_000);
 
     writeMuseOpen('muse-contract-host', 'paseo');
     writeMuseOpen('muse-contract-case', 'Paseo');
@@ -2611,6 +2633,19 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         missing: { CODEX_THREAD_ID: 'codex-1' },
         symlinked: { CODEX_THREAD_ID: 'codex-contract-sym' },
         overBound: { CODEX_THREAD_ID: 'codex-contract-over' },
+      },
+      {
+        harness: 'grok',
+        overrideAgent: 'claude',
+        terminal: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-term' },
+        other: [
+          { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-headless' },
+          { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-subagent' },
+          { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-kind-override' },
+        ],
+        missing: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-missing' },
+        symlinked: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-sym' },
+        overBound: { GROK_AGENT: '1', GROK_SESSION_ID: 'grok-contract-over' },
       },
       {
         harness: 'muse',
@@ -2656,6 +2691,18 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
           env: { ...byHandEnv, GSTACK_SESSION_KIND: 'spawned', GSTACK_EXTEND_WORK_ITEM: `item-${q.harness}-contract` },
           expectedMode: 'orchestrated',
           expectedSource: 'session-kind',
+        },
+        {
+          name: `${q.harness} qualified evidence + unattended yields session-kind`,
+          env: { ...byHandEnv, GSTACK_SESSION_KIND: 'unattended' },
+          expectedMode: 'orchestrated',
+          expectedSource: 'session-kind',
+        },
+        {
+          name: `${q.harness} qualified evidence + work item alone yields work-item`,
+          env: { ...byHandEnv, GSTACK_EXTEND_WORK_ITEM: `item-${q.harness}-alone` },
+          expectedMode: 'orchestrated',
+          expectedSource: 'work-item',
         },
         {
           name: `${q.harness} qualified evidence + GSTACK_EXTEND_WORKSPACE_OWNER yields host-managed-workspace`,
