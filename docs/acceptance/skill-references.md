@@ -410,9 +410,8 @@ end. The work did not change installed copies.
 | Codex-format scratch package | Muse Code 1.4.25 | `valid: true` (99,711 B); 5/5 load markers | `valid: true` (76,361 B); 5/5 load markers | `valid: true` (65,306 B); 5/5 load markers |
 | Disposable-home skill package | Grok 1.0.92 alpha | Unproven load. Listed by `grok inspect`. | Unproven load. Listed by `grok inspect`. | Unproven load. Listed by `grok inspect`. |
 
-The review-stage rerun on repaired copies is pending permission to send the
-candidate skill text to the verification harnesses. Grok still needs the
-five-marker result. Discovery alone does not verify a complete read.
+The initial Grok observation covered package discovery. The review-stage run
+below records the complete load and reference reads on the repaired copies.
 
 ### Base-versus-candidate behavior probe results (PR B)
 
@@ -443,9 +442,8 @@ outcomes are tracked separately from the implementation's initial runs.
 | PR-4 | `pair-review` | Parity: fetched `conditional-completion-routing` (`REFERENCE_END` verified); emitted H-C `Run /review-and-prep resume` fence, omitted `/ship`, set `next: review-and-prep` | Parity: fetched `conditional-completion-routing` (`REFERENCE_END` verified); emitted H-C `Run /review-and-prep resume` fence, omitted `/ship`, set `next: review-and-prep` | — |
 | PR-5 | `pair-review` | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass: observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped with blocked stage line and `--outcome error` |
 
-Review-added base-versus-candidate runs remain unproven on Claude Code and Codex
-pending approval for the scratch harness dispatch. The targeted local run at
-`129d800` recorded 1,663 passed, 4 skipped, and 0 failed across 14 test files.
+The targeted local run at `129d800` recorded 1,663 passed, 4 skipped, and 0
+failed across 14 test files. The final scratch results are below.
 
 | Probe | Local evidence on repaired content |
 |---|---|
@@ -457,6 +455,49 @@ pending approval for the scratch harness dispatch. The targeted local run at
 | PR-6 | Protocol locks keep the parking format in core and require a shared prepared state for batching. |
 | PR-7 | Protocol locks cover reproduction, verification and the original linked-item retest. |
 | PR-8 | The resumed Add Item route test requires a verified authoring read. The core keeps distinct Check IDs separate. |
+
+### Review-stage scratch results (PR B)
+
+The authorized read-only runs used candidate `4687b0a972c8189ca5a478bbf88e0a1dc3f61fed`
+and base `ce16f48524d6d41ab812157125aa0f5971fc32db`. Each load recovered all five
+unique markers in order and the exact digest trailer from its numbered scratch
+reference replay. The runs used native scratch packages with no Git remote.
+Installed skills stayed untouched.
+
+| Harness and scratch package | `roadmap` | `ship-and-land` | `pair-review` |
+|---|---|---|---|
+| Claude Code 2.1.331, invocation-local plugin | 5/5 + trailer | 5/5 + trailer | 5/5 + trailer |
+| Codex CLI 0.172.0, project skill | 5/5 + trailer | 5/5 + trailer | 5/5 + trailer |
+| Muse Code 1.4.25, validated and loaded project package | 5/5 + trailer | 5/5 + trailer | 5/5 + trailer |
+| Grok 1.0.92 alpha, invoked project skill | 5/5 + trailer | 5/5 + trailer | 5/5 + trailer |
+
+The load replays used `roadmap/conditional-layout-plan` (`d8d0a05820f511db`),
+`ship-and-land/conditional-release-only` (`4d189366a31bd42b`) and
+`pair-review/conditional-init-plan` (`2fffcccd6bfa1b72`). Claude's first canary
+read the file directly before the scratch plugin was registered. Grok's first
+canary rejected its CLI flag combination. The first Codex `pair-review` load
+timed out before returning a result. The reruns in the table used the same
+candidate source.
+
+The behavior probes traced independent scenario cards against base and
+candidate in separate read-only sessions. All 19 paired cases matched the
+preregistered decisions on both Claude Code and Codex. Four candidate-only
+missing-reference cases (`RM-5`, `SL-1`, `SL-5`, `PR-5`) exercised the optional
+fallback and required stops. Muse matched its three paired cases and three
+candidate-only cases.
+
+| Cases | Claude Code | Codex | Muse |
+|---|---|---|---|
+| `RM-1` through `RM-6` | 6/6 | 6/6 | `RM-1`, `RM-5` passed |
+| `SL-1` through `SL-9` | 9/9 | 9/9 | `SL-2`, `SL-5` passed |
+| `PR-1` through `PR-8` | 8/8 | 8/8 | `PR-2`, `PR-5` passed |
+
+Individual `RM-2` replays identified the `parseRoadmap` and `formatFutureIndex`
+validation explicitly. Claude's individual `SL-1`, `SL-5` and `PR-5` replays
+returned the full diagnostic lines after the grouped replies shortened their
+paths. The review evidence for PR #304 retains both attempts, the decisions,
+and the source and transcript hashes. The probes traced the expected decisions
+without executing the workflows in a live project.
 
 ## Open verification
 
