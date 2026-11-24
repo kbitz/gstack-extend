@@ -182,7 +182,7 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
         throw new Error('could not establish Git history for work-item IDs');
       }
       const r = spawn(
-        ['log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv', '--text',
+        ['--literal-pathspecs', 'log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv', '--text',
           '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...relPaths],
         cwd,
         HISTORY_PATCH_BUFFER_BYTES,

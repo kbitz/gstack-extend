@@ -63,6 +63,7 @@ import { walkMdFiles } from './lib/md-walk.ts';
 import { parallelismCap as resolveParallelismCap } from './lib/parallelism-cap.ts';
 import { versionGt } from './lib/semver.ts';
 import { loadSharedInfra } from './lib/shared-infra.ts';
+import { FUTURE_HEADING_RE } from './lib/state.ts';
 import { parsePhases } from './parsers/phases.ts';
 import { parseProgress } from './parsers/progress.ts';
 import {
@@ -279,7 +280,7 @@ export function buildAuditCtx(args: {
   const shippedArchivePath = findDoc(repoRoot, 'roadmap-shipped.md');
   const shippedArchiveContent = readMaybe(shippedArchivePath);
   if (shippedArchivePath !== null) {
-    roadmap = mergeShippedArchive(roadmap, parseRoadmap(shippedArchiveContent));
+    roadmap = mergeShippedArchive(roadmap, parseRoadmap(shippedArchiveContent, { fromShippedArchive: true }));
   }
   const futureArchivePath = findDoc(repoRoot, 'roadmap-future.md');
   const futureArchiveContent = readMaybe(futureArchivePath);
@@ -614,7 +615,7 @@ function computeGitInferredFreshness(ctx: AuditCtx): number {
   let count = 0;
 
   for (const line of lines) {
-    if (/^## (Future|Unprocessed|Execution Map)/i.test(line)) {
+    if (FUTURE_HEADING_RE.test(line) || /^## (Unprocessed|Execution Map)/i.test(line)) {
       inActive = false;
       continue;
     }

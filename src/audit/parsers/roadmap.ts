@@ -37,9 +37,11 @@ import {
 import { detectStateRegions, FUTURE_HEADING_RE, stateAtLine, type LifecycleState } from '../lib/state.ts';
 import {
   extractInlineBulletId,
+  futureBulletParts,
   isValidWorkItemId,
   parseTrackIdLine,
   planningLines,
+  splitBlockerReferences,
 } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
@@ -210,7 +212,7 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
   };
   const body = stripItalic(line, /^_blocked-by:/);
   if (/^(?:none|—|-*)$/i.test(body)) return { refs, malformed };
-  for (const token of body.split(/,(?![^()]*\))/)) {
+  for (const token of splitBlockerReferences(body)) {
     const part = trim(token);
     if (part === '') continue;
     if (isValidWorkItemId(part)) {
@@ -277,7 +279,7 @@ function detectTrackDepCycles(trackDeps: Map<string, string[]>): string[] {
 
 // ─── Main parser ──────────────────────────────────────────────────────
 
-export type ParseRoadmapDeps = ConfigDeps;
+export type ParseRoadmapDeps = ConfigDeps & { fromShippedArchive?: boolean };
 
 export function parseRoadmap(
   content: string,
@@ -359,6 +361,8 @@ export function parseRoadmap(
   type Section = 'none' | 'skip' | 'group' | 'track' | 'future' | 'shipped';
   let section: Section = 'none';
   let groupNum = '';
+  let inShipped = false;
+  let groupIsShipped = false;
   let trackId = '';
   let futurePointer: { declaredCount: number } | null = null;
   let shippedPointer = false;
@@ -371,11 +375,15 @@ export function parseRoadmap(
     // Top-level state section detection.
     const name = FUTURE_HEADING_RE.test(line) ? 'Future' : STATE_HEADING_RE.exec(line)?.[1];
     if (name !== undefined) {
+      inShipped = name === 'Shipped';
       section = name === 'Future' ? 'future' : name === 'Shipped' ? 'shipped' : 'none';
       trackId = '';
       groupNum = '';
       continue;
     }
+
+    const groupHeading = line.match(GROUP_HEADING_RE);
+    if (line.startsWith('## ') && groupHeading === null) inShipped = false;
 
     // Top-level v1 skip sections (Unprocessed, Execution Map) — only when no state grammar.
     if (!hasV2Grammar && /^## (Unprocessed|Execution Map)/i.test(line)) {
@@ -395,7 +403,6 @@ export function parseRoadmap(
     }
 
     // Group heading.
-    const groupHeading = line.match(GROUP_HEADING_RE);
     if (groupHeading) {
       groupNum = groupHeading[1]!;
       let groupName = trim(groupHeading[2]!);
@@ -405,6 +412,7 @@ export function parseRoadmap(
         groupName = groupName.replace(COMPLETE_SUFFIX_RE, '');
         groupName = trim(groupName);
       }
+      groupIsShipped = deps.fromShippedArchive === true || inlineComplete || inShipped;
       if (!groupOrder.includes(groupNum)) {
         groupOrder.push(groupNum);
         groupNames.set(groupNum, groupName);
@@ -489,7 +497,7 @@ export function parseRoadmap(
     }
 
     // Legacy shipped `- Track <label> — ...` bullets under `#### Group N:` (excluding `- _..._` notes).
-    if (section === 'group' && trackId === '' && !/^- _/.test(line)) {
+    if (section === 'group' && trackId === '' && groupIsShipped) {
       const legacyMatch = line.match(/^- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]/);
       if (legacyMatch !== null) {
         const parsed = extractInlineBulletId(line);
@@ -961,53 +969,19 @@ export type FutureIndexRow = {
   revisit: string | null;
 };
 
-const REVISIT_MARKER = '**Revisit when:**';
-
 /** One-line index row per Future bullet: id, title, source tag, first sentence, trigger. */
 export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
   return bullets.map((raw) => {
-    const parsedId = extractInlineBulletId(raw);
-    const id = parsedId?.id ?? null;
-    const line = raw.replace(/^- /, '');
-    const bold = line.match(/^\*\*(.+?)\*\*\s*[—–-]+\s*(.*)$/);
-    let title: string;
-    let body: string;
-    if (bold !== null) {
-      title = bold[1]!;
-      body = bold[2]!;
-    } else {
-      const em = line.match(/^(.*?)\s+[—–-]+\s+(.*)$/);
-      if (em !== null) {
-        title = em[1]!.replace(/^\*\*|\*\*$/g, '');
-        body = em[2]!;
-      } else {
-        title = line.replace(/^\*\*|\*\*$/g, '');
-        body = '';
-      }
-    }
+    const { id, title: rawTitle, body, trigger } = futureBulletParts(raw);
+    let title = rawTitle;
     let source: string | null = null;
     const srcInTitle = title.match(/^(\[[^\]]+\])\s*(.*)$/);
     if (srcInTitle !== null) {
       source = srcInTitle[1]!;
       title = srcInTitle[2]!;
     }
-    let revisit: string | null = null;
-    const marker = body.lastIndexOf(REVISIT_MARKER);
-    if (marker !== -1) {
-      const trigger = body
-        .slice(marker + REVISIT_MARKER.length)
-        .trim()
-        .replace(/\.$/, '')
-        .trim();
-      // An empty marker or the literal placeholder is a missing trigger, not a filled one.
-      revisit = trigger === '' || trigger === 'MISSING' ? null : trigger;
-      body = body.slice(0, marker).trim();
-    }
-    // Strip leading `**ID:** <val> — ` or trailing ` — **ID:** <val>` so `first` stays the prose sentence.
-    body = body
-      .replace(/^\*\*ID:\*\*[ \t]*[^\s—–,;()]*[ \t]*(?:[—–-]+[ \t]*)?/, '')
-      .replace(/[ \t]*[—–-]+[ \t]*\*\*ID:\*\*[ \t]*[^\s—–,;()]*[ \t]*(?:[—–-]+[ \t]*)?$/, '')
-      .trim();
+    const triggerText = trigger?.trim().replace(/\.$/, '').trim() ?? '';
+    const revisit = triggerText === '' || triggerText === 'MISSING' ? null : triggerText;
     const first = body.split(/(?<=\.)\s/)[0] ?? body;
     return { id, title: title.trim(), source, first: first.trim(), revisit };
   });

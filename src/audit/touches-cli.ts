@@ -28,7 +28,7 @@ function readMaybe(path: string | null): string {
 function parseRoadmaps(repoRoot: string) {
   let parsed = parseRoadmap(readMaybe(findDoc(repoRoot, 'ROADMAP.md')));
   const archive = findDoc(repoRoot, 'roadmap-shipped.md');
-  if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive)));
+  if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive), { fromShippedArchive: true }));
   return parsed.value;
 }
 

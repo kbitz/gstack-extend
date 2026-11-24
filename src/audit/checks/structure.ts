@@ -19,6 +19,7 @@
  * wins.
  */
 
+import { FUTURE_HEADING_RE } from '../lib/state.ts';
 import { planningLines } from '../lib/work-item-id.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
@@ -40,7 +41,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
   for (const line of lines) {
     if (/^#{2,4} Group [0-9]+:/.test(line)) groupCount++;
     if (/^#{3,5} Track [0-9]+[A-Z](?:\.[0-9]+)?:/.test(line)) trackCount++;
-    if (/^## Future($| \()/i.test(line)) hasFuture = true;
+    if (FUTURE_HEADING_RE.test(line)) hasFuture = true;
   }
 
   if (groupCount === 0 && !hasFuture) {

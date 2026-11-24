@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { detectMode } from '../src/audit/checks/mode.ts';
+import { runCheckStateSections } from '../src/audit/checks/state-sections.ts';
 import { runCheckStructure } from '../src/audit/checks/structure.ts';
 import { parseRoadmap, type GroupInfo, type TrackInfo } from '../src/audit/parsers/roadmap.ts';
 import { makeCtx } from './helpers/audit-ctx.ts';
@@ -174,5 +176,15 @@ describe('STRUCTURE tombstones', () => {
     const result = runCheckStructure(makeCtx({ roadmap, parsedRoadmap: parseRoadmap(roadmap).value }));
     expect(result.status).toBe('fail');
     expect(result.body.join('\n')).toContain('_blocked-by: wi-222222 is not a known Track ID or work-item ID');
+  });
+
+  test('a descriptive Future heading counts once and a Future-proof heading stays separate', () => {
+    const roadmap = '## Future — after release\n- Draft a follow-up\n## Future-proof rollout notes\n- Keep the old link\n';
+    const parsedRoadmap = parseRoadmap(roadmap).value;
+    const ctx = makeCtx({ roadmap, parsedRoadmap });
+    expect(parsedRoadmap.futureBullets).toEqual(['- Draft a follow-up']);
+    expect(runCheckStructure(ctx).status).toBe('pass');
+    expect(runCheckStateSections(ctx).status).toBe('pass');
+    expect(detectMode(ctx).detected).toBe('triage');
   });
 });

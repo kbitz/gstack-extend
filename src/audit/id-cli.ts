@@ -8,7 +8,7 @@
  */
 
 import { chmodSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { createGitGateway, type GitGateway } from './lib/git.ts';
 import {
@@ -51,24 +51,41 @@ const DOC_PATHS = DOC_NAMES.flatMap((name) => [name, `docs/${name}`]);
 const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_HEX - 1) + 16 ** WORK_ITEM_ID_MAX_HEX;
 
 type PlanningDoc = { path: string; name: string; text: string; mode: number };
+type PlanningDocs = { docs: Map<string, PlanningDoc>; historicalPaths: Set<string> };
 
-function readDocs(repoRoot: string, mode: 'mint' | 'migrate'): Map<string, PlanningDoc> {
+function projectRelativePath(root: string, path: string): string | null {
+  const nested = relative(root, path);
+  return nested === '..' || nested.startsWith(`..${sep}`) || isAbsolute(nested) ? null : nested;
+}
+
+function readDocs(repoRoot: string, mode: 'mint' | 'migrate'): PlanningDocs {
   if (!statSync(repoRoot).isDirectory()) throw new Error('project path is not a directory');
   const root = realpathSync(repoRoot);
-  const folder = join(root, 'docs');
-  if (mode === 'migrate' && lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink()) {
-    throw new Error('refusing linked docs directory');
+  let folder = join(root, 'docs');
+  if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    const target = statSync(folder, { throwIfNoEntry: false })?.isDirectory() ? realpathSync(folder) : null;
+    if (target !== null && projectRelativePath(root, target) !== null) {
+      folder = target;
+    } else if (mode === 'migrate') {
+      throw new Error('linked docs directory must resolve to a directory inside the project');
+    }
   }
   const docs = new Map<string, PlanningDoc>();
+  const historicalPaths = new Set(DOC_PATHS);
   for (const name of DOC_PATHS) {
-    const path = join(root, name);
-    // Mint reads linked planning files the audit can see. Migrate requires
-    // regular destinations and rejects links before planning any writes.
+    const path = name.startsWith('docs/') ? join(folder, name.slice(5)) : join(root, name);
+    historicalPaths.add(relative(root, path));
+    // Mint reads linked planning files the audit can see. Migrate replaces
+    // regular files and leaves the project's docs directory link intact.
     const st = mode === 'mint'
       ? statSync(path, { throwIfNoEntry: false })
       : lstatSync(path, { throwIfNoEntry: false });
     if (st === undefined) continue;
     if (!st.isFile()) throw new Error(`refusing non-regular planning document ${name}`);
+    if (mode === 'mint') {
+      const historicalPath = projectRelativePath(root, realpathSync(path));
+      if (historicalPath !== null) historicalPaths.add(historicalPath);
+    }
     const bytes = readFileSync(path);
     const text = bytes.toString('utf8');
     if (mode === 'migrate' && !Buffer.from(text, 'utf8').equals(bytes)) {
@@ -76,7 +93,7 @@ function readDocs(repoRoot: string, mode: 'mint' | 'migrate'): Map<string, Plann
     }
     docs.set(name, { path, name, text, mode: st.mode & 0o777 });
   }
-  return docs;
+  return { docs, historicalPaths };
 }
 
 function findDoc(docs: ReadonlyMap<string, PlanningDoc>, name: string): PlanningDoc | undefined {
@@ -88,12 +105,12 @@ function findDoc(docs: ReadonlyMap<string, PlanningDoc>, name: string): Planning
     : root ?? satellite;
 }
 
-function collectTakenIds(docs: Iterable<PlanningDoc>, git: GitGateway): Set<string> {
+function collectTakenIds({ docs, historicalPaths }: PlanningDocs, git: GitGateway): Set<string> {
   const taken = new Set<string>();
-  for (const doc of docs) {
+  for (const doc of docs.values()) {
     for (const id of scanAllWorkItemIds(doc.text)) taken.add(id);
   }
-  for (const id of git.historicalWorkItemIds(DOC_PATHS)) taken.add(id);
+  for (const id of git.historicalWorkItemIds([...historicalPaths])) taken.add(id);
   return taken;
 }
 
@@ -170,7 +187,7 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
 
     const repoRoot = resolveRepoRoot(positionals[0] ?? null);
     const git = gitOverride ?? createGitGateway({ cwd: repoRoot, bindToCwd: true });
-    const taken = collectTakenIds(readDocs(repoRoot, 'mint').values(), git);
+    const taken = collectTakenIds(readDocs(repoRoot, 'mint'), git);
 
     const minted: string[] = [];
     for (let i = 0; i < count; i++) {
@@ -208,9 +225,10 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
     }
 
     const repoRoot = resolveRepoRoot(positionals[0] ?? null);
-    const docs = readDocs(repoRoot, 'migrate');
+    const planning = readDocs(repoRoot, 'migrate');
+    const { docs } = planning;
     const git = gitOverride ?? createGitGateway({ cwd: repoRoot, bindToCwd: true });
-    const taken = collectTakenIds(docs.values(), git);
+    const taken = collectTakenIds(planning, git);
 
     const lines: string[] = [];
     let totalAdded = 0;
@@ -233,7 +251,9 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
 
     if (roadmap !== undefined) {
       // Migrate active/inline-shipped Tracks, then inline ## Future bullets if present in ROADMAP.md.
-      const r1 = migrateRoadmapText(roadmap.text, taken, { rewriteBlockedBy, labelToId: archive?.labelToId });
+      const r1 = migrateRoadmapText(roadmap.text, taken, {
+        rewriteBlockedBy, labelToId: archive?.labelToId, workItemIdCounts: archive?.workItemIdCounts,
+      });
       const r2 = migrateFutureText(r1.text, taken);
       record(roadmap, { ...r2, added: r1.added + r2.added });
     }

@@ -34,7 +34,7 @@ export type StateRange = {
 const SHIPPED_RE = /^## Shipped[ \t\v\f\r]*$/;
 const IN_PROGRESS_RE = /^## In Progress[ \t\v\f\r]*$/;
 const CURRENT_PLAN_RE = /^## Current Plan[ \t\v\f\r]*$/;
-export const FUTURE_HEADING_RE = /^## Future\b/;
+export const FUTURE_HEADING_RE = /^## Future(?=$|[ \t\v\f\r(:—–]|-+[ \t])/i;
 const ANY_H2_RE = /^## /;
 
 export function detectStateRegions(content: string): StateRegions {

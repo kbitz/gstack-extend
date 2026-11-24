@@ -83,7 +83,7 @@ export function runPackCli(argv: string[], stdinText?: string): string {
   let parsed = parseRoadmap(live);
   if (draft === '') {
     const archive = findDoc(repoRoot, 'roadmap-shipped.md');
-    if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive)));
+    if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive), { fromShippedArchive: true }));
   }
 
   // Same file the audit reads (src/audit/cli.ts findDoc): root CLAUDE.md when it is a regular

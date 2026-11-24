@@ -1034,6 +1034,22 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(lines[3]).toBe('- **Without ID** — Plain sentence. — revisit: later');
   });
 
+  test('the Future index preserves code examples and reads the actual revisit marker', () => {
+    const [example, legacy] = futureIndexRows([
+      '- **Document `**ID:**`** — **ID:** wi-aabbcc — `Example — **ID:** wi-a1b2c3` **Revisit when:** review `**Revisit when:**` support.',
+      '- **Follow-up**: More work. — **ID:** wi-112233 **Revisit when:** - use **Phase 2** — after GA',
+    ]);
+    expect(example).toEqual({
+      id: 'wi-aabbcc',
+      title: 'Document `**ID:**`',
+      source: null,
+      first: '`Example — **ID:** wi-a1b2c3`',
+      revisit: 'review `**Revisit when:**` support',
+    });
+    expect(legacy?.id).toBe('wi-112233');
+    expect(legacy?.revisit).toBe('- use **Phase 2** — after GA');
+  });
+
   test('parseRoadmap parses _id:, _blocked-by: work-item IDs, malformed tokens, and legacy shipped bullets', () => {
     const md = [
       '## Current Plan',
