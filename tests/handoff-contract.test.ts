@@ -29,12 +29,15 @@ import { join } from 'node:path';
 import { RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
 import { composeGreptileValue, evalGrammar, FIELD_FMT, getActiveBinding, makeCtx, renderBlock, renderComment, renderDelegationPolicyLine, renderDisclosures, renderFinal, renderStageHandoffLine } from '../src/review-state/render.ts';
 import { validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
+import { referenceText } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'handoffs');
 const read = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
 const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 const has = (haystack: string, needle: string): boolean => haystack.includes(needle);
+const PREP_POLICY = squash(referenceText('review-and-prep', 'conditional-policy-values'));
+const PREP_POLICY_ROWS = squash(referenceText('review-and-prep', 'conditional-receipt-policy-rows'));
 
 type Outcome = 'ADVANCE_TRUSTED' | 'FULL_CHECK_REQUIRED' | 'HOLD' | 'REFUSE';
 type Kind = 'H-A' | 'H-B' | 'H-C-pause' | 'H-C-resume' | 'H-D' | 'H-E' | 'H-F';
@@ -871,10 +874,23 @@ describe('(A) the doc is the oracle', () => {
   });
 
   test('the producer word of every row appears verbatim in a producer skill', () => {
+    const cycleCapRef = squash(referenceText('review-and-prep', 'conditional-cycle-cap'));
+    const extGateRef = squash(referenceText('review-and-prep', 'conditional-doc-audit-and-gates'));
+    const finalRepairRef = squash(referenceText('review-and-prep', 'conditional-pregate-and-final-repair'));
+    const gapRef = squash(referenceText('review-and-prep', 'conditional-repair-and-gaps'));
+    const missing: string[] = [];
     for (const c of DOC_CASES.values()) {
       if (c.word === '—') continue;
-      expect(has(ALL_SKILLS, squash(c.word)), `${c.code}: ${c.word}`).toBe(true);
+      const needle = squash(c.word);
+      const found =
+        has(ALL_SKILLS, needle) ||
+        (c.code === 'B-REPAIRED-HEAD' && has(finalRepairRef, needle)) ||
+        (c.code === 'B-RECORDED-GAP-HEAD' && has(gapRef, needle)) ||
+        (c.handoff === 'H-E' && has(cycleCapRef, needle)) ||
+        (c.handoff === 'H-F' && has(extGateRef, needle));
+      if (!found) missing.push(`${c.code}: ${c.word}`);
     }
+    expect(missing).toEqual([]);
   });
 
   test('each row names exactly the failing bindings its fixture reports', () => {
@@ -1142,7 +1158,8 @@ const TEMPLATES: Record<string, { skill: string; first: string }> = {
 };
 function template(kind: string): string {
   const { skill, first } = TEMPLATES[kind];
-  const found = fencedTexts(SKILLS[skill]).filter((t) => t.startsWith(first));
+  const source = kind === 'H-E' ? referenceText('review-and-prep', 'conditional-cycle-cap') : SKILLS[skill];
+  const found = fencedTexts(source).filter((t) => t.startsWith(first));
   expect(found, `${kind} template in skills/${skill}.md`).toHaveLength(1);
   return found[0];
 }
@@ -1176,7 +1193,7 @@ describe('(C) doc and producers agree', () => {
   // Value: protects=portable receipt fields match the consumer contract; fails_when=producer and consumer labels diverge; why_new=fixtures otherwise start with parsed bindings; seam=none; no_claim=installed-agent compliance
   test('stopped receipts publish exact portable evidence and resolution labels', () => {
     const contract = DOC;
-    const stop = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1].split('\n## ')[0];
+    const stop = referenceText('review-and-prep', 'conditional-cycle-cap');
     for (const line of [
       'Stopped at: <full HEAD SHA>',
       'Delta base: <full SHA>',
@@ -1184,11 +1201,12 @@ describe('(C) doc and producers agree', () => {
       'Review policy source: <caller prompt|user decision|none supplied>',
       'Full-review evidence: commit=<full SHA>; tree=<Git tree SHA>; scope=full; completed=true; source=<durable reference>',
       'Full-review evidence: unavailable',
-      'reviewRestrictionResolved: true',
     ]) {
       expect(stop).toContain(line);
       expect(contract).toContain(line);
     }
+    expect(SKILLS['review-and-prep']).toContain('reviewRestrictionResolved: true');
+    expect(contract).toContain('reviewRestrictionResolved: true');
     expect(squash(SKILLS['review-and-prep'])).toContain('A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`');
     expect(squash(stop)).toContain('dedicated full-review evidence comment');
     expect(squash(stop)).toContain('use its returned permalink as `source=`');
@@ -1271,7 +1289,7 @@ describe('(C) doc and producers agree', () => {
     expect(has(DOC, '`Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present')).toBe(true);
     expect(has(rp, 'For each test run, include a `Test selection:` line')).toBe(true);
     expect(has(DOC, '`Test selection:` lines | receipt-present')).toBe(true);
-    expect(has(rp, '`specialists-dispatched: waived (delegate;')).toBe(true);
+    expect(has(squash(referenceText('review-and-prep', 'delegate-specialist-parts')), '`specialists-dispatched: waived (delegate;')).toBe(true);
     expect(has(DOC, '`specialists-dispatched:` line | receipt-present')).toBe(true);
     expect(has(rp, '`Finding settled: <fingerprint>; found_by=<part>[,<part>...]; severity=<upstream label>; source=<plan|rules>; decision=<path:line>; evidence=<reference|none>`')).toBe(true);
     expect(has(DOC, '`settled:` status and `Finding settled:` lines | receipt-present')).toBe(true);
@@ -1390,7 +1408,7 @@ function rowFor(record: Cycle1 | null, carried: string | null): { row: string; r
 
 describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
   const prep = squash(SKILLS['review-and-prep']);
-  const stopSection = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1].split('\n## ')[0];
+  const stopSection = referenceText('review-and-prep', 'conditional-cycle-cap');
   const templateRow = stopSection.split('\n').find((l) => l.startsWith('Full-review evidence: commit='))!;
   const completedRow = templateRow
     .replace('<full SHA>', FIX.vars.BASE).replace('<Git tree SHA>', FIX.vars.TREE)
@@ -1443,7 +1461,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(example).toHaveLength(1);
     const lines = example[0][1].split('\n');
     expect(parsePolicy(lines[0].replace('Review policy: ', ''))?.get('final-gate-repair')).toBe('tests-docs');
-    const producer = SKILLS['review-and-prep'].split('**Receipt.**')[1].split('```text\n')[1].split('\n```')[0].split('\n');
+    const producer = referenceText('review-and-prep', 'conditional-pregate-and-final-repair').split('**Receipt.**')[1].split('```text\n')[1].split('\n```')[0].split('\n');
     expect(lines.slice(1, 4).map((l) => l.split(': ')[0])).toEqual(producer.map((l) => l.split(': ')[0]));
     expect(lines[4]).toMatch(/^Final-gate repair: fallback; step=\w[\w-]*; reason=[a-z-]+; repair=.+; allowance=(?:consumed|unused); detail=.+; evidence=\S+$/);
   });
@@ -1613,10 +1631,10 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the four unavailable reasons the skill prints are the ones the model knows; fails_when=a reason is added, renamed or dropped on one side; why_new=new STOPPED output; seam=none
   test('the skill and the model name the same unavailable reasons', () => {
-    const m = /`Full-review evidence unavailable: <([a-z|-]+)>`/.exec(prep);
+    const m = /`Full-review evidence unavailable: <([a-z|-]+)>`/.exec(stopSection);
     expect(m?.[1].split('|')).toEqual(UNAVAILABLE_REASONS);
     expect(has(squash(DOC), 'the H-E prompt is unchanged')).toBe(true);
-    expect(has(prep, 'Full-review evidence: unavailable')).toBe(true);
+    expect(has(stopSection, 'Full-review evidence: unavailable')).toBe(true);
   });
 
   // Value: protects=the skill and the handoff contract doc publish the same 3,000-character PR-body budget, the kept marker set, hash-chained provenance and legacy-receipt rules, and B-COMPACT-RECEIPT parity with B-TRUSTED; fails_when=the budget numbers diverge, a kept marker or label is dropped from the doc table, or a compact receipt comment changes the H-B outcome; why_new=readable PRs 3,000-character budget and kept marker set contract; seam=none; no_claim=installed-agent execution
@@ -1631,7 +1649,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(has(doc, 'Because consumers read the marked receipt comment first and already accept a linked completion matrix, this adds no binding for a consumer.')).toBe(true);
     const keptSection = squash(DOC.split('### Receipt layout and kept marker set')[1]?.split('\n## ')[0] ?? '');
     const producerMarkers = new Set(
-      Object.values(SKILLS).flatMap((s) => [...s.matchAll(/<!-- review-and-prep:([a-z-]+):/g)].map((m) => m[1])),
+      [...Object.values(SKILLS), stopSection].flatMap((s) => [...s.matchAll(/<!-- review-and-prep:([a-z-]+):/g)].map((m) => m[1])),
     );
     expect([...producerMarkers].sort()).toEqual([
       'continuation',
@@ -1828,8 +1846,9 @@ describe('(E) the external gate and lean parent reads', () => {
 
   // Value: protects=skill and doc print the same three line templates, and a consumer without H-F holds the pause as a bare summary; fails_when=a template drifts between skill and doc or the fallback stops holding; why_new=new line formats; seam=none; no_claim=installed-agent execution
   test('skill and doc carry the same line templates, and a consumer without H-F holds the pause', () => {
+    const extGateRef = squash(referenceText('review-and-prep', 'conditional-doc-audit-and-gates'));
     for (const t of [PAUSE_TEMPLATE, RESULT_TEMPLATE, ATTESTATION_TEMPLATE]) {
-      expect(has(prep, t), `skill: ${t}`).toBe(true);
+      expect(has(t === ATTESTATION_TEMPLATE ? extGateRef : prep, t), `skill: ${t}`).toBe(true);
       expect(has(doc, t), `doc: ${t}`).toBe(true);
     }
     expect(has(doc, '`External gate attestation:` rows | receipt-present')).toBe(true);
@@ -1883,7 +1902,8 @@ describe('(E) the external gate and lean parent reads', () => {
     expect(body).toContain('pregate-narrowing: active');
     expect(body).toContain('Pregate lane not run:');
     expect(fixtureText(FIX.cases['B-NARROWED-PREGATE-HEAD'])).not.toContain('Pregate lane not run:');
-    const template = prep.match(/`Pregate lane not run: ([^`]+)`/)![1];
+    const pregateRef = squash(referenceText('review-and-prep', 'conditional-pregate-and-final-repair'));
+    const template = pregateRef.match(/`Pregate lane not run: ([^`]+)`/)![1];
     const row = body.split('\n').find((l) => l.startsWith('Pregate lane not run: '))!.slice('Pregate lane not run: '.length);
     const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
     expect(keys(row)).toEqual(keys(template));
@@ -1891,7 +1911,7 @@ describe('(E) the external gate and lean parent reads', () => {
     expect(has(doc, '`pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present')).toBe(true);
     expect(has(doc, 'the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`)')).toBe(true);
     expect(has(doc, '`B-NARROWED-PREGATE-HEAD` | H-B | `Pregate lane not run:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `pregate-narrowing:` status line and each `Pregate lane not run:` line')).toBe(true);
+    expect(has(PREP_POLICY_ROWS, 'the `pregate-narrowing:` status line and each `Pregate lane not run:` line')).toBe(true);
   });
 
   // Value: protects=the skill and the published contract say the same thing about narrowing, its decline cases, the loaded-copy check and the ship consequence; fails_when=a sentence drifts apart between the two, the check is dropped or the doc stops saying a narrowed run takes the FULL ship path; why_new=criteria 5, 7 and 9; seam=none; no_claim=installed-agent execution
@@ -1899,10 +1919,16 @@ describe('(E) the external gate and lean parent reads', () => {
     const check = `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`;
     expect(has(prep, check), `skill: ${check}`).toBe(true);
     expect(has(doc, check), `doc: ${check}`).toBe(true);
-    for (const phrase of ['Narrow the pregate after an accepted pass', 'A matching name or hash alone does not establish coverage.',
-      '`pregate-narrowing:`', '`Pregate lane not run:`', '`pregate-preflight`',
-      'exit 1 means an older installation runs the pregate as today, and the policy line stays unchanged']) {
+    const pregateRef = squash(referenceText('review-and-prep', 'conditional-pregate-and-final-repair'));
+    for (const phrase of ['Narrow the pregate after an accepted pass', '`pregate-narrowing:`', '`Pregate lane not run:`', '`pregate-preflight`']) {
       expect(has(prep, phrase), `skill: ${phrase}`).toBe(true);
+      expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
+    }
+    const loadedCopyFallback = 'exit 1 means an older installation runs the pregate as today, and the policy line stays unchanged';
+    expect(has(PREP_POLICY, loadedCopyFallback)).toBe(true);
+    expect(has(doc, loadedCopyFallback)).toBe(true);
+    for (const phrase of ['A matching name or hash alone does not establish coverage.']) {
+      expect(has(pregateRef, phrase), `skill ref: ${phrase}`).toBe(true);
       expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
     }
     for (const phrase of ['the pregate narrows to its preflight stage: its non-test checks run and its test lanes do not',
@@ -2038,7 +2064,7 @@ describe('(F) repair-review and repair-cycles', () => {
       expect(POLICY_VALUES[key]!.source).toBe(`^${value}$`);
       expect(value).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
       expect(`${key}=${value}`).not.toMatch(/routine|standard|novel/);
-      expect(has(prep, `\`${key}=${value}\` (its only value)`), key).toBe(true);
+      expect(has(PREP_POLICY, `\`${key}=${value}\` (its only value)`), key).toBe(true);
     }
   });
 
@@ -2054,7 +2080,8 @@ describe('(F) repair-review and repair-cycles', () => {
     expect(fixtureText(FIX.cases['B-NEUTRAL-REPAIR-HEAD'])).not.toContain('Repair without review cycle:');
     expect(has(doc, 'a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`')).toBe(true);
     // The fixture line has the producer template's keys, in order.
-    const template = prep.match(/`Repair without review cycle: ([^`]+)`/)![1];
+    const repairRef = squash(referenceText('review-and-prep', 'conditional-behavior-repairs'));
+    const template = repairRef.match(/`Repair without review cycle: ([^`]+)`/)![1];
     const row = body.split('\n').find((l) => l.startsWith('Repair without review cycle: '))!.slice('Repair without review cycle: '.length);
     const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
     expect(keys(row)).toEqual(keys(template));
@@ -2068,7 +2095,8 @@ describe('(F) repair-review and repair-cycles', () => {
     expect(has(doc, '`Repair chain voided:` and `neutral-only baseline:` lines | receipt-present')).toBe(true);
     expect(has(doc, 'each skip names `source: repair-cycles=light`')).toBe(true);
     expect(has(doc, 'they never authorize a stage or merge')).toBe(true);
-    expect(has(prep, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
+    const repairRef = squash(referenceText('review-and-prep', 'conditional-behavior-repairs'));
+    expect(has(repairRef, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
     expect(has(doc, 'and `/review`\'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`)')).toBe(true);
   });
 
@@ -2157,7 +2185,7 @@ describe('(G) test-gaps', () => {
       '`repair-cycles` (`light`), `test-gaps` (`record`), `blocking` (`shown`), `post-audit` (`classify`), `run-state` (`record`), `doc-audit-gap` (`auto`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
     expect(POLICY_VALUES['test-gaps']!.source).toBe('^record$');
     expect('test-gaps=record').not.toMatch(/routine|standard|novel/);
-    expect(has(prep, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
+    expect(has(PREP_POLICY, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
   });
 
   // Value: protects=a receipt that records a gap still hands /ship-and-land a trusted head, the fixture line has the producer template's keys and the doc row publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 5; seam=none; no_claim=installed-agent execution
@@ -2171,7 +2199,8 @@ describe('(G) test-gaps', () => {
     expect(body).toContain('test-gaps: active');
     expect(body).toContain('Test gap recorded:');
     expect(fixtureText(FIX.cases['B-RECORDED-GAP-HEAD'])).not.toContain('Test gap recorded:');
-    const template = prep.match(/`Test gap recorded: ([^`]+)`/)![1];
+    const gapRef = squash(referenceText('review-and-prep', 'conditional-repair-and-gaps'));
+    const template = gapRef.match(/`Test gap recorded: ([^`]+)`/)![1];
     const row = body.split('\n').find((l) => l.startsWith('Test gap recorded: '))!.slice('Test gap recorded: '.length);
     const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
     expect(keys(row)).toEqual(keys(template));
@@ -2180,7 +2209,7 @@ describe('(G) test-gaps', () => {
     expect(has(doc, 'a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`)')).toBe(true);
     expect(has(doc, 'A prepared receipt that records test gaps still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-RECORDED-GAP-HEAD` | H-B | `Test gap recorded:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line')).toBe(true);
+    expect(has(PREP_POLICY_ROWS, 'the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line')).toBe(true);
   });
 
   // Value: protects=the acceptance record states the before sample's shape, the unknown after fields, the exact token and check, and that no saving is established; fails_when=a token, a check, an unknown or the limits are dropped, or a session ID or repository name is published; why_new=new acceptance record; seam=none; no_claim=installed-agent execution
@@ -2600,7 +2629,7 @@ describe('(H) delegate', () => {
     expect(has(doc, 'the lines never authorize a stage or merge (`B-DELEGATED-HEAD`)')).toBe(true);
     expect(has(doc, 'A prepared receipt that records delegated parts still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-DELEGATED-HEAD` | H-B | `Delegated part:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `delegation:` status line and every `Delegated part:')).toBe(true);
+    expect(has(PREP_POLICY_ROWS, 'the `delegation:` status line and every `Delegated part:')).toBe(true);
   });
 });
 
@@ -2666,7 +2695,7 @@ describe('(I) specialists=fold', () => {
       expect(has(doc, phrase), phrase).toBe(true);
     }
     expect(POLICY_VALUES.specialists!.test('fold')).toBe(true);
-    expect(has(prep, 'a line carrying both reads `Review policy: none supplied` with the reason `specialists=fold excludes delegate=`')).toBe(true);
+    expect(has(PREP_POLICY, 'a line carrying both reads `Review policy: none supplied` with the reason `specialists=fold excludes delegate=`')).toBe(true);
   });
 
   // Value: protects=a receipt that carries the fold lines still hands /ship-and-land a trusted head, the fixture lines have the skill template's keys and the doc row publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 6; seam=none; no_claim=installed-agent execution
@@ -2680,7 +2709,8 @@ describe('(I) specialists=fold', () => {
     expect(body).toContain('Review arm: fold (');
     expect(body).toContain('Folded checklist:');
     expect(fixtureText(FIX.cases['B-FOLDED-HEAD'])).not.toContain('Folded checklist:');
-    const template = prep.match(/`Folded checklist: ([^`]+)`/)![1];
+    const foldRef = squash(referenceText('review-and-prep', 'delegate-red-team-and-fold'));
+    const template = foldRef.match(/`Folded checklist: ([^`]+)`/)![1];
     const keys = (text: string) => text.split('; ').map((pair, i) => (i === 0 ? 'name' : pair.split('=')[0]));
     const rows = body.split('\n').filter((l) => l.startsWith('Folded checklist: '));
     expect(rows).toHaveLength(2);
@@ -2692,7 +2722,7 @@ describe('(I) specialists=fold', () => {
     expect(has(doc, 'the lines never authorize a stage or merge (`B-FOLDED-HEAD`)')).toBe(true);
     expect(has(doc, 'A prepared receipt that records a folded first cycle still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-FOLDED-HEAD` | H-B | `Review arm:` | ADVANCE_TRUSTED')).toBe(true);
-    expect(has(prep, 'the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>` line when the policy carries `specialists=fold`')).toBe(true);
+    expect(has(foldRef, 'the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>` line when the policy carries `specialists=fold`')).toBe(true);
   });
 });
 
@@ -3122,7 +3152,8 @@ describe('(M) blocking=shown and post-audit=classify', () => {
       expect(has(doc, phrase), phrase).toBe(true);
     }
     const docClasses = [...(/touching no documented behavior \(([^)]+)\)/.exec(doc)?.[1] ?? '').matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
-    const skillClasses = [...(/in a no-documented-behavior class \(([^)]+),\s*so `owner=not-needed`\)/.exec(prep)?.[1] ?? '').matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
+    const postAuditRef = squash(referenceText('review-and-prep', 'conditional-post-audit-classification'));
+    const skillClasses = [...(/in a no-documented-behavior class \(([^)]+),\s*so `owner=not-needed`\)/.exec(postAuditRef)?.[1] ?? '').matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
     expect(docClasses).toContain('test-tooling');
     expect(docClasses).toEqual(skillClasses);
     expect(docClasses).toEqual(['rename', 'tests-only', 'test-tooling', 'todos-only', 'mechanical-correction', 'already-documented']);
@@ -3405,7 +3436,7 @@ describe('(Q) review-state render byte compatibility', () => {
       ['output_tokens=<n|unknown>', 'output_tokens=50'], ['findings=<n>', 'findings=0'], ['<sha256>', 'b'.repeat(64)], ['<finding IDs and severities, or "none recorded">', 'none recorded'],
       ['<evidence locator>; sha256: <64 hex>', `inv-1/full-receipt-1.md; sha256: ${'3'.repeat(64)}`],
     ];
-    const stopLabelsTpl = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1]!.split('```markdown\n')[1]!.split('\n```')[0]!;
+    const stopLabelsTpl = referenceText('review-and-prep', 'conditional-cycle-cap').split('```markdown\n')[1]!.split('\n```')[0]!;
 
     for (const [name, filled, actual] of [
       ['H-B no save', `${fillExact(template('H-B').replace(hbSaveSuffix, ''), hbCommon)}\n`, renderBlock('H-B', preparedState, { commentUrl: COMMENT_URL })],
@@ -3742,7 +3773,8 @@ describe('(R) doc-audit-gap=auto', () => {
     expect(qLines[1]).toBe('doc-audit-gap: active; reuse=applied');
     const exampleChange = /^Post-audit change: [0-9a-f]{40}; paths=\d+; class=([a-z-]+); owner=not-needed; carried-audit=\S+ [0-9a-f]{64}; reason=.+; evidence=\S+\/\S+$/.exec(qLines[2]!);
     expect(exampleChange?.[1]).toBe('undocumented-internal');
-    const extendedTemplate = /`Post-audit change: <full commit SHA>; paths=<n>; class=<([^`>]*\bundocumented-internal\b[^`>]*)>; owner=<not-needed\|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`/.exec(prep);
+    const postAuditReauditRef = squash(referenceText('review-and-prep', 'conditional-post-audit-reaudit'));
+    const extendedTemplate = /`Post-audit change: <full commit SHA>; paths=<n>; class=<([^`>]*\bundocumented-internal\b[^`>]*)>; owner=<not-needed\|needed>; carried-audit=<audit_id> <section-sha256>; reason=<one line>; evidence=<reference>`/.exec(postAuditReauditRef);
     expect(extendedTemplate?.[1]?.split('|')).toContain(exampleChange?.[1]);
     expect(extendedTemplate?.[1]?.split('|')).toContain('base-merge');
     for (const [idx, wantAction, wantResult] of [

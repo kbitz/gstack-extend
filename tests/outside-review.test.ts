@@ -9,6 +9,7 @@ import { exactForms, recover, type Classifier } from '../src/outside-review/reco
 import { run, measurement } from '../src/outside-review/run';
 import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
+import { coreText, referenceText } from './helpers/skill-protocols.ts';
 
 const request: Request = { repo: '.', base: 'a'.repeat(40), candidate: 'b'.repeat(40), scope: 'full',
   criteria: 'Retain duplicate-entry detection 🦊', instructions: 'Review all severities', context: '', structured: true };
@@ -589,9 +590,17 @@ test('missing installed validator export fails before dispatch or a call claim',
 }));
 
 test('wrapper wires delta scope, both first-cycle voices and unchanged missing coverage gate', () => {
-  const skill = readFileSync(join(import.meta.dir, '../skills/review-and-prep.md'), 'utf8');
-  for (const marker of ['### Bound Claude Code outside calls', 'bin/outside-review', 'in-cap=delta',
-    'continuation=repair-only', 'Retain both distinct', 'GATE: MISSING COVERAGE', 'native pass never substitutes']) expect(skill).toContain(marker);
+  const core = coreText('review-and-prep');
+  const ref = referenceText('review-and-prep', 'conditional-outside-review');
+  const recovery = referenceText('review-and-prep', 'conditional-outside-recovery');
+  for (const marker of ['### Bound Claude Code outside calls', 'in-cap=delta', 'continuation=repair-only']) {
+    expect(core).toContain(marker);
+  }
+  for (const marker of ['bin/outside-review', 'Retain both distinct']) {
+    expect(ref).toContain(marker);
+  }
+  expect(recovery).toContain('GATE: MISSING COVERAGE');
+  expect(recovery).toContain('native pass never substitutes');
 });
 
 test('prepare places SETTLED_RULE and settled context in the shared prefix for both phases', () => {

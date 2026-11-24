@@ -19,6 +19,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -55,7 +56,7 @@ import {
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
-import { resolverSkillText, skillSection } from './helpers/skill-protocols.ts';
+import { coreText, referenceText, resolverSkillText, skillSection } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -450,9 +451,8 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
 
   test('the span-library lookup resolves the launcher through the helper in both skills and the docs', () => {
     const lookup = '_GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)';
-    for (const skill of ['review-and-prep', 'ship-and-land']) {
-      expect(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8'), skill).toContain(lookup + '\n  GX_LIB=$(');
-    }
+    expect(coreText('review-and-prep'), 'review-and-prep').toContain(lookup + '\n  GX_LIB=$(');
+    expect(coreText('ship-and-land'), 'ship-and-land').toContain(lookup + '\n  GX_LIB=$(');
     expect(readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8')).toContain(lookup + '\nGX_LIB=$(');
   });
 });
@@ -1066,6 +1066,16 @@ describe('Track 76A Conductor removal and host-neutral prompt visibility', () =>
   for (const entry of readdirSync(join(ROOT, 'skills')).filter((f) => f.endsWith('.md')).sort()) {
     liveSkills[entry] = readFileSync(join(ROOT, 'skills', entry), 'utf8');
   }
+  const refsRoot = join(ROOT, 'skills', 'references');
+  if (existsSync(refsRoot)) {
+    for (const skillDir of readdirSync(refsRoot).sort()) {
+      const fullDir = join(refsRoot, skillDir);
+      if (!statSync(fullDir).isDirectory()) continue;
+      for (const file of readdirSync(fullDir).filter((f) => f.endsWith('.md')).sort()) {
+        liveSkills[`references/${skillDir}/${file}`] = readFileSync(join(fullDir, file), 'utf8');
+      }
+    }
+  }
 
   // Value: protects=no file under skills/ names Conductor, a .context/ path, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD (any later skill that mentions Conductor or a .context/ path will fail this check by intent); fails_when=any skill reintroduces Conductor, .context/, the removed SHARED marker, or an unguarded Paseo reference; why_new=Track 76A criterion 3 locks the cross-skill removal and negative detection; seam=none
   test('no skills/*.md names Conductor, .context/, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD, and synthetic splices fail', () => {
@@ -1574,10 +1584,16 @@ describe('Track 24A workflow metrics drift-locks', () => {
       'Release-only path', 'Independently verified reuse', 'Shared review execution (DOCS and FULL)',
       'Greptile and new feedback', '3. Execute ship and verify its final changes', '4. Land and verify'],
   };
+  const metricsBodyOf = (skill: string) =>
+    skill === 'review-and-prep'
+      ? referenceText('review-and-prep', 'conditional-workflow-metrics')
+      : readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
   for (const [skill, anchors] of Object.entries(wrappers)) {
     test(`${skill} carries metrics outside SHARED with every anchor and gate guard`, () => {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-      const flat = content.replace(/\s+/g, ' ');
+      const metricsSource = metricsBodyOf(skill);
+      const coreFlat = content.replace(/\s+/g, ' ');
+      const flat = metricsSource.replace(/\s+/g, ' ');
       const startBlock = content.match(TELEMETRY_PREAMBLE_RE)?.[0] ?? '';
       const finishBlock = content.match(TELEMETRY_EPILOGUE_RE)?.[0] ?? '';
       expect(startBlock).not.toContain('metrics');
@@ -1585,16 +1601,19 @@ describe('Track 24A workflow metrics drift-locks', () => {
       const at = content.indexOf('### Workflow metrics (optional, local)');
       expect(at).toBeGreaterThan(content.indexOf('<!-- /SHARED:telemetry-start -->'));
       expect(at).toBeLessThan(content.indexOf('<!-- SHARED:telemetry-finish -->'));
-      expect(flat).toContain('The SHARED prohibition on copying session values governs legacy start/finish calls only.');
-      expect(flat).toContain('retain the opaque session ID this invocation\'s start printed');
-      expect(flat).toContain('docs/telemetry.md#workflow-metrics');
+      expect(coreFlat).toContain('The SHARED prohibition on copying session values governs legacy start/finish calls only.');
+      expect(coreFlat).toContain('retain the opaque session ID this invocation\'s start printed');
+      expect(coreFlat).toContain('docs/telemetry.md#workflow-metrics');
       expect(flat).toContain('inspect the JSON envelope\'s `status`');
       expect(flat).toContain('Never rerun completed work to manufacture telemetry');
       expect(flat).toContain('replay that identical payload at most once');
       expect(flat).toContain('capture=disabled|unavailable|partial');
       expect(flat).toContain('cannot authorize');
       expect(flat).toContain('clock-sensitive');
-      expect(flat).toContain('metrics never triggers');
+      const findingsMetrics = skill === 'review-and-prep'
+        ? referenceText('review-and-prep', 'conditional-metrics-findings').replace(/\s+/g, ' ')
+        : flat;
+      expect(findingsMetrics).toContain('metrics never triggers');
       expect(flat).toContain(`stage:"${skill}"`);
       expect(flat).toContain('Issue metrics calls one at a time from this session');
       expect(flat).toContain('emit nothing further in this invocation');
@@ -1606,17 +1625,17 @@ describe('Track 24A workflow metrics drift-locks', () => {
       } else {
         expect(flat).toContain('derive writes the run `end` after the pause checkpoint or `finish` and before Telemetry finish');
       }
-      expect(flat).toContain('kind:"fix"');
-      expect(flat).toContain('correction_kind:"finding"');
+      expect(findingsMetrics).toContain('kind:"fix"');
+      expect(findingsMetrics).toContain('correction_kind:"finding"');
       expect(flat).toContain('One governing `decision` per executed phase visit');
       expect(flat).toContain('`rc=$?`');
       // The mapping table: every left-hand anchor is a real heading (inline code stripped), every
       // required anchor is mapped, and every right-hand token is a controlled phase, wait category
       // or decision value, so a renamed heading or a misspelt phase fails here.
       const headings = [...content.matchAll(/^#{2,4} (.+)$/gm)].map(m => m[1].replace(/`/g, '').trim());
-      const tableAt = content.indexOf('| Anchor in this skill | Metric phases |', at);
-      expect(tableAt).toBeGreaterThan(at);
-      const rows = content.slice(tableAt, content.indexOf('\n\n', tableAt)).split('\n').slice(2);
+      const tableAt = metricsSource.indexOf('| Anchor in this skill | Metric phases |');
+      expect(tableAt).toBeGreaterThan(-1);
+      const rows = metricsSource.slice(tableAt, metricsSource.indexOf('\n\n', tableAt)).split('\n').slice(2);
       const mapped: string[] = [];
       const allowed = [...schemaPhases, ...waitCategories, 'RUN', 'REUSE', 'N/A'];
       for (const row of rows) {
@@ -1638,6 +1657,7 @@ describe('Track 24A workflow metrics drift-locks', () => {
   const spanDocs = DOCS.slice(DOCS.indexOf('<a id="workflow-metrics-span"></a>'), DOCS.indexOf('### Diagnostic reasons'));
   const strip = (text: string) => text.replace(/`/g, '').trim();
   const metricsOf = (skill: string) => {
+    if (skill === 'review-and-prep') return referenceText('review-and-prep', 'conditional-workflow-metrics');
     const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
     const at = content.indexOf('### Workflow metrics (optional, local)');
     return content.slice(at, content.indexOf('<!-- SHARED:telemetry-finish -->'));
@@ -1726,7 +1746,7 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(wrapperSame).toContain("GX_LIB='<retained library path>'; GX_RUN='<run step_id>'");
       expect(wrapperSame).toContain(`GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac`);
       expect(wrapperSame.trimEnd().endsWith('(exit "$rc")')).toBe(true);
-      expect(spanBlock(body, 'print the library path to retain'), `${skill}: the library lookup differs from docs/telemetry.md`)
+      expect(spanBlock(coreText(skill), 'print the library path to retain'), `${skill}: the library lookup differs from docs/telemetry.md`)
         .toBe(spanBlock(spanDocs, 'To obtain the retained library path'));
       const flat = body.replace(/\s+/g, ' ');
       expect(flat).toContain("gx_span_end 'STEP-FROM-THE-SPAN-LINE' \"$rc\" 'BEGIN-FROM-THE-SPAN-LINE'");

@@ -320,6 +320,88 @@
 - **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/300 at 2b90a30 (2026-11-23).
 - **Effort:** ? (user triages in `/roadmap`)
 
+### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test gap: Verify digest provider fallbacks
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The shell selects between sha256sum, shasum and openssl. The existing fixtures inherit the host hash programs.
+- **Hypothesis (untested):** Run the launcher with each fallback exposed in turn and verify the same digest. Then remove all providers and check the missing-reference result without body bytes.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/preamble.sh`.
+- **Evidence:** The normal SHA-256 path and stale digest fixtures passed. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Reject ambiguous manifest move entries
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Conservation fixtures cover missing navigation text and reordered blocks. They lack overlapping ranges, repeated navigation text and a heading lookalike inside a fence.
+- **Hypothesis (untested):** Add those manifest inputs to the existing fixture and verify that invalid moves never produce a changed core.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `scripts/skill-references.ts`.
+- **Evidence:** The manifest checks and conservation cases were inspected. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Test gap: Exercise the maintainer reference CLI in a fixture
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The reviewed branch ran apply, check and digests in place. Automated coverage exercises the exported transformation rather than the CLI selection and write gates.
+- **Hypothesis (untested):** Use a small fixture repository to show that digests defaults to a read-only check and that --write refreshes only the selected pointers.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `scripts/skill-references.ts`.
+- **Evidence:** The real apply, check and digest commands returned exit 0 on the current candidate. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|tests/helpers/skill-budgets.ts] Test gap: Measure the complete default review read sequence
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The cumulative budget uses references selected by the reader map. The default scratch probe stops at Step 2 before review and receipt assembly.
+- **Hypothesis (untested):** Compare the fetched reference set from a complete successful by-hand run with the representative budget after rollout.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md`.
+- **Evidence:** The early default gate passed. The acceptance record tracks the current static byte count. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=skills/review-and-prep.md|skills/references/review-and-prep/conditional-greptile-run.md|tests/skill-protocols-review-and-prep.test.ts] Test gap: Exercise the Greptile once hold through resume
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The protocol locks cover the reservation, statuses and fallback. The scratch gate set does not walk a consumed request that remains incomplete across resume.
+- **Hypothesis (untested):** Use a disposable scenario with a recorded request and unverifiable completion. Check that resume holds the draft and submits no new request.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/review-and-prep.md`.
+- **Evidence:** The applicable guard and published shapes were inspected. The item repository has no root Greptile configuration. The audit reproduced no failure.
+- **Context:** Track 94I PR A coverage audit at `56fc549` (2026-11-23).
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=scripts/skill-references.ts|tests/skill-references.test.ts] Verify reference renames in the migration command
+
+- **Description:** A renamed reference can leave its old file after `apply`. The conservation check rejects the orphan. Exercise the rename path when PR B introduces another migration and give the maintainer an explicit remove-or-retain diagnostic.
+- **Evidence:** The writer updates the named files, and the checker compares the complete reference set.
+- **Context:** Track 94I PR A full continuation.
+
+### [review:files=skills/review-and-prep.md|scripts/skill-references.ts|tests/skill-protocols-review-and-prep.test.ts] Verify rendered reference boundaries and whole-skill content locks
+
+- **Description:** Check that the generated table and numbered list boundaries render as intended. Apply whole-skill content restrictions, including the Track ID scan, to each moved reference.
+- **Evidence:** The move check preserves the raw instructions. The layout and Track ID checks still focus on the core, so these cases lack a separate fixture.
+- **Context:** Track 94I PR A full continuation. Revisit with the next skill split.
+
+### [review:files=docs/acceptance/skill-references.md|skills/review-and-prep.md] Exercise an installed Grok skill end to end
+
+- **Description:** Observe the first installed by-hand run through Grok, including discovery and workflow reference reads.
+- **Evidence:** Grok 1.0.92 alpha returned all five scratch markers. Its local inspector accepted the same package as invocable in a disposable home.
+- **Context:** Track 94I PR A full continuation. Revisit at the planned installed-copy check.
+
+### [review:files=bin/lib/preamble.sh|tests/preamble.test.ts] Test reference snapshot allocation and copy failures
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The read tests exercise source, digest, range and temporary-path handling. They do not force the temporary snapshot allocation or file copy to fail.
+- **Hypothesis (untested):** Inject those I/O failures and check that the helper reports cause `unreadable` and emits no reference body.
+- **Upstream severity:** INFORMATIONAL
+- **Evidence:** Final continuation coverage audit at `f979ee7`.
+- **Context:** Revisit when the next Track changes reference snapshot I/O.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

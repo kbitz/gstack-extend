@@ -179,7 +179,9 @@ foreign install pointers, and unrelated files are preserved.
 `setup` manages Claude Code and Codex from the table above. Another agent that reads
 `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
-`~/.gemini/config/skills/` is one such directory.
+`~/.gemini/config/skills/` is one such directory. Muse Code 1.4.25 validated
+the Codex rendering of `/review-and-prep` in a scratch install.
+See the [pre-merge load checks](acceptance/skill-references.md#pre-merge-scratch-load-and-reference-checks).
 
 With a managed Claude install, link the directory `setup` already maintains, so
 the link follows later refreshes. For Codex, use `~/.codex/skills`:
@@ -236,6 +238,7 @@ Every gstack-extend skill starts with one fixed command:
 - `--require <helper>` — in default or `--root` mode, require a verified root and executable `bin/<helper>`. A failed check prints `ERROR:` to stdout and exits `1`.
 - `--root` — print only the root lines (runs neither `bin/update-check` nor telemetry); used to recover `_EXTEND_ROOT=` later in a session.
 - `--resume` — start a new telemetry segment after a deliberate pause. This mode skips root lookup and update checks.
+- `--ref <file> --expect <digest> [--lines <a>-<b>]` — read numbered lines from a verified reference using its 16-hex SHA-256 digest. This mode skips update checks and telemetry. See [Skill references](#skill-references).
 - `--help` / `-h` — on its own, print usage synopsis and flag descriptions to stdout and exit `0`.
 
 `--root` and `--resume` are mutually exclusive. Invalid arguments print
@@ -718,6 +721,28 @@ files. Uninstall leaves the helper directory available for a waiting setup.
 If a run times out waiting for the lock, wait for the other setup to finish
 and retry. If an interrupted setup left the lock behind, confirm no setup is
 running before removing the empty `~/.gstack-extend/bin/.setup.lock` directory.
+
+### Skill references
+
+Slimmed skills fetch conditional instructions from `skills/references/<skill>/<file>.md` in the verified checkout through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`. Pass the file stem without `.md`. A required read failure stops the skill at that step and preserves existing holds. After fixing the cause, resume the existing work. If an optional metrics read fails in `/review-and-prep`, the skill reports the error, records partial capture and continues preparation.
+
+| Error line / cause | Meaning | Fix |
+|---|---|---|
+| `SKILL_REFERENCE_MISSING` (`cause: absent`) on a normal checkout | The reference file is missing from the checkout (for example, an older checkout or local deletion) | Run `"<root>/bin/update-run" "<root>"`, or inspect with `git -C "<root>" status -- skills/references` if the checkout has local changes |
+| `SKILL_REFERENCE_MISSING` (`cause: absent`) on a linked worktree | The verified root is a linked worktree (`bin/update-run` refuses linked worktrees) | Run `setup --host auto` from your stable gstack-extend checkout |
+| `SKILL_REFERENCE_MISSING` (`cause: unreadable`) | The reference could not be read or its bytes could not be verified | Follow the fix in the error line. Check the file, temporary directory, or digest utility it names. |
+| `SKILL_REFERENCE_MISSING` (`cause: no-root`) | No verified gstack-extend checkout was found under `~/.claude` or `~/.codex` | Run `setup --host auto` from your gstack-extend checkout (see Installation) |
+| `SKILL_REFERENCE_STALE` (`cause: digest-mismatch`) | The loaded skill copy and the checkout's reference file are different versions (for example, after a manual `git pull` without rerunning `setup`, or after a mid-run upgrade) | Restart `/<skill>` so the loaded copy matches the checkout; if it still differs, run `"<root>/setup" --host auto` from the checkout this host should use |
+| `SKILL_REFERENCE_USAGE` (`cause: usage`) | Bad arguments passed to `preamble ... --ref` (exit 2) | Re-run the exact command from the skill's read instruction (`preamble <skill> --ref <file> --expect <digest> [--lines <a>-<b>]`) |
+| `PREAMBLE_USAGE` (exit 2) on `--ref` | The shared `~/.gstack-extend/bin/preamble` predates `--ref` support | Run `./setup --host auto` from your updated gstack-extend checkout |
+| `SKILL_REFERENCE_INCOMPLETE` | The skill still could not verify the full reference after retrying in chunks | Report the step, reference, harness and version before resuming |
+
+If output omits the trailer, fetch `--lines 1-1` first to recover the line count.
+Retry missing lines within that count using one-based inclusive `--lines <a>-<b>` ranges.
+Each read verifies the whole file and ends with `REFERENCE_END`, which reports
+the full line count and digest. After updating a checkout manually, rerun
+`./setup --host auto` from that checkout to refresh the managed skill copies
+and shared start command.
 
 ### Unsafe skills directory
 
