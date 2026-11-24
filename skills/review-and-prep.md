@@ -999,7 +999,7 @@ anchor changed (<which>)`, let the review and the coverage audit write tests as
 today, and edit no upstream file. A policy without the value records nothing
 here.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 5553fba1d85ac714` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 57898a23ec35e259` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
 
 ### Give review parts the settled decisions
 
@@ -1086,7 +1086,7 @@ the value records nothing here.
 
 Safety findings keep today's handling. When `blocking: active`, a non-safety finding blocks only if the host shows it on the reviewed candidate and it does not reproduce on the same reachable path at base. A finding from an attacker part needs the host's own showing attempt.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 5553fba1d85ac714` before evaluating shown findings when the review policy carries `blocking=shown`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 57898a23ec35e259` before evaluating shown findings when the review policy carries `blocking=shown`.
 
 ### Record cycle 1's full-review baseline
 

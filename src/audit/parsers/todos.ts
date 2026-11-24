@@ -18,6 +18,7 @@
  */
 
 import { extractTagFromHeading, extractTitleFromHeading } from '../lib/source-tag.ts';
+import { parseTodoIdBullet } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
 export type TodoEntryKind = 'heading' | 'compactBullet' | 'legacyBullet';
@@ -32,24 +33,34 @@ export type TodoEntry = {
   title?: string;
   /** True for headings that started with `[` but the tag is unclosed. */
   unclosedTag?: boolean;
+  /** Validated `wi-` work-item ID from `- **ID:** <val>`, or null when absent/malformed. */
+  workItemId?: string | null;
+  /** Raw value from the first `- **ID:**` bullet, or null when absent. */
+  workItemIdRaw?: string | null;
+  /** Parse/duplication error for the entry's `- **ID:**` bullet(s). */
+  workItemIdError?: 'malformed' | 'duplicate' | null;
 };
 
 export type ParsedTodos = {
   hasUnprocessedSection: boolean;
   entries: TodoEntry[];
+  /** Valid work-item IDs observed under `## Completed` (for cross-doc uniqueness). */
+  completedIds?: string[];
 };
 
 export function parseTodos(content: string): ParserResult<ParsedTodos> {
   const errors: ParseError[] = [];
   const entries: TodoEntry[] = [];
+  const completedIds: string[] = [];
 
   if (content === '') {
-    return { value: { hasUnprocessedSection: false, entries }, errors };
+    return { value: { hasUnprocessedSection: false, entries, completedIds }, errors };
   }
 
   let inFence = false;
-  let inSection = false;
+  let section: 'unprocessed' | 'completed' | null = null;
   let hasUnprocessedSection = false;
+  let currentHeading: TodoEntry | null = null;
   let lineno = 0;
 
   const lines = content.split('\n');
@@ -64,26 +75,44 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
 
     if (!inFence && /^## Unprocessed\b/.test(line)) {
       hasUnprocessedSection = true;
-      inSection = true;
+      section = 'unprocessed';
+      currentHeading = null;
       continue;
     }
 
-    if (!inFence && inSection && /^## /.test(line)) {
-      inSection = false;
+    if (!inFence && /^## Completed\b/.test(line)) {
+      section = 'completed';
+      currentHeading = null;
       continue;
     }
 
-    if (!inSection || inFence) continue;
+    if (!inFence && section !== null && /^## /.test(line)) {
+      section = null;
+      currentHeading = null;
+      continue;
+    }
+
+    if (section === null || inFence) continue;
+
+    if (section === 'completed') {
+      const parsedId = parseTodoIdBullet(line);
+      if (parsedId !== null && parsedId.id !== null) {
+        completedIds.push(parsedId.id);
+      }
+      continue;
+    }
 
     // Compact bold form: `- **[`. Check before legacy `- [` (compact also
     // matches `- \[` once the bold prefix is stripped).
     if (/^- \*\*\[/.test(line)) {
+      currentHeading = null;
       entries.push({ kind: 'compactBullet', line: lineno, raw: line });
       continue;
     }
 
     // Legacy bullet form.
     if (/^- \[/.test(line)) {
+      currentHeading = null;
       entries.push({ kind: 'legacyBullet', line: lineno, raw: line });
       continue;
     }
@@ -94,17 +123,36 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
       const title = extractTitleFromHeading(line);
       const headingBody = line.replace(/^### /, '');
       const unclosedTag = tag === '' && /^\[/.test(headingBody);
-      entries.push({
+      const entry: TodoEntry = {
         kind: 'heading',
         line: lineno,
         raw: line,
         tag,
         title,
         unclosedTag,
-      });
+        workItemId: null,
+        workItemIdRaw: null,
+        workItemIdError: null,
+      };
+      entries.push(entry);
+      currentHeading = entry;
       continue;
+    }
+
+    // Attribute bullet `- **ID:** <val>` belonging to current heading entry.
+    if (currentHeading !== null) {
+      const parsedId = parseTodoIdBullet(line);
+      if (parsedId !== null) {
+        if (currentHeading.workItemIdRaw !== null && currentHeading.workItemIdRaw !== undefined) {
+          currentHeading.workItemIdError = 'duplicate';
+        } else {
+          currentHeading.workItemIdRaw = parsedId.raw;
+          currentHeading.workItemId = parsedId.id;
+          currentHeading.workItemIdError = parsedId.id === null ? 'malformed' : null;
+        }
+      }
     }
   }
 
-  return { value: { hasUnprocessedSection, entries }, errors };
+  return { value: { hasUnprocessedSection, entries, completedIds }, errors };
 }

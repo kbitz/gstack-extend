@@ -180,6 +180,7 @@ type LauncherSpec = {
 
 const ALL_LAUNCHERS: LauncherSpec[] = [
   { name: 'roadmap-audit', family: 'bare', srcRel: 'src/audit/cli.ts', okArgs: ['--help'] },
+  { name: 'roadmap-id', family: 'bare', srcRel: 'src/audit/id-cli.ts', okArgs: ['--help'] },
   { name: 'roadmap-pack', family: 'bare', srcRel: 'src/audit/pack-cli.ts', okArgs: ['--help'] },
   { name: 'roadmap-touches', family: 'bare', srcRel: 'src/audit/touches-cli.ts', okArgs: [] },
   { name: 'roadmap-renumber', family: 'bare', srcRel: 'src/audit/renumber-cli.ts', okArgs: [] },
@@ -194,7 +195,7 @@ const ALL_LAUNCHERS: LauncherSpec[] = [
   { name: 'review-state', family: 'review-state', srcRel: 'src/review-state/cli.ts', okArgs: ['--help'] },
 ];
 
-describe('all 13 gated bin/ launchers', () => {
+describe('all 14 gated bin/ launchers', () => {
   const oldBunDir = freshDir('old-bun');
   makeDelegatingShim(oldBunDir, '1.2.0');
   const badBunDir = freshDir('bad-bun');
@@ -710,8 +711,8 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
   });
 });
 
-describe('--help and -h for roadmap-audit, roadmap-pack, and outside-review', () => {
-  for (const binName of ['roadmap-audit', 'roadmap-pack', 'outside-review']) {
+describe('--help and -h for roadmap-audit, roadmap-id, roadmap-pack, and outside-review', () => {
+  for (const binName of ['roadmap-audit', 'roadmap-id', 'roadmap-pack', 'outside-review']) {
     for (const flag of ['--help', '-h']) {
       test(`${binName} ${flag} prints usage on stdout, exits 0, and writes nothing`, () => {
         const scratch = freshDir(`help-${binName}`);

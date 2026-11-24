@@ -13,6 +13,7 @@ attribute bullets, optionally followed by prose paragraphs.
 
 ```
 ### [source:tag] Title
+- **ID:** wi-<4-8 lowercase hex> — immutable work-item ID assigned at creation
 - **Why:** problem statement or value (manual, ship)
 - **Description:** reviewer's analytical framing of the issue (full-review, review)
 - **Symptom:** observed behavior (pair-review, investigate)
@@ -82,6 +83,7 @@ updated skills use the hedged framing.
 
 Parsers tolerate their absence. Recommended fields:
 
+- `- **ID:**` `wi-<4-8 lowercase hex>` — immutable work-item ID assigned at creation (required by `## WORK_ITEM_IDS` in `bin/roadmap-audit`; minted via `bin/roadmap-id mint`).
 - `- **Why:**` ... — problem statement or value proposition. Shown in triage.
 - `- **Effort:**` ... — size estimate. Shown in triage.
 - `- **Depends on:**` ... — prerequisites. Flags items that shouldn't be
@@ -194,23 +196,27 @@ amendment to cut; writing `defer=true` does not supply that approval.
 
 ```markdown
 ### [pair-review:group=2,item=5] Arrow key double-move on thread list
+- **ID:** wi-a1b2c3
 - **Symptom:** user hits Up/Down and selection skips a row intermittently. Makes keyboard navigation unreliable.
 - **Repro:** 1. open thread list, 2. press Down arrow rapidly 5x, 3. observe selection jumps 2 rows on the 3rd or 4th press.
 - **Effort:** S (human: ~2 hours / CC: ~15 min)
 - **Context:** surfaced during Group 2 pair-review on kbitz/threading (2026-04-20). Re-verify per repro steps before fixing.
 
 ### [full-review:critical] SQL injection in user lookup
+- **ID:** wi-b2c3d4
 - **Description:** `User.where("email = '#{params[:email]}'")` is concatenated, not parameterized. Direct exploitation path.
 - **Hypothesis (untested):** swap to `User.where(email: params[:email])` — verify the column exists and the param shape matches before applying.
 - **Effort:** S (human: ~1 hour / CC: ~10 min)
 - **Found in:** app/controllers/users_controller.rb:47
 
 ### [full-review:nice-to-have,files=app/services/cache.ts] Cache TTL tunable via config
+- **ID:** wi-c3d4e5
 - **Description:** hardcoded 60s TTL doesn't fit all query types.
 - **Hypothesis (untested):** consider whether the TTL should be removed entirely (cache-busting on write) before adding configurability — adding a config knob is the additive direction.
 - **Effort:** M (human: ~1 day / CC: ~30 min)
 
 ### [review:files=src/export.ts|src/export-format.ts] Test gap: empty batch is not tested
+- **ID:** wi-d4e5f6
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** `exportBatch` has no test for an empty batch; the code path returns early and nothing asserts its output.
 - **Hypothesis (untested):** a test that passes an empty batch and expects an empty file; re-verify the early return first.
@@ -223,6 +229,7 @@ amendment to cut; writing `defer=true` does not supply that approval.
 Under `blocking=shown`, `/review-and-prep` writes `### [review:files=<a.ts|b.ts>] Base issue: <short title>` (or `### [review] Base issue: <short title>` when a path cannot form a `files=` value) for a finding already present at the merge base; it routes KEEP with source `review`.
 
 ### [review:files=src/export.ts|src/export-format.ts] Base issue: header row lacks newline on empty input
+- **ID:** wi-e5f607
 - **Base issue:** present at merge base `a0b1c2d`; filed under `blocking=shown`
 - **Description:** `formatHeader` omits the trailing newline when the row list is empty, failing the CSV parser check at both the head and the merge base.
 - **Evidence:** `bun test tests/export.test.ts` fails at `a1b2c3d` and at merge base `a0b1c2d`.
@@ -232,11 +239,13 @@ Under `blocking=shown`, `/review-and-prep` writes `### [review:files=<a.ts|b.ts>
 - **Effort:** ? (user triages in /roadmap)
 
 ### [manual] Explore webhook outbound events for v1.1
+- **ID:** wi-f60718
 - **Why:** customer ask from two accounts.
 - **Effort:** L (human: ~1 week / CC: ~1 hr)
 - **Priority:** P3
 
 ### [plan-ceo-review:track=4A,defer=true] Per-tenant isolation for cache layer
+- **ID:** wi-071829
 - **Description:** original Track 4A scope included tenant-scoped cache keys. Cut during CEO review to keep PR sized correctly (~600 LOC vs ~250 cap).
 - **Hypothesis (untested):** may need tenant-scoped keys; verify that the selected target actually includes multiple tenants before proposing implementation.
 - **Revisit when:** the project admits a second tenant, or isolation is shown necessary for the current supported workflow.
@@ -279,3 +288,48 @@ per-entry findings:
   A stray `]` or a `,` inside a value is `MALFORMED_TAG` instead.
 
 The skill surfaces validator failures during triage and blocks until resolved.
+
+## Work-item IDs and `_blocked-by:` contract (`work-item-id/v1`)
+
+Every `TODOS.md` entry, `## Future` bullet, active `ROADMAP.md` Track card, and shipped Track record carries an immutable work-item ID so external consumers and planning tools can track items across promotions, deferrals, and Track-label renumbering.
+
+### Format and immutability
+
+- **Regex:** `^wi-[0-9a-f]{4,8}$` (fixed `wi-` prefix followed by 4 to 8 lowercase hex characters; filename-safe and unambiguous against Track labels like `96A` or Group numbers like `96`).
+- **Default length and collision growth:** new IDs default to 6 lowercase hex characters (`wi-a1b2c3`) and grow to 7 then 8 hex characters on collision with any live or git-historical ID before drawing fresh entropy (for `mint`) or re-salting the hash counter (for `migrate`).
+- **Immutability and never-reuse:** an ID is assigned once at creation, travels unchanged when a `TODOS.md` item or `## Future` bullet is promoted to a Track or shipped, and is never reused after an entry is killed, shipped, or merged into another. Track labels (`96A`, `97B`) remain recyclable display text.
+
+### Field shapes across planning documents
+
+| Document | Record shape | ID field placement |
+|---|---|---|
+| `TODOS.md` / `docs/TODOS.md` | `### [source:tag] Title` (under `## Unprocessed` and `## Completed`) | `- **ID:** wi-<hex>` as the first attribute bullet |
+| `docs/roadmap-future.md` (or inline `## Future`) | `- **Title** — body **Revisit when:** ...` | Inline `**ID:** wi-<hex>` immediately after the title dash separator (`- **Title** — **ID:** wi-<hex> — body`); ignored inside `**Revisit when:**` |
+| `docs/ROADMAP.md` | `#### Track <label>: Title` | `_id: wi-<hex>_` on the line immediately after the `_...risk..._` metadata line (`_id:` before metadata fails `STRUCTURE`) |
+| `docs/roadmap-shipped.md` | `### Track <label>: Title ✓ Shipped ...` | `_id: wi-<hex>_` immediately under the heading |
+| `docs/roadmap-shipped.md` (legacy) | `- Track <label> — _shipped ..._` under `#### Group N:` | Inline `**ID:** wi-<hex>` immediately after the dash separator (`- Track <label> — **ID:** wi-<hex> — ...`) |
+
+### `_blocked-by:` grammar
+
+```
+_blocked-by: <ref>[, <ref>...]_
+```
+
+- **Canonical write form:** `/roadmap` writes immutable work-item IDs (`_blocked-by: wi-a1b2c3, wi-d4e5f6_`).
+- **Reader compatibility:** `src/audit/parsers/roadmap.ts`, `bin/roadmap-audit`, and `bin/roadmap-pack` accept both `wi-[0-9a-f]{4,8}` work-item IDs and legacy Track labels (`Track 95C`, `95C`, `11A.2`), resolving live work-item IDs to their current Track labels for packing and filtering satisfied shipped IDs identically to shipped Track labels.
+- **Renumber invariance:** `bin/roadmap-renumber` treats `_id:` as immutable and never rewrites `wi-` IDs on `_blocked-by:` lines when renumbering Track or Group labels.
+- **Validation:** unrecognized tokens on `_blocked-by:` (such as `wi-12`, `wi-ZZZZ`, or unknown IDs) fail `## STRUCTURE`.
+
+### Audit enforcement (`## WORK_ITEM_IDS`)
+
+`bin/roadmap-audit` emits a canonical `## WORK_ITEM_IDS` section (after `TODO_FORMAT`, before `MODE`). It inspects every `TODOS.md ## Unprocessed` heading entry, every `## Future` bullet, every active and shipped Track heading, and every legacy shipped `- Track` bullet, while registering `TODOS.md ## Completed` IDs in the global uniqueness map:
+
+- `MISSING_ID` — a record lacks its structured ID field (also emits a trailing hint to run `bin/roadmap-id migrate`).
+- `MALFORMED_ID` — an ID field does not match `^wi-[0-9a-f]{4,8}$`.
+- `DUPLICATE_ID` — two records share the same ID (within or across documents, including `## Completed` and colliding archive records), or a single record carries multiple ID fields.
+
+### CLI (`bin/roadmap-id`)
+
+- `bin/roadmap-id mint [repo-path] [--count N]` — scans live planning docs and git history (`git log -G 'wi-[0-9a-f]{4,8}'`), then prints `N` (default `1`) unique `wi-` IDs to stdout. Exit `0` on success, `2` on invalid arguments.
+- `bin/roadmap-id migrate [repo-path] [--dry-run] [--rewrite-blocked-by]` — idempotently assigns deterministic SHA-256-derived `wi-` IDs to existing records across `roadmap-shipped.md`, `ROADMAP.md`, `roadmap-future.md`, and `TODOS.md` without altering any other text (opt-in `--rewrite-blocked-by` rewrites resolvable Track labels on `_blocked-by:` lines). Prints per-file `ADDED` counts, total `ADDED: <N>`, and `STATUS: ok|dry-run|unchanged`. Exit `0` on success, `2` on invalid arguments.
+- `bin/roadmap-id --help | -h` — prints usage to stdout, exits `0`, writes nothing.

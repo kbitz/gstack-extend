@@ -1196,4 +1196,20 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
   test('malformed and unknown tags keep an explicit user decision', () => {
     expect(contract.replace(/\s+/g, ' ')).toContain("Malformed or unknown tags still need the user's explicit decision.");
   });
+
+  test('source-tag-contract.md locks work-item-id/v1 regex, all four field shapes, and _blocked-by: ID grammar', async () => {
+    const { WORK_ITEM_ID_CONTRACT, WORK_ITEM_ID_RE } = await import('../src/audit/lib/work-item-id.ts');
+    expect(contract).toContain(WORK_ITEM_ID_CONTRACT);
+    expect(contract).toContain(WORK_ITEM_ID_RE.source);
+    expect(contract).toContain('- **ID:** wi-<hex>');
+    expect(contract).toContain('**ID:** wi-<hex>');
+    expect(contract).toContain('_id: wi-<hex>_');
+    expect(contract).toContain('_blocked-by: wi-a1b2c3, wi-d4e5f6_');
+    expect(contract).toContain('## WORK_ITEM_IDS');
+    expect(contract).toContain('MISSING_ID');
+    expect(contract).toContain('MALFORMED_ID');
+    expect(contract).toContain('DUPLICATE_ID');
+    expect(contract).toContain('bin/roadmap-id mint');
+    expect(contract).toContain('bin/roadmap-id migrate');
+  });
 });

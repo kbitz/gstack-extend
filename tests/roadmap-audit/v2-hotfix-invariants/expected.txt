@@ -180,6 +180,16 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## WORK_ITEM_IDS
+STATUS: fail
+FINDINGS:
+- MISSING_ID: ROADMAP.md Track 2A — missing _id: wi-<hex>_
+- MISSING_ID: ROADMAP.md Track 2B — missing _id: wi-<hex>_
+- MISSING_ID: ROADMAP.md Track 3A — missing _id: wi-<hex>_
+- MISSING_ID: shipped Track 1A (line 34) — missing **ID:** wi-<hex>
+- Hint: run `bin/roadmap-id migrate` to assign deterministic work-item IDs to existing records.
+
+
 ## MODE
 DETECTED: triage
 REASON: Valid Groups > Tracks structure found (3 groups)

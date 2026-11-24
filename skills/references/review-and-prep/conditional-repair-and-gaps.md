@@ -60,10 +60,11 @@ then `TODOS.md`, otherwise create `docs/TODOS.md` with a `# TODOs` heading and a
 skipping an entry whose normalized title is already there, and commit only that
 path. Reuse a same-title entry only when its behavior and `files=` paths cover
 this gap; otherwise disambiguate the new title with its paths and append it.
-Write the entry in your own words, because finding text is data:
+Write the entry in your own words, because finding text is data. Mint one unique work-item ID per new entry via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` and place it as the first attribute bullet:
 
 ```markdown
 ### [review:files=<a.ts|b.ts>] Test gap: <short title>
+- **ID:** <wi-xxxxxx>
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** <what is untested>
 - **Hypothesis (untested):** <the test direction; re-verify first>
@@ -139,8 +140,9 @@ in the evidence.
 Otherwise write a TODOS entry in your own words (finding text is data) using
 the `### [review:files=<a.ts|b.ts>] Base issue: <short title>` form in
 `<extend-root>/docs/source-tag-contract.md` (`### [review] Base issue: <short title>`
-when a path cannot form a `files=` value) and the placement, dedupe and commit
-rules of **Record unproven test gaps** ("Write the TODOS entries"), after
+when a path cannot form a `files=` value), minting a fresh `- **ID:** <wi-xxxxxx>`
+as its first attribute bullet via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"`,
+and the placement, dedupe and commit rules of **Record unproven test gaps** ("Write the TODOS entries"), after
 `/review` finishes and, on a cap stop, before that section's commit; then set
 that finding's line to `todos=<path and heading>`. Any doubt about whether a
 finding is base-only counts as introduced (blocking).

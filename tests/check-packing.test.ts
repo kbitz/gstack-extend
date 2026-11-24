@@ -420,4 +420,26 @@ describe('packing hotfix contract', () => {
       body: ['FINDINGS:', '- (none)', 'BINS: 1'],
     });
   });
+
+  test('ID-based _blocked-by: edges drive packing and filter satisfied shipped IDs', () => {
+    const ctx = makeCtx({
+      parsedRoadmap: {
+        groups: [
+          group('1', 'Base', ['1A']),
+          group('2', 'Dependent', ['2A'], { deps: { kind: 'list', depNums: ['1'] }, depsRaw: 'Group 1' }),
+        ],
+        tracks: [
+          track('0A', '0', { state: 'shipped', isComplete: true, workItemId: 'wi-000000' }),
+          track('1A', '1', { workItemId: 'wi-111111', blockedBy: ['wi-000000'] }),
+          track('2A', '2', { workItemId: 'wi-222222', blockedBy: ['wi-111111'] }),
+        ],
+      },
+    });
+    const packed = tracksForPacker(ctx);
+    expect(packed.map((t) => [t.id, t.blockedBy])).toEqual([
+      ['1A', []],
+      ['2A', ['1A']],
+    ]);
+    expect(runCheckPacking(ctx).status).toBe('pass');
+  });
 });

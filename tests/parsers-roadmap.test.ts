@@ -1023,4 +1023,37 @@ describe('future pointer + mergeFutureArchive', () => {
   test('formatFutureIndex of an empty Future prints both header lines', () => {
     expect(formatFutureIndex([])).toBe('FUTURE_INDEX: 0\nFUTURE_TRIGGERS_MISSING: 0\n');
   });
+
+  test('formatFutureIndex extracts ID, strips it from first sentence, and preserves ID-less format', () => {
+    const out = formatFutureIndex([
+      '- **With ID** — **ID:** wi-a1b2c3 — First sentence. Second sentence. **Revisit when:** trigger.',
+      '- **Without ID** — Plain sentence. **Revisit when:** later.',
+    ]);
+    const lines = out.trim().split('\n');
+    expect(lines[2]).toBe('- **With ID** (wi-a1b2c3) — First sentence. — revisit: trigger');
+    expect(lines[3]).toBe('- **Without ID** — Plain sentence. — revisit: later');
+  });
+
+  test('parseRoadmap parses _id:, _blocked-by: work-item IDs, malformed tokens, and legacy shipped bullets', () => {
+    const md = [
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: First',
+      '_1 task · ~50 LOC · low risk_',
+      '_id: wi-000101_',
+      '_touches: src/a.ts_',
+      '_blocked-by: wi-000099, Track 0A, wi-BAD!_',
+      '- **Do** -- body (S)',
+      '## Shipped',
+      '#### Group 0: Old ✓ Shipped (v0.1.0)',
+      '- Track 0A — **ID:** wi-000099 — _shipped (v0.1.0): old_',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks.find((x) => x.id === '1A')!;
+    expect(t.workItemId).toBe('wi-000101');
+    expect(t.blockedBy).toEqual(['wi-000099', '0A']);
+    expect(t.blockedByMalformed).toEqual(['wi-BAD!']);
+    expect(r.value.legacyShippedTracks).toHaveLength(1);
+    expect(r.value.legacyShippedTracks![0]!.workItemId).toBe('wi-000099');
+  });
 });

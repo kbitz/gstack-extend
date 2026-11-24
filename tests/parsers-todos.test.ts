@@ -181,3 +181,31 @@ describe('parseTodos — line numbers', () => {
     expect(r.value.entries[0]!.line).toBe(5);
   });
 });
+
+describe('parseTodos — work-item IDs', () => {
+  test('captures valid, malformed, duplicate IDs and ## Completed IDs without changing entries count', () => {
+    const md = [
+      '## Unprocessed',
+      '### [manual] Valid',
+      '- **ID:** wi-a1b2c3',
+      '- **Why:** ok',
+      '### [manual] Malformed',
+      '- **ID:** wi-BAD!',
+      '### [manual] Duplicate bullets',
+      '- **ID:** wi-111111',
+      '- **ID:** wi-222222',
+      '## Completed',
+      '### [manual] Done',
+      '- **ID:** wi-dead01',
+    ].join('\n');
+    const r = parseTodos(md);
+    expect(r.value.entries).toHaveLength(3);
+    expect(r.value.entries[0]!.workItemId).toBe('wi-a1b2c3');
+    expect(r.value.entries[0]!.workItemIdError).toBeNull();
+    expect(r.value.entries[1]!.workItemId).toBeNull();
+    expect(r.value.entries[1]!.workItemIdRaw).toBe('wi-BAD!');
+    expect(r.value.entries[1]!.workItemIdError).toBe('malformed');
+    expect(r.value.entries[2]!.workItemIdError).toBe('duplicate');
+    expect(r.value.completedIds).toEqual(['wi-dead01']);
+  });
+});

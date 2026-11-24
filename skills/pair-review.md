@@ -554,7 +554,7 @@ action.
 
 ### Present the next item
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before resuming a recorded parked-bug fix or its pending verification or retest.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect bd3fae4568d358b5` before resuming a recorded parked-bug fix or its pending verification or retest.
 
 Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-fix-flow --expect 4b10d77803484a36` before resuming a recorded item fix or its pending verification or retest.
 
@@ -768,7 +768,7 @@ were noticed during the just-completed group. If none, skip triage silently.
 
 Present each parked bug with "Fix now (recommended)" first, "Send to TODOS.md", or "Stay parked". Fix now follows Prepare-the-item safety rules, checkpoint, reproduce, fix commit, rebuild, agent-verify, and human retest; Send to TODOS.md writes the `[pair-review:...]` rich format and commits separately.
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before triaging parked bugs at group completion when `parked-bugs.md` has PARKED entries from this group.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect bd3fae4568d358b5` before triaging parked bugs at group completion when `parked-bugs.md` has PARKED entries from this group.
 
 ## Phase 2.5: Post-Testing Fix Queue
 
@@ -778,7 +778,7 @@ they were noticed during, including bugs parked before testing started).
 
 If none remain, skip to Phase 4.
 
-Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect 564d3d2bede49996` before running Phase 2.5 when PARKED bugs remain after all groups complete.
+Run `~/.gstack-extend/bin/preamble pair-review --ref conditional-triage-and-queue --expect bd3fae4568d358b5` before running Phase 2.5 when PARKED bugs remain after all groups complete.
 
 After all parked bugs are processed (or the user says to stop), proceed to Phase 4.
 

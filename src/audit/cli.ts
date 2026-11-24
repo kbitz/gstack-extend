@@ -55,6 +55,7 @@ import { runCheckTodoFormat } from './checks/todo-format.ts';
 import { runCheckUnprocessed } from './checks/unprocessed.ts';
 import { runCheckVersion } from './checks/version.ts';
 import { runCheckVocabLint } from './checks/vocab-lint.ts';
+import { runCheckWorkItemIds } from './checks/work-item-ids.ts';
 import { createGitGateway } from './lib/git.ts';
 import { resolveStateDir } from './lib/effort.ts';
 import { computeInFlight } from './lib/in-flight.ts';
@@ -432,6 +433,7 @@ const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckScatteredTodos,
   runCheckUnprocessed,
   runCheckTodoFormat,
+  runCheckWorkItemIds,
 ];
 
 function renderMode(m: ModeResult): string {

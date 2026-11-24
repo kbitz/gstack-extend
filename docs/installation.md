@@ -20,7 +20,7 @@ setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run .
 
 | Entry points | Channel and format | Exit | Error codes / causes |
 |---|---|---|---|
-| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `review-delegate` | Single line on stderr. For missing Bun, `setup` also prints download and checksum instructions. Dry-run init warns on stderr and keeps its preview exit behavior. | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
+| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `review-delegate` | Single line on stderr. For missing Bun, `setup` also prints download and checksum instructions. Dry-run init warns on stderr and keeps its preview exit behavior. | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
 | `layout-scaffold`, `docs-ship`, `upstream-check` | Two lines on stderr with `ERROR <code>:` and `FIX:`. | 5 | `bun_missing`, `bun_not_absolute`, `bun_too_old`, `bun_version_unknown` |
 | `layout-scaffold`, `docs-ship` | Two lines on stderr with `ERROR <code>:` and `FIX:` for an incomplete installation or broken launcher link. | 5 | `source_missing`, `symlink_loop` |
 | `upstream-check` | Three lines on stderr with `ERROR INTERNAL:`, version context and `FIX:` for an incomplete installation or broken launcher link. | 1 | `source_missing`, `symlink_loop` |

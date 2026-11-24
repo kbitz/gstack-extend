@@ -37,6 +37,7 @@ Group context; never claim the whole original Group shipped:
 ## Individual Track history
 
 ### Track 22A: Record landed work ✓ Shipped (v1.2.3.0)
+_id: wi-<hex>_
 - 2026-10-01: merged PR #109 (commit abc1234); verified land-time Track 22A, original Group 22.
 ```
 
@@ -103,7 +104,7 @@ console.log('RAW ARCHIVE DIAGNOSTICS', JSON.stringify({ errors: rawArchive.error
 console.log('MERGED DIAGNOSTICS', JSON.stringify({ errors: ctx.roadmap.errors, warnings: ctx.roadmap.value.styleLintWarnings }))
 const sections = parseAuditSections(report)
 if (!CANONICAL_SECTIONS.every(name => sections.some(s => s.name === name))) throw new Error('Incomplete audit section coverage')
-const blockers = new Set(['SIZE', 'COLLISIONS', 'PACKING', 'STRUCTURE', 'STATE_SECTIONS', 'VERSION', 'GROUP_DEPS', 'PARALLELISM_BUDGET', 'FUTURE'])
+const blockers = new Set(['SIZE', 'COLLISIONS', 'PACKING', 'STRUCTURE', 'STATE_SECTIONS', 'VERSION', 'GROUP_DEPS', 'PARALLELISM_BUDGET', 'FUTURE', 'WORK_ITEM_IDS'])
 if (rawArchive.errors.length || sections.some(s => blockers.has(s.name) && s.body.includes('STATUS: fail'))) process.exit(1)
 ```
 

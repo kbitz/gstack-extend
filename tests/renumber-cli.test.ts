@@ -54,4 +54,26 @@ describe('runRenumberCli', () => {
     expect(r.ok).toBe(false);
     expect(r.text).toContain('usage:');
   });
+
+  test('preserves _id: and ID-based _blocked-by: lines when renumbering Track labels', () => {
+    writeFileSync(
+      join(dir, 'docs', 'ROADMAP.md'),
+      [
+        '## Current Plan',
+        '### Group 101: Wave',
+        '#### Track 101A: First',
+        '_1 task · ~50 LOC · low risk_',
+        '_id: wi-101a00_',
+        '_blocked-by: wi-101b00_',
+        '- **Do** -- x (S)',
+      ].join('\n') + '\n',
+    );
+    const r = runRenumberCli(['--map', '101A=91A,101=91', dir]);
+    expect(r.ok).toBe(true);
+    const roadmap = readFileSync(join(dir, 'docs', 'ROADMAP.md'), 'utf8');
+    expect(roadmap).toContain('### Group 91: Wave');
+    expect(roadmap).toContain('#### Track 91A: First');
+    expect(roadmap).toContain('_id: wi-101a00_');
+    expect(roadmap).toContain('_blocked-by: wi-101b00_');
+  });
 });

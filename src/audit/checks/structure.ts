@@ -77,6 +77,14 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
         trackName = '';
         continue;
       }
+      if (/^_id:/i.test(line)) {
+        findings.push(
+          `- ${trackName}: _id:_ line appears before metadata (expected metadata first)`,
+        );
+        inTrack = false;
+        trackName = '';
+        continue;
+      }
       if (/^_.*_$/.test(line)) {
         if (!/risk|low|medium|high/i.test(line)) {
           findings.push(`- ${trackName}: metadata line missing risk level`);
@@ -155,10 +163,25 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
   }
 
   const trackIds = new Set(ctx.roadmap.value.tracks.map((t) => t.id));
+  const knownWorkItemIds = new Set<string>();
+  for (const t of ctx.roadmap.value.tracks) {
+    if (t.workItemId) knownWorkItemIds.add(t.workItemId);
+  }
+  for (const rec of ctx.roadmap.value.archiveCollisionTracks ?? []) {
+    if (rec.workItemId) knownWorkItemIds.add(rec.workItemId);
+  }
+  for (const leg of ctx.roadmap.value.legacyShippedTracks ?? []) {
+    if (leg.workItemId) knownWorkItemIds.add(leg.workItemId);
+  }
   for (const t of ctx.roadmap.value.tracks) {
     if (t.state === 'shipped' || t.legacy) continue;
+    for (const bad of t.blockedByMalformed ?? []) {
+      findings.push(
+        `- Track ${t.id}: _blocked-by: ${bad} is malformed (expected Track label or wi-<4-8 lowercase hex>)`,
+      );
+    }
     for (const b of t.blockedBy) {
-      if (!trackIds.has(b)) {
+      if (!trackIds.has(b) && !knownWorkItemIds.has(b)) {
         findings.push(
           `- Track ${t.id}: _blocked-by: ${b} is not a known Track ID`,
         );

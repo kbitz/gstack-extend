@@ -940,6 +940,14 @@ gstack-extend init: $target_abs
 
 EOF
 
+  local init_todo_id=""
+  if [ "$dry_run" != "1" ] && [ -x "$REPO_ROOT/bin/roadmap-id" ] && [ -n "${BUN_PREREQ_RAW_PATH:-}" ]; then
+    init_todo_id=$(with_audit_bun "$target_abs" "$BUN_PREREQ_RAW_PATH" "$REPO_ROOT/bin/roadmap-id" mint "$target_abs" 2>/dev/null | head -n 1 || true)
+  fi
+  if ! printf '%s' "$init_todo_id" | grep -qE '^wi-[0-9a-f]{4,8}$'; then
+    init_todo_id=$(printf 'wi-%06x' "$(( (RANDOM * 32768 + RANDOM) % 16777216 ))")
+  fi
+
   # Build the template var argv. Use ${test_cmd_block} as a multi-line var.
   local vars=(
     "name=$name"
@@ -947,6 +955,7 @@ EOF
     "created_at=$created_at"
     "created_at_date=$created_at_date"
     "test_cmd_block=$tcb"
+    "init_todo_id=$init_todo_id"
   )
 
   # Scaffold (D2.B): refuse on canonical file collision or an outside write,

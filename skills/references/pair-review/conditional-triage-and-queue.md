@@ -67,7 +67,8 @@ Behavior for each option:
      only after agent verification and a passing human retest. A linked item's
      failed attempt stays; only a human retest of its own criteria can pass it.
 - **Send to TODOS.md** — cross-branch bug, fix on another branch later.
-  Append the bug to the `## Unprocessed` section of TODOS.md (root or docs/,
+  Mint a unique work-item ID via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"`,
+  then append the bug to the `## Unprocessed` section of TODOS.md (root or docs/,
   whichever exists). If no `## Unprocessed` section exists, create it at the
   end of the file. Use this rich format:
 
@@ -75,6 +76,7 @@ Behavior for each option:
   ## Unprocessed
 
   ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
+  - **ID:** <wi-xxxxxx>
   - **Symptom:** <Symptom field from parked-bugs.md>
   - **Repro:** <Repro field from parked-bugs.md, verbatim>
   - **Noticed during:** <group>, item <item>
@@ -124,10 +126,11 @@ triage):
 
 Behavior for each option:
 - **Fix now** — apply the Prepare-the-item safety rules throughout this parked-bug flow; checkpoint, reproduce per the bug's `Repro:` before fixing (a bug that does not reproduce is recorded as not reproduced and is not fixed), agent implements fix, commit, rebuild, verify after the rebuild, record both steps in the bug's `parked-bugs.md` entry, ask the user to verify only a verified fix, mark FIXED only after a passing human retest. Unavailable observation is not non-reproduction: keep the bug parked with its reason and any linked FAILED item unchanged.
-- **Send to TODOS.md** — cross-branch, append to `## Unprocessed` section of TODOS.md
+- **Send to TODOS.md** — cross-branch, mint a unique work-item ID via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` and append to `## Unprocessed` section of TODOS.md
   using this rich format:
   ```markdown
   ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
+  - **ID:** <wi-xxxxxx>
   - **Symptom:** <Symptom field from parked-bugs.md>
   - **Repro:** <Repro field from parked-bugs.md, verbatim>
   - **Noticed during:** <group>, item <item>

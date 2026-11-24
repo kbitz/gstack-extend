@@ -44,6 +44,7 @@ export const CANONICAL_SECTIONS = [
   'SCATTERED_TODOS',
   'UNPROCESSED',
   'TODO_FORMAT',
+  'WORK_ITEM_IDS',
   'MODE',
 ] as const;
 

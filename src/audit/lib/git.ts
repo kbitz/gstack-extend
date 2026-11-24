@@ -52,6 +52,8 @@ export type GitGateway = {
   logSubjectsSince(sinceISO: string, file: string): string[];
   /** Union of unstaged, staged, and untracked paths (drift check). */
   workingTreePaths(): string[];
+  /** All work-item IDs (`wi-[0-9a-f]{4,8}`) ever seen in git history of `relPaths`. */
+  historicalWorkItemIds(relPaths: string[]): string[];
 };
 
 export type GitGatewayDeps = {
@@ -144,6 +146,22 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
         }
       }
       return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    },
+
+    historicalWorkItemIds(relPaths: string[]): string[] {
+      if (relPaths.length === 0) return [];
+      const r = spawn(
+        ['log', '--no-color', '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '--', ...relPaths],
+        cwd,
+      );
+      if (!r.ok || r.stdout === '') return [];
+      const found = new Set<string>();
+      const re = /\bwi-[0-9a-f]{4,8}\b/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(r.stdout)) !== null) {
+        found.add(m[0]!);
+      }
+      return [...found].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     },
   };
 }

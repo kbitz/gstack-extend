@@ -1053,6 +1053,8 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
         expect(section).toContain(`### ${form} <Bug title>`);
         expect(validateTagExpression(form.replace('<group-slug>', 'auth').replace('<item-index>', '2')).ok).toBe(true);
       }
+      expect(section).toContain('bin/roadmap-id" mint');
+      expect(section).toContain('- **ID:** <wi-xxxxxx>');
     }, TIMEOUT_23D);
   }
   test('contract references and both false routing claims are removed', () => {

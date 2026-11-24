@@ -110,6 +110,7 @@ const EXPECTED_FAIL_SECTIONS = [
   'GROUP_DEPS',
   'PARALLELISM_BUDGET',
   'FUTURE',
+  'WORK_ITEM_IDS',
 ] as const;
 
 const EXPECTED_ADVISORY_SECTIONS = [
@@ -535,5 +536,13 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
     expect(proposal).toContain('create a directory for this run under `~/scratch/`');
     expect(proposal).toContain('create a unique subdirectory of `<PROPOSAL_DIR>` for this run');
     expect(proposal).toContain('substitute the resolved absolute file path for the full placeholder path');
+  });
+
+  test('roadmap locks immutable work-item IDs (_id:, bin/roadmap-id mint, ID-based _blocked-by:)', () => {
+    const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+    expect(roadmap).toContain('_id: wi-<hex>_');
+    expect(roadmap).toContain('bin/roadmap-id" mint');
+    expect(roadmap).toContain('_blocked-by: wi-a1b2c3, wi-d4e5f6_');
+    expect(roadmap).toContain('WORK_ITEM_IDS');
   });
 });

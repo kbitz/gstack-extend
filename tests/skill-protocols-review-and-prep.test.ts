@@ -1741,6 +1741,7 @@ describe('review-and-prep test-gaps=record', () => {
     expect(routeSourceTag(tag)).toMatchObject({ action: 'KEEP', source: 'review' });
     expect(validateTagExpression('[review:files=app/[id]/page.tsx]').ok).toBe(false);
     for (const label of [
+      '**ID:** <wi-xxxxxx>',
       '**Test gap:** no demonstrated defect',
       '**Description:**',
       '**Hypothesis (untested):**',
@@ -1752,6 +1753,7 @@ describe('review-and-prep test-gaps=record', () => {
     ]) {
       expect(fence).toContain(label);
     }
+    expect(gap).toContain('bin/roadmap-id" mint');
   });
 });
 

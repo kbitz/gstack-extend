@@ -143,6 +143,11 @@ STATUS: skip
 FINDINGS:
 - No TODOS.md found
 
+## WORK_ITEM_IDS
+STATUS: skip
+FINDINGS:
+- No inspectable planning records found
+
 ## MODE
 DETECTED: overhaul
 REASON: No ROADMAP.md found

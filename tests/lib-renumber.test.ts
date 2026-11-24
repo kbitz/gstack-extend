@@ -157,4 +157,21 @@ describe('isHistoricalContext', () => {
     const i = s.indexOf('104C');
     expect(isHistoricalContext(s, i, 4)).toBe(false);
   });
+
+  test('_id: line is immutable and _blocked-by: work-item IDs are unchanged during Track renumbering', () => {
+    const map = parseMapArg('101=91,101A=91A,101B=91B');
+    const src = [
+      '### Group 101: Wave',
+      '#### Track 101A: First',
+      '_1 task · ~50 LOC · low risk_',
+      '_id: wi-a1b2c3_',
+      '_blocked-by: wi-d4e5f6, wi-010101_',
+    ].join('\n');
+    const r = applyRenames(src, map);
+    expect(r.text).toContain('### Group 91: Wave');
+    expect(r.text).toContain('#### Track 91A: First');
+    expect(r.text).toContain('_id: wi-a1b2c3_');
+    expect(r.text).toContain('_blocked-by: wi-d4e5f6, wi-010101_');
+    expect(isHistoricalContext('_id: wi-101a00_', 4, 9)).toBe(true);
+  });
 });

@@ -89,6 +89,7 @@ describe('template substitution', () => {
     const md = readFileSync(join(s.target, 'docs', 'TODOS.md'), 'utf8');
     expect(md).toContain('## Unprocessed');
     expect(md).toContain('### [manual] First-session checklist');
+    expect(md).toMatch(/^- \*\*ID:\*\* wi-[0-9a-f]{4,8}$/m);
     expect(md).toContain('/roadmap');
     expect(md).not.toContain('/review-apparatus');
     expect(md).toContain('/full-review');

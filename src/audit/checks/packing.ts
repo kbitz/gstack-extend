@@ -28,6 +28,11 @@ export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
   const liveIds = new Set(
     tracks.filter((t) => t.state !== 'shipped' && !t.legacy).map((t) => t.id),
   );
+  const liveByWorkItemId = new Map<string, string>();
+  for (const t of tracks) {
+    if (t.state === 'shipped' || t.legacy) continue;
+    if (t.workItemId) liveByWorkItemId.set(t.workItemId, t.id);
+  }
   const groupByNum = new Map(groups.map((g) => [g.num, g]));
 
   const out: PackTrack[] = [];
@@ -36,10 +41,17 @@ export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
     if (t.state === 'shipped' || t.legacy) continue;
     const g = groupByNum.get(t.groupNum);
     if (g?.isHotfix) continue;
+    const resolvedBlockedBy: string[] = [];
+    for (const ref of t.blockedBy) {
+      const target = liveIds.has(ref) ? ref : liveByWorkItemId.get(ref);
+      if (target !== undefined && !resolvedBlockedBy.includes(target)) {
+        resolvedBlockedBy.push(target);
+      }
+    }
     out.push({
       id: t.id,
       touches: t.touches,
-      blockedBy: t.blockedBy.filter((id) => liveIds.has(id)),
+      blockedBy: resolvedBlockedBy,
       isHotfix: false,
       title: t.title,
       ord: i,

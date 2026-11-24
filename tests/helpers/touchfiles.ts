@@ -97,6 +97,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/bun-prereq.test.ts': [
     'bin/lib/bun-prereq.sh',
     'bin/roadmap-audit',
+    'bin/roadmap-id',
     'bin/roadmap-pack',
     'bin/roadmap-touches',
     'bin/roadmap-renumber',
@@ -175,6 +176,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/renumber-cli.test.ts': [
     'bin/roadmap-renumber',
+  ],
+  'tests/roadmap-id.test.ts': [
+    'bin/roadmap-id',
+    'bin/lib/bun-prereq.sh',
   ],
   'tests/audit-cli-contract.test.ts': [
     'bin/lib/bun-prereq.sh',
