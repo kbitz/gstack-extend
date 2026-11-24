@@ -402,6 +402,84 @@
 - **Evidence:** Final continuation coverage audit at `f979ee7`.
 - **Context:** Revisit when the next Track changes reference snapshot I/O.
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Reject non-object JSON and invalid UTF-8
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The malformed JSON fixtures cover syntax errors. They leave valid JSON arrays or scalars and undecodable UTF-8 untested.
+- **Hypothesis (untested):** Extend isolated metadata fixtures with a non-object JSON value and invalid UTF-8 bytes. Verify both yield entrypoint-unavailable.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1100`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Refuse a nonregular optional summary
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The optional summary tests cover absence, malformed files, links, size and identity. They leave a present nonregular entry untested.
+- **Hypothesis (untested):** Use an isolated FIFO fixture with a bounded finish command. Verify the reader returns unavailable without waiting for a writer.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1091`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Find the checkout-root session from a nested directory
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** Positive launch fixtures put metadata in the invoking directory's bucket. They leave the checkout-root lookup from a nested directory untested.
+- **Hypothesis (untested):** Start and finish from a nested directory with an identified session in the checkout-root bucket only.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1635`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Refuse duplicate named sessions across checkout buckets
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The ambiguity fixture covers multiple unnamed active sessions. It leaves a named session duplicated under both current-directory and checkout-root buckets untested.
+- **Hypothesis (untested):** Place the same valid session identifier under both fixture buckets and verify the reader leaves mode unknown.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1649`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Exclude nonregular events from unnamed session selection
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The active-session fixtures use regular event logs. Link tests currently exercise named session directories and metadata files.
+- **Hypothesis (untested):** Give unnamed candidates linked or nonregular events entries and verify they cannot qualify.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1677`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Pin the headless context guard without a summary
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The headless fixture also has a headless summary kind, which independently disqualifies it.
+- **Hypothesis (untested):** Use primary audience with a true non-interactive flag and omit the summary. Check that the context alone yields entrypoint-unqualified.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1708`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: Pin the subagent audience guard without a summary
+
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The subagent fixture also has a subagent summary kind, which independently disqualifies it.
+- **Hypothesis (untested):** Use subagent audience with a false non-interactive flag and omit the summary. Check that the context alone yields entrypoint-unqualified.
+- **Upstream severity:** INFORMATIONAL (coverage audit)
+- **Found in:** `bin/lib/telemetry.py:1708`
+- **Evidence:** Coverage audit of the launch-surface changes at `628d3ca` and their fixture assertions. No failure was reproduced.
+- **Context:** Filed during [PR #305](https://github.com/kbitz/gstack-extend/pull/305). Revisit when a Track next touches this reader or its fixtures.
+- **Effort:** ? (user triages in `/roadmap`)
+
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
