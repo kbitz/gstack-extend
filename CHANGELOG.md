@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.116.1] - 2026-11-24
+
+### Fixed
+
+- Re-anchored pregate narrowing to gstack 1.103.0.0 so narrowed preflight runs work again on Claude Code and Codex installations.
+- Pregate narrowing recognizes the gstack 1.103.0.0 check registry on Claude Code and Codex.
+- Older gstack registries that omit `policyFloorCheck` use ordinary pregate after an accepted external pass.
+
+### Upgrade notes
+
+- Installations on gstack older than 1.103.0.0 will report pregate-narrowing anchor drift and keep pregate narrowing inactive until gstack is upgraded.
+
 ## [0.116.0] - 2026-11-24
 
 ### Added
