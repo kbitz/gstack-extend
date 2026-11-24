@@ -1219,26 +1219,30 @@ describe('drift', () => {
   }, 30000);
 
   // Value: protects=an unreadable upstream review file drifts both attacker.adversarial-item anchors with read-failure reasons rather than emitting INFO not-declared; fails_when=unreadable review files are treated as undeclared or miss attacker-item drift; why_new=Track 93C coverage gap for cli.ts:784-791; seam=none
-  test.each(['nested', 'sibling'] as const)('an unreadable review file in the %s layout drifts both attacker.adversarial-item anchors without not-declared', async (layout) => {
-    for (const [kind, corrupt, expectedReason] of [
-      ['missing', (p: string) => rmSync(p), 'review skill not found:'],
-      ['dir', (p: string) => { rmSync(p); mkdirSync(p); }, 'review skill is not a regular file:'],
-    ] as const) {
-      const f = upstream(layout, `unreadable-review-${kind}-${layout}`);
-      corrupt(f.files.review!);
-      const r = await check(rootArgs(f));
-      expectAgreement(r);
-      expect(r.code).toBe(4);
-      expect(r.out).not.toContain('INFO not-declared review-and-prep.attacker.adversarial-item');
-      const driftIds = drifts(r.lines).map((l) => l.split(' ')[2]);
-      expect(driftIds).toContain('review-and-prep.attacker.adversarial-item.1');
-      expect(driftIds).toContain('review-and-prep.attacker.adversarial-item.2');
-      for (const id of ['review-and-prep.attacker.adversarial-item.1', 'review-and-prep.attacker.adversarial-item.2'] as const) {
-        const idx = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
-        expect(idx).toBeGreaterThan(-1);
-        expect(r.lines[idx]).toContain(expectedReason);
-        expect(r.lines[idx + 1]).toBe(ATTACKER_EFFECT);
-      }
+  test.each([
+    ['nested', 'missing', 'sibling'],
+    ['sibling', 'missing', 'sibling'],
+    ['nested', 'directory', 'nested'],
+    ['sibling', 'directory', 'sibling'],
+  ] as const)('a %s fixture with a %s review drifts both attacker items through the %s layout', async (fixtureLayout, kind, selectedLayout) => {
+    const f = upstream(fixtureLayout, `unreadable-review-${kind}-${fixtureLayout}`);
+    const reviewPath = f.files.review!;
+    rmSync(reviewPath);
+    if (kind === 'directory') mkdirSync(reviewPath);
+
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.lines).toContain(`INFO layout ${selectedLayout}`);
+    expect(r.out).not.toContain('INFO not-declared review-and-prep.attacker.adversarial-item');
+    const expectedReason = kind === 'missing'
+      ? `review skill not found: ${join(f.skills, 'gstack-review', 'SKILL.md')}`
+      : `review skill is not a regular file: ${realpathSync(reviewPath)}`;
+    for (const item of [1, 2]) {
+      const idx = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor review-and-prep.attacker.adversarial-item.${item} `));
+      expect(idx).toBeGreaterThan(-1);
+      expect(r.lines[idx]).toContain(expectedReason);
+      expect(r.lines[idx + 1]).toBe(ATTACKER_EFFECT);
     }
   }, 30000);
 
