@@ -510,7 +510,7 @@ and the test-gap routing value.
 | Wrapper anchors and classifier cases (qualified by this Track) | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 | Fix-First anchors | `959c8a6a4fdafabf1186e407b76082b7f07e9f24` | 1.91.327.0 |
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
-| Pregate-narrowing anchors | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
+| Pregate-narrowing anchors | `0d6cc1be56136706854e40dccf417e008e5c69ab` | 1.103.0.0 |
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
 | Delegation anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Fold anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |

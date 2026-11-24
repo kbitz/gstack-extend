@@ -1565,13 +1565,13 @@ Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-doc-audit-a
 
 ### Narrow the pregate after an accepted pass
 
-Only under `full-suite=external`, and only on a `pass` already persisted for the
+Only under `full-suite=external`, on a `pass` persisted for the
 live head and tree (**Pass** above). A `fail` never takes this section: its rule
 above is untouched. `/ship-and-land` reuses item 4's procedure and never takes
 this section, and the default and `full-suite=final` paths never enter it. The
 attested command already ran the tests the pregate's `lanes` check would run
 again, so when that coverage is established the pregate runs its other checks
-alone. Wherever coverage is not established, item 4's pregate runs as today and
+alone. Without established coverage, item 4's pregate runs as today and
 the receipt says why.
 
 **Activation (narrowed pregate).** Apply this section only while the installed
@@ -1579,7 +1579,7 @@ the receipt says why.
 `--stage preflight|tests|guards|all   default all`
 and `--explain                     print each selected test's provenance and each uncertain mapping`,
 its `lib/pregate/index.ts` still contains, byte for byte,
-`export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];`
+`export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, policyFloorCheck, timingCheck, guardsCheck, lanesCheck];`
 and `const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));`,
 and its `lib/pregate/checks/lanes.ts` still contains, byte for byte,
 `export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',`
