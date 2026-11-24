@@ -1068,13 +1068,13 @@ _MISSING = object()
 
 def head_json(path, home, missing=None):
     """Read a single UTF-8 JSON object within LOG_HEAD_BYTES under a trusted home without following links below it."""
-    if path is None:
+    if path is None or not home.is_absolute():
         return None
     try:
         parts = path.relative_to(home).parts
     except ValueError:
         return None
-    if not parts:
+    if not parts or ".." in parts:
         return None
     directory_flags = os.O_RDONLY | os.O_DIRECTORY
     try:
@@ -1630,7 +1630,9 @@ def grok_launch_surface(root=None, begin=None):
     # A relative GROK_HOME (or relative HOME without GROK_HOME) would resolve against the checkout.
     if not home.is_absolute():
         return None
-    places = {quote(os.getcwd(), safe="")} | ({quote(root, safe="")} if root else set())
+    places = {quote(os.getcwd(), safe="")}
+    if root and os.path.isabs(root):
+        places.add(quote(root, safe=""))
     named = os.environ.get("GROK_SESSION_ID", "")
     directory_flags = os.O_RDONLY | os.O_DIRECTORY
     if valid_session(named):
@@ -1686,9 +1688,8 @@ def grok_launch_surface(root=None, begin=None):
     context = head_json(session_dir / "prompt_context.json", home)
     if context is None:
         return None
-    raw_audience = context.get("audience")
-    audience = clean(raw_audience)
-    if audience is None or raw_audience != audience:
+    audience = clean(context.get("audience"))
+    if audience is None or audience != audience.strip():
         return None
     non_interactive = context.get("is_non_interactive")
     if not isinstance(non_interactive, bool):

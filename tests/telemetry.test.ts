@@ -6125,7 +6125,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       { name: 'non-boolean is_non_interactive=0 fails closed', env: { GROK_SESSION_ID: 'nonbool-zero' }, mode: 'unknown', source: 'entrypoint-unavailable' },
       { name: 'non-boolean is_non_interactive="false" fails closed', env: { GROK_SESSION_ID: 'nonbool-str' }, mode: 'unknown', source: 'entrypoint-unavailable' },
       { name: 'missing audience fails closed', env: { GROK_SESSION_ID: 'missing-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
-      { name: 'padded audience maps to other (entrypoint-unqualified)', env: { GROK_SESSION_ID: 'padded-audience' }, mode: 'unknown', source: 'entrypoint-unqualified' },
+      { name: 'padded audience fails closed', env: { GROK_SESSION_ID: 'padded-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
       { name: 'unclean audience (newline) fails closed', env: { GROK_SESSION_ID: 'unclean-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
       { name: 'blank audience fails closed', env: { GROK_SESSION_ID: 'blank-audience' }, mode: 'unknown', source: 'entrypoint-unavailable' },
       { name: 'malformed prompt_context.json fails closed', env: { GROK_SESSION_ID: 'malformed-context' }, mode: 'unknown', source: 'entrypoint-unavailable' },
