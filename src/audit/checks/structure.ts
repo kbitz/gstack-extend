@@ -19,6 +19,7 @@
  * wins.
  */
 
+import { planningLines } from '../lib/work-item-id.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStructure(ctx: AuditCtx): CheckResult {
@@ -30,7 +31,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const lines = ctx.files.roadmap.split('\n');
+  const lines = [...planningLines(ctx.files.roadmap.split('\n'))].map(([, line]) => line);
   const findings: string[] = [];
 
   let groupCount = 0;
@@ -167,7 +168,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
   for (const t of ctx.roadmap.value.tracks) {
     if (t.workItemId) knownWorkItemIds.add(t.workItemId);
   }
-  for (const rec of ctx.roadmap.value.archiveCollisionTracks ?? []) {
+  for (const rec of ctx.roadmap.value.extraTrackWorkItems ?? []) {
     if (rec.workItemId) knownWorkItemIds.add(rec.workItemId);
   }
   for (const leg of ctx.roadmap.value.legacyShippedTracks ?? []) {

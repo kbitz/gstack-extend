@@ -97,8 +97,9 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     const file = track.fromShippedArchive ? 'docs/roadmap-shipped.md' : 'ROADMAP.md';
     inspect(`${file} Track ${track.id}`, TRACK_FIELD, track);
   }
-  for (const track of roadmap.archiveCollisionTracks ?? []) {
-    inspect(`docs/roadmap-shipped.md Track ${track.label}`, TRACK_FIELD, track);
+  for (const track of roadmap.extraTrackWorkItems ?? []) {
+    const file = track.fromShippedArchive ? 'docs/roadmap-shipped.md' : 'ROADMAP.md';
+    inspect(`${file} Track ${track.label}`, TRACK_FIELD, track);
   }
   for (const track of roadmap.legacyShippedTracks ?? []) {
     inspect(`shipped Track ${track.label} (line ${track.line})`, INLINE_FIELD, track);

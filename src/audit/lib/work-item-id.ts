@@ -24,7 +24,7 @@ const SCAN_WORK_ITEM_ID_RE = /\bwi-[0-9a-f]{4,8}(?![0-9A-Za-z])/g;
 const TODO_ID_BULLET_RE = /^- \*\*ID:\*\*[ \t]*(.*)$/;
 const TRACK_ID_LINE_RE = /^_id:[ \t\v\f\r]*(.*)$/i;
 const INLINE_ID_RE = /^\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*/;
-const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*$/;
+const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*(?:[—–-]+[ \t]*)?$/;
 const BOLD_BULLET_RE = /^(- \*\*(.+?)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const TRACK_HEADING_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):(.*)$/;
@@ -106,7 +106,7 @@ export function parseTrackIdLine(line: string): ParsedIdField | null {
  */
 export function extractInlineBulletId(bullet: string): ParsedIdField | null {
   const revisitIdx = bullet.lastIndexOf(REVISIT_MARKER);
-  const head = revisitIdx >= 0 ? bullet.slice(0, revisitIdx) : bullet;
+  const head = (revisitIdx >= 0 ? bullet.slice(0, revisitIdx) : bullet).trimStart();
   const bold = BOLD_BULLET_RE.exec(head);
   const legacy = LEGACY_SHIPPED_TRACK_BULLET_RE.exec(head);
   const body = bold?.[3] ?? legacy?.[3];
@@ -115,13 +115,9 @@ export function extractInlineBulletId(bullet: string): ParsedIdField | null {
   const raw = leading?.[1] ?? trailing?.[1];
   if (raw === undefined) return null;
   const result: ParsedIdField = { raw, id: isValidWorkItemId(raw) ? raw : null };
-  if (leading && body !== undefined) {
-    const remainder = body.slice(leading[0].length);
-    const repeated = /^[—–-]+[ \t]*\*\*ID:\*\*/.test(remainder);
-    if (repeated || (remainder.trim() !== '' && trailing && trailing.index >= head.length - remainder.length)) {
-      result.duplicate = true;
-    }
-  }
+  // Ignore Markdown code spans when counting separators in the prose.
+  const fields = head.replace(/(`+)(.*?)\1/g, '').match(/[—–-]+[ \t]*\*\*ID:\*\*/g);
+  if (fields && fields.length > 1) result.duplicate = true;
   return result;
 }
 
@@ -340,11 +336,12 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
       continue;
     }
     if (!inFuture) continue;
-    if (!/^- /.test(line)) continue;
+    const bullet = line.trimStart();
+    if (!/^- /.test(bullet)) continue;
 
     // Extract title for deterministic seeding regardless of whether ID exists.
-    const rest = line.slice(2);
-    const boldDash = BOLD_BULLET_RE.exec(line);
+    const rest = bullet.slice(2);
+    const boldDash = BOLD_BULLET_RE.exec(bullet);
     const title = boldDash !== null ? boldDash[2]! : rest.split(/[—–-]/)[0]!.replace(/^\*\*|\*\*$/g, '').trim();
     const normTitle = normalizeTitle(title);
     const occurrence = occ.get(normTitle) ?? 0;
@@ -360,7 +357,9 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
     const ending = lineEnding(lines[i]!);
     if (boldDash !== null) {
       // `- **<Title>** — <body>` → `- **<Title>** — **ID:** <id> — <body>`
-      out[i] = `${boldDash[1]}**ID:** ${id} — ${boldDash[3]}${ending}`;
+      const indent = line.slice(0, line.length - bullet.length);
+      const gap = /[ \t]$/.test(boldDash[1]!) ? '' : ' ';
+      out[i] = `${indent}${boldDash[1]}${gap}**ID:** ${id} — ${boldDash[3]}${ending}`;
     } else {
       const revisitIdx = line.lastIndexOf(REVISIT_MARKER);
       if (revisitIdx >= 0) {
@@ -561,16 +560,19 @@ export function migrateRoadmapText(
         existingId = parsedId.id;
         break;
       }
-      if (firstBodyLine && /^_.*_$/.test(l) && /\b(?:risk|low|medium|high)\b/i.test(l)) {
+      const body = l.trim();
+      if (firstBodyLine && /^_.*_$/.test(body) && /risk|low|medium|high/i.test(body)) {
         metaLineIdx = j;
       }
-      if (l.trim() !== '') firstBodyLine = false;
+      if (body !== '') firstBodyLine = false;
     }
 
     // The active document owns its display labels even if an older archive
     // receipt has the same label. A malformed local ID must not bind to history.
     const firstLocalRecord = !localLabels.has(span.label);
     localLabels.add(span.label);
+    // A label appearing twice in this file is ambiguous for the optional rewrite.
+    if (!firstLocalRecord) labelMap.delete(span.label);
     if (hasIdLine) {
       if (firstLocalRecord) {
         if (existingId === null) labelMap.delete(span.label);

@@ -65,6 +65,7 @@ describe('work-item-id library', () => {
     });
     expect(extractInlineBulletId('- **Title** — body **Revisit when:** **ID:** wi-a1b2c3')).toBeNull();
     expect(extractInlineBulletId('- **Title** — Shows `- **ID:** wi-a1b2c3` in an example.')).toBeNull();
+    expect(extractInlineBulletId('- Plain title — **ID:** wi-a1b2c3 — **Revisit when:** x')?.id).toBe('wi-a1b2c3');
     expect(extractInlineBulletId('- **Title** — **ID:** wi-ZZZZ — body')).toEqual({
       raw: 'wi-ZZZZ',
       id: null,
@@ -260,17 +261,19 @@ describe('bin/roadmap-id CLI', () => {
     const todoPath = join(repo, 'docs', 'TODOS.md');
     const pending = '## Unprocessed\n### My entry\n';
     const id = migrateTodosText(pending, new Set()).ids[0]!;
-    const track = `## Current Plan\n### Group 1: Work\n#### Track 1A: First\n_1 task . low risk_\n_id: ${id}_\n`;
+    // The initial patch must exceed Bun's default child-process output limit.
+    const track = `## Current Plan\n### Group 1: Work\n#### Track 1A: First\n_1 task . low risk_\n_id: ${id}_\n`
+      + 'Historical planning detail.\n'.repeat(44_000);
     writeFileSync(roadmapPath, track);
+    writeFileSync(todoPath, pending);
+    expect(runIdCli(['migrate', repo]).exitCode).toBe(0);
+    expect(readFileSync(todoPath, 'utf8')).not.toContain(`- **ID:** ${id}\n`);
     writeFileSync(
       join(repo, 'docs', 'TODOS.md'),
       '# TODOS\n\n## Unprocessed\n\n### [manual] Killed entry\n- **ID:** wi-dead01\n',
     );
     expect(git(['add', '.']).status).toBe(0);
     expect(git(['commit', '-m', 'add entry']).status).toBe(0);
-    writeFileSync(todoPath, pending);
-    expect(runIdCli(['migrate', repo]).exitCode).toBe(0);
-    expect(readFileSync(todoPath, 'utf8')).not.toContain(`- **ID:** ${id}\n`);
     // Kill the entry
     writeFileSync(roadmapPath, '');
     writeFileSync(todoPath, pending);
@@ -319,11 +322,17 @@ describe('bin/roadmap-id CLI', () => {
   });
 
   test('migration retains CRLF and the existing spaces before a Future trigger', () => {
-    const input = '## Future\r\n- A plain entry    **Revisit when:** ready.\r\n';
+    const input = '## Future\r\n  - A plain entry    **Revisit when:** ready.\r\n';
     const result = migrateFutureText(input, new Set());
     expect(result.added).toBe(1);
     expect(result.text.replace(` — **ID:** ${result.ids[0]}`, '')).toBe(input);
     expect(migrateFutureText(result.text, new Set()).text).toBe(result.text);
+  });
+
+  test('migration inserts a Track ID after metadata ending directly after the risk level', () => {
+    const card = '## Current Plan\n### Group 1: Work\n#### Track 1A: First\n_1 task · ~1 LOC · low_\n';
+    const result = migrateRoadmapText(card, new Set());
+    expect(result.text).toBe(`${card}_id: ${result.ids[0]}_\n`);
   });
 
   test('migrate --dry-run, migrate, and idempotent second run', () => {

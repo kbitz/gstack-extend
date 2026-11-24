@@ -34,7 +34,11 @@ export type GitSpawnResult = {
   stderr: string;
 };
 
-export type GitSpawn = (args: string[], cwd: string) => GitSpawnResult;
+export type GitSpawn = (args: string[], cwd: string, maxBuffer?: number) => GitSpawnResult;
+
+// History patches include full changed lines. A single planning-document
+// migration can exceed the child process default of 1 MiB.
+const HISTORY_PATCH_BUFFER_BYTES = 64 * 1024 * 1024;
 
 export type GitGateway = {
   /** Resolve repository root, or null if not in a repo. */
@@ -62,10 +66,11 @@ export type GitGatewayDeps = {
   spawn?: GitSpawn;
 };
 
-export const defaultSpawn: GitSpawn = (args, cwd) => {
+export const defaultSpawn: GitSpawn = (args, cwd, maxBuffer) => {
   const result = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
+    maxBuffer,
     env: { ...process.env, LC_ALL: 'C', GIT_PAGER: 'cat' },
   });
   return {
@@ -162,6 +167,7 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
         ['log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv',
           '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...relPaths],
         cwd,
+        HISTORY_PATCH_BUFFER_BYTES,
       );
       if (!r.ok) throw new Error('could not read Git history for work-item IDs');
       return scanAllWorkItemIds(r.stdout);

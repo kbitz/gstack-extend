@@ -109,11 +109,12 @@ export type LegacyShippedTrack = {
   line: number;
 };
 
-export type ArchiveTrackIdRecord = {
+export type TrackWorkItemRecord = {
   label: string;
   workItemId: string | null;
   workItemIdRaw: string | null;
   workItemIdError: 'malformed' | 'duplicate' | null;
+  fromShippedArchive?: boolean;
 };
 
 export type SizeLabelMismatch = {
@@ -142,8 +143,8 @@ export type ParsedRoadmap = {
   tombstones: string[];
   /** Legacy shipped `- Track <label> — ...` bullets under `#### Group N:`. */
   legacyShippedTracks?: LegacyShippedTrack[];
-  /** Archive Track ID records dropped on Track-label collision during mergeShippedArchive. */
-  archiveCollisionTracks?: ArchiveTrackIdRecord[];
+  /** Physical Track records that share a display label with another Track. */
+  extraTrackWorkItems?: TrackWorkItemRecord[];
   /** Keep both Future sources available for ID auditing after a split failure. */
   unmergedFutureArchive?: string[];
   futureFromArchive?: boolean;
@@ -221,7 +222,7 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
     }
     // Legacy readers accepted named Track labels embedded in prose. Keep
     // that path while requiring the new work-item tokens to match exactly.
-    const legacy = [...part.matchAll(/\bTrack[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?![0-9A-Za-z.])/gi)];
+    const legacy = [...part.matchAll(/\bTrack[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?![0-9A-Za-z])(?!\.[0-9A-Za-z])/gi)];
     if (/^wi-/i.test(part) || legacy.length === 0) malformed.push(part);
     else for (const match of legacy) pushRef(canonicalizeTrackId(match[1]!));
   }
@@ -300,7 +301,7 @@ export function parseRoadmap(
         effortTagFindings: [],
         tombstones: [],
         legacyShippedTracks: [],
-        archiveCollisionTracks: [],
+        extraTrackWorkItems: [],
       },
       errors,
     };
@@ -337,9 +338,9 @@ export function parseRoadmap(
   const trackProduces = new Map<string, string>();
   const trackBlockedBy = new Map<string, string[]>();
   const trackBlockedByMalformed = new Map<string, string[]>();
-  const trackWorkItemId = new Map<string, string | null>();
-  const trackWorkItemIdRaw = new Map<string, string | null>();
-  const trackWorkItemIdError = new Map<string, 'malformed' | 'duplicate' | null>();
+  const trackWorkItems = new Map<string, TrackWorkItemRecord>();
+  const extraTrackWorkItems: TrackWorkItemRecord[] = [];
+  let currentTrackWorkItem: TrackWorkItemRecord | null = null;
   const trackLegacy = new Map<string, boolean>();
   const trackDeps = new Map<string, string[]>();
   const trackDepsFreetext = new Set<string>();
@@ -506,6 +507,12 @@ export function parseRoadmap(
     const trackHeading = line.match(TRACK_HEADING_RE);
     if (trackHeading) {
       trackId = trackHeading[1]!;
+      currentTrackWorkItem = {
+        label: trackId,
+        workItemId: null,
+        workItemIdRaw: null,
+        workItemIdError: null,
+      };
       let headingTitle = trim(line.replace(TRACK_HEADING_RE, ''));
       if (COMPLETE_SUFFIX_RE.test(headingTitle)) {
         headingTitle = trim(headingTitle.replace(COMPLETE_SUFFIX_RE, ''));
@@ -515,10 +522,12 @@ export function parseRoadmap(
       }
       if (!trackTitles.has(trackId)) trackTitles.set(trackId, headingTitle);
       if (trackOrder.includes(trackId)) {
+        extraTrackWorkItems.push(currentTrackWorkItem);
         styleLintWarnings.push(
           `${trackId}: duplicate track ID (another track earlier in ROADMAP.md also uses '${trackId}') — rename one; track IDs must be globally unique`,
         );
       } else {
+        trackWorkItems.set(trackId, currentTrackWorkItem);
         trackOrder.push(trackId);
         trackHeadingLine.set(trackId, lineNo);
       }
@@ -593,7 +602,8 @@ export function parseRoadmap(
       }
       if (/^_blocked-by:/.test(line)) {
         const parsed = parseBlockedBy(line);
-        trackBlockedBy.set(trackId, parsed.refs);
+        const existing = trackBlockedBy.get(trackId) ?? [];
+        trackBlockedBy.set(trackId, [...new Set([...existing, ...parsed.refs])]);
         if (parsed.malformed.length > 0) {
           const prev = trackBlockedByMalformed.get(trackId) ?? [];
           trackBlockedByMalformed.set(trackId, [...prev, ...parsed.malformed]);
@@ -601,13 +611,13 @@ export function parseRoadmap(
         continue;
       }
       const parsedTrackId = parseTrackIdLine(line);
-      if (parsedTrackId !== null) {
-        if (trackWorkItemIdRaw.has(trackId)) {
-          trackWorkItemIdError.set(trackId, 'duplicate');
+      if (parsedTrackId !== null && currentTrackWorkItem !== null) {
+        if (currentTrackWorkItem.workItemIdRaw !== null) {
+          currentTrackWorkItem.workItemIdError = 'duplicate';
         } else {
-          trackWorkItemIdRaw.set(trackId, parsedTrackId.raw);
-          trackWorkItemId.set(trackId, parsedTrackId.id);
-          trackWorkItemIdError.set(trackId, parsedTrackId.id === null ? 'malformed' : null);
+          currentTrackWorkItem.workItemIdRaw = parsedTrackId.raw;
+          currentTrackWorkItem.workItemId = parsedTrackId.id;
+          currentTrackWorkItem.workItemIdError = parsedTrackId.id === null ? 'malformed' : null;
         }
         continue;
       }
@@ -801,6 +811,7 @@ export function parseRoadmap(
     const touches = trackTouches.get(id) ?? [];
     const tasksCount = trackTasks.get(id) ?? 0;
     const deleteTasks = trackDeleteTasks.get(id) ?? 0;
+    const workItem = trackWorkItems.get(id);
     return {
       id,
       groupNum: trackGroup.get(id) ?? '0',
@@ -823,9 +834,9 @@ export function parseRoadmap(
       depsFreetext: trackDepsFreetext.has(id),
       bannedPrSplit: trackBannedPrSplit.has(id),
       untaggedWriteTasks: trackUntaggedWrites.get(id) ?? 0,
-      workItemId: trackWorkItemId.get(id) ?? null,
-      workItemIdRaw: trackWorkItemIdRaw.get(id) ?? null,
-      workItemIdError: trackWorkItemIdError.get(id) ?? null,
+      workItemId: workItem?.workItemId ?? null,
+      workItemIdRaw: workItem?.workItemIdRaw ?? null,
+      workItemIdError: workItem?.workItemIdError ?? null,
       blockedByMalformed: trackBlockedByMalformed.get(id) ?? [],
     };
   });
@@ -845,7 +856,7 @@ export function parseRoadmap(
       effortTagFindings,
       tombstones: tombstoneNums,
       legacyShippedTracks,
-      archiveCollisionTracks: [],
+      extraTrackWorkItems,
     },
     errors,
   };
@@ -862,8 +873,9 @@ export function mergeShippedArchive(
   const groups = [...active.value.groups];
   const tracks = [...active.value.tracks];
   const collisionWarnings: string[] = [];
-  const archiveCollisionTracks: ArchiveTrackIdRecord[] = [
-    ...(active.value.archiveCollisionTracks ?? []),
+  const extraTrackWorkItems: TrackWorkItemRecord[] = [
+    ...(active.value.extraTrackWorkItems ?? []),
+    ...(archive.value.extraTrackWorkItems ?? []).map((item) => ({ ...item, fromShippedArchive: true })),
   ];
   for (const g of archive.value.groups) {
     if (seenGroups.has(g.num)) {
@@ -879,8 +891,9 @@ export function mergeShippedArchive(
       collisionWarnings.push(
         `archive Track ${t.id} collides with active ROADMAP — active wins, archive copy dropped`,
       );
-      archiveCollisionTracks.push({
+      extraTrackWorkItems.push({
         label: t.id,
+        fromShippedArchive: true,
         workItemId: t.workItemId ?? null,
         workItemIdRaw: t.workItemIdRaw ?? null,
         workItemIdError: t.workItemIdError ?? null,
@@ -906,7 +919,7 @@ export function mergeShippedArchive(
       sizeLabelMismatches: [...active.value.sizeLabelMismatches],
       tombstones,
       legacyShippedTracks,
-      archiveCollisionTracks,
+      extraTrackWorkItems,
     },
     errors: [...active.errors],
   };
@@ -990,7 +1003,7 @@ export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
     // Strip leading `**ID:** <val> — ` or trailing ` — **ID:** <val>` so `first` stays the prose sentence.
     body = body
       .replace(/^\*\*ID:\*\*[ \t]*[^\s—–,;()]*[ \t]*(?:[—–-]+[ \t]*)?/, '')
-      .replace(/[ \t]*[—–-]+[ \t]*\*\*ID:\*\*[ \t]*[^\s—–,;()]*[ \t]*$/, '')
+      .replace(/[ \t]*[—–-]+[ \t]*\*\*ID:\*\*[ \t]*[^\s—–,;()]*[ \t]*(?:[—–-]+[ \t]*)?$/, '')
       .trim();
     const first = body.split(/(?<=\.)\s/)[0] ?? body;
     return { id, title: title.trim(), source, first: first.trim(), revisit };

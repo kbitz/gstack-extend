@@ -40,6 +40,15 @@ describe('runCheckWorkItemIds', () => {
     expect(result.body.join('\n')).not.toContain('MISSING_ID');
   });
 
+  test('checks shipped receipts with a recycled display label as separate records', () => {
+    const roadmap = parseRoadmap([
+      '## Shipped', '### Track 1A: First ✓ Shipped', '_id: wi-111111_',
+      '### Track 1A: Second ✓ Shipped', '_id: wi-222222_',
+    ].join('\n'));
+    const result = runCheckWorkItemIds(makeCtx({ parsedRoadmap: roadmap.value }));
+    expect(result.status).toBe('pass');
+  });
+
   test('passes when all records across TODOS, Future, ROADMAP, and shipped have valid unique IDs', () => {
     const todos = parseTodos([
       '# TODOS',
