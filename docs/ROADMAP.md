@@ -40,20 +40,20 @@ post-default remeasurement record (94F, PR #299, docs-only, verdict
 `insufficient-evidence`), fixed Greptile receipt wording (94G, v0.112.1),
 actionable Bun prerequisite failures (94H, v0.112.2), digest-bound skill
 reference slimming (94I, PR #302 v0.113.0 and PR #304 v0.114.0) and Grok Build
-interactive telemetry qualification (94J, v0.115.0). Track 95A (restoring
+interactive telemetry qualification (94J, v0.115.0). Tracks 95A (restoring
 `/review-and-prep`'s `delegate=<part>` part-list clause to the core skill,
-fixing a v0.113.0 regression from 94I) has also shipped (PR #307, v0.115.1). One
-Track remains in flight in Group 95: detecting Antigravity and reading its
-by-hand runs back as `user-directed` (95B). Group 95 also holds the remaining
-open install/upgrade qualification obligations (95C, former 94D, where PR #303
-landed the scratch record and left U1–U3 open on the developer's "SHIP WITH
-GAPS OPEN" decision). Next in Group 96 come re-anchoring pregate narrowing and
-`secret-dispositions` location to installed gstack 1.103.0.0 (96A, now
-unblocked after 95A shipped and ready to launch ahead of the developer-run
-Tracks), the remaining real review records and by-hand run-mode
+fixing a v0.113.0 regression from 94I; PR #307, v0.115.1) and 95B (detecting
+Antigravity and reading its by-hand runs back as `user-directed`; PR #308,
+v0.116.0) have also shipped, leaving no Track declared in flight. Group 95 holds
+the remaining open install/upgrade qualification obligations (95C, former 94D,
+where PR #303 landed the scratch record and left U1–U3 open on the developer's
+"SHIP WITH GAPS OPEN" decision). Next in Group 96 come re-anchoring pregate
+narrowing and `secret-dispositions` location to installed gstack 1.103.0.0
+(96A, now unblocked after 95A shipped and ready to launch ahead of the
+developer-run Tracks), the remaining real review records and by-hand run-mode
 readbacks (96B, former 94E), and the two-driver workflow qualification (96C,
-former 95A, whose rows can be harvested from real by-hand runs once 94J and 95B
-merge). Behind them come the O6 measurement and decisions (97A, former 96B)
+former 95A, whose rows can now be harvested from real by-hand runs since 94J
+and 95B have both merged). Behind them come the O6 measurement and decisions (97A, former 96B)
 beside the stable update channel the owner placed "right before 1.0" (97B,
 former 96C), then aligning install and upgrade with gstack (98A, former 97A).
 Only 95C and 96C gate later Groups (97B appends to 95C's record; 97A and 97B
@@ -123,11 +123,11 @@ the reason is on 51A's shipped receipt).
 **Labels.** This regeneration (2026-11-24) recorded Tracks 94A, 94B, 94C, 94F
 and assigned canonical IDs 94G, 94H, 94I and 94J to the placeholder Tracks
 shipped since `81e36f3`, retiring Group 94 by tombstone, and also recorded
-Track 95A (restore `/review-and-prep`'s delegate part-list clause to the core
-skill; item `93449c95`; PR #307, `v0.115.1`) as shipped after it merged before
-this PR landed. One new Track remains declared in flight in Group 95: 95B
-(detect Antigravity and read its by-hand runs back as `user-directed`; item
-`d574f7e2`). Remaining unshipped Tracks recycled from 95 in packer order:
+Tracks 95A (restore `/review-and-prep`'s delegate part-list clause to the core
+skill; item `93449c95`; PR #307, `v0.115.1`) and 95B (detect Antigravity and
+read its by-hand runs back as `user-directed`; item `d574f7e2`; PR #308,
+`v0.116.0`) as shipped after both merged before this PR landed, leaving no
+Track declared in flight. Remaining unshipped Tracks recycled from 95 in packer order:
 former 94D (U1–U3 open after PR #303) became 95C; 96A kept its ID 96A (widened
 for installed gstack `1.103.0.0`'s `secret-dispositions.location.1` drift and
 its promoted Future test gap); former 94E became 96B; former 95A became 96C;
@@ -146,26 +146,17 @@ distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-One Track remains declared in flight at this regeneration (2026-11-24): Track 95B (item `d574f7e2`, detecting Antigravity and reading its by-hand runs back as `user-directed`). Track 95A (item `93449c95`, restoring `/review-and-prep`'s `delegate=<part>` part-list clause to the core skill after the v0.113.0 regression) shipped as `v0.115.1` in PR #307 (`a4e3da7`) and is recorded in shipped history alongside Tracks 94A, 94B, 94C, 94F, 94G, 94H, 94I and 94J. Track 95C (former 94D; PR #303 landed the scratch record and left U1–U3 open) shares Group 95's packer bin because its file footprint is disjoint and unblocked, and is not declared in flight. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
+No Track is declared in flight at this regeneration (2026-11-24). Tracks 95A (item `93449c95`, restoring `/review-and-prep`'s `delegate=<part>` part-list clause to the core skill; PR #307, `a4e3da7`, `v0.115.1`) and 95B (item `d574f7e2`, detecting Antigravity and reading its by-hand runs back as `user-directed`; PR #308, `55eb2ae`, `v0.116.0`) shipped before this PR landed and are recorded in shipped history alongside Tracks 94A, 94B, 94C, 94F, 94G, 94H, 94I and 94J. Track 95C (former 94D; PR #303 landed the scratch record and left U1–U3 open) remains open in Group 95 under Current Plan. O1 and O3–O6 remain pending; O2 was accepted on 2026-10-23.
 
-### Group 95: Antigravity run-mode telemetry ∥ install/upgrade qualification gaps
+## Current Plan
+
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94_
+
+### Group 95: Install/upgrade qualification gaps
 
 _Depends on: none_
 
-**This group delivers:** Antigravity (`agy`) harness detection and by-hand `user-directed` telemetry readback so everyday Antigravity runs count toward O3.3 and O6.1; and, whenever the owner runs them, closure of the open U1–U3 install/upgrade qualification gaps in `docs/acceptance/install-upgrade.md`.
-
-##### Track 95B: Detect Antigravity and read its by-hand runs back as user-directed
-_2 tasks . ~180 LOC incl. tests . medium risk_
-**Outcome:** A stage the developer runs by hand in Antigravity (`agy`), from a terminal or launched through a host app, is recorded with its harness and `run_mode: "user-directed"`, and an orchestrated Antigravity run still reads `orchestrated`, so everyday Antigravity work counts toward Track 96C (former 95A) and Track 96B (former 94E) like Claude, Codex, Muse and Grok work.
-**Supports:** [SPEC](SPEC.md) O6.1 (run-mode readback) and O3.3; completes Track 94J (`v0.115.0`, PR #305, item `a4f956d6`), which left Antigravity unsupported.
-**Done when:** (1) Antigravity is a detected harness: its session markers are identified from real local sessions (named in the plan with evidence), `agent` records it, and model and effort are read where Antigravity's session store exposes them (absent fields stay null with a reason). (2) A launch-surface reader maps a by-hand Antigravity stage, terminal or host-app launched, to `user-directed` with a qualified source; print-mode stream-JSON launches are classified from evidence, never from `PASEO_AGENT_ID` alone, and fail closed to an explicit non-`user-directed` source when evidence is missing. (3) No orchestrated run reads `user-directed`: `GSTACK_SESSION_KIND` and the run-mode environment keep precedence, with tests for Antigravity's orchestrated and by-hand paths. (4) `docs/stage-runs.schema.json`'s `agent` enum and `docs/telemetry.md`'s harness and run-mode tables add Antigravity; the schema change is disclosed in the release notes as a compatible addition; existing rows are not rewritten.
-_touches: bin/lib/telemetry.py, docs/telemetry.md, docs/stage-runs.schema.json, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/helpers/telemetry-env.ts_
-_blocked-by: Track 94J_
-**Scheduling:** Declared in flight (2026-11-24, item `d574f7e2`). Technical edge on Track 94J (shipped, `v0.115.0`, PR #305), which edited the same telemetry files; ran beside Track 95A on disjoint files (Track 95A has since shipped in PR #307, `v0.115.1`). Never read Antigravity credential or config files beyond its session logs; telemetry changes run the full telemetry suite list in `CLAUDE.md`'s Testing section. Tracks 96B and 96C follow this Track so by-hand Antigravity runs count in their readbacks and harvest.
-_Source: the developer (2026-11-23): "I run agy by hand all the time, you can tell from all the manual runs" (item `d574f7e2`, after Track 94J's plan left Antigravity as `unknown`/`no-harness` to avoid a schema change outside its card; developer approved adding Antigravity to the published `agent` enum as a compatible schema addition). Verified at `5128dce`: `docs/stage-runs.schema.json` `agent` enum lists `claude`, `codex`, `grok`, `cursor`, `muse`, `null` and `docs/telemetry.md` documents Antigravity/`agy` as `unknown`/`no-harness`._
-_read-first: docs/telemetry.md, docs/stage-runs.schema.json_
-- **Detect Antigravity sessions and classify launch surfaces** -- Identify Antigravity session markers from local session logs, read available model and effort fields, map terminal and host-app by-hand runs to `user-directed` from positive evidence (failing closed when missing), and keep `GSTACK_SESSION_KIND` and run-mode env precedence for orchestrated runs. _~120 lines incl. tests._ (M)
-- **Extend the schema, docs and telemetry suites** -- Add Antigravity to `docs/stage-runs.schema.json`'s `agent` enum (compatible addition, existing rows unchanged) and `docs/telemetry.md`'s harness and run-mode tables, and cover orchestrated and by-hand paths across the telemetry suites. _~60 lines incl. tests._ (S)
+**This group delivers:** Whenever the owner runs them, closure of the open U1–U3 install/upgrade qualification gaps in `docs/acceptance/install-upgrade.md`.
 
 ##### Track 95C: Qualify install, upgrade and recovery on the owner's machines
 _2 tasks . ~100 LOC . medium risk_
@@ -180,15 +171,11 @@ _read-first: docs/acceptance/install-upgrade.md, docs/installation.md, docs/acce
 - **Close U1 authenticated onboarding and loaded-skill identity** -- Run a first skill invocation in authenticated Claude Code and Codex sessions after install/upgrade and record loaded revision parity and any open gaps. _~35 lines._ (S)
 - **Close U2 published legacy four-part upgrade and U3 owner confirmation** -- Run the Task 2 owner runbook in `docs/acceptance/install-upgrade.md` against the default remote (or record an explicit owner waiver), disposition open defects 7 and 9, and capture owner O1 confirmation for PROGRESS. _~65 lines._ (M)
 
-## Current Plan
-
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94_
-
 ### Group 96: Upstream 1.103.0.0 re-anchor ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
 
-_Depends on: Group 95_
+_Depends on: none_
 
-**This group delivers:** Pregate narrowing and `secret-dispositions` location re-anchored to installed upstream gstack `1.103.0.0` with clean `bin/upstream-check` on both hosts and the recorded anchor-inventory and secret-dispositions test gaps covered (now unblocked after Track 95A shipped in PR #307 and ready to start ahead of the developer-run Tracks); the remaining real review records and non-Claude by-hand run-mode readbacks; and real by-hand and orchestrated workflow evidence on the holds-first matrix PR #291 added, harvestable from real by-hand runs once Tracks 94J and 95B have merged.
+**This group delivers:** Pregate narrowing and `secret-dispositions` location re-anchored to installed upstream gstack `1.103.0.0` with clean `bin/upstream-check` on both hosts and the recorded anchor-inventory and secret-dispositions test gaps covered (now unblocked after Track 95A shipped in PR #307 and ready to start ahead of the developer-run Tracks); the remaining real review records and non-Claude by-hand run-mode readbacks; and real by-hand and orchestrated workflow evidence on the holds-first matrix PR #291 added, now harvestable from real by-hand runs since Tracks 94J and 95B have both merged.
 
 ##### Track 96A: Re-anchor pregate narrowing and secret-dispositions location to installed gstack 1.103.0.0 and cover the recorded test gaps
 _4 tasks . ~290 LOC incl. tests . medium risk_
@@ -208,12 +195,12 @@ _read-first: docs/upstream-check.md, docs/acceptance/release-compatibility.md, d
 ##### Track 96B: Record the owner's remaining real review runs and by-hand run-mode readbacks
 _3 tasks . ~120 LOC . low risk_
 **Outcome:** The owner can see from dated records that a by-hand review with no caller lines still runs as before, that the attacker parts run with per-part models when an orchestrator delegates them, that tools-mode delegation works on an installed release, and that a stage run by hand in Codex, Muse, Grok Build or Antigravity reads back with the run mode the shared rule promises.
-**Supports:** [SPEC](SPEC.md) O6 and P1, O6.1, O3.3 (the by-hand driver's evidence) and O4.4. The remainder of the earlier Track 80D (PR #256, `v0.94.2`), which left attacker-parts PM1 and PM2 and tools-mode PM1 pending; the open acceptance of Track 72B (PR #221) and the post-release PM1 of the owner-approved tools-mode plan (PR #229); and the post-merge by-hand readbacks left pending by Track 90B (PR #283; Cursor discharged on 2026-11-21), Track 94J (PR #305, `v0.115.0`, qualifying Grok Build as `user-directed`/`terminal-session`) and Track 95B (in flight, Antigravity).
-**Done when:** (1) `docs/acceptance/attacker-parts.md` records PM1 (one real by-hand `/review-and-prep` with no `Review policy:` or `Review delegates:` line, read back as unchanged, with its invocation and receipt retained) and PM2 (one orchestrated run with `delegate=adversarial,red-team` mapping the two parts to different providers or models, with its `Delegated part:` lines, v3 attempts, `found_by` labels and any fallbacks), each with date, revision, host and harness versions and PR. (2) `docs/acceptance/delegate-tools-mode.md` records its PM1 installed paired run and names the exact reviewed content its earlier dry-run evidence covers. (3) Each pending non-Claude row in `docs/acceptance/hand-use-telemetry.md`'s "Pending post-merge by-hand readbacks" (Codex, Muse, Grok Build — updated from its pre-94J `harness-unqualified` expectation to `user-directed`/`terminal-session` per Track 94J — plus Antigravity once Track 95B merges; the Cursor row stays discharged with "Cursor support dropped 2026-11-21") is run by hand and read back through `gstack-extend-telemetry report --by-host` and the ledger's `agent`, `run_mode` and `run_mode_source`, or stays pending with the reason. (4) A failed, unavailable or wrongly read-back run stays recorded as open, never as passed, and a wrong read-back is filed as a defect.
+**Supports:** [SPEC](SPEC.md) O6 and P1, O6.1, O3.3 (the by-hand driver's evidence) and O4.4. The remainder of the earlier Track 80D (PR #256, `v0.94.2`), which left attacker-parts PM1 and PM2 and tools-mode PM1 pending; the open acceptance of Track 72B (PR #221) and the post-release PM1 of the owner-approved tools-mode plan (PR #229); and the post-merge by-hand readbacks left pending by Track 90B (PR #283; Cursor discharged on 2026-11-21), Track 94J (PR #305, `v0.115.0`, qualifying Grok Build as `user-directed`/`terminal-session`) and Track 95B (PR #308, `v0.116.0`, qualifying Antigravity as `user-directed`/`terminal-session`).
+**Done when:** (1) `docs/acceptance/attacker-parts.md` records PM1 (one real by-hand `/review-and-prep` with no `Review policy:` or `Review delegates:` line, read back as unchanged, with its invocation and receipt retained) and PM2 (one orchestrated run with `delegate=adversarial,red-team` mapping the two parts to different providers or models, with its `Delegated part:` lines, v3 attempts, `found_by` labels and any fallbacks), each with date, revision, host and harness versions and PR. (2) `docs/acceptance/delegate-tools-mode.md` records its PM1 installed paired run and names the exact reviewed content its earlier dry-run evidence covers. (3) Each pending non-Claude row in `docs/acceptance/hand-use-telemetry.md`'s "Pending post-merge by-hand readbacks" (Codex, Muse, Grok Build — updated from its pre-94J `harness-unqualified` expectation to `user-directed`/`terminal-session` per Track 94J — plus Antigravity per Track 95B; the Cursor row stays discharged with "Cursor support dropped 2026-11-21") is run by hand and read back through `gstack-extend-telemetry report --by-host` and the ledger's `agent`, `run_mode` and `run_mode_source`, or stays pending with the reason. (4) A failed, unavailable or wrongly read-back run stays recorded as open, never as passed, and a wrong read-back is filed as a defect.
 _touches: docs/acceptance/attacker-parts.md, docs/acceptance/delegate-tools-mode.md, docs/acceptance/hand-use-telemetry.md_
 _blocked-by: Track 94J, Track 95B_
-**Scheduling:** Technical edges on Track 94J (shipped, `v0.115.0`, PR #305) and Track 95B (in flight, item `d574f7e2`) so the by-hand readback table covers Grok Build and Antigravity alongside Codex and Muse; it gates no other Track. PM2 already has partial observations (PRs #250 and #253 and a consumer repository's review) and waits only on harness CLI version provenance, which the run's operator can record from the harness at run time; tools-mode PM1 waits on the orchestrator's paired tools-mode run, requested on 2026-11-15. By-hand runs recorded here can also supply rows harvested by Track 96C (former 95A).
-_Source: PR #256's receipt (2026-11-15: "attacker PM1/PM2 and paired tools-mode qualification remain pending"); `docs/acceptance/attacker-parts.md` and `docs/acceptance/delegate-tools-mode.md` (PM rows pending); PR #283's receipt ("post-merge hand-run readbacks PM1–PM4 in Codex, Muse, Grok and Cursor") and `docs/acceptance/hand-use-telemetry.md` (pending Codex, Muse and Grok rows; Cursor discharged 2026-11-21); PR #305's receipt ("Live by-hand readbacks are tracked in Track 94E"); and Track 95B's card (item `d574f7e2`)._
+**Scheduling:** Technical edges on Track 94J (shipped, `v0.115.0`, PR #305) and Track 95B (shipped, `v0.116.0`, PR #308, item `d574f7e2`) are both satisfied so the by-hand readback table covers Grok Build and Antigravity alongside Codex and Muse; it gates no other Track. PM2 already has partial observations (PRs #250 and #253 and a consumer repository's review) and waits only on harness CLI version provenance, which the run's operator can record from the harness at run time; tools-mode PM1 waits on the orchestrator's paired tools-mode run, requested on 2026-11-15. By-hand runs recorded here can also supply rows harvested by Track 96C (former 95A).
+_Source: PR #256's receipt (2026-11-15: "attacker PM1/PM2 and paired tools-mode qualification remain pending"); `docs/acceptance/attacker-parts.md` and `docs/acceptance/delegate-tools-mode.md` (PM rows pending); PR #283's receipt ("post-merge hand-run readbacks PM1–PM4 in Codex, Muse, Grok and Cursor") and `docs/acceptance/hand-use-telemetry.md` (pending Codex, Muse and Grok rows; Cursor discharged 2026-11-21); PR #305's receipt ("Live by-hand readbacks are tracked in Track 94E"); and Track 95B (PR #308, item `d574f7e2`)._
 _read-first: docs/delegated-review.md, docs/acceptance/hand-use-telemetry.md, docs/telemetry.md_
 - **Attacker parts PM1 and PM2** -- Run and read back one by-hand review with no caller lines, and finish PM2's harness version provenance. _~50 lines._ (S)
 - **Tools-mode PM1 and provenance** -- Record the installed paired run and name the content the dry-run record covers. _~40 lines._ (S)
@@ -227,7 +214,7 @@ _2 tasks . ~240 LOC . medium risk_
 _touches: docs/acceptance/workflow-drivers.md_
 _blocked-by: Track 70A, Track 72C, Track 71E, Track 74A, Track 76A, Track 75A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 79A, Track 80B, Track 87A, Track 89A, Track 90A, Track 91A, Track 90B, Track 91B, Track 92A, Track 94J, Track 95B_
 **Status (2026-11-24):** Not done; holds stay open. PR #291 (`bbcdd0a`, merged 2026-11-22, documentation only, no release) added `docs/acceptance/workflow-drivers.md` as a holds-first matrix of 23 rows (14 `WD-*` and 9 `DS-*`; 0 pass, 23 hold at `8077fa2`), the runbooks for both drivers and seven post-92A telemetry observations. Criteria 1–2 still need the owner's real by-hand runs and one real external orchestrator's runs, each read back in telemetry; no row passes without its own live evidence on `producer_version >= 0.109.0`, and pending approvals or failures stay holds.
-**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changed them through Track 92A (`v0.109.0`, shipped), plus Track 94J (`v0.115.0`, shipped, PR #305) and Track 95B (in flight, item `d574f7e2`). **Report-only harvest after 94J and 95B merge:** once Track 94J (Grok Build run-mode) and Track 95B (Antigravity run-mode) are both merged and installed, this Track's by-hand rows can be harvested from the developer's real by-hand runs across Claude, Codex, Muse, Grok Build and Antigravity as a report-only readback step, alongside orchestrated runs. **Track 96A starts ahead of this Track:** Track 96A does not wait on these developer runs, because this record binds each row to the `producer_version` it ran on and re-anchoring `upstream-check` does not invalidate runs of other stages. The other developer-run record Tracks (95C, 96B) do not gate this one; a run here can supply their rows. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
+**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changed them through Track 92A (`v0.109.0`, shipped), plus Track 94J (`v0.115.0`, shipped, PR #305) and Track 95B (`v0.116.0`, shipped, PR #308, item `d574f7e2`). **Report-only harvest now available (94J and 95B shipped):** now that Track 94J (Grok Build run-mode) and Track 95B (Antigravity run-mode) are both merged, once installed this Track's by-hand rows can be harvested from the developer's real by-hand runs across Claude, Codex, Muse, Grok Build and Antigravity as a report-only readback step, alongside orchestrated runs. **Track 96A starts ahead of this Track:** Track 96A does not wait on these developer runs, because this record binds each row to the `producer_version` it ran on and re-anchoring `upstream-check` does not invalidate runs of other stages. The other developer-run record Tracks (95C, 96B) do not gate this one; a run here can supply their rows. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
 - **Exercise both drivers** -- Run or harvest the matrix's rows (the record exists; this task fills it). Use real host-managed workspaces and approved accounts with the harnesses the owner uses for each stage; retain the bound PR and workspace, test stale/partial/held handoffs, confirm next-stage consumption from artifacts across sessions, include the host-attribution check deferred from Track 26A, and count operator interventions. _~200 documentation lines._ (L)
 - **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging, and its interactive merge question; include one Sonnet-class run and one `/roadmap` handoff, and compare work/wait wall time with a recent docs PR shipped through the ordinary path. _~40 lines._ (S)
 
@@ -297,29 +284,28 @@ turned that into an edge here. The adjacency below is the packer's DEPENDS
 output with bin numbers replaced by Group numbers; the Track IDs after each set
 are the packer's own list of the Tracks that cause the edge, so a Group never
 waits on a blocker's siblings. In particular, Track 96A's blockers (Tracks 94A
-and 95A) have both shipped, so Track 96A is ready to launch now (it does not
-wait on Track 95B, Track 95C or Track 96C), Tracks 96B and 96C wait on Track
-95B (and once 94J and 95B merge, Track 96C's by-hand rows can be harvested as a
-report-only step), and Track 95C gates only Track 97B. Document order is
-priority, not a gate. The cards label priority choices separately from
+and 95A) and Tracks 96B and 96C's blockers (Tracks 94J and 95B) have all
+shipped, so Track 96A is ready to launch now (it does not wait on Track 95C or
+Track 96C), Track 96C's by-hand rows can be harvested as a report-only step
+once `v0.116.0` is installed, and Track 95C gates only Track 97B. Document
+order is priority, not a gate. The cards label priority choices separately from
 technical prerequisites.
 
 ```
 - Group 95 ← {}
-- Group 96 ← {95}: Track 95B
+- Group 96 ← {}
 - Group 97 ← {95, 96}: Tracks 95C, 96C
 - Group 98 ← {97}: Track 97B
 ```
 
 Track detail per group:
 ```
-Group 95: Antigravity run-mode telemetry ∥ install/upgrade qualification gaps (in progress: 95B)
-  +-- Track 95B ........... ~M . 2 tasks   (in flight: item d574f7e2)
-  +-- Track 95C ........... ~M . 2 tasks   (not in flight: U1–U3 open, owner's runs)
+Group 95: Install/upgrade qualification gaps
+  +-- Track 95C ........... ~M . 2 tasks   (U1–U3 open, owner's runs)
 Group 96: Upstream 1.103.0.0 re-anchor ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
   +-- Track 96A ........... ~M . 4 tasks   (ready now after 95A shipped; ahead of 96C)
-  +-- Track 96B ........... ~S . 3 tasks   (developer's runs)
-  +-- Track 96C ........... ~L . 2 tasks   (holds open: harvestable after 94J + 95B)
+  +-- Track 96B ........... ~S . 3 tasks   (developer's runs; 94J + 95B shipped)
+  +-- Track 96C ........... ~L . 2 tasks   (holds open: harvestable once v0.116.0 is installed)
 Group 97: Measured stage cost ∥ stable update channel
   +-- Track 97A ........... ~L . 4 tasks
   +-- Track 97B ........... ~M . 5 tasks
@@ -327,7 +313,7 @@ Group 98: Install and upgrade aligned with upstream gstack
   +-- Track 98A ........... ~M . 3 tasks
 ```
 
-**4 Groups / 8 Tracks remaining**, 1 in progress (Track 95B).
+**4 Groups / 7 Tracks remaining**, none in progress.
 
 Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
