@@ -18,6 +18,15 @@ export function resolverSkillText(skill: string): string {
   return readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
 }
 
+export function coreText(skill: string): string {
+  return readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+}
+
+export function referenceText(skill: string, file: string): string {
+  const leaf = file.endsWith('.md') ? file : `${file}.md`;
+  return readFileSync(join(ROOT, 'skills', 'references', skill, leaf), 'utf8');
+}
+
 // Track 22D. Headings inside fences are not section boundaries.
 export function skillSection(text: string, heading: string): string {
   const lines = text.split('\n');

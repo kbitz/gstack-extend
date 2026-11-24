@@ -14,6 +14,7 @@
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -296,7 +297,7 @@ describe('bin/lib/preamble.sh — flags, usage errors, modes, and diagnostics', 
       const r = spawnSync(PREAMBLE_SRC, [flag], { env: scopedEnv(baseTmp), encoding: 'utf8' });
       expect(r.status).toBe(0);
       expect(r.stderr).toBe('');
-      expect(r.stdout).toContain('Usage: preamble <skill> [--force] [--require <helper>] [--root | --resume]');
+      expect(r.stdout).toContain('Usage: preamble <skill> [--force] [--require <helper>] [--root | --resume | --ref <file> --expect <digest> [--lines <a>-<b>]]');
       expect(r.stdout).toContain('print only the root lines');
       expect(r.stdout).toContain('start a new telemetry segment');
     }
@@ -324,7 +325,7 @@ describe('bin/lib/preamble.sh — flags, usage errors, modes, and diagnostics', 
       const lines = r.stderr.trim().split('\n');
       expect(lines.length).toBe(2);
       expect(lines[0]).toMatch(/^preamble: PREAMBLE_USAGE: /);
-      expect(lines[1]).toBe('preamble: usage: preamble <skill> [--force] [--require <helper>] [--root | --resume]');
+      expect(lines[1]).toBe('preamble: usage: preamble <skill> [--force] [--require <helper>] [--root | --resume | --ref <file> --expect <digest> [--lines <a>-<b>]]');
     }
   });
 
@@ -429,6 +430,221 @@ describe('bin/lib/preamble.sh — flags, usage errors, modes, and diagnostics', 
       const zshCheck = runShell('zsh', ['-fc'], `${assignLine}\nprintf '%s' "$_EXTEND_ROOT"`, scopedEnv(home));
       expect(zshCheck.status).toBe(0);
       expect(zshCheck.stdout).toBe(root);
+    }
+  });
+});
+
+function refDigest(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+}
+
+describe('bin/lib/preamble.sh — --ref mode (Track 94I)', () => {
+  function setupRefFixture(name: string, opts: { linkedWorktree?: boolean; version?: string } = {}) {
+    const home = mkdtempSync(join(baseTmp, `ref-${name}-`));
+    const root = join(home, 'checkout');
+    writeUpdateCheck(root);
+    if (opts.version !== undefined) writeFileSync(join(root, 'VERSION'), `${opts.version}\n`);
+    if (opts.linkedWorktree) {
+      writeFileSync(join(root, '.git'), 'gitdir: /tmp/fake-worktree\n');
+    } else {
+      mkdirSync(join(root, '.git'), { recursive: true });
+    }
+    writePointer(home, 'claude', 'review-and-prep', root);
+    return { home, root };
+  }
+
+  test('present reference with matching digest prints numbered lines and REFERENCE_END trailer without telemetry or update-check', () => {
+    const { home, root } = setupRefFixture('present-\\path', { version: '0.113.0' });
+    const updateLog = join(home, 'update.log');
+    const telemetryLog = join(home, 'telemetry.log');
+    writeUpdateCheckWithOutput(root, { recordCall: true });
+    writeTelemetryStub(home, telemetryLog);
+
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    const body = '# Sample\nLine two\n<!-- end of skills/references/review-and-prep/conditional-sample.md -->\n';
+    writeFileSync(join(refDir, 'conditional-sample.md'), body);
+    const digest = refDigest(body);
+
+    const r = spawnSync(PREAMBLE_SRC, ['review-and-prep', '--ref', 'conditional-sample', '--expect', digest], {
+      env: { ...scopedEnv(home), PREAMBLE_TEST_UPDATE_LOG: updateLog },
+      encoding: 'utf8',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(
+      `1: # Sample\n2: Line two\n3: <!-- end of skills/references/review-and-prep/conditional-sample.md -->\nREFERENCE_END review-and-prep/conditional-sample lines=3 digest=${digest}\n`,
+    );
+    expect(() => readFileSync(updateLog)).toThrow();
+    expect(() => readFileSync(telemetryLog)).toThrow();
+  });
+
+  test('--lines <a>-<b> prints only the requested 1-based inclusive range with total line count in REFERENCE_END', () => {
+    const { home, root } = setupRefFixture('lines', { version: '0.113.0' });
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    const body = 'alpha\nbeta\ngamma\ndelta\nepsilon\n';
+    writeFileSync(join(refDir, 'conditional-lines.md'), body);
+    const digest = refDigest(body);
+
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-lines', '--expect', digest, '--lines', '2-4'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(
+      `2: beta\n3: gamma\n4: delta\nREFERENCE_END review-and-prep/conditional-lines lines=5 digest=${digest}\n`,
+    );
+
+    const outOfRange = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-lines', '--expect', digest, '--lines', '6-7'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(outOfRange.status, outOfRange.stderr).toBe(2);
+    expect(outOfRange.stdout).toBe('');
+    expect(outOfRange.stderr).toContain('requested line range ends after line 5');
+  });
+
+  test('reads a reference snapshot when the temporary directory is a relative path containing an equals sign', () => {
+    const { home, root } = setupRefFixture('relative-temp');
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    mkdirSync(join(home, 'tmp=reference'));
+    const body = 'alpha\nbeta\n';
+    writeFileSync(join(refDir, 'conditional-sample.md'), body);
+    const digest = refDigest(body);
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-sample', '--expect', digest],
+      { cwd: home, env: { ...scopedEnv(home), TMPDIR: 'tmp=reference' }, encoding: 'utf8', timeout: 3000 },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(`1: alpha\n2: beta\nREFERENCE_END review-and-prep/conditional-sample lines=2 digest=${digest}\n`);
+  });
+
+  test('a dangling reference symlink uses unreadable recovery', () => {
+    const { home, root } = setupRefFixture('dangling-reference');
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    symlinkSync('unavailable.md', join(refDir, 'conditional-sample.md'));
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-sample', '--expect', '0123456789abcdef'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('cause: unreadable');
+    expect(r.stdout).toContain('readable regular reference file');
+  });
+
+  test('absent reference on normal checkout prints SKILL_REFERENCE_MISSING with update-run fix and exits 1', () => {
+    const { home, root } = setupRefFixture('absent', { version: '0.113.0' });
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-missing', '--expect', '0123456789abcdef'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('SKILL_REFERENCE_MISSING: /review-and-prep ref conditional-missing');
+    expect(r.stdout).toContain('cause: absent');
+    expect(r.stdout).toContain(`root ${root}`);
+    expect(r.stdout).toContain('VERSION 0.113.0');
+    expect(r.stdout).toContain(`${root}/bin/update-run`);
+    expect(r.stdout).toContain('docs/installation.md#skill-references');
+  });
+
+  test('absent reference on linked-worktree checkout names setup from stable checkout instead of update-run', () => {
+    const { home, root } = setupRefFixture('worktree', { linkedWorktree: true, version: '0.113.0' });
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-missing', '--expect', '0123456789abcdef'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('SKILL_REFERENCE_MISSING: /review-and-prep ref conditional-missing');
+    expect(r.stdout).toContain('cause: absent');
+    expect(r.stdout).toContain('linked worktree');
+    expect(r.stdout).toContain('run setup --host auto from your stable gstack-extend checkout');
+    expect(r.stdout).not.toContain(`${root}/bin/update-run`);
+  });
+
+  test('unreadable reference prints SKILL_REFERENCE_MISSING with unreadable cause and exits 1', () => {
+    const { home, root } = setupRefFixture('unreadable', { version: '0.113.0' });
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    // A directory at the file path is always non-regular even if running as root.
+    const refPath = join(refDir, 'conditional-dir.md');
+    mkdirSync(refPath);
+
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-dir', '--expect', '0123456789abcdef'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('SKILL_REFERENCE_MISSING: /review-and-prep ref conditional-dir');
+    expect(r.stdout).toContain('cause: unreadable');
+    expect(r.stdout).toContain('VERSION 0.113.0');
+    expect(r.stdout).toContain('docs/installation.md#skill-references');
+  });
+
+  test('digest mismatch prints SKILL_REFERENCE_STALE with expected/actual digests and restart/setup fix, no body', () => {
+    const { home, root } = setupRefFixture('stale', { version: '0.113.0' });
+    const refDir = join(root, 'skills', 'references', 'review-and-prep');
+    mkdirSync(refDir, { recursive: true });
+    const body = 'SECRET_BODY_DO_NOT_PRINT\n';
+    writeFileSync(join(refDir, 'conditional-stale.md'), body);
+    const actual = refDigest(body);
+
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-stale', '--expect', 'deadbeef01234567'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('SKILL_REFERENCE_STALE: /review-and-prep ref conditional-stale');
+    expect(r.stdout).toContain('cause: digest-mismatch');
+    expect(r.stdout).toContain('expected deadbeef01234567');
+    expect(r.stdout).toContain(`actual ${actual}`);
+    expect(r.stdout).toContain('restart /review-and-prep');
+    expect(r.stdout).toContain(`"${root}/setup" --host auto`);
+    expect(r.stdout).not.toContain('SECRET_BODY_DO_NOT_PRINT');
+  });
+
+  test('no root prints SKILL_REFERENCE_MISSING with cause no-root and existing install message', () => {
+    const home = mkdtempSync(join(baseTmp, 'ref-noroot-'));
+    const r = spawnSync(
+      PREAMBLE_SRC,
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef'],
+      { env: scopedEnv(home), encoding: 'utf8' },
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('SKILL_REFERENCE_MISSING: /review-and-prep ref conditional-x');
+    expect(r.stdout).toContain('cause: no-root; root none; VERSION unknown');
+    expect(r.stdout).toContain('No gstack-extend install found under ~/.claude or ~/.codex.');
+  });
+
+  test('usage errors print SKILL_REFERENCE_USAGE to stderr and exit 2', () => {
+    const home = mkdtempSync(join(baseTmp, 'ref-usage-'));
+    const badCalls: string[][] = [
+      ['review-and-prep', '--ref', 'conditional-x'], // missing --expect
+      ['review-and-prep', '--expect', '0123456789abcdef'], // missing --ref
+      ['review-and-prep', '--lines', ''], // explicit empty argument cannot fall through to regular start
+      ['review-and-prep', '--bogus', '--ref', 'conditional-x', '--expect', '0123456789abcdef'],
+      ['review-and-prep', '--ref', '../escape', '--expect', '0123456789abcdef'], // traversal
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', 'not-hex'], // bad digest
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '5-2'], // reversed range
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '0-5'], // 0-based
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--lines', '1-9999999999999999999999'],
+      ['review-and-prep', '--ref', 'conditional-x', '--expect', '0123456789abcdef', '--root'], // conflicting flag
+    ];
+    for (const args of badCalls) {
+      const r = spawnSync(PREAMBLE_SRC, args, { env: scopedEnv(home), encoding: 'utf8' });
+      expect(r.status, args.join(' ')).toBe(2);
+      expect(r.stderr, args.join(' ')).toContain('SKILL_REFERENCE_USAGE:');
+      expect(r.stderr.trimEnd().split('\n'), args.join(' ')).toHaveLength(1);
+      expect(r.stdout, args.join(' ')).toBe('');
     }
   });
 });

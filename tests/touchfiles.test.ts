@@ -431,9 +431,30 @@ function declaredConsumers(file: string): string[] {
 /** The skill-path spellings a split suite may use; each names one skill. */
 const SKILL_PATH_FORMS = [
   /join\(ROOT, (['"])skills\1, (['"])(?<name>[a-z-]+)\.md\2\)/g,
+  /join\(ROOT, (['"])skills\1, (['"])references\2, (['"])(?<name>[a-z-]+)\3, (['"])[a-z0-9-]+\.md\5\)/g,
   /(['"])skills\/(?<name>[a-z-]+)\.md\1/g,
+  /(['"])skills\/references\/(?<name>[a-z-]+)\/[a-z0-9-]+\.md\1/g,
   /resolverSkillText\((['"])(?<name>[a-z-]+)\1\)/g,
+  /coreText\((['"])(?<name>[a-z-]+)\1\)/g,
+  /referenceText\((['"])(?<name>[a-z-]+)\1,\s*(['"])[a-z0-9-]+(?:\.md)?\3\)/g,
 ];
+
+const SKILL_REF_PATH_FORMS = [
+  /join\(ROOT, (['"])skills\1, (['"])references\2, (['"])(?<name>[a-z-]+)\3, (['"])(?<file>[a-z0-9-]+)\.md\5\)/g,
+  /(['"])skills\/references\/(?<name>[a-z-]+)\/(?<file>[a-z0-9-]+)\.md\1/g,
+  /referenceText\((['"])(?<name>[a-z-]+)\1,\s*(['"])(?<file>[a-z0-9-]+)(?:\.md)?\3\)/g,
+];
+
+/** Skill reference files a split suite reads, from the path forms the suites use. */
+function namedSkillRefs(source: string): string[] {
+  const paths = new Set<string>();
+  for (const form of SKILL_REF_PATH_FORMS) {
+    for (const m of source.matchAll(form)) {
+      paths.add(`skills/references/${m.groups!.name!}/${m.groups!.file!}.md`);
+    }
+  }
+  return [...paths].sort();
+}
 
 /** Skill names a split suite reads, from the path forms the suites use. */
 function namedSkills(source: string): string[] {
@@ -445,13 +466,13 @@ function namedSkills(source: string): string[] {
 /**
  * Skill references outside SKILL_PATH_FORMS: a `skills` path segment
  * (`'skills'`, `"skills/" + name`, a template literal, a directory listing) or
- * resolverSkillText with a computed argument. Each can read a skill the
- * suite does not declare.
+ * resolverSkillText/coreText/referenceText with a computed argument. Each can
+ * read a skill the suite does not declare.
  */
 function computedSkillReads(source: string): string[] {
   let rest = source;
   for (const form of SKILL_PATH_FORMS) rest = rest.replace(form, '');
-  const hits = [...rest.matchAll(/(['"`])skills(?:\1|\/)|resolverSkillText\(/g)];
+  const hits = [...rest.matchAll(/(['"`])skills(?:\1|\/)|(?:resolverSkillText|coreText|referenceText)\(/g)];
   return hits.map(m => rest.slice(Math.max(0, m.index! - 30), m.index! + 30).replace(/\s+/g, ' '));
 }
 
@@ -509,6 +530,20 @@ describe('per-skill selection', () => {
     ]) expect([computed, computedSkillReads(computed).length]).toEqual([computed, 1]);
   });
 
+  test('the read lint recognizes literal reference paths in every supported form', () => {
+    for (const source of [
+      "join(ROOT, 'skills', 'references', 'review-and-prep', 'conditional-workflow-metrics.md')",
+      "read('skills/references/review-and-prep/conditional-workflow-metrics.md')",
+      "referenceText('review-and-prep', 'conditional-workflow-metrics')",
+    ]) {
+      expect(namedSkills(source), source).toEqual(['review-and-prep']);
+      expect(namedSkillRefs(source), source).toEqual([
+        'skills/references/review-and-prep/conditional-workflow-metrics.md',
+      ]);
+      expect(computedSkillReads(source), source).toEqual([]);
+    }
+  });
+
   test('each split suite declares exactly the skill files it names, and none reads a skill by a computed path', () => {
     const problems: string[] = [];
     for (const t of [...splitSuites, SHARED_SUITE]) {
@@ -519,7 +554,7 @@ describe('per-skill selection', () => {
         continue;
       }
       for (const hit of computedSkillReads(source)) problems.push(`${t}: reads a skill through a computed path (…${hit}…); name the file, or move the test to ${SHARED_SUITE}`);
-      const named = namedSkills(source).map(n => `skills/${n}.md`);
+      const named = [...namedSkills(source).map(n => `skills/${n}.md`), ...namedSkillRefs(source)];
       const missing = named.filter(f => !declared.some(g => matchGlob(f, g)));
       const stale = declared.filter(g => !named.some(f => matchGlob(f, g)));
       if (missing.length) problems.push(`${t}: reads ${missing.join(', ')} without declaring it`);

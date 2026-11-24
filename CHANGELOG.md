@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.113.0] - 2026-11-23
+
+### Added
+
+- The `preamble` command adds `--ref` for digest-verified skill reference reads.
+
+### Changed
+
+- `/review-and-prep` loads conditional instructions on demand and continues with partial capture when an optional metrics reference is unavailable.
+
+### Fixed
+
+- Review workflow gates stay in force across skill reference reads, and gate instructions load before they are first used.
+- The cycle-cap hold stays in the draft body, and other review holds remain when a skill reference read fails.
+- Skill reference output stays within the measured read budget.
+
 ## [0.112.2] - 2026-11-23
 
 ### Added

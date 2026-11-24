@@ -2103,7 +2103,7 @@ describe('Track 57A finding attribution', () => {
     expect(defs.finding_v2.required).toEqual([...defs.finding.required, 'found_by', 'attribution_reason']);
     expect(Object.keys(defs.finding_v2.properties).sort()).toEqual([...Object.keys(defs.finding.properties), 'found_by', 'attribution_reason'].sort());
 
-    const skill = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+    const skill = readFileSync(join(ROOT, 'skills', 'references', 'review-and-prep', 'conditional-metrics-findings.md'), 'utf8');
     const from = skill.indexOf('- Finding attribution (`v:2`)');
     expect(from).toBeGreaterThan(0);
     const bullet = skill.slice(from, skill.indexOf('\n- ', from + 1)).replace(/\s+/g, ' ');
@@ -2416,8 +2416,7 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     expect(schema.definitions.safe_id.pattern).toBe(MODEL_RE.source);
     expect(schema.definitions.unknown_reason.enum).toContain('too-many-providers');
     const docs = readFileSync(join(ROOT, 'docs/telemetry.md'), 'utf8').replace(/\s+/g, ' ');
-    const skill = readFileSync(join(ROOT, 'skills/review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
-    const delegated = skill.slice(skill.indexOf('### Delegate named specialist parts'), skill.indexOf('### Reopen review only for behavior-changing repairs'));
+    const delegated = readFileSync(join(ROOT, 'skills/references/review-and-prep/delegate-specialist-parts.md'), 'utf8').replace(/\s+/g, ' ');
     for (const reason of helper.reasons) {
       expect(docs, reason).toContain('`' + reason + '`');
       expect(delegated, reason).toContain('`' + reason + '`');
