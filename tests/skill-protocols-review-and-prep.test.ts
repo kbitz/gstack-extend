@@ -288,6 +288,17 @@ function checkPolicyGrammarLock(text: string): string[] {
   return text.includes(POLICY_GRAMMAR_LINE) ? [] : ['missing full policy grammar line'];
 }
 
+const DELEGATE_PART_LIST_CLAUSE =
+  '`delegate=<part>[,<part>...]` (`testing`, `maintainability`, `performance`,\n  `simplification`, `adversarial` and `red-team`, comma-separated, each at most\n  once)';
+
+function checkDelegatePartListClauseLock(text: string): string[] {
+  const section = skillSection(text, '### Read an optional review policy');
+  const count = section.split(DELEGATE_PART_LIST_CLAUSE).length - 1;
+  return count === 1
+    ? []
+    : [`expected delegate part-list clause once in Read an optional review policy, got ${count}`];
+}
+
 const CAPABILITY_EXEMPTIONS = EXEMPTIONS.filter((e) => e.file === 'skills/review-and-prep.md');
 
 function checkCapabilityGrepLinesLock(text: string): string[] {
@@ -1179,6 +1190,11 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=all 17 EXEMPTIONS capability lines exist once in the skill; fails_when=a capability grep -F line is dropped, duplicated or wrapped; why_new=Track 86B T3 static capability lock; seam=src/upstream-check/cli.ts EXEMPTIONS
   test('each EXEMPTIONS capability entry matches exactly one grep -F skill line', () => {
     expect(checkCapabilityGrepLinesLock(prep)).toEqual([]);
+  });
+
+  // Value: protects=delegate part-list clause stays verbatim in core Read an optional review policy; fails_when=a supported delegate part is dropped, reworded, duplicated or moved out of core; why_new=caller-parsed delegate part-list lock; seam=none
+  test('the delegate part-list clause stays verbatim once in Read an optional review policy', () => {
+    expect(checkDelegatePartListClauseLock(prep)).toEqual([]);
   });
 
   // Value: protects=the in-cap override checks gstack's exact text first and keeps delta tokens; fails_when=an anchor, the inactive path or the scope token drifts; why_new=in-cap override; seam=none
@@ -3110,6 +3126,11 @@ describe('kept contract locks fail on mutation', () => {
       name: 'capability grep -F lines: drop blocking=shown capability line',
       lock: checkCapabilityGrepLinesLock,
       mutate: (t) => t.replace("grep -F 'blocking=shown'", "grep -F 'blocking-removed'"),
+    },
+    {
+      name: 'delegate part-list clause: drop adversarial from core clause',
+      lock: checkDelegatePartListClauseLock,
+      mutate: (t) => t.replace('`simplification`, `adversarial` and `red-team`', '`simplification` and `red-team`'),
     },
     {
       name: 'upstream anchors: mutate in-cap=delta anchor',
