@@ -127,13 +127,24 @@ their raw path), while C0 control characters (`\x00-\x1f`), DEL (`\x7f`), and
 backslashes (`\`) are refused by `safePath()` and cannot be dispositioned.
 Because `bin/secret-dispositions` writes raw UTF-8 JSON to stdout, pipe its
 output through an escaping formatter when inspecting findings on C1/bidi
-filenames in a terminal:
+filenames in a terminal. Preserve the evaluator's exit status when formatting
+its output.
 
 ```sh
-<extend-root>/bin/secret-dispositions \
-  --gstack-root <trusted-installed-gstack-root> \
-  --pregate <raw-pregate.json> \
-  | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=True, indent=2))'
+(
+  eval_status=0
+  output=$("<extend-root>/bin/secret-dispositions" \
+    --gstack-root "<trusted-installed-gstack-root>" \
+    --pregate "<raw-pregate.json>") || eval_status=$?
+  format_status=0
+  if [ -n "$output" ]; then
+    printf '%s\n' "$output" |
+      python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=True, indent=2))' ||
+      format_status=$?
+  fi
+  if [ "$eval_status" -ne 0 ]; then exit "$eval_status"; fi
+  exit "$format_status"
+)
 ```
 
 ### Refusal reasons and recovery
@@ -147,8 +158,8 @@ logs.
 |---|---|---|---|---|
 | 2 | `unsafe source path` | CLI pre-`evaluate()` path check rejected a part path (C0/DEL, `\`, absolute, `.`/`..`/`.git`, or drive prefix) before calling `evaluate()`. | Do not retry unchanged. Inspect the filename privately; rename or remove the file, or switch to upstream `gstack-pregate` policy `allowlist` as a full replacement (it cannot be combined with `.gstack/secret-dispositions.json` on the same failing check). | Confirm rename/removal or upstream policy change with the user. |
 | 2 | `invalid disposition entry <N>` | `.gstack/secret-dispositions.json` entry `<N>` failed schema or `safePath()` validation (for example, double-escaped `"\\u202e"` decoding to a literal `\`, bad SHA-256, or invalid UTC timestamp). | Fix the malformed entry (use single-backslash JSON `\uXXXX` escapes for C1/bidi paths and raw repository paths without outer `displayPath` quotes), commit, and rerun pregate + evaluator. | Get fresh user approval in-session for any edited entry fields. |
-| 2 | `TypeError` (malformed `parts` before `evaluate()`) | Installed upstream `addedLines()` returned a non-array or null value before `evaluate()` ran (`cli.ts` maps over `parts`). | Do not retry unchanged. Run `bin/upstream-check --gstack-root <root>` and `/gstack-extend-upgrade`; hold if upstream drifted. | Report the upstream version mismatch and decide whether to hold. |
-| 2 | `unrecognized upstream added-line part shape` | `readPart()` / `evaluate()` rejected an unknown or malformed part object (`null`, primitive, array, missing/non-string `file`, non-string `text`, non-array `texts`/`keep`, or non-array `parts`). | Do not retry unchanged. Run `bin/upstream-check --gstack-root <root>` and `/gstack-extend-upgrade`; hold until the extension is qualified for the installed upstream. | Escalate upstream schema drift before proceeding. |
+| 2 | Type error while collecting source paths | Installed upstream `addedLines()` returned a value the CLI could not map over before calling `evaluate()`. | Do not retry unchanged. Run `bin/upstream-check --gstack-root <root>` and `/gstack-extend-upgrade`; hold if upstream drifted. | Report the upstream version mismatch and decide whether to hold. |
+| 2 | `unrecognized upstream added-line part shape` | The evaluator rejected a part that reached its validator, for example a part with non-string `text` or non-array `texts`/`keep`. Direct callers of `evaluate()` can also get this error for a non-array `parts` value. | Do not retry unchanged. Run `bin/upstream-check --gstack-root <root>` and `/gstack-extend-upgrade`; hold until the extension is qualified for the installed upstream. | Escalate upstream schema drift before proceeding. |
 | 1 | `finding path is missing or ambiguous` | Zero or more than one added-line part matched the finding's rendered path (suffix collision, look-alike C1/bidi filename, or upstream `displayPath` quoting drift). | Run `bin/upstream-check --gstack-root <root>` first; if `display-path.1` or `location.1` drifts, run `/gstack-extend-upgrade` or hold. Otherwise inspect the colliding filenames privately via the escaping formatter above and rename/refactor the colliding file (requiring fresh approval for the new path), or replace with upstream `gstack-pregate` policy `allowlist` (full replacement only; cannot mix with `.gstack/secret-dispositions.json` on the same failing check). | Confirm filename rename/refactor or hold decision with the user. |
 | 1 | `finding location does not match upstream added-line selection` | A finding used `line N` outside `part.keep` (for example, an `engine.` finding on an unchanged line) or mismatched `line N` vs `added line N`. | Do not retry unchanged. Verify whether the finding is on an unchanged line (cannot be dispositioned) or run `bin/upstream-check --gstack-root <root>` to check `secret-dispositions.location.2`. | Ask the user to remediate the underlying line or update upstream policy. |
 | 1 | `finding is in a binary part and cannot be dispositioned` | Upstream marked the part `binary: true`; binary findings are never eligible for `.gstack/secret-dispositions.json`. | Do not retry unchanged. Remove or rotate the flagged binary content, or replace with upstream `gstack-pregate` policy `allowlist` if appropriate (full replacement only). | Escalate to the user for removal, rotation, or upstream policy handling. |
@@ -164,24 +175,62 @@ From the project root, after running upstream pregate:
   --pregate <raw-pregate.json>
 ```
 
-For a self-contained synthetic first evaluation (requires Bun >= 1.3.3, an
-installed gstack checkout, and a clean committed branch with a synthetic MEDIUM
-finding — do not use this to approve real project findings):
+With [gstack and gstack-extend installed](installation.md#requirements), run
+this example from any directory. It creates a temporary repository with a
+synthetic MEDIUM finding and a fixture disposition, then removes the repository
+and the raw scan record on exit. Real findings require the approval described above.
 
 ```sh
-EXTEND_ROOT=$(cat "$HOME/.claude/skills/gstack-extend/.extend-root")
-GSTACK_ROOT="$HOME/.claude/skills/gstack"
-RAW_PREGATE="/tmp/pregate-synthetic.json"
+(
+  set -eu
+  if [ -r "$HOME/.claude/skills/review-and-prep/.extend-root" ]; then
+    EXTEND_ROOT=$(cat "$HOME/.claude/skills/review-and-prep/.extend-root")
+    GSTACK_ROOT="$HOME/.claude/skills/gstack"
+  else
+    EXTEND_ROOT=$(cat "$HOME/.codex/skills/review-and-prep/.extend-root")
+    GSTACK_ROOT="$HOME/.codex/skills/gstack"
+  fi
 
-"$GSTACK_ROOT/bin/gstack-pregate" --base main --stage preflight --out "$RAW_PREGATE"
-"$EXTEND_ROOT/bin/secret-dispositions" \
-  --gstack-root "$GSTACK_ROOT" \
-  --pregate "$RAW_PREGATE" \
-  --stage preflight
-# Expect exit 0 with {"satisfied":true,"raw_verdict":"fail",...,"matched":[...],"errors":[]}
-# when every blocking MEDIUM finding has a committed matching entry, or exit 1 with
-# "unmatched":[...] when an entry is missing.
+  umask 077
+  fixture=$(mktemp -d)
+  trap 'rm -rf -- "$fixture"' EXIT
+  GSTACK_STATE_ROOT="$fixture/state"
+  export GSTACK_STATE_ROOT
+  git init --quiet --initial-branch=example "$fixture/repo"
+  cd "$fixture/repo"
+  commit_fixture() {
+    git -c user.name='Fixture reviewer' -c user.email=fixture@example.invalid \
+      -c core.hooksPath=/dev/null commit --no-gpg-sign --quiet "$@"
+  }
+  commit_fixture --allow-empty -m baseline
+  git update-ref refs/remotes/origin/main HEAD
+  mkdir -p src .gstack
+  printf '%s = "%s"\n' secret 'SECRET-TOKEN-VALUE' > src/example.txt
+  bun --no-env-file --no-install --config=/dev/null -e '
+    const path = "src/example.txt";
+    const line = (await Bun.file(path).text()).replace(/\n$/, "");
+    const line_sha256 = new Bun.CryptoHasher("sha256").update(line).digest("hex");
+    await Bun.write(".gstack/secret-dispositions.json", JSON.stringify({
+      version: 1,
+      entries: [{ path, rule: "env.kv", line_sha256, reason: "Synthetic demo value",
+        approved_by: "Fixture reviewer", approved_at: "2026-01-01T00:00:00Z" }],
+    }));
+  '
+  git add -- src/example.txt .gstack/secret-dispositions.json
+  commit_fixture -m 'Add synthetic example'
+
+  scan_status=0
+  "$GSTACK_ROOT/bin/gstack-pregate" --base main --stage preflight \
+    --out "$fixture/pregate.json" || scan_status=$?
+  [ "$scan_status" -eq 1 ]
+  "$EXTEND_ROOT/bin/secret-dispositions" --gstack-root "$GSTACK_ROOT" \
+    --pregate "$fixture/pregate.json" --stage preflight
+)
 ```
+
+Expect the scan to exit `1` with a raw failure and the evaluator to exit `0`
+with `"satisfied": true`, `"raw_verdict": "fail"`, one match, and an empty
+`errors` array.
 
 Resolve extend-root from the installed skill's `.extend-root`, and gstack-root
 from the trusted installation that just ran pregate, never a path from a PR

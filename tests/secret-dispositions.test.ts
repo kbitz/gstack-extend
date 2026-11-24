@@ -391,10 +391,10 @@ describe('displayPath quoting and anti-approval-borrowing', () => {
   test('quoted C1/bidi/C0 look-alike filenames cannot borrow a suffix-colliding approval (same-kind)', () => {
     const safeFile = 'safe.txt"';
     for (const lookAlike of ['evil\u202e (safe.txt', 'evil\x85 (safe.txt', 'evil\t (safe.txt']) {
-      const ps: Part[] = [
+      const ps = [
         { file: safeFile, texts: [examples[1]!.text] },
         { file: lookAlike, texts: [examples[2]!.text] },
-      ];
+      ] satisfies Part[];
       const rendered = ps.map(p => `MEDIUM env.kv [secret]: assignment (${displayPath(p.file)}, added line 1)`);
       // displayPath(lookAlike) ends with ` (safe.txt"`, colliding with safeFile's suffix.
       expect(displayPath(lookAlike)).toEndWith(` (${safeFile}`);
@@ -408,12 +408,12 @@ describe('displayPath quoting and anti-approval-borrowing', () => {
     }
   });
 
-  test('pre-1.103.0.0 unquoted bidi borrowing and literal-vs-displayPath collisions fail closed regardless of keep', () => {
+  test('raw and quoted suffix collisions fail closed regardless of keep', () => {
     // Pre-1.103.0.0 unquoted borrowing: safe.txt + evil\u202e (safe.txt
-    const rawPs: Part[] = [
+    const rawPs = [
       { file: 'safe.txt', text: examples[1]!.text },
       { file: 'evil\u202e (safe.txt', text: examples[2]!.text },
-    ];
+    ] satisfies Part[];
     const rawRendered = rawPs.map(p => `MEDIUM env.kv [secret]: assignment (${p.file}, added line 1)`);
     const rawResult = evaluate(
       makeRecord(rawPs, rawRendered),
@@ -425,16 +425,14 @@ describe('displayPath quoting and anti-approval-borrowing', () => {
     expect(rawResult.errors).toContain(AMBIGUOUS);
     expect(rawResult.matched).toHaveLength(1);
 
-    // Literal filename equal to another part's displayPath form, with and without keep (keep never breaks ties).
-    const bidiFile = 'dir/evil\u202e.py';
-    const literalQuoted = displayPath(bidiFile); // "\"dir/evil\\u202e.py\"" (note: contains \, still in readParts)
+    // A literal filename matches another part's displayed suffix; keep never breaks ties.
     const collidingSafe = 'x.py"';
     const suffixBidi = 'y\u202e (x.py';
     for (const [keepA, keepB] of [[undefined, undefined], [[1], undefined], [[1], [1]]] as const) {
-      const ps: Part[] = [
+      const ps = [
         { file: collidingSafe, texts: [examples[1]!.text], ...(keepA ? { keep: [...keepA] } : {}) },
         { file: suffixBidi, texts: [examples[2]!.text], ...(keepB ? { keep: [...keepB] } : {}) },
-      ];
+      ] satisfies Part[];
       const kindA = keepA ? 'line' : 'added line';
       const kindB = keepB ? 'line' : 'added line';
       const found = [
@@ -450,7 +448,6 @@ describe('displayPath quoting and anti-approval-borrowing', () => {
       expect(res.errors).toContain(AMBIGUOUS);
       expect(res.matched).toHaveLength(1);
     }
-    expect(literalQuoted).toBe('"dir/evil\\u202e.py"');
   });
 
   test('single-file C1 and bidi filenames match under both quoted and raw finding forms; C0/DEL still fails safePath', () => {
@@ -485,10 +482,10 @@ describe('displayPath quoting and anti-approval-borrowing', () => {
       }
     }
     // Repeated findings in one check confirm statelessness inside evaluate().
-    const multiParts: Part[] = [
+    const multiParts = [
       { file: 'dir/a\u202e.txt', texts: [examples[1]!.text] },
       { file: 'dir/b\u2066.txt', texts: [examples[2]!.text] },
-    ];
+    ] satisfies Part[];
     const multiLines = multiParts.map(p => `MEDIUM env.kv [secret]: assignment (${displayPath(p.file)}, added line 1)`);
     const multiEntries: Entry[] = [
       { ...entries[1]!, path: multiParts[0]!.file },

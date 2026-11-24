@@ -516,12 +516,13 @@ and the test-gap routing value.
 3. If a check still drifts, decide to proceed with the stated cost or hold.
 
 Secret-dispositions compatibility against qualified upstream revision
-`f7402213a04d720eed5c50557c0ba528a69af4bd` (`1.103.1.0`):
+`f7402213a04d720eed5c50557c0ba528a69af4bd` (`1.103.1.0`). The table covers
+the secret-finding anchors. The overall verdict also depends on the other checks.
 
-| Installed upstream gstack | Accepted finding syntax in `evaluate.ts` | Expected `bin/upstream-check` result |
+| Installed upstream gstack | Accepted finding syntax in `evaluate.ts` | Expected secret-finding anchor result |
 |---|---|---|
 | Pre-`1.103.0.0` (unquoted `${f.file}`) | Accepted (dual-form matcher retains raw path fallback) | `DRIFT` on `secret-dispositions.location.1` and `secret-dispositions.display-path.1` |
-| `1.103.0.0`–`1.103.1.0` (`displayPath(f.file)`) | Accepted (qualified at `f7402213a04d720eed5c50557c0ba528a69af4bd` / `1.103.1.0`) | `OK` (`drift=0`) |
+| `1.103.0.0`–`1.103.1.0` (`displayPath(f.file)`) | Accepted (qualified at `f7402213a04d720eed5c50557c0ba528a69af4bd` / `1.103.1.0`) | `OK` for the location and display-path anchors |
 | Future `displayPath()` character-class or quoting edit | May diverge on newly-quoted paths; hold until requalified | `DRIFT` on `secret-dispositions.display-path.1` (exit `4`) |
 
 ## What it does not do
