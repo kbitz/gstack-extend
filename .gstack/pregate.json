@@ -454,11 +454,22 @@
       "tests/handoff-contract.test.ts",
       "tests/skill-protocols-project-spec.test.ts"
     ],
+    "skills/references/pair-review/**": [
+      "tests/skill-protocols-pair-review.test.ts"
+    ],
     "skills/references/review-and-prep/**": [
       "tests/handoff-contract.test.ts",
       "tests/outside-review.test.ts",
       "tests/skill-protocols-review-and-prep.test.ts",
       "tests/workflow-metrics.test.ts"
+    ],
+    "skills/references/roadmap/**": [
+      "tests/skill-protocols-project-spec.test.ts",
+      "tests/skill-protocols-roadmap.test.ts"
+    ],
+    "skills/references/ship-and-land/**": [
+      "tests/skill-protocols-review-and-prep.test.ts",
+      "tests/skill-protocols-ship-and-land.test.ts"
     ],
     "skills/review-and-prep.md": [
       "tests/handoff-contract.test.ts",

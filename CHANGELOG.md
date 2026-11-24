@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.114.0] - 2026-11-23
+
+### Changed
+
+- The `/roadmap`, `/ship-and-land`, and `/pair-review` skills now load conditional instructions from verified reference files in the installed checkout.
+
+### Fixed
+
+- Scoped documentation rules stay reachable in full ship runs.
+- Greptile settings are verified at every applicable push.
+- Reference entry points stay available, and workflow holds remain in place.
+
+### Upgrade notes
+
+- A missing or stale required reference stops the affected workflow and prints recovery instructions.
+
 ## [0.113.0] - 2026-11-23
 
 ### Added

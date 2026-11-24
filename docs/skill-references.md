@@ -5,9 +5,12 @@ keeps everything needed on every run; conditional detail lives in **reference
 files** under `skills/references/<skill>/` and is fetched on demand through the
 start command (`~/.gstack-extend/bin/preamble`).
 
-See the [Track 94I acceptance record](acceptance/skill-references.md) for the
-`/review-and-prep` measurements and
-[installation troubleshooting](installation.md#skill-references) for read failures.
+See the Track 94I acceptance record for measurements of `/review-and-prep`,
+`/roadmap`, `/ship-and-land`, and `/pair-review`.
+[Track 94I acceptance record](acceptance/skill-references.md)
+
+If a reference read fails, follow the recovery steps for the reported error.
+[Installation troubleshooting](installation.md#skill-references)
 
 ## Why references live under the checkout root
 
@@ -40,7 +43,9 @@ gstack-extend checkout rather than beside each host's installed `SKILL.md`:
   - Any heading linked by `#anchor` from `docs/` or `tests/`.
 - All **no-root and degraded-mode fallbacks** and their output templates.
   Keep any optional-read fallback inline. A failed metrics read in
-  `/review-and-prep` disables capture for that segment and preparation continues.
+  `/review-and-prep` or `/ship-and-land` disables capture for that segment,
+  records `capture=partial (reference-unavailable)`, and lets the workflow
+  continue.
 
 ### May move to a reference (`skills/references/<skill>/<prefix>-<topic>.md`)
 

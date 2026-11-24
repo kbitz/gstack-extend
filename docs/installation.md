@@ -180,8 +180,10 @@ foreign install pointers, and unrelated files are preserved.
 `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
 no helper from this checkout, such as `/plan-track`. Antigravity's
 `~/.gemini/config/skills/` is one such directory. Muse Code 1.4.25 validated
-the Codex rendering of `/review-and-prep` in a scratch install.
-See the [pre-merge load checks](acceptance/skill-references.md#pre-merge-scratch-load-and-reference-checks).
+scratch Codex renderings of `/review-and-prep` and the initial PR B copies of
+`/roadmap`, `/ship-and-land`, and `/pair-review`.
+[PR A load checks](acceptance/skill-references.md#pre-merge-scratch-load-and-reference-checks),
+[PR B load checks](acceptance/skill-references.md#pre-merge-scratch-load-checks-pr-b).
 
 With a managed Claude install, link the directory `setup` already maintains, so
 the link follows later refreshes. For Codex, use `~/.codex/skills`:
@@ -724,7 +726,7 @@ running before removing the empty `~/.gstack-extend/bin/.setup.lock` directory.
 
 ### Skill references
 
-Slimmed skills fetch conditional instructions from `skills/references/<skill>/<file>.md` in the verified checkout through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`. Pass the file stem without `.md`. A required read failure stops the skill at that step and preserves existing holds. After fixing the cause, resume the existing work. If an optional metrics read fails in `/review-and-prep`, the skill reports the error, records partial capture and continues preparation.
+Slimmed skills fetch conditional instructions from `skills/references/<skill>/<file>.md` in the verified checkout through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`. Pass the file stem without `.md`. A required read failure stops the skill at that step and preserves existing holds. After fixing the cause, resume the existing work. If an optional metrics read fails in `/review-and-prep` or `/ship-and-land`, the skill reports the error, records `capture=partial (reference-unavailable)`, and continues the workflow.
 
 | Error line / cause | Meaning | Fix |
 |---|---|---|

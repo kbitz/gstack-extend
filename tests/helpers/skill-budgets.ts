@@ -46,8 +46,7 @@ export const BUDGET_RAISE_LOG: readonly BudgetRaiseEntry[] = [];
 /**
  * Budgets for every skill in setup's SKILLS list.
  * - Slimmed in PR A: review-and-prep, with a separate cumulative path budget.
- * - Scheduled for PR B: roadmap, ship-and-land, pair-review (held at current
- *   size + <=10% rounded up to 4 KiB until PR B slims them).
+ * - Slimmed in PR B: roadmap, ship-and-land, pair-review.
  * - Unslimmed skills: current size + <=10% rounded up to 4 KiB.
  */
 export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
@@ -77,9 +76,13 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
     defaultByHandBytes: 53_248,
   },
   'pair-review': {
-    coreBytes: 102_400, // 90,667 * 1.10 = 99,734 -> 100 KiB (PR B slims)
-    defaultByHandRefs: [],
-    defaultByHandBytes: 102_400,
+    coreBytes: 73_728, // 68,088 B core with headroom up to 72 KiB.
+    // Default by-hand Init -> all-pass loop -> Phase 4 completion.
+    defaultByHandRefs: [
+      'conditional-init-plan',
+      'conditional-completion-routing',
+    ],
+    defaultByHandBytes: 86_016, // 77,814 B representative path with headroom.
   },
   'plan-track': {
     coreBytes: 32_768, // 27,135 * 1.10 = 29,849 -> 32 KiB
@@ -110,13 +113,30 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
     ],
   },
   roadmap: {
-    coreBytes: 147_456, // 132,635 * 1.10 = 145,899 -> 144 KiB (PR B slims)
-    defaultByHandRefs: [],
-    defaultByHandBytes: 147_456,
+    coreBytes: 110_592, // 102,934 B core with headroom up to 108 KiB.
+    // Representative regeneration with shipped-Track candidate validation.
+    defaultByHandRefs: [
+      'conditional-candidate-validation',
+    ],
+    defaultByHandBytes: 122_880, // 112,234 B representative path with headroom.
   },
   'ship-and-land': {
-    coreBytes: 126_976, // 114,290 * 1.10 = 125,719 -> 124 KiB (PR B slims)
-    defaultByHandRefs: [],
-    defaultByHandBytes: 126_976,
+    coreBytes: 86_016, // 78,289 B core with headroom up to 84 KiB.
+    // Prepared release-only path with metrics, test evidence and landing checks.
+    defaultByHandRefs: [
+      'conditional-workflow-metrics',
+      'conditional-release-only',
+      'conditional-test-evidence',
+      'conditional-trailer-check',
+      'conditional-land-adapters',
+    ],
+    defaultByHandBytes: 114_688, // 112,215 B representative path with headroom.
+    orchestratedDefaultRefs: [
+      'conditional-workflow-metrics',
+      'conditional-release-only',
+      'conditional-test-evidence',
+      'conditional-trailer-check',
+      'conditional-land-adapters',
+    ],
   },
 };
