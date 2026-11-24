@@ -346,7 +346,7 @@ function checkNarrowedPregateAnchorsLock(text: string): string[] {
   const anchors = [
     '--stage preflight|tests|guards|all   default all',
     "--explain                     print each selected test's provenance and each uncertain mapping",
-    'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];',
+    'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, policyFloorCheck, timingCheck, guardsCheck, lanesCheck];',
     "const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
     "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',",
     "status: 'incomplete', code: 'REPO_COMMANDS_NOT_ALLOWED'",

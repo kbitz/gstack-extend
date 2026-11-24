@@ -312,7 +312,7 @@ describe('pregate-narrowing inventory', () => {
       "--explain                     print each selected test's provenance and each uncertain mapping",
     ]);
     expect(PREGATE_NARROW.index).toEqual([
-      'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];',
+      'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, policyFloorCheck, timingCheck, guardsCheck, lanesCheck];',
       "const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
     ]);
     expect(PREGATE_NARROW.lanes).toEqual([
@@ -1195,6 +1195,7 @@ describe('drift', () => {
   // Value: protects=both Claude and Codex adversarial-pass dispatch wordings pass cleanly across layouts; fails_when=either host wording drifts in its layout or sibling <=1.102.1.0 breaks; why_new=Track 93C dual-host dispatch compatibility; seam=none
   test.each([
     ['nested', 'claude'],
+    ['nested', 'codex'],
     ['sibling', 'codex'],
     ['sibling', 'claude'],
   ] as const)('healthy %s layout with %s dispatch wording passes all checks with 0 drift', async (layout, wording) => {
@@ -1203,6 +1204,46 @@ describe('drift', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
+  }, 30000);
+
+  // Value: protects=an upstream review file containing both Claude and Codex adversarial-pass dispatch wordings together passes cleanly in both layouts; fails_when=matching one alternative breaks when both exact forms coexist; why_new=Track 93C coverage gap for cli.ts:775-777; seam=none
+  test.each(['nested', 'sibling'] as const)('both exact adversarial-pass dispatch forms together in the %s layout pass with 0 drift', async (layout) => {
+    const f = upstream(layout, `both-dispatch-${layout}`, 'claude');
+    writeFileSync(f.files.review!, `${readFileSync(f.files.review!, 'utf8')}\n${ADVERSARIAL_DISPATCH_FORMS[1]}\n`);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(0);
+    expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
+    expect(r.lines).toContain('OK anchor review-and-prep.overlap.review.5');
+    expect(r.lines).toContain('OK anchor review-and-prep.attacker.adversarial-item.2');
+  }, 30000);
+
+  // Value: protects=an unreadable upstream review file drifts both attacker.adversarial-item anchors with read-failure reasons rather than emitting INFO not-declared; fails_when=unreadable review files are treated as undeclared or miss attacker-item drift; why_new=Track 93C coverage gap for cli.ts:784-791; seam=none
+  test.each([
+    ['nested', 'missing', 'sibling'],
+    ['sibling', 'missing', 'sibling'],
+    ['nested', 'directory', 'nested'],
+    ['sibling', 'directory', 'sibling'],
+  ] as const)('a %s fixture with a %s review drifts both attacker items through the %s layout', async (fixtureLayout, kind, selectedLayout) => {
+    const f = upstream(fixtureLayout, `unreadable-review-${kind}-${fixtureLayout}`);
+    const reviewPath = f.files.review!;
+    rmSync(reviewPath);
+    if (kind === 'directory') mkdirSync(reviewPath);
+
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.lines).toContain(`INFO layout ${selectedLayout}`);
+    expect(r.out).not.toContain('INFO not-declared review-and-prep.attacker.adversarial-item');
+    const expectedReason = kind === 'missing'
+      ? `review skill not found: ${join(f.skills, 'gstack-review', 'SKILL.md')}`
+      : `review skill is not a regular file: ${realpathSync(reviewPath)}`;
+    for (const item of [1, 2]) {
+      const idx = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor review-and-prep.attacker.adversarial-item.${item} `));
+      expect(idx).toBeGreaterThan(-1);
+      expect(r.lines[idx]).toContain(expectedReason);
+      expect(r.lines[idx + 1]).toBe(ATTACKER_EFFECT);
+    }
   }, 30000);
 
   // Value: protects=an unrecognized adversarial-pass dispatch wording matching neither Claude nor Codex drifts both overlap.review.5 and attacker.adversarial-item.2 and names both expected wordings; fails_when=an unknown wording passes or omits the expected forms; why_new=Track 93C criterion 3 negative lock; seam=none
@@ -1289,6 +1330,27 @@ describe('drift', () => {
 
     const alternatives = withCopy('single-form-alternative', (t) => t.replace('`# Red Team Review`\n', '`# Red Team Review` or '));
     expect(attackerInventory(alternatives)).toMatchObject({ ok: false, reason: 'red-team anchor list has a malformed or alternative' });
+
+    const claudeSpan = '`an Agent dispatch for the adversarial pass, its prompt including`';
+
+    const mixedWidth = withCopy('mixed-width-ticks', (t) => t.replace('`adversarial-pass`\nand ', '`adversarial-pass``\nand '));
+    expect(attackerInventory(mixedWidth)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has an unbalanced backtick' });
+
+    const leadingOr = withCopy('leading-or', (t) => t.replace('`adversarial-pass`\nand ', 'or `adversarial-pass`\nand '));
+    expect(attackerInventory(leadingOr)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has a malformed or alternative' });
+
+    const overlapLeadingOr = withCopy('overlap-leading-or', (t) => t.replace('`All readers examine the same candidate.`', 'or `All readers examine the same candidate.`'));
+    expect(overlapInventory(overlapLeadingOr)).toMatchObject({ ok: false, reason: 'review anchor list has a malformed or alternative' });
+
+    const repeated = withCopy('repeated-or-alternative', (t) => t.split(pair).join(`${claudeSpan} or ${claudeSpan}`));
+    expect(attackerInventory(repeated)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list has a malformed or alternative' });
+    expect(overlapInventory(repeated)).toMatchObject({ ok: false, reason: 'review anchor list has a malformed or alternative' });
+
+    const earlierAltAttacker = withCopy('earlier-alt-attacker', (t) => t.replace('`adversarial-pass`\nand ' + pair, `\`adversarial-pass\` or ${claudeSpan}\nand ${codexSpan}`));
+    expect(attackerInventory(earlierAltAttacker)).toMatchObject({ ok: false, reason: 'adversarial-item anchor list must have 2 slots with alternatives only in the last slot' });
+
+    const earlierAltOverlap = withCopy('earlier-alt-overlap', (t) => t.replace(`\n${precedingOverlap}\n${pair}`, `\n${precedingOverlap} or ${claudeSpan}\n${codexSpan}`));
+    expect(overlapInventory(earlierAltOverlap)).toMatchObject({ ok: false, reason: 'review anchor list must have 5 slots with alternatives only in the last slot' });
   });
 
   const NARROW_EFFECT = '  effect: /review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so';
@@ -1297,7 +1359,7 @@ describe('drift', () => {
   test.each([
     ['nested', 'bin', 'review-and-prep.pregate-narrowing.bin.1', '--stage preflight|tests|guards|all   default all'],
     ['sibling', 'bin', 'review-and-prep.pregate-narrowing.bin.2', "--explain                     print each selected test's provenance and each uncertain mapping"],
-    ['nested', 'index', 'review-and-prep.pregate-narrowing.index.1', 'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];'],
+    ['nested', 'index', 'review-and-prep.pregate-narrowing.index.1', 'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, policyFloorCheck, timingCheck, guardsCheck, lanesCheck];'],
     ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.2', "const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));"],
     ['nested', 'lanes', 'review-and-prep.pregate-narrowing.lanes.1', "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',"],
     ['sibling', 'lanes', 'review-and-prep.pregate-narrowing.lanes.3', "status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'"],
@@ -1329,17 +1391,24 @@ describe('drift', () => {
 
   const OLD_PREGATE_NARROW = {
     'review-and-prep.pregate-narrowing.bin.1': '--stage preflight|tests|all   default all',
+    'review-and-prep.pregate-narrowing.index.1': 'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];',
     'review-and-prep.pregate-narrowing.index.2': "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
   } as const;
-  // Value: protects=the requalified pregate anchors (the guards stage) report OK on the installed text and DRIFT on the 1.91.367.0 text, in both layouts, as longer spans that do not contain the old ones; fails_when=an anchor is re-loosened to a shorter or contained match, or the old text still passes; why_new=upstream added a guards stage in 1.94.27.0; seam=none
+  // Value: protects=the requalified pregate anchors (guards stage and policyFloorCheck) report OK on the installed text and DRIFT on the prior text, in both layouts, as longer spans that do not contain the old ones; fails_when=an anchor is re-loosened to a shorter or contained match, or the old text still passes; why_new=upstream added guards in 1.94.27.0 and policyFloorCheck in 1.103.0.0; seam=none
   test.each([
     ['nested', 'bin', 'review-and-prep.pregate-narrowing.bin.1'],
     ['sibling', 'bin', 'review-and-prep.pregate-narrowing.bin.1'],
+    ['nested', 'index', 'review-and-prep.pregate-narrowing.index.1'],
+    ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.1'],
     ['nested', 'index', 'review-and-prep.pregate-narrowing.index.2'],
     ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.2'],
   ] as const)('requalified anchor in the %s layout\'s pregate %s file: OK on the new text, DRIFT on the old (%s)', async (layout, file, id) => {
     const old = OLD_PREGATE_NARROW[id];
-    const current = file === 'bin' ? PREGATE_NARROW.bin[0]! : PREGATE_NARROW.index[1]!;
+    const current = id === 'review-and-prep.pregate-narrowing.bin.1'
+      ? PREGATE_NARROW.bin[0]!
+      : id === 'review-and-prep.pregate-narrowing.index.1'
+        ? PREGATE_NARROW.index[0]!
+        : PREGATE_NARROW.index[1]!;
     expect(current.length).toBeGreaterThan(old.length);
     expect(current.includes(old)).toBe(false);
     const ok = await check(rootArgs(upstream(layout)));
@@ -2003,6 +2072,46 @@ describe('launcher', () => {
     expect(r.stdout).not.toContain('review-and-prep.overlap.review.');
     expect(r.stdout).toContain('  effect: /review-and-prep: the overlap anchors cannot be listed, so first-cycle=overlap is unverified and stays inactive');
     expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - OVERLAP_ANCHORS} drift=1`);
+  }, 40000);
+
+  // Value: protects=a malformed local attacker or overlap dispatch list through bin/upstream-check reports its own inventory drift, effect, and reduced check count while keeping all other inventories OK; fails_when=local dispatch syntax drift silently drops checks or drifts another inventory; why_new=Track 93C coverage gap for cli.ts:753-759; seam=none
+  test('a copied tree with a malformed local adversarial or overlap dispatch list reports DRIFT inventory for that list only', () => {
+    const codexSpan = '``a `spawn_agent` (`task_name: adversarial`), its prompt including``';
+    const pair = '`an Agent dispatch for the adversarial pass, its prompt including` or ' + codexSpan;
+    const makeCopy = (label: string, mutate: (text: string) => string) => {
+      const copy = fresh(label);
+      cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+      mkdirSync(join(copy, 'bin'));
+      cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+      put(join(copy, 'bin', 'lib', 'bun-prereq.sh'), readFileSync(join(REPO, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'));
+      writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
+      put(join(copy, 'skills', 'review-and-prep.md'), mutate(readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8')));
+      return copy;
+    };
+
+    const attackerCopy = makeCopy('copy-attacker-malformed', (t) => t.replace('`adversarial-pass`\nand ' + pair, '`adversarial-pass`\nand ' + pair + ' or'));
+    const ra = launch(rootArgs(upstream('nested')), {}, cwd, join(attackerCopy, 'bin', 'upstream-check'));
+    expect(ra.status).toBe(4);
+    expect(drifts(ra.stdout.split('\n')).map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual(['inventory review-and-prep.attacker']);
+    expect(ra.stdout).toContain('DRIFT inventory review-and-prep.attacker adversarial-item anchor list has a malformed or alternative');
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold', 'overlap']) {
+      expect(ra.stdout).toContain(`OK inventory review-and-prep.${gate}`);
+    }
+    expect(ra.stdout).not.toContain('review-and-prep.attacker.');
+    expect(ra.stdout).toContain('  effect: /review-and-prep: the attacker-part anchors cannot be listed, so the red-team step and delegate=adversarial|red-team are unverified and stay inactive');
+    expect(ra.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - ATTACKER_ANCHORS} drift=1`);
+
+    const overlapCopy = makeCopy('copy-overlap-malformed', (t) => t.replace(`\n${pair}\nand its adversarial instructions`, `\n${pair} or\nand its adversarial instructions`));
+    const ro = launch(rootArgs(upstream('nested')), {}, cwd, join(overlapCopy, 'bin', 'upstream-check'));
+    expect(ro.status).toBe(4);
+    expect(drifts(ro.stdout.split('\n')).map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual(['inventory review-and-prep.overlap']);
+    expect(ro.stdout).toContain('DRIFT inventory review-and-prep.overlap review anchor list has a malformed or alternative');
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold', 'attacker']) {
+      expect(ro.stdout).toContain(`OK inventory review-and-prep.${gate}`);
+    }
+    expect(ro.stdout).not.toContain('review-and-prep.overlap.');
+    expect(ro.stdout).toContain('  effect: /review-and-prep: the overlap anchors cannot be listed, so first-cycle=overlap is unverified and stays inactive');
+    expect(ro.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - OVERLAP_ANCHORS} drift=1`);
   }, 40000);
 
   test('a missing extension dependency uses the internal-error contract before output', () => {
