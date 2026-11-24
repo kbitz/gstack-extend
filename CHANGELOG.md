@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.115.1] - 2026-11-24
+
+### Fixed
+
+- Restored the delegable part-list clause for review-policy delegation, including adversarial and red-team, to the core `skills/review-and-prep.md` skill so callers inspecting the loaded skill file see every supported part again.
+- Callers can discover `adversarial` and `red-team` delegation support from the installed `/review-and-prep` skill.
+
 ## [0.115.0] - 2026-11-23
 
 ### Changed
