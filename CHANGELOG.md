@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.115.0] - 2026-11-23
+
+### Changed
+
+- Grok Build stage telemetry labels qualified interactive terminal and host-app sessions as `user-directed` with the `terminal-session` source.
+
+### Fixed
+
+- Malformed Grok launch evidence is rejected.
+
+### Upgrade notes
+
+- Grok Build by-hand runs now classify as `user-directed` (`terminal-session`) from `prompt_context.json` and `summary.json`, while Antigravity (`agy`) and non-orchestrated `review-state derive` rows remain documented as `unknown` (`no-harness`) and existing ledger rows are not rewritten.
+
 ## [0.114.0] - 2026-11-23
 
 ### Changed
