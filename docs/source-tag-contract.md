@@ -331,7 +331,7 @@ _blocked-by: <ref>[, <ref>...]_
 ### CLI (`bin/roadmap-id`)
 
 - `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from live planning documents and available Git history.
-- `bin/roadmap-id migrate [repo-path] [--dry-run] [--rewrite-blocked-by]` idempotently assigns deterministic SHA-256-derived IDs across `roadmap-shipped.md`, `ROADMAP.md`, `roadmap-future.md`, and `TODOS.md`. It also reserves historical IDs and preserves all other text by default. The optional blocker rewrite prefers a live Track over a shipped receipt with the same label. Output includes per-file `ADDED` counts, total `ADDED: <N>`, and `STATUS: ok|dry-run|unchanged`.
+- `bin/roadmap-id migrate [repo-path] [--dry-run] [--rewrite-blocked-by]` idempotently assigns deterministic SHA-256-derived IDs across `roadmap-shipped.md`, `ROADMAP.md`, `roadmap-future.md`, and `TODOS.md`. It validates the UTF-8 planning files before writing, reserves historical IDs, and preserves all other text by default. Optional blocker rewriting converts unannotated Track labels with a unique target. A live Track takes precedence over shipped receipts with the same label. Output includes per-file `ADDED` counts, total `ADDED: <N>`, and `STATUS: ok|dry-run|unchanged`.
 - `bin/roadmap-id --help | -h` — prints usage to stdout, exits `0`, writes nothing.
 
 Both subcommands return `0` on success, `1` when they cannot safely read the project or complete the operation, and `2` on invalid arguments. Migration replaces each changed regular file in place and can be rerun after a partial migration. A shallow clone can reserve only the IDs visible in its documents and available Git history.

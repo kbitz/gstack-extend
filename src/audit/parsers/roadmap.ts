@@ -34,7 +34,7 @@ import {
   parseEffortTag,
   parseTaskTitle,
 } from '../lib/task-line.ts';
-import { detectStateRegions, stateAtLine, type LifecycleState } from '../lib/state.ts';
+import { detectStateRegions, FUTURE_HEADING_RE, stateAtLine, type LifecycleState } from '../lib/state.ts';
 import {
   extractInlineBulletId,
   isValidWorkItemId,
@@ -241,7 +241,7 @@ function isDeleteTask(line: string): boolean {
 const PHASE_HEADING_RE = /^#{2,4} Phase ([0-9]+):(.*)$/;
 const GROUP_HEADING_RE = /^#{2,4} Group ([0-9]+):(.*)$/;
 const TRACK_HEADING_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
-const STATE_HEADING_RE = /^## (Shipped|In Progress|Current Plan|Future)/;
+const STATE_HEADING_RE = /^## (Shipped|In Progress|Current Plan)/;
 
 // ─── Cycle detection ──────────────────────────────────────────────────
 
@@ -369,9 +369,8 @@ export function parseRoadmap(
     const lineNo = i + 1;
 
     // Top-level state section detection.
-    const stateMatch = line.match(STATE_HEADING_RE);
-    if (stateMatch !== null) {
-      const name = stateMatch[1];
+    const name = FUTURE_HEADING_RE.test(line) ? 'Future' : STATE_HEADING_RE.exec(line)?.[1];
+    if (name !== undefined) {
       section = name === 'Future' ? 'future' : name === 'Shipped' ? 'shipped' : 'none';
       trackId = '';
       groupNum = '';

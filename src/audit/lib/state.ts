@@ -34,7 +34,7 @@ export type StateRange = {
 const SHIPPED_RE = /^## Shipped[ \t\v\f\r]*$/;
 const IN_PROGRESS_RE = /^## In Progress[ \t\v\f\r]*$/;
 const CURRENT_PLAN_RE = /^## Current Plan[ \t\v\f\r]*$/;
-const FUTURE_RE = /^## Future[ \t\v\f\r]*(\([^)]*\))?[ \t\v\f\r]*$/;
+export const FUTURE_HEADING_RE = /^## Future\b/;
 const ANY_H2_RE = /^## /;
 
 export function detectStateRegions(content: string): StateRegions {
@@ -58,7 +58,7 @@ export function detectStateRegions(content: string): StateRegions {
     if (SHIPPED_RE.test(line)) opened = 'shipped';
     else if (IN_PROGRESS_RE.test(line)) opened = 'in-progress';
     else if (CURRENT_PLAN_RE.test(line)) opened = 'current-plan';
-    else if (FUTURE_RE.test(line)) opened = 'future';
+    else if (FUTURE_HEADING_RE.test(line)) opened = 'future';
 
     if (opened !== null) {
       close(lineNo);

@@ -47,6 +47,9 @@ describe('runCheckWorkItemIds', () => {
     ].join('\n'));
     const result = runCheckWorkItemIds(makeCtx({ parsedRoadmap: roadmap.value }));
     expect(result.status).toBe('pass');
+    const todos = parseTodos('## Unprocessed\n### [manual] Inbox entry\n- **ID:** wi-222222\n');
+    const duplicate = runCheckWorkItemIds(makeCtx({ parsedRoadmap: roadmap.value, parsedTodos: todos.value }));
+    expect(duplicate.body.join('\n')).toContain('DUPLICATE_ID: ROADMAP.md Track 1A');
   });
 
   test('passes when all records across TODOS, Future, ROADMAP, and shipped have valid unique IDs', () => {

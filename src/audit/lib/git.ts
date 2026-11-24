@@ -64,24 +64,42 @@ export type GitGateway = {
 export type GitGatewayDeps = {
   cwd: string;
   spawn?: GitSpawn;
+  bindToCwd?: boolean;
 };
 
-export const defaultSpawn: GitSpawn = (args, cwd, maxBuffer) => {
+// Git hooks set repository-local variables even when an invoked command
+// changes directory. A caller bound to a project path uses Git discovery.
+const GIT_REPOSITORY_ENV = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_CONFIG',
+  'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_DIR', 'GIT_GRAFT_FILE',
+  'GIT_IMPLICIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_NAMESPACE',
+  'GIT_NO_REPLACE_OBJECTS', 'GIT_OBJECT_DIRECTORY', 'GIT_PREFIX',
+  'GIT_QUARANTINE_PATH', 'GIT_REPLACE_REF_BASE', 'GIT_SHALLOW_FILE', 'GIT_WORK_TREE',
+];
+
+function spawnGit(args: string[], cwd: string, maxBuffer?: number, bindToCwd = false): GitSpawnResult {
+  const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', GIT_PAGER: 'cat' };
+  if (bindToCwd) {
+    for (const key of GIT_REPOSITORY_ENV) delete env[key];
+  }
   const result = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
     maxBuffer,
-    env: { ...process.env, LC_ALL: 'C', GIT_PAGER: 'cat' },
+    env,
   });
   return {
     ok: result.status === 0,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
   };
-};
+}
+
+export const defaultSpawn: GitSpawn = spawnGit;
 
 export function createGitGateway(deps: GitGatewayDeps): GitGateway {
-  const spawn = deps.spawn ?? defaultSpawn;
+  const spawn: GitSpawn = deps.spawn ??
+    ((args, cwd, maxBuffer) => spawnGit(args, cwd, maxBuffer, deps.bindToCwd));
   const cwd = deps.cwd;
 
   const splitLines = (s: string): string[] => {
@@ -160,11 +178,11 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       // command as an empty reservation set. A non-repository is legitimate.
       const repo = spawn(['rev-parse', '--is-inside-work-tree'], cwd);
       if (!repo.ok) {
-        if (/not a git repository/i.test(repo.stderr)) return [];
+        if (/^fatal: not a git repository \(or any\b/.test(repo.stderr)) return [];
         throw new Error('could not establish Git history for work-item IDs');
       }
       const r = spawn(
-        ['log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv',
+        ['log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv', '--text',
           '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...relPaths],
         cwd,
         HISTORY_PATCH_BUFFER_BYTES,

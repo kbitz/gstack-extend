@@ -10,6 +10,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import { FUTURE_HEADING_RE } from './state.ts';
 
 // ─── Contract constants ───────────────────────────────────────────────
 
@@ -25,10 +26,11 @@ const TODO_ID_BULLET_RE = /^- \*\*ID:\*\*[ \t]*(.*)$/;
 const TRACK_ID_LINE_RE = /^_id:[ \t\v\f\r]*(.*)$/i;
 const INLINE_ID_RE = /^\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*/;
 const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*(?:[—–-]+[ \t]*)?$/;
-const BOLD_BULLET_RE = /^(- \*\*(.+?)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
+const BOLD_BULLET_RE = /^(- \*\*((?:(?!\*\*).)+)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const TRACK_HEADING_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):(.*)$/;
 const GROUP_HEADING_RE = /^#{2,4} Group ([0-9]+):/;
+const SHIPPED_SUFFIX_RE = /[ \t]+✓[ \t]+(?:Complete|Shipped)(?:[ \t]+\(v[^)]+\))?[ \t]*$/;
 const LEGACY_SHIPPED_TRACK_BULLET_RE = /^(- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]+[ \t]*)(.*)$/;
 const FENCE_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 
@@ -98,6 +100,39 @@ export function parseTrackIdLine(line: string): ParsedIdField | null {
   return { raw, id: closed && isValidWorkItemId(raw) ? raw : null };
 }
 
+/** Blank closed inline code spans while retaining the original offsets. */
+function maskInlineCode(line: string): string {
+  const runs = [...line.matchAll(/`+/g)];
+  if (runs.length < 2) return line;
+  const nextOfLength = new Map<number, number>();
+  const closers: Array<number | undefined> = [];
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const width = runs[i]![0].length;
+    closers[i] = nextOfLength.get(width);
+    nextOfLength.set(width, i);
+  }
+
+  const pieces: string[] = [];
+  let offset = 0;
+  for (let i = 0; i < runs.length; i++) {
+    const closing = closers[i];
+    if (closing === undefined) continue;
+    const start = runs[i]!.index;
+    const end = runs[closing]!.index + runs[closing]![0].length;
+    pieces.push(line.slice(offset, start), ' '.repeat(end - start));
+    offset = end;
+    i = closing;
+  }
+  return pieces.join('') + line.slice(offset);
+}
+
+function trailingInlineId(head: string, visible: string): RegExpExecArray | null {
+  const match = TRAILING_INLINE_ID_RE.exec(head);
+  if (match === null) return null;
+  const marker = match.index + match[0].indexOf('**ID:**');
+  return visible.startsWith('**ID:**', marker) ? match : null;
+}
+
 /**
  * Extract an inline `**ID:** <val>` token from a `## Future` bullet or legacy
  * shipped `- Track <label> —` bullet, ignoring anything inside `**Revisit when:**`.
@@ -106,20 +141,24 @@ export function parseTrackIdLine(line: string): ParsedIdField | null {
  */
 export function extractInlineBulletId(bullet: string): ParsedIdField | null {
   const line = bullet.replace(/\r$/, '');
-  const revisitIdx = line.lastIndexOf(REVISIT_MARKER);
-  const head = (revisitIdx >= 0 ? line.slice(0, revisitIdx) : line).trimStart();
+  const visibleLine = maskInlineCode(line);
+  const revisitIdx = visibleLine.lastIndexOf(REVISIT_MARKER);
+  const prose = revisitIdx >= 0 ? line.slice(0, revisitIdx) : line;
+  const head = prose.trimStart();
+  const visible = visibleLine.slice(prose.length - head.length, prose.length);
   const bold = BOLD_BULLET_RE.exec(head);
   const legacy = LEGACY_SHIPPED_TRACK_BULLET_RE.exec(head);
   const body = bold?.[3] ?? legacy?.[3];
-  const leading = body === undefined ? null : INLINE_ID_RE.exec(body);
-  const trailing = TRAILING_INLINE_ID_RE.exec(head);
+  const leading = body !== undefined && visible.startsWith('**ID:**', head.length - body.length)
+    ? INLINE_ID_RE.exec(body) : null;
+  const trailing = trailingInlineId(head, visible);
   const raw = leading?.[1] ?? trailing?.[1];
   if (raw === undefined) return null;
   const result: ParsedIdField = { raw, id: isValidWorkItemId(raw) ? raw : null };
   const remainder = leading ? body!.slice(leading[0].length) : '';
   const secondLeadingField = /^(?:[—–-]+[ \t]*)?\*\*ID:\*\*/.test(remainder);
   const secondTrailingField = trailing !== null && (
-    TRAILING_INLINE_ID_RE.test(head.slice(0, trailing.index)) ||
+    trailingInlineId(head.slice(0, trailing.index), visible.slice(0, trailing.index)) !== null ||
     (leading !== null && trailing.index >= head.length - remainder.length)
   );
   if (secondLeadingField || secondTrailingField) result.duplicate = true;
@@ -333,7 +372,7 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
   const out = [...lines];
 
   for (const [i, line] of planningLines(lines)) {
-    if (/^## Future[ \t]*(?:\([^)]*\))?[ \t]*$/.test(line)) {
+    if (FUTURE_HEADING_RE.test(line)) {
       inFuture = true;
       continue;
     }
@@ -346,8 +385,12 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
     if (!/^- /.test(bullet)) continue;
 
     // Extract title for deterministic seeding regardless of whether ID exists.
-    const rest = bullet.slice(2);
-    const boldDash = BOLD_BULLET_RE.exec(bullet);
+    const indent = line.slice(0, line.length - bullet.length);
+    const revisitIdx = maskInlineCode(line).lastIndexOf(REVISIT_MARKER);
+    const proseEnd = revisitIdx >= 0 ? revisitIdx : line.length;
+    const prose = line.slice(indent.length, proseEnd);
+    const rest = prose.slice(2);
+    const boldDash = BOLD_BULLET_RE.exec(prose);
     const title = boldDash !== null ? boldDash[2]! : rest.split(/[—–-]/)[0]!.replace(/^\*\*|\*\*$/g, '').trim();
     const normTitle = normalizeTitle(title);
     const occurrence = occ.get(normTitle) ?? 0;
@@ -363,11 +406,9 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
     const ending = lineEnding(lines[i]!);
     if (boldDash !== null) {
       // `- **<Title>** — <body>` → `- **<Title>** — **ID:** <id> — <body>`
-      const indent = line.slice(0, line.length - bullet.length);
       const gap = /[ \t]$/.test(boldDash[1]!) ? '' : ' ';
-      out[i] = `${indent}${boldDash[1]}${gap}**ID:** ${id} — ${boldDash[3]}${ending}`;
+      out[i] = `${indent}${boldDash[1]}${gap}**ID:** ${id} — ${boldDash[3]}${line.slice(proseEnd)}${ending}`;
     } else {
-      const revisitIdx = line.lastIndexOf(REVISIT_MARKER);
       if (revisitIdx >= 0) {
         const insertion = line.slice(0, revisitIdx).search(/[ \t]*$/);
         const gap = insertion === revisitIdx ? ' ' : '';
@@ -386,10 +427,15 @@ export function migrateFutureText(content: string, taken: Set<string>): MigrateR
 
 export type MigrateRoadmapOpts = {
   rewriteBlockedBy?: boolean;
-  labelToId?: ReadonlyMap<string, string>;
+  labelToId?: ReadonlyMap<string, string | null>;
+  fromShippedArchive?: boolean;
 };
 
-type MigrateRoadmapResult = MigrateResult & { labelToId: ReadonlyMap<string, string> };
+type MigrateRoadmapResult = MigrateResult & { labelToId: ReadonlyMap<string, string | null> };
+
+function recordLabel(labels: Map<string, string | null>, label: string, id: string | null): void {
+  labels.set(label, labels.has(label) ? null : id);
+}
 
 function canonicalizeTrackLabel(raw: string): string {
   return raw.replace(/^([0-9]+)([A-Za-z])((?:\.[0-9]+)?)$/, (_m, n: string, letter: string, rest: string) => {
@@ -397,7 +443,7 @@ function canonicalizeTrackLabel(raw: string): string {
   });
 }
 
-function rewriteBlockedByLine(line: string, labelToId: ReadonlyMap<string, string>): string {
+function rewriteBlockedByLine(line: string, labelToId: ReadonlyMap<string, string | null>): string {
   const m = /^(_blocked-by:[ \t\v\f\r]*)(.*?)(_[ \t\v\f\r]*)$/i.exec(line);
   if (m === null) return line;
   const prefix = m[1]!;
@@ -408,24 +454,21 @@ function rewriteBlockedByLine(line: string, labelToId: ReadonlyMap<string, strin
   let changed = false;
   const parts = body.split(/,(?![^()]*\))/).map((rawPart) => {
     const trimmed = rawPart.trim();
-    if (isValidWorkItemId(trimmed)) return trimmed;
-    const note = trimmed.match(/[ \t]+\(([^)]*)\)$/);
-    // Legacy readers treat a named Track inside a note as another dependency.
-    if (note && /\bTrack[ \t]+[0-9]+[A-Za-z]/i.test(note[1]!)) return trimmed;
-    const bare = (note ? trimmed.slice(0, note.index) : trimmed).replace(/^Track[ \t]+/i, '');
+    // Only whole labels can become canonical ID tokens without losing notes.
+    const bare = trimmed.replace(/^Track[ \t]+/i, '');
     if (/^[0-9]+[A-Za-z](?:\.[0-9]+)?$/.test(bare)) {
       const canon = canonicalizeTrackLabel(bare);
       const mapped = labelToId.get(canon);
-      if (mapped !== undefined) {
+      if (typeof mapped === 'string') {
         changed = true;
-        return mapped;
+        return rawPart.replace(trimmed, mapped);
       }
     }
-    return trimmed;
+    return rawPart;
   });
 
   if (!changed) return line;
-  return `${prefix}${parts.join(', ')}${suffix}`;
+  return `${prefix}${parts.join(',')}${suffix}`;
 }
 
 /**
@@ -444,7 +487,8 @@ export function migrateRoadmapText(
 ): MigrateRoadmapResult {
   const lines = content.split('\n');
   const addedIds: string[] = [];
-  const labelMap = new Map<string, string>(opts.labelToId ?? []);
+  const shippedLabels = new Map(opts.labelToId);
+  const liveLabels = new Map<string, string | null>();
 
   // Track spans for `#{3,5} Track <label>: <title>` headings.
   type TrackSpan = {
@@ -452,43 +496,31 @@ export function migrateRoadmapText(
     endIdx: number;
     label: string;
     title: string;
+    shipped: boolean;
   };
   const spans: TrackSpan[] = [];
   let inGroup = false;
   let inFuture = false;
+  let inShipped = opts.fromShippedArchive === true;
+  let groupShipped = false;
   let current: TrackSpan | null = null;
   const legacyBulletIndices: Array<{ idx: number; label: string; prefix: string; rest: string }> = [];
 
   for (const [i, line] of planningLines(lines)) {
-    if (/^## Future($| \()/i.test(line)) {
+    const topLevel = line.startsWith('## ');
+    const groupHeading = GROUP_HEADING_RE.test(line) && (!inFuture || topLevel);
+    if (topLevel || groupHeading) {
       if (current !== null) {
         current.endIdx = i;
         spans.push(current);
         current = null;
       }
-      inFuture = true;
-      inGroup = false;
-      continue;
-    }
-    const groupHeading = GROUP_HEADING_RE.test(line);
-    if (groupHeading && (!inFuture || /^## /.test(line))) {
-      if (current !== null) {
-        current.endIdx = i;
-        spans.push(current);
-        current = null;
+      if (topLevel && !groupHeading) {
+        inShipped = opts.fromShippedArchive === true || /^## Shipped\b/.test(line);
       }
-      inFuture = false;
-      inGroup = true;
-      continue;
-    }
-    if (/^## /.test(line)) {
-      if (current !== null) {
-        current.endIdx = i;
-        spans.push(current);
-        current = null;
-      }
-      inFuture = false;
-      inGroup = false;
+      inFuture = FUTURE_HEADING_RE.test(line);
+      inGroup = groupHeading;
+      groupShipped = groupHeading && SHIPPED_SUFFIX_RE.test(line);
       continue;
     }
     if (inFuture) continue;
@@ -500,8 +532,9 @@ export function migrateRoadmapText(
         spans.push(current);
       }
       const label = tm[1]!;
-      const title = tm[2]!.replace(/[ \t]+✓[ \t]+(?:Complete|Shipped)(?:[ \t]+\(v[^)]+\))?[ \t]*$/, '').trim();
-      current = { headingIdx: i, endIdx: lines.length, label, title };
+      const shipped = inShipped || groupShipped || SHIPPED_SUFFIX_RE.test(tm[2]!);
+      const title = tm[2]!.replace(SHIPPED_SUFFIX_RE, '').trim();
+      current = { headingIdx: i, endIdx: lines.length, label, title, shipped };
       continue;
     }
 
@@ -534,22 +567,19 @@ export function migrateRoadmapText(
 
     const existing = extractInlineBulletId(outLines[b.idx]!);
     if (existing !== null) {
-      if (existing.id !== null && !labelMap.has(b.label)) {
-        labelMap.set(b.label, existing.id);
-      }
+      recordLabel(shippedLabels, b.label, existing.duplicate ? null : existing.id);
       continue;
     }
     const seed = `roadmap-legacy\0${b.label}\0${occurrence}`;
     const id = deriveDeterministicId(seed, taken);
     taken.add(id);
     addedIds.push(id);
-    if (!labelMap.has(b.label)) labelMap.set(b.label, id);
+    recordLabel(shippedLabels, b.label, id);
     outLines[b.idx] = `${b.prefix}**ID:** ${id} — ${b.rest}${lineEnding(lines[b.idx]!)}`;
   }
 
   // Handle `#{3,5} Track` headings.
   const insertAfter = new Map<number, string>();
-  const localLabels = new Set<string>();
   for (const span of spans) {
     const normKey = `track\0${span.label}\0${normalizeTitle(span.title)}`;
     const occurrence = occ.get(normKey) ?? 0;
@@ -567,23 +597,16 @@ export function migrateRoadmapText(
         break;
       }
       const body = l.trim();
-      if (firstBodyLine && /^_.*_$/.test(body) && /risk|low|medium|high/i.test(body)) {
+      if (firstBodyLine && /^_.*_$/.test(body) &&
+          (/risk|low|medium|high/i.test(body) || (!span.shipped && /^_\d+[ \t]+tasks?\b/i.test(body)))) {
         metaLineIdx = j;
       }
       if (body !== '') firstBodyLine = false;
     }
 
-    // The active document owns its display labels even if an older archive
-    // receipt has the same label. A malformed local ID must not bind to history.
-    const firstLocalRecord = !localLabels.has(span.label);
-    localLabels.add(span.label);
-    // A label appearing twice in this file is ambiguous for the optional rewrite.
-    if (!firstLocalRecord) labelMap.delete(span.label);
+    const labels = span.shipped ? shippedLabels : liveLabels;
     if (hasIdLine) {
-      if (firstLocalRecord) {
-        if (existingId === null) labelMap.delete(span.label);
-        else labelMap.set(span.label, existingId);
-      }
+      recordLabel(labels, span.label, existingId);
       continue;
     }
 
@@ -591,13 +614,18 @@ export function migrateRoadmapText(
     const id = deriveDeterministicId(seed, taken);
     taken.add(id);
     addedIds.push(id);
-    if (firstLocalRecord) labelMap.set(span.label, id);
+    recordLabel(labels, span.label, id);
 
     // Insert right after the `_...risk..._` metadata line when present,
     // or immediately under the heading otherwise.
     const anchor = metaLineIdx >= 0 ? metaLineIdx : span.headingIdx;
     insertAfter.set(anchor, `_id: ${id}_${lineEnding(lines[anchor]!)}`);
   }
+
+  // A live record takes precedence over shipped history. An ambiguous or
+  // malformed live record still prevents accidentally targeting history.
+  const labelMap = new Map(shippedLabels);
+  for (const [label, id] of liveLabels) labelMap.set(label, id);
 
   // Optionally rewrite `_blocked-by:` lines inside Track bodies.
   let blockedByChanged = false;

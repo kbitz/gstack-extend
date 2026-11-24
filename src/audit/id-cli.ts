@@ -41,8 +41,9 @@ Options:
 `;
 
 function resolveRepoRoot(positional: string | null): string {
-  const gw = createGitGateway({ cwd: process.cwd() });
-  return resolve(positional ?? gw.toplevel() ?? process.cwd());
+  if (positional !== null) return resolve(positional);
+  const gw = createGitGateway({ cwd: process.cwd(), bindToCwd: true });
+  return resolve(gw.toplevel() ?? process.cwd());
 }
 
 const DOC_NAMES = ['roadmap-shipped.md', 'ROADMAP.md', 'roadmap-future.md', 'TODOS.md'] as const;
@@ -51,20 +52,29 @@ const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_H
 
 type PlanningDoc = { path: string; name: string; text: string; mode: number };
 
-function readDocs(repoRoot: string): Map<string, PlanningDoc> {
+function readDocs(repoRoot: string, mode: 'mint' | 'migrate'): Map<string, PlanningDoc> {
   if (!statSync(repoRoot).isDirectory()) throw new Error('project path is not a directory');
   const root = realpathSync(repoRoot);
   const folder = join(root, 'docs');
-  if (lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink()) {
+  if (mode === 'migrate' && lstatSync(folder, { throwIfNoEntry: false })?.isSymbolicLink()) {
     throw new Error('refusing linked docs directory');
   }
   const docs = new Map<string, PlanningDoc>();
   for (const name of DOC_PATHS) {
     const path = join(root, name);
-    const st = lstatSync(path, { throwIfNoEntry: false });
+    // Mint reads linked planning files the audit can see. Migrate requires
+    // regular destinations and rejects links before planning any writes.
+    const st = mode === 'mint'
+      ? statSync(path, { throwIfNoEntry: false })
+      : lstatSync(path, { throwIfNoEntry: false });
     if (st === undefined) continue;
     if (!st.isFile()) throw new Error(`refusing non-regular planning document ${name}`);
-    docs.set(name, { path, name, text: readFileSync(path, 'utf8'), mode: st.mode & 0o777 });
+    const bytes = readFileSync(path);
+    const text = bytes.toString('utf8');
+    if (mode === 'migrate' && !Buffer.from(text, 'utf8').equals(bytes)) {
+      throw new Error(`planning document is not valid UTF-8: ${name}`);
+    }
+    docs.set(name, { path, name, text, mode: st.mode & 0o777 });
   }
   return docs;
 }
@@ -88,15 +98,17 @@ function collectTakenIds(docs: Iterable<PlanningDoc>, git: GitGateway): Set<stri
 }
 
 function replaceDoc(doc: PlanningDoc, text: string): void {
-  if (!lstatSync(doc.path).isFile() || realpathSync(doc.path) !== doc.path ||
-      readFileSync(doc.path, 'utf8') !== doc.text) {
-    throw new Error(`planning document changed during migration: ${doc.name}`);
-  }
-  const staging = mkdtempSync(join(dirname(doc.path), '.roadmap-id-'));
+  const parent = dirname(doc.path);
+  if (realpathSync(parent) !== parent) throw new Error(`planning document path changed during migration: ${doc.name}`);
+  const staging = mkdtempSync(join(parent, '.roadmap-id-'));
   const tmp = join(staging, 'document');
   try {
     writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
     chmodSync(tmp, doc.mode);
+    if (!lstatSync(doc.path).isFile() || realpathSync(doc.path) !== doc.path ||
+        realpathSync(tmp) !== tmp || !readFileSync(doc.path).equals(Buffer.from(doc.text, 'utf8'))) {
+      throw new Error(`planning document changed during migration: ${doc.name}`);
+    }
     renameSync(tmp, doc.path);
   } finally {
     rmSync(staging, { recursive: true, force: true });
@@ -157,8 +169,8 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
     }
 
     const repoRoot = resolveRepoRoot(positionals[0] ?? null);
-    const git = gitOverride ?? createGitGateway({ cwd: repoRoot });
-    const taken = collectTakenIds(readDocs(repoRoot).values(), git);
+    const git = gitOverride ?? createGitGateway({ cwd: repoRoot, bindToCwd: true });
+    const taken = collectTakenIds(readDocs(repoRoot, 'mint').values(), git);
 
     const minted: string[] = [];
     for (let i = 0; i < count; i++) {
@@ -196,8 +208,8 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
     }
 
     const repoRoot = resolveRepoRoot(positionals[0] ?? null);
-    const docs = readDocs(repoRoot);
-    const git = gitOverride ?? createGitGateway({ cwd: repoRoot });
+    const docs = readDocs(repoRoot, 'migrate');
+    const git = gitOverride ?? createGitGateway({ cwd: repoRoot, bindToCwd: true });
     const taken = collectTakenIds(docs.values(), git);
 
     const lines: string[] = [];
@@ -214,7 +226,7 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
     const roadmap = findDoc(docs, 'ROADMAP.md');
     const future = findDoc(docs, 'roadmap-future.md');
     const todos = findDoc(docs, 'TODOS.md');
-    const archive = shipped === undefined ? undefined : migrateRoadmapText(shipped.text, taken);
+    const archive = shipped === undefined ? undefined : migrateRoadmapText(shipped.text, taken, { fromShippedArchive: true });
     if (shipped !== undefined && archive !== undefined) {
       record(shipped, archive);
     }
