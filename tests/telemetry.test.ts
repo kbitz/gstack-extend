@@ -1584,7 +1584,7 @@ describe('execution provenance', () => {
     expect(start.status).toBe(0);
     const finish = runHelper({ ...debugFix.env, ...env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', '--agent', 'cursor']);
     expect(finish.status).toBe(0);
-    expect(finish.stderr).toContain("ignored invalid --agent 'cursor' (expected claude, codex, grok or muse)");
+    expect(finish.stderr).toContain("ignored invalid --agent 'cursor' (expected claude, codex, grok, muse or antigravity)");
     expect(debugFix.readLedger().at(-1)).toMatchObject({ agent: null, agent_source: 'unknown', route: 'unknown', run_mode_source: 'no-harness' });
   });
 
@@ -2237,6 +2237,239 @@ describe('execution provenance', () => {
     ], { env: fix.env, encoding: 'utf8' });
     expect([ancestry.status, ancestry.stderr]).toEqual([0, '']);
     expect(JSON.parse(ancestry.stdout)).toEqual(['muse', 'muse', 'claude']);
+  }, 30_000);
+
+  test('Antigravity markers detect agent and verbatim model (with carry, tie-break, effort fallbacks, fingerprint, and fail-closed safety)', () => {
+    const fix = makeTelemetryFixture('off');
+    const agyTranscript = (appDir: string, cid: string) =>
+      join(appDir, 'brain', cid, '.system_generated', 'logs', 'transcript.jsonl');
+    const writeAgy = (appDir: string, cid: string, records: object[]) =>
+      writeJsonl(agyTranscript(appDir, cid), records);
+    const defaultAppDir = join(fix.home, '.gemini', 'antigravity-cli');
+    const customAppDir = join(fix.home, 'custom-agy-data');
+
+    // Full detection with ANTIGRAVITY_AGENT=1, valid ANTIGRAVITY_CONVERSATION_ID, and custom ANTIGRAVITY_APP_DATA_DIR;
+    // carry=True resolves a PLANNER_RESPONSE created_at before stage begin, effort stays null (unknown).
+    const cidMain = '0195c8a1-0000-4000-8000-000000000001';
+    const detected = provenanceRun(
+      fix,
+      { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: cidMain, ANTIGRAVITY_APP_DATA_DIR: customAppDir },
+      start => {
+        writeAgy(customAppDir, cidMain, [
+          { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(start - 20) },
+          { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: iso(start - 15) },
+        ]);
+      },
+    ).row;
+    expect(detected).toMatchObject({
+      agent: 'antigravity',
+      agent_source: 'detected',
+      model: 'gemini-4-neon-xhigh',
+      model_source: 'detected',
+      effort: null,
+      effort_source: 'unknown',
+      route: 'unknown',
+      run_mode: 'user-directed',
+      run_mode_source: 'terminal-session',
+    });
+    expect(validRow(detected)).toBe(true);
+
+    // Tie-break to later model (1 carried turn + 1 in-window turn, both <= end) and most-turns-wins.
+    const cidTie = '0195c8a1-0000-4000-8000-000000000002';
+    const tied = provenanceRun(
+      fix,
+      { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: cidTie },
+      start => {
+        writeAgy(defaultAppDir, cidTie, [
+          { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(start - 10) },
+          { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-medium', created_at: iso(start - 1) },
+          { step_index: 2, type: 'PLANNER_RESPONSE', model: 'gemini-3.8-flash-high', created_at: iso(start) },
+        ]);
+      },
+    ).row;
+    expect(tied).toMatchObject({ agent: 'antigravity', model: 'gemini-3.8-flash-high', model_source: 'detected', effort: null, effort_source: 'unknown' });
+
+    const cidMajority = '0195c8a1-0000-4000-8000-000000000004';
+    const majority = provenanceRun(
+      fix,
+      { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: cidMajority },
+      start => {
+        writeAgy(defaultAppDir, cidMajority, [
+          { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(start - 10) },
+          { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-medium', created_at: iso(start) },
+          { step_index: 2, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-medium', created_at: iso(start) },
+          { step_index: 3, type: 'PLANNER_RESPONSE', model: 'gemini-3.8-flash-high', created_at: iso(start) },
+        ]);
+      },
+    ).row;
+    expect(majority).toMatchObject({ agent: 'antigravity', model: 'gemini-4-neon-medium', model_source: 'detected', effort: null, effort_source: 'unknown' });
+
+    // Requested effort fallback (GSTACK_EXTEND_EFFORT) and explicit --effort flag override.
+    const reqEffort = provenanceRun(
+      fix,
+      { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: cidMain, ANTIGRAVITY_APP_DATA_DIR: customAppDir, GSTACK_EXTEND_EFFORT: 'high' },
+    ).row;
+    expect(reqEffort).toMatchObject({ agent: 'antigravity', model: 'gemini-4-neon-xhigh', effort: 'high', effort_source: 'requested' });
+
+    const flagEffort = provenanceRun(
+      fix,
+      { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: cidMain, ANTIGRAVITY_APP_DATA_DIR: customAppDir, GSTACK_EXTEND_EFFORT: 'high' },
+      () => {},
+      ['--outcome', 'success', '--effort', 'xhigh'],
+    ).row;
+    expect(flagEffort).toMatchObject({ agent: 'antigravity', model: 'gemini-4-neon-xhigh', effort: 'xhigh', effort_source: 'flag' });
+
+    // --agent antigravity flag override and --help output.
+    const flagAgent = provenanceRun(fix, {}, () => {}, ['--outcome', 'success', '--agent', 'antigravity']).row;
+    expect(flagAgent).toMatchObject({ agent: 'antigravity', agent_source: 'flag', run_mode: 'unknown', run_mode_source: 'no-harness' });
+    expect(validRow(flagAgent)).toBe(true);
+    const help = runHelper(fix.env, ['--help']);
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('[--agent claude|codex|grok|muse|antigravity]');
+
+    // Valid ANTIGRAVITY_CONVERSATION_ID alone detects Antigravity and contributes to session fingerprint.
+    const cidAlone = '0195c8a1-0000-4000-8000-000000000003';
+    const fpFix = makeTelemetryFixture('off');
+    expect(runHelper({ ...fpFix.env, ANTIGRAVITY_CONVERSATION_ID: cidAlone }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(readHandoff(fpFix).harness).toBe(sessionFingerprint([['ANTIGRAVITY_CONVERSATION_ID', cidAlone]]));
+    const aloneRow = provenanceRun(fix, { ANTIGRAVITY_CONVERSATION_ID: cidAlone }, start => {
+      writeAgy(defaultAppDir, cidAlone, [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(start - 5) },
+        { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-argon-high', created_at: iso(start - 4) },
+      ]);
+    }).row;
+    expect(aloneRow).toMatchObject({ agent: 'antigravity', model: 'gemini-4-argon-high', run_mode: 'user-directed', run_mode_source: 'terminal-session' });
+
+    // Non-"1" ANTIGRAVITY_AGENT without valid ANTIGRAVITY_CONVERSATION_ID does NOT detect Antigravity.
+    for (const badAgent of ['0', 'custom']) {
+      const ignored = provenanceRun(fix, { ANTIGRAVITY_AGENT: badAgent }).row;
+      expect(ignored).toMatchObject({ agent: null, agent_source: 'unknown', run_mode: 'unknown', run_mode_source: 'no-harness' });
+    }
+
+    // ANTIGRAVITY_AGENT=1 without ANTIGRAVITY_CONVERSATION_ID detects agent but fails closed even with PASEO_AGENT_ID.
+    const noCid = provenanceRun(fix, { ANTIGRAVITY_AGENT: '1', PASEO_AGENT_ID: 'paseo-agy-no-cid' }).row;
+    expect(noCid).toMatchObject({
+      agent: 'antigravity',
+      agent_source: 'detected',
+      model: null,
+      effort: null,
+      run_mode: 'unknown',
+      run_mode_source: 'entrypoint-unavailable',
+    });
+
+    // Traversal conversation ID, relative ANTIGRAVITY_APP_DATA_DIR, symlinked dirs/file, and FIFO all fail closed.
+    const badCid = provenanceRun(fix, { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: '../escape', PASEO_AGENT_ID: 'paseo-agy-bad' }).row;
+    expect(badCid).toMatchObject({ agent: 'antigravity', model: null, run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
+
+    const relRoot = provenanceRun(fix, {
+      ANTIGRAVITY_AGENT: '1',
+      ANTIGRAVITY_CONVERSATION_ID: cidMain,
+      ANTIGRAVITY_APP_DATA_DIR: relative(process.cwd(), customAppDir),
+    }).row;
+    expect(relRoot).toMatchObject({ agent: 'antigravity', model: null, run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
+
+    // Symlinked brain/, <id>/, .system_generated/, logs/, and transcript.jsonl below ANTIGRAVITY_APP_DATA_DIR.
+    const symCases: Array<[string, () => string]> = [
+      ['brain', () => {
+        const root = join(fix.home, 'agy-sym-brain');
+        mkdirSync(root, { recursive: true });
+        symlinkSync(join(customAppDir, 'brain'), join(root, 'brain'), 'dir');
+        return root;
+      }],
+      ['id', () => {
+        const root = join(fix.home, 'agy-sym-id');
+        mkdirSync(join(root, 'brain'), { recursive: true });
+        symlinkSync(join(customAppDir, 'brain', cidMain), join(root, 'brain', cidMain), 'dir');
+        return root;
+      }],
+      ['system_generated', () => {
+        const root = join(fix.home, 'agy-sym-sysgen');
+        mkdirSync(join(root, 'brain', cidMain), { recursive: true });
+        symlinkSync(join(customAppDir, 'brain', cidMain, '.system_generated'), join(root, 'brain', cidMain, '.system_generated'), 'dir');
+        return root;
+      }],
+      ['logs', () => {
+        const root = join(fix.home, 'agy-sym-logs');
+        mkdirSync(join(root, 'brain', cidMain, '.system_generated'), { recursive: true });
+        symlinkSync(join(customAppDir, 'brain', cidMain, '.system_generated', 'logs'), join(root, 'brain', cidMain, '.system_generated', 'logs'), 'dir');
+        return root;
+      }],
+      ['transcript', () => {
+        const root = join(fix.home, 'agy-sym-file');
+        const logsDir = join(root, 'brain', cidMain, '.system_generated', 'logs');
+        mkdirSync(logsDir, { recursive: true });
+        symlinkSync(agyTranscript(customAppDir, cidMain), join(logsDir, 'transcript.jsonl'));
+        return root;
+      }],
+    ];
+    for (const [label, buildRoot] of symCases) {
+      const symRoot = buildRoot();
+      const row = provenanceRun(fix, {
+        ANTIGRAVITY_AGENT: '1',
+        ANTIGRAVITY_CONVERSATION_ID: cidMain,
+        ANTIGRAVITY_APP_DATA_DIR: symRoot,
+      }).row;
+      expect(row, `symlinked ${label}`).toMatchObject({
+        agent: 'antigravity',
+        model: null,
+        run_mode: 'unknown',
+        run_mode_source: 'entrypoint-unavailable',
+      });
+    }
+
+    // FIFO transcript.jsonl must not block and must fail closed.
+    const fifoRoot = join(fix.home, 'agy-fifo-root');
+    const fifoLogsDir = join(fifoRoot, 'brain', cidMain, '.system_generated', 'logs');
+    mkdirSync(fifoLogsDir, { recursive: true });
+    expect(spawnSync('mkfifo', [join(fifoLogsDir, 'transcript.jsonl')]).status).toBe(0);
+    const fifoRow = provenanceRun(fix, {
+      ANTIGRAVITY_AGENT: '1',
+      ANTIGRAVITY_CONVERSATION_ID: cidMain,
+      ANTIGRAVITY_APP_DATA_DIR: fifoRoot,
+    }).row;
+    expect(fifoRow).toMatchObject({ agent: 'antigravity', model: null, run_mode: 'unknown', run_mode_source: 'entrypoint-unavailable' });
+  }, 30_000);
+
+  test('Antigravity nested with Claude markers resolves by latest turn, and harness_ancestor recognizes agy and antigravity', () => {
+    const fix = makeTelemetryFixture('off');
+    const claudeSid = 'claude-outer-agy-test';
+    const agyCid = '0195c8a1-0000-4000-8000-000000000009';
+    const transcript = join(fix.home, '.claude/projects/-outer', claudeSid + '.jsonl');
+    const agyFile = join(fix.home, '.gemini/antigravity-cli/brain', agyCid, '.system_generated/logs/transcript.jsonl');
+    const both = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: claudeSid, ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: agyCid };
+
+    const agyLatest = provenanceRun(fix, both, start => {
+      const now = Date.now() / 1000;
+      writeJsonl(transcript, [claudeTurn(start - 20, 'c1', 'claude-opus-5', 'xhigh')]);
+      writeJsonl(agyFile, [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(now - 1) },
+        { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-high', created_at: iso(now) },
+      ]);
+    }).row;
+    expect(agyLatest).toMatchObject({ agent: 'antigravity', model: 'gemini-4-neon-high', effort: null });
+
+    const claudeLatest = provenanceRun(fix, both, start => {
+      writeJsonl(transcript, [claudeTurn(Date.now() / 1000, 'c2', 'claude-opus-5', 'xhigh')]);
+      writeJsonl(agyFile, [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(start - 25) },
+        { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-high', created_at: iso(start - 20) },
+      ]);
+    }).row;
+    expect(claudeLatest).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
+
+    const ancestry = spawnSync('python3', ['-B', '-I', '-c',
+      'import json, sys\n'
+      + 'sys.path.insert(0, sys.argv[1])\n'
+      + 'import telemetry\n'
+      + 'cands = {"antigravity", "claude", "codex", "grok", "muse"}\n'
+      + 't_agy = {300: (200, "/bin/bash", "bash"), 200: (100, "/usr/local/bin/agy", "agy"), 100: (1, "/usr/bin/claude", "claude")}\n'
+      + 't_full = {300: (200, "/bin/bash", "bash"), 200: (100, "/opt/bin/antigravity", "antigravity"), 100: (1, "/usr/bin/codex", "codex")}\n'
+      + 't_other = {300: (200, "/usr/bin/agym", "agym"), 200: (100, "/usr/bin/muse", "muse"), 100: (1, "/usr/bin/grok", "grok")}\n'
+      + 'print(json.dumps([telemetry.harness_ancestor(cands, table=t_agy, pid=300), telemetry.harness_ancestor(cands, table=t_full, pid=300), telemetry.harness_ancestor(cands, table=t_other, pid=300)]))\n',
+      join(ROOT, 'bin/lib'),
+    ], { env: fix.env, encoding: 'utf8' });
+    expect([ancestry.status, ancestry.stderr]).toEqual([0, '']);
+    expect(JSON.parse(ancestry.stdout)).toEqual(['antigravity', 'antigravity', 'muse']);
   }, 30_000);
 
   test('an unreadable provenance config records nothing', () => {
@@ -5433,14 +5666,24 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     writeGrokContext('grok-audit-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-audit-headless' }, session_kind: 'headless' });
     writeMuseOpen('muse-rm-host', 'paseo');
     writeMuseOpen('muse-rm-nocli', null);
+    const agyAuditPath = (cid: string) =>
+      join(fix.home, '.gemini/antigravity-cli/brain', cid, '.system_generated/logs/transcript.jsonl');
+    writeJsonl(agyAuditPath('agy-audit-term'), [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(1790000000) },
+      { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: iso(1790000001) },
+    ]);
+    writeJsonl(agyAuditPath('agy-audit-sub'), [
+      { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: iso(1790000000) },
+    ]);
 
-    // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the ten-case cross product; seam=none
+    // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the cross product; seam=none
     for (const [name, harness] of [
       ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
       ['Claude Paseo', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'Paseo' }],
       ['Codex', { CODEX_THREAD_ID: 'synthetic-codex' }],
       ['Grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok' }],
       ['Muse', { MUSE_SESSION_ID: 'synthetic-muse' }],
+      ['Antigravity', { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'synthetic-antigravity' }],
     ] as Array<[string, Record<string, string>]>) {
       for (const owner of ['', 'fixture-owner']) {
         cases.push({ name: `${name} orchestration override owner=${owner || 'unset'}`,
@@ -5495,9 +5738,9 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      'for fn in (telemetry.run_mode, telemetry._open_regular_log, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.antigravity_app_data_dir, telemetry.antigravity_logs, telemetry.antigravity_turns, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.antigravity_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
       '    src = inspect.getsource(fn)',
-      '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl"):',
+      '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl", "sqlite3"):',
       '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
       'bad = []',
       'def hook(event, args):',
@@ -5536,6 +5779,17 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-nocli"}, clear=False):',
       '    assert telemetry.muse_launch_surface() is None',
       '    assert telemetry.run_mode("muse", "muse", None) == ("unknown", "entrypoint-unavailable")',
+      'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-term", "PASEO_AGENT_ID": "paseo-agy-audit"}, clear=False):',
+      '    assert len(telemetry.antigravity_logs("agy-audit-term")) == 1',
+      '    assert telemetry.antigravity_turns("agy-audit-term")[0][1] == "gemini-4-neon-xhigh"',
+      '    assert telemetry.antigravity_launch_surface() == "terminal"',
+      '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("user-directed", "terminal-session")',
+      'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-sub"}, clear=False):',
+      '    assert telemetry.antigravity_launch_surface() == "other"',
+      '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("unknown", "entrypoint-unqualified")',
+      'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-missing"}, clear=False):',
+      '    assert telemetry.antigravity_launch_surface() is None',
+      '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("unknown", "entrypoint-unavailable")',
       'telemetry.run_mode("claude", "claude", None)',
       'with mock.patch.dict(telemetry.os.environ, {}, clear=True):',
       '    assert telemetry.run_mode("claude", "claude", "bad\\nitem") == ("unknown", "malformed-signal")',
@@ -5623,6 +5877,58 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     );
     writeMuseOpen('muse-rm-over', 'paseo', 70_000);
 
+    const agyTranscriptPath = (cid: string, appDir = join(fix.home, '.gemini/antigravity-cli')) =>
+      join(appDir, 'brain', cid, '.system_generated/logs/transcript.jsonl');
+    const writeAgySession = (cid: string, records: object[] | string) => {
+      const target = agyTranscriptPath(cid);
+      if (typeof records === 'string') {
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, records);
+      } else {
+        writeJsonl(target, records);
+      }
+    };
+    writeAgySession('agy-rm-term', [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(1790000000) },
+      { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: iso(1790000001) },
+    ]);
+    writeAgySession('agy-rm-subagent', [
+      { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: iso(1790000000) },
+    ]);
+    writeAgySession('agy-rm-implicit', [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_IMPLICIT', created_at: iso(1790000000) },
+    ]);
+    const agySymTarget = agyTranscriptPath('agy-rm-sym');
+    mkdirSync(dirname(agySymTarget), { recursive: true });
+    symlinkSync(agyTranscriptPath('agy-rm-term'), agySymTarget);
+    writeAgySession('agy-rm-over', [
+      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', pad: 'x'.repeat(70_000) },
+    ]);
+    writeAgySession('agy-rm-step1', [
+      { step_index: 1, type: 'USER_INPUT', source: 'USER_EXPLICIT' },
+    ]);
+    writeAgySession('agy-rm-boolstep', [
+      { step_index: false, type: 'USER_INPUT', source: 'USER_EXPLICIT' },
+    ]);
+    writeAgySession('agy-rm-padded-type', [
+      { step_index: 0, type: ' USER_INPUT ', source: 'USER_EXPLICIT' },
+    ]);
+    writeAgySession('agy-rm-padded-source', [
+      { step_index: 0, type: 'USER_INPUT', source: ' USER_EXPLICIT ' },
+    ]);
+    const agyStepZero = JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT' });
+    writeAgySession('agy-rm-malformed', `{not-json\n${agyStepZero}\n`);
+    const linkedAgyBrainRoot = join(fix.home, 'agy-linked-brain-root');
+    mkdirSync(linkedAgyBrainRoot, { recursive: true });
+    symlinkSync(join(fix.home, '.gemini/antigravity-cli/brain'), join(linkedAgyBrainRoot, 'brain'), 'dir');
+    const linkedAgyLogsRoot = join(fix.home, 'agy-linked-logs-root');
+    mkdirSync(join(linkedAgyLogsRoot, 'brain/agy-rm-term/.system_generated'), { recursive: true });
+    symlinkSync(
+      join(fix.home, '.gemini/antigravity-cli/brain/agy-rm-term/.system_generated/logs'),
+      join(linkedAgyLogsRoot, 'brain/agy-rm-term/.system_generated/logs'),
+      'dir',
+    );
+
     // Value: protects=only a regular file under the named session store can qualify; fails_when=a linked date directory is followed; why_new=QA showed an outside-store fixture classifying as hand use; seam=none
     const linkedCodexHome = join(fix.home, 'codex-linked-home');
     const linkedDay = join(linkedCodexHome, 'sessions/2026/11/19');
@@ -5698,6 +6004,18 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         missing: { MUSE_SESSION_ID: 'muse-rm-1' },
         symlinked: { MUSE_SESSION_ID: 'muse-rm-sym' },
         overBound: { MUSE_SESSION_ID: 'muse-rm-over' },
+      },
+      {
+        harness: 'antigravity',
+        overrideAgent: 'claude',
+        terminal: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-term', PASEO_AGENT_ID: 'paseo-agy-rm' },
+        other: [
+          { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-subagent', PASEO_AGENT_ID: 'paseo-agy-sub' },
+          { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-implicit', PASEO_AGENT_ID: 'paseo-agy-imp' },
+        ],
+        missing: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-missing', PASEO_AGENT_ID: 'paseo-agy-miss' },
+        symlinked: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-sym' },
+        overBound: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-over' },
       },
     ];
 
@@ -5848,6 +6166,64 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         finishEnv: { CODEX_THREAD_ID: 'codex-rm-resumed-exec' },
         mode: 'unknown',
         source: 'entrypoint-unqualified',
+      },
+      {
+        name: 'Antigravity PASEO_AGENT_ID alone without conversation ID gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', PASEO_AGENT_ID: 'paseo-agy-only' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity linked brain directory under ANTIGRAVITY_APP_DATA_DIR gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-term', ANTIGRAVITY_APP_DATA_DIR: linkedAgyBrainRoot },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity linked logs directory under ANTIGRAVITY_APP_DATA_DIR gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-term', ANTIGRAVITY_APP_DATA_DIR: linkedAgyLogsRoot },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity relative ANTIGRAVITY_APP_DATA_DIR gives entrypoint-unavailable',
+        finishEnv: {
+          ANTIGRAVITY_AGENT: '1',
+          ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-term',
+          ANTIGRAVITY_APP_DATA_DIR: relative(process.cwd(), join(fix.home, '.gemini/antigravity-cli')),
+        },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity non-zero step_index gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-step1' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity boolean step_index=false gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-boolstep' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity whitespace-padded type gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-padded-type' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity whitespace-padded source gives entrypoint-unavailable',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-padded-source' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
+      },
+      {
+        name: 'Antigravity malformed line 0 stays unavailable even when a later record matches',
+        finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-malformed' },
+        mode: 'unknown',
+        source: 'entrypoint-unavailable',
       },
     );
 
@@ -6532,6 +6908,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     for (const [agent, unsupportedEnv] of [
       ['grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok-session' }],
       ['muse', { MUSE_SESSION_ID: 'synthetic-muse-session' }],
+      ['antigravity', { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'synthetic-antigravity-session' }],
     ] as Array<[string, Record<string, string>]>) {
       const unsupported = provenanceRun(fix, unsupportedEnv, () => {}, ['--outcome', 'success']);
       expect(unsupported.row).toMatchObject({
