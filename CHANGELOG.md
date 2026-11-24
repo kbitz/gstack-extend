@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.116.0] - 2026-11-24
+
+### Added
+
+- Telemetry now detects Antigravity sessions and classifies by-hand Antigravity runs as `user-directed` (`terminal-session`), adding `antigravity` as a compatible addition to the `agent` enum in `docs/stage-runs.schema.json` while leaving existing ledger rows unchanged.
+- Stage-run telemetry now records Antigravity provenance and qualifies by-hand runs from the first transcript line.
+- The version 4 stage-run schema and the `--agent` flag now accept `antigravity`.
+
+### Upgrade notes
+
+- Consumers validating `stage-runs` rows against a pinned or vendored copy of `docs/stage-runs.schema.json` should update that copy before ingesting `agent: "antigravity"` rows, and automated scripts invoking `agy -p` or stream-JSON print mode must set `GSTACK_EXTEND_RUN_MODE=orchestrated` (or another orchestration signal) so those runs are not classified as `user-directed`.
+
 ## [0.115.1] - 2026-11-24
 
 ### Fixed
