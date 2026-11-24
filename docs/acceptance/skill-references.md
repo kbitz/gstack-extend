@@ -27,7 +27,7 @@ reference reader still checks contiguity and retries a truncated read in ranges.
 - **Per-reference caps.** `16,384` file bytes, `340` lines, and at most
   `2,000` characters per line. The numbered response and trailer must fit
   `17,000` bytes, with a 1,000-byte margin below the measured Grok result.
-  The final 29 references top out at 15,513 file bytes,
+  PR A's 29 `/review-and-prep` references top out at 15,513 file bytes,
   231 lines and 16,540 output bytes.
 - **Budgets:** enforced in `tests/helpers/skill-budgets.ts` and `tests/skill-references.test.ts` for all 11 skills in `setup`'s `SKILLS` list.
 - **Root-read proof:** `setup` is unchanged; references live at `skills/references/<skill>/<prefix>-<topic>.md` under the gstack-extend checkout and are served through `~/.gstack-extend/bin/preamble <skill> --ref <file> --expect <digest>`, which resolves the same verified checkout root as the start command and binds the loaded core to the checkout via a 16-hex SHA-256 content digest.
@@ -365,7 +365,7 @@ Each probe runs in a scratch repository with no remote, given only scenario inpu
 
 ### Before / after sizes (PR B)
 
-Original cores are from `ce16f48`. Every slimmed core and reference meets all byte, line, and numbered-output caps (`scripts/skill-references.ts check --base ce16f48` passed with `dropped=0` on all three skills).
+Original cores are from `ce16f48`. The repaired candidate at `129d800` meets the core and reference byte, line, and numbered-output caps.
 
 | Skill | Before core (B) | After core (B) | Codex rendering (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -376,7 +376,9 @@ Original cores are from `ce16f48`. Every slimmed core and reference meets all by
 The representative paths count each reference body once. The by-hand ship path
 includes release test evidence even when preparation supplied the full-suite result.
 
-Conservation check output at `ce16f48`:
+`bun scripts/skill-references.ts check --base ce16f48 --skill <skill>` passed
+for each of the three skills at `129d800`.
+
 - `CONSERVATION roadmap: ok=true blocks=8 dropped=0 base=132635B core=102934B`
 - `CONSERVATION ship-and-land: ok=true blocks=14 dropped=0 base=114290B core=78289B`
 - `CONSERVATION pair-review: ok=true blocks=13 dropped=0 base=90667B core=68088B`
@@ -442,8 +444,8 @@ outcomes are tracked separately from the implementation's initial runs.
 | PR-5 | `pair-review` | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass (candidate-only): observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped blocked | Pass: observed exit 1 and relayed `SKILL_REFERENCE_MISSING` for `conditional-fix-flow` verbatim; stopped with blocked stage line and `--outcome error` |
 
 Review-added base-versus-candidate runs remain unproven on Claude Code and Codex
-pending approval for the scratch harness dispatch. Local tests cover several
-of the affected entry points independently.
+pending approval for the scratch harness dispatch. The targeted local run at
+`129d800` recorded 1,663 passed, 4 skipped, and 0 failed across 14 test files.
 
 | Probe | Local evidence on repaired content |
 |---|---|
