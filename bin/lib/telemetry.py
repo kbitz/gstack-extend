@@ -11,7 +11,7 @@ import json
 import os
 import stat
 from collections import Counter
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 import re
 import shutil
@@ -1030,9 +1030,8 @@ def iso(epoch):
         return None
 
 
-def head_records(path, home):
-    if path is None:
-        return
+@contextmanager
+def _open_regular_log(path, home):
     # The harness's configured home is trusted. Each directory below it and the log itself are opened without
     # following links or racing a path check, so a linked store, date or session directory cannot qualify.
     parts = path.relative_to(home).parts
@@ -1046,9 +1045,20 @@ def head_records(path, home):
         descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         opened.callback(os.close, descriptor)
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            yield None
             return
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            chunk = stream.read(LOG_HEAD_BYTES + 1)
+            yield stream
+
+
+def head_records(path, home, *, first_line_only=False):
+    if path is None:
+        return
+    with _open_regular_log(path, home) as stream:
+        if stream is None:
+            return
+        read = stream.readline if first_line_only else stream.read
+        chunk = read(LOG_HEAD_BYTES + 1)
 
     # The one-byte lookahead can confirm a record ends at the cap, but is never parsed.
     lines = chunk[:LOG_HEAD_BYTES].split(b"\n")
@@ -1385,51 +1395,38 @@ def antigravity_app_data_dir(app_data_dir=None):
     return Path(app_data_dir or os.environ.get("ANTIGRAVITY_APP_DATA_DIR") or Path.home() / ".gemini/antigravity-cli")
 
 
-def antigravity_logs(conversation_id, app_data_dir=None):
+def _antigravity_log_path(conversation_id, home):
     if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", conversation_id):
-        return []
-    home = antigravity_app_data_dir(app_data_dir)
+        return None
     if not home.is_absolute():
+        return None
+    return home / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
+
+
+def antigravity_logs(conversation_id, app_data_dir=None):
+    home = antigravity_app_data_dir(app_data_dir)
+    log = _antigravity_log_path(conversation_id, home)
+    if log is None:
         return []
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY
     try:
-        with ExitStack() as opened:
-            directory = os.open(home, directory_flags)
-            opened.callback(os.close, directory)
-            for part in ("brain", conversation_id, ".system_generated", "logs"):
-                directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
-                opened.callback(os.close, directory)
-            descriptor = os.open("transcript.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-            opened.callback(os.close, descriptor)
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                return []
+        with _open_regular_log(log, home) as stream:
+            return [log] if stream is not None else []
     except OSError:
         return []
-    return [home / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"]
 
 
 def antigravity_turns(conversation_id):
-    if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", conversation_id):
-        return []
     home = antigravity_app_data_dir()
-    if not home.is_absolute():
+    log = _antigravity_log_path(conversation_id, home)
+    if log is None:
         return []
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY
     try:
-        with ExitStack() as opened:
-            directory = os.open(home, directory_flags)
-            opened.callback(os.close, directory)
-            for part in ("brain", conversation_id, ".system_generated", "logs"):
-                directory = os.open(part, directory_flags | os.O_NOFOLLOW, dir_fd=directory)
-                opened.callback(os.close, directory)
-            descriptor = os.open("transcript.jsonl", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-            opened.callback(os.close, descriptor)
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        with _open_regular_log(log, home) as stream:
+            if stream is None:
                 return []
-            with os.fdopen(descriptor, "rb", closefd=False) as stream:
-                size = stream.seek(0, os.SEEK_END)
-                stream.seek(max(0, size - LOG_TAIL_BYTES))
-                lines = stream.read(LOG_TAIL_BYTES).split(b"\n")
+            size = stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, size - LOG_TAIL_BYTES))
+            lines = stream.read(LOG_TAIL_BYTES).split(b"\n")
     except OSError:
         return []
     turns = []
@@ -1780,15 +1777,11 @@ def grok_launch_surface(root=None, begin=None):
 
 def antigravity_launch_surface():
     conversation_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID", "")
-    if not isinstance(conversation_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", conversation_id):
-        return None
     home = antigravity_app_data_dir()
-    # A relative ANTIGRAVITY_APP_DATA_DIR (or relative HOME without it) would resolve against the checkout.
-    if not home.is_absolute():
-        return None
-    log = home / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
+    log = _antigravity_log_path(conversation_id, home)
     try:
-        record = next(head_records(log, home), None)
+        # Only the opening line can qualify this conversation's launch surface.
+        record = next(head_records(log, home, first_line_only=True), None)
     except OSError:
         return None
     if record is None:

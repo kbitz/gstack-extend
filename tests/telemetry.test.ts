@@ -5738,7 +5738,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'from unittest import mock',
       'sys.path.insert(0, sys.argv[1])',
       'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.antigravity_app_data_dir, telemetry.antigravity_logs, telemetry.antigravity_turns, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.antigravity_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+      'for fn in (telemetry.run_mode, telemetry._open_regular_log, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.antigravity_app_data_dir, telemetry.antigravity_logs, telemetry.antigravity_turns, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.antigravity_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
       '    src = inspect.getsource(fn)',
       '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl", "sqlite3"):',
       '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
@@ -5916,7 +5916,8 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     writeAgySession('agy-rm-padded-source', [
       { step_index: 0, type: 'USER_INPUT', source: ' USER_EXPLICIT ' },
     ]);
-    writeAgySession('agy-rm-malformed', '{not-json\n');
+    const agyStepZero = JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT' });
+    writeAgySession('agy-rm-malformed', `{not-json\n${agyStepZero}\n`);
     const linkedAgyBrainRoot = join(fix.home, 'agy-linked-brain-root');
     mkdirSync(linkedAgyBrainRoot, { recursive: true });
     symlinkSync(join(fix.home, '.gemini/antigravity-cli/brain'), join(linkedAgyBrainRoot, 'brain'), 'dir');
@@ -6219,7 +6220,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         source: 'entrypoint-unavailable',
       },
       {
-        name: 'Antigravity malformed JSON line 0 gives entrypoint-unavailable',
+        name: 'Antigravity malformed line 0 stays unavailable even when a later record matches',
         finishEnv: { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_CONVERSATION_ID: 'agy-rm-malformed' },
         mode: 'unknown',
         source: 'entrypoint-unavailable',
