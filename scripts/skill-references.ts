@@ -667,7 +667,10 @@ export const MOVE_MANIFEST: readonly MoveEntry[] = [
     startMarker: '**Applicable Greptile gate, before landing:** after ship creates/updates the PR,',
     endBeforeMarker: null,
     readInstructionSuffix: 'before triggering, monitoring, triaging Greptile feedback, or checking the landing gate when Greptile applies',
-    coreGate: 'When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. If a push would start a second run, stop before it and ask the user how to resolve that trigger.',
+    additionalReads: [
+      ['### Commit without co-author trailers', 'before checking automatic review settings for each push when Greptile applies'],
+    ],
+    coreGate: 'When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. Before every push, check applicable automatic triggers against the one-run allowance. If a push would start a second run, stop before it and ask the user how to resolve that trigger.',
   },
   {
     skill: 'ship-and-land',

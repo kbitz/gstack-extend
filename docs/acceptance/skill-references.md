@@ -324,7 +324,7 @@ Measured on `mmm/f0a413c8` against base `ce16f48524d6d41ab812157125aa0f5971fc32d
 | `## Preamble (run first)` + `### Inline upgrade flow` + `# /pair-review` + `## Prompt Visibility Rule` + `## Step 0: Detect Command` + `## State Management` | Primary (every run) | Core-only | — | `SHARED:upgrade-flow`, `CORE_REFERENCE_RULE`, visibility rule, command routing, paths, schemas |
 | `## Phase 0: Deploy Discovery` (Step 1, Step 3, Step 4) | Primary (Init) | Core-only | — | Recipe check, ask user, and save recipe (contains nested markdown fence) stay in core |
 | `### Step 2: Discover deploy patterns` + `### Step 3: Generate grouped test plan` + `### Step 3.2: Merge co-observable items` + `### Step 3.4: Order for one pass through the app` | Primary (conditional: Phase 1 Init) | Split | `conditional-init-plan` | Sizing/human-judgment/Check-ID gates stay in core; pattern discovery, three-line authoring rules, merge test, and ordering rules move |
-| `### Step 4: Present and approve` + `### Step 5: Write state` + `## Phase 2: Test Execution Loop` (`Lookahead`, `Prepare the item`, `Present the next item`, `On PASS`, `On FAIL`, `On SKIP`, `On ADD ITEM`, `Group completion`) | Primary (every run) | Core-only | — | Core testing loop, isolation/tracked-file blocker guards, recovery, AskUserQuestion contract |
+| `### Step 4: Present and approve` + `### Step 5: Write state` + `## Phase 2: Test Execution Loop` (`Lookahead`, `Prepare the item`, `Present the next item`, `On PASS`, `On FAIL`, `On SKIP`, `Group completion`) | Primary (every run) | Core-only | — | Core testing loop, isolation and tracked-file guards, recovery routing and AskUserQuestion contract |
 | `### On ADD ITEM` | Primary (conditional: user adds an item) | Split | `conditional-init-plan` | Fetches the authoring and merge rules on entry, including after resume. |
 | `### On FIX NOW` | Primary (conditional: user chooses "Fix now" or resumes a recorded item fix) | Split | `conditional-fix-flow` | Checkpoint, reproduction and verification gates stay in core. The full fix cycle moves. |
 | `### On PARK` + `### On BATCH` | Primary (conditional: user parks bug or selects batch) | Split | `conditional-park-and-batch` | Parked-bug record format stays in core for automatic linked parking. The interactive description and batch procedures move. |
@@ -370,7 +370,7 @@ Original cores are from `ce16f48`. Every slimmed core and reference meets all by
 | Skill | Before core (B) | After core (B) | Codex rendering (B) | Core budget (B) | Total references (B, files) | Default by-hand path (B) | Orchestrated path (B) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `roadmap` | 132,635 | 102,934 | 102,822 | 110,592 | 36,469 (5) | 112,234 | 102,934 |
-| `ship-and-land` | 114,290 | 76,886 | 76,734 | 86,016 | 46,196 (8) | 110,812 | 110,812 |
+| `ship-and-land` | 114,290 | 77,164 | 77,012 | 86,016 | 46,196 (8) | 111,090 | 111,090 |
 | `pair-review` | 90,667 | 68,088 | 67,976 | 73,728 | 29,520 (6) | 77,814 | 68,088 |
 
 The representative paths count each reference body once. The by-hand ship path
@@ -378,7 +378,7 @@ includes release test evidence even when preparation supplied the full-suite res
 
 Conservation check output at `ce16f48`:
 - `CONSERVATION roadmap: ok=true blocks=8 dropped=0 base=132635B core=102934B`
-- `CONSERVATION ship-and-land: ok=true blocks=13 dropped=0 base=114290B core=76886B`
+- `CONSERVATION ship-and-land: ok=true blocks=13 dropped=0 base=114290B core=77164B`
 - `CONSERVATION pair-review: ok=true blocks=13 dropped=0 base=90667B core=68088B`
 
 ### Navigation edits in moved text (PR B)
@@ -389,7 +389,7 @@ Conservation check output at `ce16f48`:
 | `roadmap` / `delegate-progress-append` | `the STOP above` | `the Step 4 destination STOP in **Step 4: PROGRESS.md staleness check**` |
 | `roadmap` / `conditional-layout-plan` | `the **Refusal format** below` | `the **Refusal format** for **Execution (apply path)**` |
 | `ship-and-land` / `conditional-workflow-metrics` | `the literal status line below` | `the status line in the metrics receipt instructions` |
-| `ship-and-land` / `conditional-workflow-metrics` | `the run `begin` (below)` | The run `begin` under **Workflow metrics (optional, local)** in the core |
+| `ship-and-land` / `conditional-workflow-metrics` | the run `begin` (below) | The run `begin` under **Workflow metrics (optional, local)** in the core |
 | `ship-and-land` / `conditional-release-only` | `provenance and binding checks above`, `stage-table rows below` | **Release-only path** and **Ship overrides** in the core |
 | `ship-and-land` / `conditional-test-evidence` | `installed permitted age above` | **Independently verified reuse** in the core |
 | `ship-and-land` / `conditional-docs-profile` | `test gate's requirements above`, `ordinary test gate above` | **Test evidence** in the core |

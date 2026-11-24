@@ -689,7 +689,7 @@ never requests another run or resets a timeout. Carry a qualifying recorded
 no-response fallback honestly; do not call it a completed review or restart
 the wait. A known queued/running or failed run is not that fallback.
 
-When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. If a push would start a second run, stop before it and ask the user how to resolve that trigger.
+When Greptile applies, hold landing until its one review completed with findings resolved, or the qualifying no-response fallback or acknowledged exclusion is verified. Never make a ready PR draft to trigger review. Before every push, check applicable automatic triggers against the one-run allowance. If a push would start a second run, stop before it and ask the user how to resolve that trigger.
 
 Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-greptile-feedback --expect 073ea65ac2698971` before triggering, monitoring, triaging Greptile feedback, or checking the landing gate when Greptile applies.
 
@@ -716,6 +716,8 @@ DOCS test policy when that classification still holds; otherwise retain ship's
 ordinary test invalidation (including docs/TODO inputs consumed by the lane).
 
 ### Commit without co-author trailers
+
+Run `~/.gstack-extend/bin/preamble ship-and-land --ref conditional-greptile-feedback --expect 073ea65ac2698971` before checking automatic review settings for each push when Greptile applies.
 
 Drop the `Co-Authored-By` line from ship's commit template. Some hosts' commit
 wrappers append a trailer anyway; Cursor adds `Co-authored-by: Cursor`, even on

@@ -121,7 +121,7 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
     defaultByHandBytes: 122_880, // 112,234 B representative path with headroom.
   },
   'ship-and-land': {
-    coreBytes: 86_016, // 76,886 B core with headroom up to 84 KiB.
+    coreBytes: 86_016, // 77,164 B core with headroom up to 84 KiB.
     // Prepared release-only path with metrics, test evidence and landing checks.
     defaultByHandRefs: [
       'conditional-workflow-metrics',
@@ -130,7 +130,7 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
       'conditional-trailer-check',
       'conditional-land-adapters',
     ],
-    defaultByHandBytes: 114_688, // 110,812 B representative path with headroom.
+    defaultByHandBytes: 114_688, // 111,090 B representative path with headroom.
     orchestratedDefaultRefs: [
       'conditional-workflow-metrics',
       'conditional-release-only',

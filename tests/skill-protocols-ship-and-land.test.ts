@@ -142,6 +142,9 @@ describe('ship-and-land drift-locks', () => {
   test('Greptile stays once per PR and manual testing cannot be bypassed', () => {
     expect(normalized).toContain('This wrapper never requests another run or resets a timeout.');
     expect(normalized).toContain('Never make a ready PR draft to trigger review.');
+    expect(normalized).toContain('Before every push, check applicable automatic triggers against the one-run allowance.');
+    const pushChecks = content.split('### Commit without co-author trailers\n')[1]!.split('## 4. Land and verify')[0]!;
+    expect(pushChecks).toMatch(/--ref conditional-greptile-feedback --expect [0-9a-f]{16}` before checking automatic review settings for each push when Greptile applies\./);
     expect(normalized).toContain('If a push would start a second run, stop before it and ask the user');
     expect(normalized).toContain('hold landing until its one review completed with findings resolved');
     expect(normalized).toContain('including when Step 2 reused every review');
