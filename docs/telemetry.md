@@ -1845,11 +1845,10 @@ configured home, which must be absolute, never through a linked directory or log
 inside that home, and never from a sibling log, a non-regular file or directory presence) onto two shared launch-surface
 classes:
 
-- `terminal` — the session's own evidence names the harness's own interactive
-  terminal UI or CLI client, recording `run_mode: "user-directed"` and
-  `run_mode_source: "terminal-session"` (`"cli"` for Claude). A host app that
-  drives a harness's own interactive client without naming itself in the session
-  log also maps to `terminal` (`"terminal-session"`).
+- `terminal` — the session's own evidence matches the harness's terminal rule,
+  recording `run_mode: "user-directed"` and `run_mode_source: "terminal-session"`
+  (`"cli"` for Claude). The table below shows which launch surfaces share that
+  evidence, including Antigravity's headless print mode.
 - `host-app` — the session's own evidence names an orchestrator-host client in
   the shared host table (`HOST_APP_CLIENTS` in `bin/lib/telemetry.py`, compared
   exactly and case-sensitively as one provider of orchestrator-host evidence under
@@ -1909,10 +1908,11 @@ inspects parent process command lines or orchestrator directories. Hand-use
 capture is qualified by real readbacks for the owner's observed Claude `cli` and
 `paseo-entrypoint` launch types plus an orchestrated interactive run, while
 non-Claude classifications (`codex` `terminal-session`, `grok` `terminal-session`,
-`muse` `host-app-session`, and `antigravity` `terminal-session`) are fixture-qualified until their post-merge
-by-hand readbacks; see [the hand-use record](acceptance/hand-use-telemetry.md)
-for dated readbacks, pending non-Claude readbacks, the per-harness launch
-inventory, and upstream request status. This is not fleet-wide SPEC O6 acceptance.
+`muse` `host-app-session`, and `antigravity` `terminal-session`) are fixture-qualified
+until their post-merge by-hand readbacks. Antigravity's evidence is summarized
+below. See [the hand-use record](acceptance/hand-use-telemetry.md) for dated
+readbacks, the earlier harness inventory, and upstream request status. This is
+not fleet-wide SPEC O6 acceptance.
 
 | Harness | Detection | Evidence read by reader | What maps to `terminal` (`terminal-session`; Claude `cli`) | What maps to `host-app` (`host-app-session`; Claude `paseo-entrypoint`) | Reason for any class that cannot qualify |
 |---|---|---|---|---|---|
