@@ -694,6 +694,14 @@ require_bun() {
   fi
   probe_init_bun "$mode" || return 1
   check_bun_audit_path "$mode" || return 1
+  if ! bun_runtime_deps_check "$REPO_ROOT"; then
+    if [ "$mode" = 'preview' ]; then
+      bun_runtime_deps_print_shared 'gstack-extend init: warning' >&2
+    else
+      bun_runtime_deps_print_shared 'gstack-extend init' >&2
+    fi
+    return 1
+  fi
 
   # The audit runs the checked Bun from the target directory, where a version
   # manager's shim can select another version at the same path. A new target

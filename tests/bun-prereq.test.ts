@@ -711,6 +711,68 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
   });
 });
 
+test('missing and mismatched runtime dependencies refuse before executing or scaffolding', () => {
+  const mirror = freshDir("runtime deps' mirror");
+  const home = freshDir('runtime-deps-home');
+  const parent = freshDir('runtime-deps-projects');
+  const target = join(parent, 'consumer');
+  const shim = freshDir('runtime-deps-bun');
+  makeShim(shim, `#!/bin/sh
+if [ "$1" = --version ]; then echo '1.3.3'; exit 0; fi
+if [ "$1" = --help ]; then printf '%s\\n' '  --no-env-file'; exit 0; fi
+touch "$TEST_RUNTIME_HIT"
+exit 97
+`);
+  for (const file of ['gstack-extend', 'roadmap-audit', 'roadmap-pack', 'roadmap-touches']) {
+    mkdirSync(join(mirror, 'bin'), { recursive: true });
+    copyFileSync(join(REPO_ROOT, 'bin', file), join(mirror, 'bin', file));
+  }
+  mkdirSync(join(mirror, 'bin', 'lib'));
+  for (const file of ['bun-prereq.sh', 'install-safety.sh', 'projects-registry.sh']) {
+    copyFileSync(join(REPO_ROOT, 'bin', 'lib', file), join(mirror, 'bin', 'lib', file));
+  }
+  const installed = join(mirror, 'node_modules', 'marked');
+  cpSync(join(REPO_ROOT, 'scripts', 'init-templates'), join(mirror, 'scripts', 'init-templates'), { recursive: true });
+  writeFileSync(join(mirror, 'package.json'), JSON.stringify({
+    metadata: { dependencies: { decoy: '1.0.0' } },
+    description: 'Contains the text "dependencies": {}',
+    dependencies: { marked: '18.1.3' },
+    devDependencies: { ajv: '8.20.0' },
+  }));
+  const hit = join(parent, 'typescript-ran');
+  const env = { HOME: home, PATH: `${shim}:${NO_BUN_PATH}`, TEST_RUNTIME_HIT: hit };
+  const options = { env, encoding: 'utf8' as const, timeout: 15_000 };
+
+  for (const found of [null, '17.0.0']) {
+    if (found !== null) {
+      mkdirSync(installed, { recursive: true });
+      writeFileSync(join(installed, 'package.json'), JSON.stringify({
+        nested: { version: '18.1.3' },
+        version: found,
+      }));
+    }
+    const initArgs = [join(mirror, 'bin', 'gstack-extend'), 'init', '--no-prompt', target];
+    const refusal = spawnSync('/bin/bash', initArgs, options);
+    expect(refusal.status).toBe(1);
+    expect(refusal.stderr).toContain('gstack-extend init: PREREQ_DEPS_MISSING');
+    const preview = spawnSync('/bin/bash', [...initArgs, '--dry-run'], options);
+    expect(preview.status, preview.stdout + preview.stderr).toBe(0);
+    expect(preview.stderr).toContain('gstack-extend init: warning: PREREQ_DEPS_MISSING');
+
+    for (const launcher of ['roadmap-audit', 'roadmap-pack', 'roadmap-touches']) {
+      const result = spawnSync('/bin/sh', [join(mirror, 'bin', launcher), '--help'], options);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr.trim().split('\n')).toHaveLength(1);
+      expect(result.stderr).toContain(`${launcher}: PREREQ_DEPS_MISSING missing or mismatched runtime dependency marked@18.1.3 in ${mirror}`);
+      expect(result.stderr).toContain('/setup\' --host auto');
+      expect(result.stderr).toContain('bun install --production --frozen-lockfile');
+    }
+    expect(snapshotTree(home)).toEqual([]);
+    expect(snapshotTree(parent)).toEqual([]);
+  }
+});
+
 describe('--help and -h for roadmap-audit, roadmap-id, roadmap-pack, and outside-review', () => {
   for (const binName of ['roadmap-audit', 'roadmap-id', 'roadmap-pack', 'outside-review']) {
     for (const flag of ['--help', '-h']) {

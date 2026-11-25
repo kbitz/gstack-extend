@@ -14,11 +14,12 @@
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { mkScope } from './helpers/init-scope.ts';
+import { installedMarkedVersion, markedVersion, offlineFloorBun } from './helpers/runtime-deps.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SETUP = join(ROOT, 'setup');
@@ -330,6 +331,90 @@ function runCopied(
   });
   return { exitCode: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
+
+describe('setup runtime dependencies', () => {
+  test('a fresh install runs setup, all planning readers and init with a local cache', () => {
+    const s = scope('runtime-deps-fresh');
+    const install = join(s.home, 'gstack-extend');
+    mkdirSync(install);
+    for (const rel of ['bin', 'docs', 'scripts', 'skills', 'src', 'setup', 'bun.lock', 'package.json', 'CLAUDE.md', 'README.md', 'VERSION', 'CHANGELOG.md']) {
+      cpSync(join(ROOT, rel), join(install, rel), { recursive: true });
+    }
+    expect(existsSync(join(install, 'node_modules'))).toBe(false);
+
+    const path = process.env.PATH ?? '/usr/bin:/bin';
+    const env = offlineFloorBun(ROOT, join(s.state, 'offline-runtime'), path);
+    const result = runCopied(join(install, 'setup'), s, ['--host', 'claude'], env);
+    expect(result.stderr).not.toContain('registration or audit did not complete');
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain('Installed runtime dependencies');
+    expect(result.stdout).toContain('Self-registered gstack-extend');
+    expect(installedMarkedVersion(install)).toBe(markedVersion(install));
+    expect(existsSync(join(install, 'node_modules', 'ajv'))).toBe(false);
+    expect(existsSync(homeRegistry(s.home))).toBe(true);
+
+    const clean = scope('runtime-deps-consumer', false);
+    expect(readdirSync(clean.home)).toEqual([]);
+    const options = {
+      cwd: clean.state,
+      env: { ...env, HOME: clean.home, GSTACK_STATE_ROOT: clean.groot },
+      encoding: 'utf8' as const,
+      timeout: 15_000,
+    };
+    for (const [entry, args, output] of [
+      ['roadmap-audit', [install], '## STRUCTURE'],
+      ['roadmap-pack', [install], 'BINS:'],
+      ['roadmap-touches', ['report-cross-group', install], 'CROSS_GROUP:'],
+      ['gstack-extend', ['init', clean.target, '--no-prompt'], 'gstack-extend init: SUCCESS.'],
+    ] as const) {
+      const run = spawnSync(join(install, 'bin', entry), args, options);
+      expect(run.stderr).not.toContain('PREREQ_');
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(output);
+    }
+  });
+
+  test('setup skips a current install and preserves development dependencies', () => {
+    const s = scope('runtime-deps-idempotent');
+    const install = join(s.home, 'install');
+    copyInstall(install);
+    for (const rel of ['package.json', 'bun.lock']) copyFileSync(join(ROOT, rel), join(install, rel));
+    for (const name of ['marked', 'ajv']) {
+      const packageDir = join(install, 'node_modules', name);
+      mkdirSync(packageDir, { recursive: true });
+      copyFileSync(join(ROOT, 'node_modules', name, 'package.json'), join(packageDir, 'package.json'));
+    }
+    const ajvManifest = join(install, 'node_modules', 'ajv', 'package.json');
+    const before = readFileSync(ajvManifest, 'utf8');
+    const options = offlineFloorBun(ROOT, join(s.state, 'refuse-install'), process.env.PATH ?? '/usr/bin:/bin', { failInstall: true });
+    const result = runCopied(join(install, 'setup'), s, ['--host', 'claude', '--quiet'], options);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).not.toContain('fixture install refused');
+    expect(readFileSync(ajvManifest, 'utf8')).toBe(before);
+    expect(installedMarkedVersion(install)).toBe(markedVersion(install));
+  });
+
+  test('an install failure exits before publishing skills, preamble or CLI links', () => {
+    const s = scope('runtime-deps-failure');
+    const install = join(s.home, 'install');
+    copyInstall(install);
+    for (const rel of ['package.json', 'bun.lock']) copyFileSync(join(ROOT, rel), join(install, rel));
+    const options = offlineFloorBun(ROOT, join(s.state, 'refuse-install'), process.env.PATH ?? '/usr/bin:/bin', { failInstall: true });
+    const temp = join(s.state, 'tmp');
+    mkdirSync(temp);
+    const result = runCopied(join(install, 'setup'), s, ['--host', 'claude', '--quiet'], { ...options, TMPDIR: temp });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('fixture install refused');
+    expect(result.stderr).toContain('Fix: from the checkout, run bun install');
+    expect(existsSync(join(s.home, '.claude', 'skills', 'implement', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(s.home, '.gstack-extend', 'bin', 'preamble'))).toBe(false);
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
+    expect(existsSync(homeRegistry(s.home))).toBe(false);
+    expect(readdirSync(temp)).toEqual([]);
+  });
+});
 
 describe('setup registration failures', () => {
   test('corrupt HOME registry stays byte-for-byte and the printed retry targets HOME', () => {

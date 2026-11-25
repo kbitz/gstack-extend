@@ -59,6 +59,7 @@ report_skipped_hosts() {
   return 0
 }
 REWRITE_TMP=""
+RUNTIME_DEPS_LOG=""
 HELPER_LOCK=""
 release_helper_lock() {
   [ -n "$HELPER_LOCK" ] || return 0
@@ -96,6 +97,7 @@ on_exit() {
   # subshells today; the guard keeps a future shell from publishing twice.
   [ "${BASH_SUBSHELL:-0}" -eq 0 ] || return 0
   [ -z "$REWRITE_TMP" ] || rm -f "$REWRITE_TMP" 2>/dev/null || true
+  [ -z "$RUNTIME_DEPS_LOG" ] || rm -f "$RUNTIME_DEPS_LOG" 2>/dev/null || true
   release_helper_lock
   # Publication normally runs in the main shell so a signal during the rename
   # can still reach this trap and drop only this invocation's lock. Early exits
@@ -1791,6 +1793,39 @@ fi
 if [ "$INSTALL_CODEX" -eq 1 ]; then
   preflight_dir "$(host_skills_dir codex)" codex
 fi
+
+ensure_runtime_deps() {
+  bun_runtime_deps_check "$SCRIPT_DIR" && return 0
+
+  if [ ! -f "$SCRIPT_DIR/bun.lock" ] || [ ! -r "$SCRIPT_DIR/bun.lock" ]; then
+    echo "Error: cannot install runtime dependencies (bun.lock missing or unreadable)." >&2
+    echo "Fix: restore bun.lock from your checkout and run setup again." >&2
+    finish_setup 1
+  fi
+  if ! RUNTIME_DEPS_LOG=$(mktemp "${TMPDIR:-/tmp}/gstack-extend-runtime-deps.XXXXXX"); then
+    echo "Error: cannot stage runtime dependency install diagnostics." >&2
+    echo "Fix: set TMPDIR to a writable directory and run setup again." >&2
+    finish_setup 1
+  fi
+
+  local install_args=(--frozen-lockfile --ignore-scripts --config=/dev/null)
+  if [ ! -d "$SCRIPT_DIR/node_modules/ajv" ]; then
+    install_args+=(--production)
+  fi
+  if (cd "$SCRIPT_DIR" && umask 022 && "$BUN_PREREQ_RAW_PATH" install "${install_args[@]}") >"$RUNTIME_DEPS_LOG" 2>&1 &&
+     bun_runtime_deps_check "$SCRIPT_DIR"; then
+    rm -f "$RUNTIME_DEPS_LOG"
+    RUNTIME_DEPS_LOG=""
+    log "Installed runtime dependencies in $SCRIPT_DIR"
+    return 0
+  fi
+
+  cat "$RUNTIME_DEPS_LOG" >&2
+  printf 'Error: %s %s.\n' "$BUN_PREREQ_DEPS_TOKEN" "$BUN_PREREQ_DEPS_WHAT" >&2
+  printf 'Fix: from the checkout, run bun install %s and retry setup. See docs/installation.md#requirements.\n' "${install_args[*]}" >&2
+  finish_setup 1
+}
+ensure_runtime_deps
 
 # Install the shared start command before publishing any skill copy or link.
 # Last setup wins; written through a temp file and atomic rename. Failure is fatal with nothing installed.

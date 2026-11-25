@@ -10,6 +10,9 @@
     "test": "bun scripts/select-tests.ts",
     "test:full": "bun test tests/"
   },
+  "dependencies": {
+    "marked": "18.1.3"
+  },
   "devDependencies": {
     "ajv": "8.20.0"
   },

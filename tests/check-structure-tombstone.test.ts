@@ -188,3 +188,19 @@ describe('STRUCTURE tombstones', () => {
     expect(detectMode(ctx).detected).toBe('triage');
   });
 });
+
+test.each([
+  ['HTML comment', ['<!--', '```md', '## Future', '#### Group 9: Example', '-->']],
+  ['closed list example', ['- ```md', '  ## Future', '  #### Group 9: Example', '  ```']],
+  ['unclosed list example', ['- ```md', '  ## Future', '  #### Group 9: Example']],
+  ['tilde fence', ['  ~~~md', '## Future', '#### Group 9: Example', '  ~~~ \t ']],
+  ['nonbreaking-space closer', ['~~~md', '~~~\u00a0', '## Future', '#### Group 9: Example', '~~~']],
+] as const)('mode, state sections and structure ignore headings inside a %s', (_, example) => {
+  const plain = makeCtx({ roadmap: CARD, parsedRoadmap: parseRoadmap(CARD).value });
+  const roadmap = [...example, CARD].join('\n');
+  const ctx = makeCtx({ roadmap, parsedRoadmap: parseRoadmap(roadmap).value });
+  expect(detectMode(ctx)).toEqual(detectMode(plain));
+  expect(runCheckStateSections(ctx)).toEqual(runCheckStateSections(plain));
+  expect(runCheckStructure(ctx)).toEqual(runCheckStructure(plain));
+  expect(runCheckStructure(ctx).status).toBe('pass');
+});

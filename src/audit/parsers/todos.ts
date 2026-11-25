@@ -2,8 +2,8 @@
  * todos.ts — parses TODOS.md into a structured shape consumed by
  * check_unprocessed, check_todo_format, and check_taxonomy.
  *
- * Walks line-by-line tracking fence state (``` toggle) and section state.
- * Inside the `## Unprocessed` section (and outside fences), classifies each
+ * Walks planning text line-by-line, tracking section state.
+ * Inside the `## Unprocessed` section, classifies each
  * candidate line as one of:
  *
  *   - heading       → `### [tag] Title` or `### Plain title`  (canonical)
@@ -12,13 +12,10 @@
  *
  * Tag/title extraction reuses src/audit/lib/source-tag.ts so the parsing
  * is byte-identical to source-tag's contract.
- *
- * Fence handling: any line matching `^[ \t]*` ` ` ` toggles fence state.
- * The bash version uses a simple toggle (TODOS.md rarely nests). Same here.
  */
 
+import { planningLines } from '../lib/markdown.ts';
 import { extractTagFromHeading, extractTitleFromHeading } from '../lib/source-tag.ts';
-import { planningLines } from '../lib/state.ts';
 import { legacyTodoBulletKind, parseTodoIdBullet } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
@@ -63,9 +60,7 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
   let section: 'unprocessed' | 'completed' | null = null;
   let hasUnprocessedSection = false;
   let currentHeading: TodoEntry | null = null;
-  const lines = content.split('\n');
-  for (const [index, line] of planningLines(lines)) {
-    const lineno = index + 1;
+  for (const [lineno, line] of planningLines(content)) {
     if (/^## Unprocessed\b/.test(line)) {
       hasUnprocessedSection = true;
       section = 'unprocessed';

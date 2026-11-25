@@ -228,3 +228,14 @@ describe('parseTodos — work-item IDs', () => {
     expect(r.value.completedIds).toEqual(['wi-dead01']);
   });
 });
+
+test.each([
+  ['HTML comment', ['<!--', '```md', '### [manual] Example', '-->']],
+  ['closed list example', ['- ```md', '  ### [manual] Example', '  ```']],
+  ['unclosed list example', ['- ```md', '  ### [manual] Example']],
+  ['nonbreaking-space closer', ['~~~md', '~~~\u00a0', '### [manual] Example', '~~~ \t ']],
+] as const)('keeps the real TODO and its line number after a %s', (_, example) => {
+  const content = ['## Unprocessed', ...example, '### [manual] Real'].join('\n');
+  const { entries } = parseTodos(content).value;
+  expect(entries.map(entry => [entry.title, entry.line])).toEqual([['Real', example.length + 2]]);
+});
