@@ -77,18 +77,23 @@ if (![repoRoot, extendRoot, activeDraftPath, archiveDraftPath].every(p => p && i
 const { buildAuditCtx, runAudit } = await import(join(extendRoot, 'src/audit/cli.ts'))
 const { parseRoadmap, mergeShippedArchive, mergeFutureArchive } = await import(join(extendRoot, 'src/audit/parsers/roadmap.ts'))
 const { parsePhases } = await import(join(extendRoot, 'src/audit/parsers/phases.ts'))
+const { detectStateRegions } = await import(join(extendRoot, 'src/audit/lib/state.ts'))
 const { CANONICAL_SECTIONS, parseAuditSections } = await import(join(extendRoot, 'src/audit/sections.ts'))
 const base = buildAuditCtx({ repoRoot, extendDir: extendRoot, argv: { repoRoot, scanState: false, futureIndex: false, prompt: null } })
 if (!base.paths.roadmap) throw new Error('No live roadmap; use the greenfield flow')
 const active = await Bun.file(activeDraftPath).text()
 const archive = await Bun.file(archiveDraftPath).text()
-const futureBody = text => text.split(/^## Future(?:[ \t].*)?$/m)[1]?.split(/^## /m)[0] ?? ''
-if (futureBody(active) !== futureBody(base.files.roadmap)) throw new Error('Future changed; rebuild complete context')
+const futureSection = text => {
+  const state = detectStateRegions(text)
+  const section = state.kind === 'v2' && state.ranges.find(range => range.state === 'future')
+  return section ? text.split('\n').slice(section.startLine - 1, section.endLine).join('\n') : null
+}
+if (futureSection(active) !== futureSection(base.files.roadmap)) throw new Error('Future changed; rebuild complete context')
 const ctx = { ...base, paths: { ...base.paths }, files: { ...base.files } }
 ctx.paths.shippedArchive ??= join(repoRoot, 'docs/roadmap-shipped.md')
 ctx.files.roadmap = active
 ctx.files.shippedArchive = archive
-const rawArchive = parseRoadmap(archive)
+const rawArchive = parseRoadmap(archive, { fromShippedArchive: true })
 ctx.roadmap = mergeFutureArchive(mergeShippedArchive(parseRoadmap(active), rawArchive), parseRoadmap(base.files.futureArchive))
 ctx.phases = parsePhases(active)
 const scaffolds = parsed => parsed.value.phases.flatMap(p => p.scaffoldPaths.map(path => p.num + '|' + path)).sort()

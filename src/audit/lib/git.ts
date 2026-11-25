@@ -26,6 +26,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { scanAllWorkItemIds } from './work-item-id.ts';
 
 export type GitSpawnResult = {
@@ -39,6 +40,12 @@ export type GitSpawn = (args: string[], cwd: string, maxBuffer?: number) => GitS
 // History patches include full changed lines. A single planning-document
 // migration can exceed the child process default of 1 MiB.
 const HISTORY_PATCH_BUFFER_BYTES = 64 * 1024 * 1024;
+
+type PlanningHistoryLayout = {
+  root: string;
+  directory: string;
+  documentNames: readonly string[];
+};
 
 export type GitGateway = {
   /** Resolve repository root, or null if not in a repo. */
@@ -58,7 +65,7 @@ export type GitGateway = {
   /** Union of unstaged, staged, and untracked paths (drift check). */
   workingTreePaths(): string[];
   /** Reserve IDs from available Git history. Throws if history cannot be checked. */
-  historicalWorkItemIds(relPaths: string[]): string[];
+  historicalWorkItemIds(relPaths: string[], layout?: PlanningHistoryLayout): string[];
 };
 
 export type GitGatewayDeps = {
@@ -89,13 +96,63 @@ function spawnGit(args: string[], cwd: string, maxBuffer?: number, bindToCwd = f
     env,
   });
   return {
-    ok: result.status === 0,
+    ok: result.status === 0 && result.error === undefined,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
   };
 }
 
 export const defaultSpawn: GitSpawn = spawnGit;
+
+/** Follow committed planning links across moves while keeping the log path-limited. */
+function historicalPlanningPaths(
+  spawn: GitSpawn,
+  cwd: string,
+  relPaths: string[],
+  layout: PlanningHistoryLayout,
+): string[] {
+  const files = new Set(relPaths);
+  const directories = new Set([layout.directory]);
+  const scanned = new Set<string>();
+  const targets = new Map<string, string>();
+  for (;;) {
+    const paths = [...new Set([...files, ...directories])].filter((path) => !scanned.has(path));
+    if (paths.length === 0) return [...files];
+    for (const path of paths) scanned.add(path);
+    const log = spawn(
+      ['--literal-pathspecs', 'log', '--all', '--full-history', '-m', '--format=', '--raw', '--no-color', '--relative',
+        '--no-abbrev', '--no-renames', '-z', '--', ...paths],
+      cwd,
+      HISTORY_PATCH_BUFFER_BYTES,
+    );
+    if (!log.ok) throw new Error('could not read planning document link history');
+    const selected = new Set(paths);
+    const rows = log.stdout.split('\0');
+    for (let i = 0; i + 1 < rows.length; i += 2) {
+      const path = rows[i + 1]!;
+      if (!selected.has(path)) continue;
+      const [oldMode, newMode, oldObject, newObject] = rows[i]!.trimStart().slice(1).split(' ');
+      for (const [mode, object] of [[oldMode, oldObject], [newMode, newObject]] as const) {
+        if (mode !== '120000' || object === undefined) continue;
+        let blob = targets.get(object);
+        if (blob === undefined) {
+          const result = spawn(['cat-file', 'blob', object], cwd);
+          if (!result.ok) throw new Error('could not read a historical planning document link');
+          blob = result.stdout;
+          targets.set(object, blob);
+        }
+        const target = isAbsolute(blob) ? relative(layout.root, blob) : normalize(join(dirname(path), blob));
+        if (target === '..' || target.startsWith(`..${sep}`) || isAbsolute(target)) continue;
+        if (directories.has(path)) {
+          if (target && target !== '.') directories.add(target);
+          for (const name of layout.documentNames) files.add(join(target, name));
+        } else if (target && target !== '.') {
+          files.add(target);
+        }
+      }
+    }
+  }
+}
 
 export function createGitGateway(deps: GitGatewayDeps): GitGateway {
   const spawn: GitSpawn = deps.spawn ??
@@ -172,7 +229,7 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     },
 
-    historicalWorkItemIds(relPaths: string[]): string[] {
+    historicalWorkItemIds(relPaths: string[], layout?: PlanningHistoryLayout): string[] {
       if (relPaths.length === 0) return [];
       // The mint and migration commands cannot safely treat a failed Git
       // command as an empty reservation set. A non-repository is legitimate.
@@ -181,9 +238,10 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
         if (/^fatal: not a git repository \(or any\b/.test(repo.stderr)) return [];
         throw new Error('could not establish Git history for work-item IDs');
       }
+      const paths = layout === undefined ? relPaths : historicalPlanningPaths(spawn, cwd, relPaths, layout);
       const r = spawn(
         ['--literal-pathspecs', 'log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv', '--text',
-          '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...relPaths],
+          '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...paths],
         cwd,
         HISTORY_PATCH_BUFFER_BYTES,
       );

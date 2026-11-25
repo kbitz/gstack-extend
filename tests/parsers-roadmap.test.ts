@@ -1050,6 +1050,12 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(legacy?.revisit).toBe('- use **Phase 2** — after GA');
   });
 
+  test('a leading Future ID is excluded from the index summary for a plain title', () => {
+    expect(futureIndexRows(['- Plain title — **ID:** wi-aabbcc — Keep the context.'])[0]).toEqual({
+      id: 'wi-aabbcc', title: 'Plain title', source: null, first: 'Keep the context.', revisit: null,
+    });
+  });
+
   test('parseRoadmap parses _id:, _blocked-by: work-item IDs, malformed tokens, and legacy shipped bullets', () => {
     const md = [
       '## Current Plan',
@@ -1072,5 +1078,15 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(t.blockedByMalformed).toEqual(['wi-BAD!']);
     expect(r.value.legacyShippedTracks).toHaveLength(1);
     expect(r.value.legacyShippedTracks![0]!.workItemId).toBe('wi-000099');
+  });
+
+  test('an ID mentioned in a nested legacy blocker note leaves the Track reference intact', () => {
+    const roadmap = [
+      '## Current Plan', '### Group 1: Current', '#### Track 1B: Second', '_1 task . low risk_',
+      '_blocked-by: Track 1A (see rationale (appendix), follow-up wi-a1b2c3), wi-112233_',
+    ].join('\n');
+    const track = parseRoadmap(roadmap, deps()).value.tracks[0]!;
+    expect(track.blockedBy).toEqual(['1A', 'wi-112233']);
+    expect(track.blockedByMalformed).toEqual([]);
   });
 });

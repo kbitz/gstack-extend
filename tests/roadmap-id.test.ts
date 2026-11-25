@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -22,6 +22,7 @@ import {
   scanAllWorkItemIds,
 } from '../src/audit/lib/work-item-id.ts';
 import { parseRoadmap } from '../src/audit/parsers/roadmap.ts';
+import { parseTodos } from '../src/audit/parsers/todos.ts';
 import { GIT_ENV, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -364,6 +365,35 @@ describe('bin/roadmap-id CLI', () => {
     expect(readFileSync(todos)).toEqual(legacy);
   });
 
+  test('migration reserves IDs from the previous location of linked project docs', () => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const docs = join(repo, 'docs');
+    mkdirSync(join(repo, 'planning'));
+    mkdirSync(join(repo, 'documentation'));
+    const pending = '## Unprocessed\n### Follow-up\n';
+    const previous = migrateTodosText(pending, new Set());
+    symlinkSync('planning', docs);
+    const oldTodo = join(repo, 'planning', 'TODOS.md');
+    const newTodo = join(repo, 'documentation', 'TODOS.md');
+    const commit = (message: string, paths: string[]) => {
+      expect(spawnSync('git', ['add', '--', ...paths], { cwd: repo, env: GIT_ENV }).status).toBe(0);
+      expect(spawnSync('git', ['commit', '-m', message], { cwd: repo, env: GIT_ENV }).status).toBe(0);
+    };
+    writeFileSync(oldTodo, previous.text);
+    commit('record first follow-up', ['docs', 'planning/TODOS.md']);
+    writeFileSync(oldTodo, '## Unprocessed\n');
+    commit('retire first follow-up', ['planning/TODOS.md']);
+    unlinkSync(docs);
+    symlinkSync('documentation', docs);
+    writeFileSync(newTodo, pending);
+    commit('move planning docs and add new follow-up', ['docs', 'documentation/TODOS.md']);
+
+    const result = spawnSync('/bin/sh', [BIN, 'migrate', repo], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readlinkSync(docs)).toBe('documentation');
+    expect(readFileSync(newTodo, 'utf8')).toBe(migrateTodosText(pending, new Set(previous.ids)).text);
+  });
+
   test('rewrite uses the live label over a shipped label and reads legacy archive Groups', () => {
     const repo = freshDir('rewrite');
     mkdirSync(join(repo, 'docs'));
@@ -424,6 +454,22 @@ describe('bin/roadmap-id CLI', () => {
     expect(migrateFutureText(migrated.text, new Set()).text).toBe(migrated.text);
   });
 
+  test('a Future title ending in italic emphasis retains its assigned ID', () => {
+    const bullet = '- **Read *this*** — **ID:** wi-aabbcc — Keep context. **Revisit when:** next release';
+    const source = '## Future\n' + bullet + '\n';
+    expect(extractInlineBulletId(bullet)?.id).toBe('wi-aabbcc');
+    expect(migrateFutureText(source, new Set())).toEqual({ text: source, added: 0, ids: [] });
+  });
+
+  test('a leading field after a plain or partly bold Future title stays assigned', () => {
+    for (const title of ['Plain title', '**One** and **Two**', '**Title** (follow-up)']) {
+      const bullet = '- ' + title + ' — **ID:** wi-aabbcc — Keep context.';
+      const source = '## Future\n' + bullet + '\n';
+      expect(extractInlineBulletId(bullet)?.id).toBe('wi-aabbcc');
+      expect(migrateFutureText(source, new Set())).toEqual({ text: source, added: 0, ids: [] });
+    }
+  });
+
   test('migration ends Future at the separate Future-proof notes heading', () => {
     const notes = '## Future-proof rollout notes\n- Keep the old link\n';
     const source = '## Future — after release\n- Draft a follow-up\n' + notes;
@@ -467,6 +513,17 @@ describe('bin/roadmap-id CLI', () => {
       '_blocked-by: Track 1A, Track 1C, Track 1B (prep, Track 1D, another check (optional)), wi-ddee11_'));
   });
 
+  test('blocker rewriting keeps the references on an inline shipped receipt', () => {
+    const roadmap = [
+      '## Current Plan', '### Group 1: Live',
+      '#### Track 1A: Later work', '_id: wi-111111_',
+      '#### Track 1B: Live follow-up', '_id: wi-222222_', '_blocked-by: Track 1A_',
+      '## Shipped', '### Track 2A: Earlier work ✓ Shipped', '_id: wi-333333_', '_blocked-by: Track 1A_', '',
+    ].join('\n');
+    const result = migrateRoadmapText(roadmap, new Set(), { rewriteBlockedBy: true });
+    expect(result.text).toBe(roadmap.replace('_blocked-by: Track 1A_', '_blocked-by: wi-111111_'));
+  });
+
   test('migration inserts a Track ID after metadata ending directly after the risk level', () => {
     const card = '## Current Plan\n### Group 1: Work\n#### Track 1A: First\n_1 task · ~1 LOC · low_\n';
     const result = migrateRoadmapText(card, new Set());
@@ -491,9 +548,12 @@ describe('bin/roadmap-id CLI', () => {
     const active = [
       '## Current Plan', '```markdown', '## Shipped', '```',
       '### Group 1: Current', '- Track 1A — wait for the owner review.',
-      '#### Track 1A: First', '_1 task . low risk_', '_id: wi-aabbcc_', '',
+      '#### Track 1A: First', '_1 task . low risk_', '_id: wi-aabbcc_', '_touches: src/first.ts_', '',
     ].join('\n');
-    expect(parseRoadmap(active).value.legacyShippedTracks).toEqual([]);
+    const parsed = parseRoadmap(active).value;
+    expect(parsed.legacyShippedTracks).toEqual([]);
+    expect(parsed.tracks[0]?.state).toBe('current-plan');
+    expect(parsed.tracks[0]?.isComplete).toBe(false);
     const untouched = migrateRoadmapText(active, new Set());
     expect(untouched.added).toBe(0);
     expect(untouched.text).toBe(active);
@@ -505,6 +565,13 @@ describe('bin/roadmap-id CLI', () => {
       .toBe(migrated.ids[0]);
   });
 
+  test('an archived Track ID sits immediately below its heading before an italic note', () => {
+    const heading = '### Track 1A: Delivered ✓ Shipped\n';
+    const receipt = '## Shipped\n' + heading + '_Follow-up notes_\n';
+    const result = migrateRoadmapText(receipt, new Set(), { fromShippedArchive: true });
+    expect(result.text).toBe(receipt.replace(heading, heading + '_id: ' + result.ids[0] + '_\n'));
+  });
+
   test('code spans and inline attribute prose leave later Future records visible', () => {
     const original = [
       '## Future', '```code``` explains the entry below.',
@@ -514,6 +581,22 @@ describe('bin/roadmap-id CLI', () => {
     expect(migrated.added).toBe(1);
     const bullet = migrated.text.split('\n')[2]!;
     expect(extractInlineBulletId(bullet)).toEqual({ raw: migrated.ids[0], id: migrated.ids[0] });
+  });
+
+  test('TODO migration and audit agree on checklist, link and legacy entry boundaries', () => {
+    const withNotes = [
+      '## Unprocessed', '### [manual] Follow-up', '- [ ] Take a note',
+      '- [Spec](docs/SPEC.md)', '- **[Guide](docs/guide.md)**', '- **ID:** wi-aabbcc', '',
+    ].join('\n');
+    const entries = parseTodos(withNotes).value.entries;
+    expect(entries.map(entry => [entry.kind, entry.workItemId])).toEqual([['heading', 'wi-aabbcc']]);
+    expect(migrateTodosText(withNotes, new Set()).text).toBe(withNotes);
+
+    const legacy = '## Unprocessed\n### [manual] First\n- [review] Legacy item\n- **ID:** wi-112233\n';
+    const migrated = migrateTodosText(legacy, new Set(['wi-112233']));
+    expect(migrated.added).toBe(1);
+    expect(migrated.text).toBe(legacy.replace('### [manual] First\n',
+      '### [manual] First\n- **ID:** ' + migrated.ids[0] + '\n'));
   });
 
   test('migrate --dry-run, migrate, and idempotent second run', () => {

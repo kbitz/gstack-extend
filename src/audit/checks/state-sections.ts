@@ -18,7 +18,7 @@
  *   SECTIONS_PRESENT: <comma-separated list>
  */
 
-import { FUTURE_HEADING_RE } from '../lib/state.ts';
+import { FUTURE_HEADING_RE, planningLines } from '../lib/state.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 const ORDER = ['In Progress', 'Current Plan', 'Future', 'Shipped'] as const;
@@ -35,8 +35,7 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
 
   const lines = ctx.files.roadmap.split('\n');
   const seen: Array<{ name: StateSectionName; line: number }> = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+  for (const [i, line] of planningLines(lines)) {
     for (const name of ORDER) {
       const re = name === 'Future' ? FUTURE_HEADING_RE : new RegExp(`^## ${name}\\b`);
       if (re.test(line)) {

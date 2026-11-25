@@ -51,7 +51,7 @@ const DOC_PATHS = DOC_NAMES.flatMap((name) => [name, `docs/${name}`]);
 const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_HEX - 1) + 16 ** WORK_ITEM_ID_MAX_HEX;
 
 type PlanningDoc = { path: string; name: string; text: string; mode: number };
-type PlanningDocs = { docs: Map<string, PlanningDoc>; historicalPaths: Set<string> };
+type PlanningDocs = { root: string; docs: Map<string, PlanningDoc>; historicalPaths: Set<string> };
 
 function projectRelativePath(root: string, path: string): string | null {
   const nested = relative(root, path);
@@ -93,7 +93,7 @@ function readDocs(repoRoot: string, mode: 'mint' | 'migrate'): PlanningDocs {
     }
     docs.set(name, { path, name, text, mode: st.mode & 0o777 });
   }
-  return { docs, historicalPaths };
+  return { root, docs, historicalPaths };
 }
 
 function findDoc(docs: ReadonlyMap<string, PlanningDoc>, name: string): PlanningDoc | undefined {
@@ -105,12 +105,13 @@ function findDoc(docs: ReadonlyMap<string, PlanningDoc>, name: string): Planning
     : root ?? satellite;
 }
 
-function collectTakenIds({ docs, historicalPaths }: PlanningDocs, git: GitGateway): Set<string> {
+function collectTakenIds({ root, docs, historicalPaths }: PlanningDocs, git: GitGateway): Set<string> {
   const taken = new Set<string>();
   for (const doc of docs.values()) {
     for (const id of scanAllWorkItemIds(doc.text)) taken.add(id);
   }
-  for (const id of git.historicalWorkItemIds([...historicalPaths])) taken.add(id);
+  const layout = { root, directory: 'docs', documentNames: DOC_NAMES };
+  for (const id of git.historicalWorkItemIds([...historicalPaths], layout)) taken.add(id);
   return taken;
 }
 

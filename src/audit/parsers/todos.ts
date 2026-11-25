@@ -18,7 +18,8 @@
  */
 
 import { extractTagFromHeading, extractTitleFromHeading } from '../lib/source-tag.ts';
-import { parseTodoIdBullet, planningLines } from '../lib/work-item-id.ts';
+import { planningLines } from '../lib/state.ts';
+import { legacyTodoBulletKind, parseTodoIdBullet } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
 export type TodoEntryKind = 'heading' | 'compactBullet' | 'legacyBullet';
@@ -86,18 +87,10 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
 
     if (section === null) continue;
 
-    // Compact bold form: `- **[`. Check before legacy `- [` (compact also
-    // matches `- \[` once the bold prefix is stripped).
-    if (section === 'unprocessed' && /^- \*\*\[/.test(line)) {
+    const legacyKind = section === 'unprocessed' ? legacyTodoBulletKind(line) : null;
+    if (legacyKind !== null) {
       currentHeading = null;
-      entries.push({ kind: 'compactBullet', line: lineno, raw: line });
-      continue;
-    }
-
-    // Legacy bullet form.
-    if (section === 'unprocessed' && /^- \[/.test(line)) {
-      currentHeading = null;
-      entries.push({ kind: 'legacyBullet', line: lineno, raw: line });
+      entries.push({ kind: legacyKind, line: lineno, raw: line });
       continue;
     }
 

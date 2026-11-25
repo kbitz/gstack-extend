@@ -3,7 +3,7 @@
  *
  * The Future section is "items we might do but aren't committed to."
  * Plain bullets, no Phase/Group/Track structure, no `_touches:_`, no
- * sizing, no IDs. When split, ROADMAP holds a pointer and
+ * sizing, no Track labels. When split, ROADMAP holds a pointer and
  * docs/roadmap-future.md holds the bullets.
  *
  * Output shape:

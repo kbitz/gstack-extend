@@ -10,7 +10,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { FUTURE_HEADING_RE } from './state.ts';
+import { FUTURE_HEADING_RE, planningLines } from './state.ts';
 
 // ─── Contract constants ───────────────────────────────────────────────
 
@@ -26,29 +26,14 @@ const TODO_ID_BULLET_RE = /^- \*\*ID:\*\*[ \t]*(.*)$/;
 const TRACK_ID_LINE_RE = /^_id:[ \t\v\f\r]*(.*)$/i;
 const INLINE_ID_RE = /^\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*/;
 const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*(?:[—–-]+[ \t]*)?$/;
-const BOLD_BULLET_RE = /^(- \*\*((?:(?!\*\*).)+)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
+// Extra closing stars can end nested emphasis before the outer bold title.
+const BOLD_BULLET_RE = /^(- \*\*((?:(?!\*\*(?!\*)).)+)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
+const PLAIN_BULLET_RE = /^((?:- )?(.*?)\s+[—–-]+\s+)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const TRACK_HEADING_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):(.*)$/;
 const GROUP_HEADING_RE = /^#{2,4} Group ([0-9]+):/;
 const SHIPPED_SUFFIX_RE = /[ \t]+✓[ \t]+(?:Complete|Shipped)(?:[ \t]+\(v[^)]+\))?[ \t]*$/;
 const LEGACY_SHIPPED_TRACK_BULLET_RE = /^(- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]+[ \t]*)(.*)$/;
-const FENCE_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
-
-/** Yield document lines outside fenced examples, keeping their original indices. */
-export function* planningLines(lines: readonly string[], start = 0, end = lines.length) {
-  let fence: string | null = null;
-  for (let i = start; i < end; i++) {
-    const line = lines[i]!.replace(/\r$/, '');
-    const delimiter = FENCE_RE.exec(line);
-    if (fence !== null) {
-      if (delimiter && delimiter[1]!.startsWith(fence) && delimiter[2]!.trim() === '') fence = null;
-    } else if (delimiter && !(delimiter[1]![0] === '`' && delimiter[2]!.includes('`'))) {
-      fence = delimiter[1]!;
-    } else {
-      yield [i, line] as const;
-    }
-  }
-}
 
 function lineEnding(rawLine: string): string {
   return rawLine.endsWith('\r') ? '\r' : '';
@@ -84,6 +69,15 @@ export function parseTodoIdBullet(line: string): ParsedIdField | null {
   if (m === null) return null;
   const raw = m[1]!.trim();
   return { raw, id: isValidWorkItemId(raw) ? raw : null };
+}
+
+/** Identify entry bullets while keeping checklist and link bullets with their heading. */
+export function legacyTodoBulletKind(line: string): 'compactBullet' | 'legacyBullet' | null {
+  const opener = /^- (\*\*)?\[/.exec(line);
+  if (opener === null) return null;
+  const label = line.slice(opener[0].length - 1);
+  if (/^\[[ xX]\](?:[ \t]|$)|^\[[^\]]+\](?:\(|\[)/.test(label)) return null;
+  return opener[1] === undefined ? 'legacyBullet' : 'compactBullet';
 }
 
 /**
@@ -142,16 +136,22 @@ function splitInlineBullet(bullet: string) {
 }
 
 function locateInlineId(head: string, visible: string) {
-  const prefix = BOLD_BULLET_RE.exec(visible)?.[1] ?? LEGACY_SHIPPED_TRACK_BULLET_RE.exec(visible)?.[1];
+  const explicitPrefix = BOLD_BULLET_RE.exec(visible)?.[1] ?? LEGACY_SHIPPED_TRACK_BULLET_RE.exec(visible)?.[1];
+  const prefix = explicitPrefix ?? PLAIN_BULLET_RE.exec(visible)?.[1];
   const body = prefix === undefined ? undefined : head.slice(prefix.length);
-  const leading = body !== undefined && visible.startsWith('**ID:**', prefix!.length)
+  let leading = body !== undefined && visible.startsWith('**ID:**', prefix!.length)
     ? INLINE_ID_RE.exec(body) : null;
+  let remainder = leading ? body!.slice(leading[0].length) : '';
+  const separator = /^[—–-]+[ \t]*/.exec(remainder);
+  // A plain title can also have a leading field with a clearly delimited body.
+  if (explicitPrefix === undefined && remainder !== '' && separator === null) {
+    leading = null;
+    remainder = '';
+  }
   const trailing = trailingInlineId(head, visible);
   const raw = leading?.[1] ?? trailing?.[1];
   if (raw === undefined) return null;
   const field: ParsedIdField = { raw, id: isValidWorkItemId(raw) ? raw : null };
-  const remainder = leading ? body!.slice(leading[0].length) : '';
-  const separator = /^[—–-]+[ \t]*/.exec(remainder);
   const secondLeadingField = /^(?:[—–-]+[ \t]*)?\*\*ID:\*\*/.test(remainder);
   const secondTrailingField = trailing !== null && (
     trailingInlineId(head.slice(0, trailing.index), visible.slice(0, trailing.index)) !== null ||
@@ -193,14 +193,15 @@ export function futureBulletParts(bullet: string) {
   if (bold !== null) {
     return { id, title: prose.slice(4, 4 + bold[2]!.length), body: prose.slice(bold[1]!.length), trigger };
   }
-  const line = prose.replace(/^- /, '');
-  const separator = /^(.*?)\s+[—–-]+\s+(.*)$/.exec(layout.replace(/^- /, ''));
+  const separator = PLAIN_BULLET_RE.exec(layout);
   if (separator !== null) {
+    const start = prose.startsWith('- ') ? 2 : 0;
     return {
-      id, title: line.slice(0, separator[1]!.length).replace(/^\*\*|\*\*$/g, ''),
-      body: line.slice(line.length - separator[2]!.length), trigger,
+      id, title: prose.slice(start, start + separator[2]!.length).replace(/^\*\*|\*\*$/g, ''),
+      body: prose.slice(separator[1]!.length), trigger,
     };
   }
+  const line = prose.replace(/^- /, '');
   return { id, title: line.trim().replace(/^\*\*|\*\*$/g, ''), body: '', trigger };
 }
 
@@ -315,6 +316,11 @@ export function migrateTodosText(content: string, taken: Set<string>): MigrateRe
       }
       section = null;
       continue;
+    }
+    if (section === 'unprocessed' && current !== null && legacyTodoBulletKind(line) !== null) {
+      current.endIdx = i;
+      spans.push(current);
+      current = null;
     }
     if (section !== null && /^### /.test(line)) {
       if (current !== null) {
@@ -488,19 +494,26 @@ function canonicalizeTrackLabel(raw: string): string {
   });
 }
 
-export function splitBlockerReferences(body: string): string[] {
-  const refs: string[] = [];
+export function splitBlockerReferences(body: string): Array<{ raw: string; outsideNotes: string }> {
+  const refs: Array<{ raw: string; outsideNotes: string }> = [];
   let depth = 0;
   let start = 0;
+  let outsideNotes = '';
   for (let i = 0; i < body.length; i++) {
-    if (body[i] === '(') depth++;
-    else if (body[i] === ')' && depth > 0) depth--;
-    else if (body[i] === ',' && depth === 0) {
-      refs.push(body.slice(start, i));
+    if (body[i] === '(') {
+      if (depth === 0) outsideNotes += ' ';
+      depth++;
+    } else if (body[i] === ')' && depth > 0) {
+      depth--;
+    } else if (body[i] === ',' && depth === 0) {
+      refs.push({ raw: body.slice(start, i), outsideNotes });
       start = i + 1;
+      outsideNotes = '';
+    } else if (depth === 0) {
+      outsideNotes += body[i]!;
     }
   }
-  refs.push(body.slice(start));
+  refs.push({ raw: body.slice(start), outsideNotes });
   return refs;
 }
 
@@ -513,7 +526,7 @@ function rewriteBlockedByLine(line: string, labelToId: ReadonlyMap<string, strin
   if (body.trim() === '') return line;
 
   let changed = false;
-  const parts = splitBlockerReferences(body).map((rawPart) => {
+  const parts = splitBlockerReferences(body).map(({ raw: rawPart }) => {
     const trimmed = rawPart.trim();
     // Only whole labels can become canonical ID tokens without losing notes.
     const bare = trimmed.replace(/^Track[ \t]+/i, '');
@@ -669,7 +682,7 @@ export function migrateRoadmapText(
         continue;
       }
       const body = l.trim();
-      if (firstBodyLine && /^_.*_$/.test(body) &&
+      if (!opts.fromShippedArchive && firstBodyLine && /^_.*_$/.test(body) &&
           (/risk|low|medium|high/i.test(body) || (!span.shipped && /^_\d+[ \t]+tasks?\b/i.test(body)))) {
         metaLineIdx = j;
       }
@@ -689,8 +702,8 @@ export function migrateRoadmapText(
     countId(id);
     recordLabel(labels, span.label, id);
 
-    // Insert right after the `_...risk..._` metadata line when present,
-    // or immediately under the heading otherwise.
+    // Archived receipts place the field under the heading. Active cards
+    // with recognized metadata place it directly below that metadata.
     const anchor = metaLineIdx >= 0 ? metaLineIdx : span.headingIdx;
     insertAfter.set(anchor, `_id: ${id}_${lineEnding(lines[anchor]!)}`);
   }
@@ -707,6 +720,7 @@ export function migrateRoadmapText(
   let blockedByChanged = false;
   if (opts.rewriteBlockedBy === true) {
     for (const span of spans) {
+      if (span.shipped) continue;
       for (const [j, l] of planningLines(lines, span.headingIdx + 1, span.endIdx)) {
         if (/^_blocked-by:/i.test(l)) {
           const rewritten = rewriteBlockedByLine(l, labelMap);

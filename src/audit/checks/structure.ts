@@ -19,8 +19,7 @@
  * wins.
  */
 
-import { FUTURE_HEADING_RE } from '../lib/state.ts';
-import { planningLines } from '../lib/work-item-id.ts';
+import { FUTURE_HEADING_RE, planningLines } from '../lib/state.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStructure(ctx: AuditCtx): CheckResult {

@@ -34,13 +34,12 @@ import {
   parseEffortTag,
   parseTaskTitle,
 } from '../lib/task-line.ts';
-import { detectStateRegions, FUTURE_HEADING_RE, stateAtLine, type LifecycleState } from '../lib/state.ts';
+import { detectStateRegions, FUTURE_HEADING_RE, planningLines, stateAtLine, type LifecycleState } from '../lib/state.ts';
 import {
   extractInlineBulletId,
   futureBulletParts,
   isValidWorkItemId,
   parseTrackIdLine,
-  planningLines,
   splitBlockerReferences,
 } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
@@ -212,8 +211,8 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
   };
   const body = stripItalic(line, /^_blocked-by:/);
   if (/^(?:none|—|-*)$/i.test(body)) return { refs, malformed };
-  for (const token of splitBlockerReferences(body)) {
-    const part = trim(token);
+  for (const { raw, outsideNotes } of splitBlockerReferences(body)) {
+    const part = trim(raw);
     if (part === '') continue;
     if (isValidWorkItemId(part)) {
       pushRef(part);
@@ -226,8 +225,7 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
     // Legacy readers accepted named Track labels embedded in prose. Keep
     // that path while requiring the new work-item tokens to match exactly.
     const legacy = [...part.matchAll(/\bTrack[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?![0-9A-Za-z])(?!\.[0-9A-Za-z])/gi)];
-    const withoutNotes = part.replace(/\([^)]*\)/g, '');
-    if (/\bwi-/i.test(withoutNotes) || legacy.length === 0) malformed.push(part);
+    if (/\bwi-/i.test(outsideNotes) || legacy.length === 0) malformed.push(part);
     else for (const match of legacy) pushRef(canonicalizeTrackId(match[1]!));
   }
   return { refs, malformed };
