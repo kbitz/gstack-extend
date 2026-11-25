@@ -8,7 +8,48 @@
 - **Evidence:** Main packs Track `1A` for both cases. The current scanner reports `BINS: EMPTY`. See `review-and-prep/mmm-6c091012-20261125T122758Z-continue5/reproduced-blocker.md` in the review evidence.
 - **Nested title case:** A Future title such as `**Clarify **help** output**` makes the index drop `**ID:** pending` from the description and makes the audit report `MALFORMED_ID`. See `review-and-prep/mmm-6c091012-20261125T134028Z-continue7/reproduced-blocker.md` in the review evidence.
 - **Fenced heading case:** A descriptive Future heading inside a code fence can hide the next advisory vocabulary warning. Apply lexer boundaries to the vocabulary and freshness scans. See `review-and-prep/mmm-6c091012-20261125T143405Z-continue8/vocab-fence-probe.md` in the review evidence.
+- **Test gap:** Pin vocabulary and freshness behavior for a descriptive Future heading and a `Future-proof` heading. Existing tests cover the ordinary Future heading and the presence of the freshness signal.
 - **Context:** PR #311 continuations 7 and 8 accept these cases for the queued `marked` lexer Track. Include the nested title fixture when replacing the hand-written parsing.
+- **Effort:** ?
+
+### [review:files=src/audit/parsers/roadmap.ts|src/audit/checks/structure.ts|tests/check-work-item-ids.test.ts] Test gap: Cover repeated Track IDs and shipped blocker targets
+- **ID:** wi-0df099
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The duplicate-field fixtures cover TODO and Future records. The passing shipped blocker fixture points to a canonical shipped heading.
+- **Hypothesis (untested):** Assert that repeated `_id:` fields on one Track produce `DUPLICATE_ID` and that an ID on a legacy shipped bullet or recycled shipped receipt satisfies its blocker.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/audit/parsers/roadmap.ts:622` and `src/audit/checks/structure.ts:171`.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=src/audit/id-cli.ts|tests/roadmap-id.test.ts] Test gap: Strengthen mint path and reservation tests
+- **ID:** wi-9b214e
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The mint batch test uses an explicit root and readable files. A random batch is unlikely to detect an omitted planning document.
+- **Hypothesis (untested):** Check project lookup with an omitted path, the read-error exit and output, and reservation across the root and `docs/` locations with a deterministic control.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/audit/id-cli.ts:30` and `tests/roadmap-id.test.ts:165`.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=bin/gstack-extend|tests/init-bin.test.ts] Test gap: Verify init stops before scaffolding on starter-ID errors
+- **ID:** wi-98ad73
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The init suite checks cleanup after a successful mint.
+- **Hypothesis (untested):** Exercise a failed mint and malformed mint output. Assert that init reports the error and leaves the project, scratch directory, and registry untouched.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/gstack-extend:961` and `tests/init-bin.test.ts:204`.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=skills/roadmap.md|skills/full-review.md|skills/pair-review.md|skills/review-and-prep.md] Test gap: Exercise work-item IDs through installed planning skills
+- **ID:** wi-670d1d
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The skill protocol tests check the mint command and field wording in the prompts.
+- **Hypothesis (untested):** Run a disposable planning flow and inspect its saved records for one correctly placed ID kept through promotion, deferral, and filing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** The producer paths covered by `tests/skill-protocols-roadmap.test.ts:610` and the companion review skill suites.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
 - **Effort:** ?
 
 ### [review:files=src/audit/lib/todo-patterns.ts|src/audit/checks/scattered-todos.ts] Base issue: Count scattered TODOs after indented code examples
