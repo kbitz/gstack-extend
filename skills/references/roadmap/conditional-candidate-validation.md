@@ -37,6 +37,7 @@ Group context; never claim the whole original Group shipped:
 ## Individual Track history
 
 ### Track 22A: Record landed work ✓ Shipped (v1.2.3.0)
+_id: wi-<hex>_
 - 2026-10-01: merged PR #109 (commit abc1234); verified land-time Track 22A, original Group 22.
 ```
 
@@ -56,43 +57,64 @@ bin, no dependencies. Use the caller's actual cap/output if different.
 
 ## From Complete-candidate validation
 
-Save active/archive drafts and this temporary Bun script **outside the workspace**
-in the durable proposal directory or scratch. Run it with four explicit absolute
-arguments: project root, resolved extend root, active draft, archive draft.
-It reads real Git/version/cap/scaffold metadata, overlays raw docs, reparses
-phases, merges shipped/Future history and replaces markdown snapshots; it never
-writes live files. This closure-only recipe requires every other artifact to remain byte-unchanged,
-including TODOS and the Future satellite even when its pointer count is unchanged.
+Save drafts and this Bun script **outside the workspace** in the durable
+proposal directory or scratch. Pass absolute paths for the project root,
+extend root, active ROADMAP draft and shipped archive draft. This four-argument
+form validates closure when all other artifacts retain their current bytes.
+
+For regeneration, append the drained TODOS draft and the Future satellite draft
+in that order. Use `-` in either slot to reuse its live bytes.
+Validate a promotion after removing the original record from its source draft
+so its immutable ID appears once in the candidate. Include every other changed
+artifact and rebuild its derived context before live writes. The script reads
+real Git/version/cap/scaffold metadata and overlays the drafts in memory.
 A selected trigger migration validates its Future draft with the snippet in Deferred work.
-It preserves Future/scaffold declarations.
-For wider regeneration overlay **every** changed artifact and rebuild all its
-derived context (inbox, Future, design docs, existence/scaffold maps, etc.), or
-defer both writes. Test stub metadata and live write-and-restore are insufficient.
 
 ```typescript
 import { isAbsolute, join, relative } from 'node:path'
-const [repoRoot, extendRoot, activeDraftPath, archiveDraftPath] = process.argv.slice(2)
+const args = process.argv.slice(2)
+const [repoRoot, extendRoot, activeDraftPath, archiveDraftPath, todosDraftPath, futureDraftPath] = args
+if (args.length !== 4 && args.length !== 6) throw new Error('Supply four paths and optionally both planning draft slots')
 if (![repoRoot, extendRoot, activeDraftPath, archiveDraftPath].every(p => p && isAbsolute(p))) throw new Error('Four absolute paths required')
+const regeneration = args.length === 6
+if (regeneration && ![todosDraftPath, futureDraftPath].every(p => p === '-' || (p && isAbsolute(p)))) throw new Error('Planning draft slots need absolute paths or -')
 const { buildAuditCtx, runAudit } = await import(join(extendRoot, 'src/audit/cli.ts'))
 const { parseRoadmap, mergeShippedArchive, mergeFutureArchive } = await import(join(extendRoot, 'src/audit/parsers/roadmap.ts'))
 const { parsePhases } = await import(join(extendRoot, 'src/audit/parsers/phases.ts'))
+const { parseTodos } = await import(join(extendRoot, 'src/audit/parsers/todos.ts'))
+const { detectStateRegions } = await import(join(extendRoot, 'src/audit/lib/state.ts'))
 const { CANONICAL_SECTIONS, parseAuditSections } = await import(join(extendRoot, 'src/audit/sections.ts'))
 const base = buildAuditCtx({ repoRoot, extendDir: extendRoot, argv: { repoRoot, scanState: false, futureIndex: false, prompt: null } })
 if (!base.paths.roadmap) throw new Error('No live roadmap; use the greenfield flow')
 const active = await Bun.file(activeDraftPath).text()
 const archive = await Bun.file(archiveDraftPath).text()
-const futureBody = text => text.split(/^## Future(?:[ \t].*)?$/m)[1]?.split(/^## /m)[0] ?? ''
-if (futureBody(active) !== futureBody(base.files.roadmap)) throw new Error('Future changed; rebuild complete context')
+const futureSection = text => {
+  const state = detectStateRegions(text)
+  const section = state.kind === 'v2' && state.ranges.find(range => range.state === 'future')
+  return section ? text.split('\n').slice(section.startLine - 1, section.endLine).join('\n') : null
+}
+if (!regeneration && futureSection(active) !== futureSection(base.files.roadmap)) throw new Error('Future changed; rebuild complete context')
 const ctx = { ...base, paths: { ...base.paths }, files: { ...base.files } }
 ctx.paths.shippedArchive ??= join(repoRoot, 'docs/roadmap-shipped.md')
 ctx.files.roadmap = active
 ctx.files.shippedArchive = archive
-const rawArchive = parseRoadmap(archive)
-ctx.roadmap = mergeFutureArchive(mergeShippedArchive(parseRoadmap(active), rawArchive), parseRoadmap(base.files.futureArchive))
+const replacements = new Map([[ctx.paths.roadmap, active], [ctx.paths.shippedArchive, archive]])
+if (todosDraftPath && todosDraftPath !== '-') {
+  ctx.paths.todos ??= join(repoRoot, 'docs/TODOS.md')
+  ctx.files.todos = await Bun.file(todosDraftPath).text()
+  ctx.todos = parseTodos(ctx.files.todos)
+  replacements.set(ctx.paths.todos, ctx.files.todos)
+}
+if (futureDraftPath && futureDraftPath !== '-') {
+  ctx.paths.futureArchive ??= join(repoRoot, 'docs/roadmap-future.md')
+  ctx.files.futureArchive = await Bun.file(futureDraftPath).text()
+  replacements.set(ctx.paths.futureArchive, ctx.files.futureArchive)
+}
+const rawArchive = parseRoadmap(archive, { fromShippedArchive: true })
+ctx.roadmap = mergeFutureArchive(mergeShippedArchive(parseRoadmap(active), rawArchive), parseRoadmap(ctx.files.futureArchive))
 ctx.phases = parsePhases(active)
 const scaffolds = parsed => parsed.value.phases.flatMap(p => p.scaffoldPaths.map(path => p.num + '|' + path)).sort()
 if (JSON.stringify(scaffolds(ctx.phases)) !== JSON.stringify(scaffolds(base.phases))) throw new Error('Scaffolds changed; rebuild complete context')
-const replacements = new Map([[ctx.paths.roadmap, active], [ctx.paths.shippedArchive, archive]])
 ctx.mdFiles = base.mdFiles.map(file => ({ ...file, content: replacements.get(file.abs) ?? file.content }))
 for (const [path, content] of replacements) {
   if (!ctx.mdFiles.some(file => file.abs === path)) ctx.mdFiles.push({ abs: path, rel: relative(repoRoot, path), content })
@@ -103,7 +125,7 @@ console.log('RAW ARCHIVE DIAGNOSTICS', JSON.stringify({ errors: rawArchive.error
 console.log('MERGED DIAGNOSTICS', JSON.stringify({ errors: ctx.roadmap.errors, warnings: ctx.roadmap.value.styleLintWarnings }))
 const sections = parseAuditSections(report)
 if (!CANONICAL_SECTIONS.every(name => sections.some(s => s.name === name))) throw new Error('Incomplete audit section coverage')
-const blockers = new Set(['SIZE', 'COLLISIONS', 'PACKING', 'STRUCTURE', 'STATE_SECTIONS', 'VERSION', 'GROUP_DEPS', 'PARALLELISM_BUDGET', 'FUTURE'])
+const blockers = new Set(['SIZE', 'COLLISIONS', 'PACKING', 'STRUCTURE', 'STATE_SECTIONS', 'VERSION', 'GROUP_DEPS', 'PARALLELISM_BUDGET', 'FUTURE', 'WORK_ITEM_IDS'])
 if (rawArchive.errors.length || sections.some(s => blockers.has(s.name) && s.body.includes('STATUS: fail'))) process.exit(1)
 ```
 

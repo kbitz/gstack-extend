@@ -86,6 +86,7 @@
       "tests/quota.test.ts",
       "tests/review-delegate.test.ts",
       "tests/review-state.test.ts",
+      "tests/roadmap-id.test.ts",
       "tests/secret-dispositions.test.ts",
       "tests/setup-hosts.test.ts",
       "tests/setup-init-wire.test.ts",
@@ -235,6 +236,12 @@
       "tests/init-templates.test.ts",
       "tests/layout-scaffold.test.ts",
       "tests/setup-init-wire.test.ts"
+    ],
+    "bin/roadmap-id": [
+      "tests/bun-prereq.test.ts",
+      "tests/init-bin.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/roadmap-id.test.ts"
     ],
     "bin/roadmap-pack": [
       "tests/audit-snapshots.test.ts",

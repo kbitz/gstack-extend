@@ -15,6 +15,7 @@
  * how bash builds it via the outer for-term loop + inner grep -in.
  */
 
+import { FUTURE_HEADING_RE } from '../lib/state.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 const BANNED = ['cluster', 'workstream', 'milestone', 'sprint'] as const;
@@ -63,7 +64,7 @@ export function runCheckVocabLint(ctx: AuditCtx): CheckResult {
         state = 'PHASE';
       } else if (/^#{2,4} Group/i.test(line)) {
         state = 'GROUP';
-      } else if (/^## Future($| \()/i.test(line)) {
+      } else if (FUTURE_HEADING_RE.test(line)) {
         state = 'FUTURE';
       } else if (/^## (Shipped|In Progress|Current Plan)\b/.test(line)) {
         state = 'TOPLEVEL';

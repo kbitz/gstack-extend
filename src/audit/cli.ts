@@ -55,6 +55,7 @@ import { runCheckTodoFormat } from './checks/todo-format.ts';
 import { runCheckUnprocessed } from './checks/unprocessed.ts';
 import { runCheckVersion } from './checks/version.ts';
 import { runCheckVocabLint } from './checks/vocab-lint.ts';
+import { runCheckWorkItemIds } from './checks/work-item-ids.ts';
 import { createGitGateway } from './lib/git.ts';
 import { resolveStateDir } from './lib/effort.ts';
 import { computeInFlight } from './lib/in-flight.ts';
@@ -62,6 +63,7 @@ import { walkMdFiles } from './lib/md-walk.ts';
 import { parallelismCap as resolveParallelismCap } from './lib/parallelism-cap.ts';
 import { versionGt } from './lib/semver.ts';
 import { loadSharedInfra } from './lib/shared-infra.ts';
+import { FUTURE_HEADING_RE } from './lib/state.ts';
 import { parsePhases } from './parsers/phases.ts';
 import { parseProgress } from './parsers/progress.ts';
 import {
@@ -278,7 +280,7 @@ export function buildAuditCtx(args: {
   const shippedArchivePath = findDoc(repoRoot, 'roadmap-shipped.md');
   const shippedArchiveContent = readMaybe(shippedArchivePath);
   if (shippedArchivePath !== null) {
-    roadmap = mergeShippedArchive(roadmap, parseRoadmap(shippedArchiveContent));
+    roadmap = mergeShippedArchive(roadmap, parseRoadmap(shippedArchiveContent, { fromShippedArchive: true }));
   }
   const futureArchivePath = findDoc(repoRoot, 'roadmap-future.md');
   const futureArchiveContent = readMaybe(futureArchivePath);
@@ -432,6 +434,7 @@ const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckScatteredTodos,
   runCheckUnprocessed,
   runCheckTodoFormat,
+  runCheckWorkItemIds,
 ];
 
 function renderMode(m: ModeResult): string {
@@ -612,7 +615,7 @@ function computeGitInferredFreshness(ctx: AuditCtx): number {
   let count = 0;
 
   for (const line of lines) {
-    if (/^## (Future|Unprocessed|Execution Map)/i.test(line)) {
+    if (FUTURE_HEADING_RE.test(line) || /^## (Unprocessed|Execution Map)/i.test(line)) {
       inActive = false;
       continue;
     }

@@ -173,6 +173,12 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## WORK_ITEM_IDS
+STATUS: warn
+FINDINGS:
+- MISSING_ID: ROADMAP.md Track 1A — missing _id: wi-<hex>_
+
+
 ## MODE
 DETECTED: triage
 REASON: Valid Groups > Tracks structure found (1 groups)

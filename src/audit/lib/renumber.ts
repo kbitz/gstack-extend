@@ -62,6 +62,7 @@ export function isHistoricalContext(text: string, index: number, len: number): b
   const trimmed = line.replace(/^[ \t]+/, '');
   if (/^#{1,6}[ \t]/.test(trimmed)) return false;
   if (/^_tombstone:/i.test(trimmed)) return true;
+  if (/^_id:/i.test(trimmed)) return true;
   if (/^_(?:blocked-by|out|read-first|Depends on|touches):/i.test(trimmed)) return false;
   const before = text.slice(Math.max(lineStart, index - 60), index);
   if (HIST_RE.test(before)) return true;

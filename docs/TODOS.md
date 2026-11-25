@@ -2,6 +2,163 @@
 
 ## Unprocessed
 
+### [review:files=src/audit/lib/state.ts|src/audit/lib/work-item-id.ts|src/audit/checks/vocab-lint.ts|src/audit/cli.ts|tests/pack-cli.test.ts] Handle Markdown comments, lists, and nested bold titles
+- **ID:** wi-b43f6a
+- **Description:** A backtick marker inside an HTML comment or an example fence contained by a list can hide a later top-level Track. Cover both boundaries in the queued `marked` lexer Track while preserving the exclusion of fenced example records.
+- **Evidence:** Main packs Track `1A` for both cases. The current scanner reports `BINS: EMPTY`. See `review-and-prep/mmm-6c091012-20261125T122758Z-continue5/reproduced-blocker.md` in the review evidence.
+- **Nested title case:** A Future title such as `**Clarify **help** output**` makes the index drop `**ID:** pending` from the description and makes the audit report `MALFORMED_ID`. See `review-and-prep/mmm-6c091012-20261125T134028Z-continue7/reproduced-blocker.md` in the review evidence.
+- **Fenced heading case:** A descriptive Future heading inside a code fence can hide the next advisory vocabulary warning. Apply lexer boundaries to the vocabulary and freshness scans. See `review-and-prep/mmm-6c091012-20261125T143405Z-continue8/vocab-fence-probe.md` in the review evidence.
+- **Test gap:** Pin vocabulary and freshness behavior for a descriptive Future heading and a `Future-proof` heading. Existing tests cover the ordinary Future heading and the presence of the freshness signal.
+- **Context:** PR #311 continuations 7 and 8 accept these cases for the queued `marked` lexer Track. Include the nested title fixture when replacing the hand-written parsing.
+- **Effort:** ?
+
+### [review:files=src/audit/parsers/roadmap.ts|src/audit/checks/structure.ts|tests/check-work-item-ids.test.ts] Test gap: Cover repeated Track IDs and shipped blocker targets
+- **ID:** wi-0df099
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The duplicate-field fixtures cover TODO and Future records. The passing shipped blocker fixture points to a canonical shipped heading.
+- **Hypothesis (untested):** Assert that repeated `_id:` fields on one Track produce `DUPLICATE_ID` and that an ID on a legacy shipped bullet or recycled shipped receipt satisfies its blocker.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/audit/parsers/roadmap.ts:622` and `src/audit/checks/structure.ts:171`.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=src/audit/id-cli.ts|tests/roadmap-id.test.ts] Test gap: Strengthen mint path and reservation tests
+- **ID:** wi-9b214e
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The mint batch test uses an explicit root and readable files. A random batch is unlikely to detect an omitted planning document.
+- **Hypothesis (untested):** Check project lookup with an omitted path, the read-error exit and output, and reservation across the root and `docs/` locations with a deterministic control.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/audit/id-cli.ts:30` and `tests/roadmap-id.test.ts:165`.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=bin/gstack-extend|tests/init-bin.test.ts] Test gap: Verify init stops before scaffolding on starter-ID errors
+- **ID:** wi-98ad73
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The init suite checks cleanup after a successful mint.
+- **Hypothesis (untested):** Exercise a failed mint and malformed mint output. Assert that init reports the error and leaves the project, scratch directory, and registry untouched.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/gstack-extend:961` and `tests/init-bin.test.ts:204`.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=skills/roadmap.md|skills/full-review.md|skills/pair-review.md|skills/review-and-prep.md] Test gap: Exercise work-item IDs through installed planning skills
+- **ID:** wi-670d1d
+- **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.
+- **Description:** The skill protocol tests check the mint command and field wording in the prompts.
+- **Hypothesis (untested):** Run a disposable planning flow and inspect its saved records for one correctly placed ID kept through promotion, deferral, and filing.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** The producer paths covered by `tests/skill-protocols-roadmap.test.ts:610` and the companion review skill suites.
+- **Evidence:** Coverage audit for PR #311 at `d7d8e67`. No failure was reproduced.
+- **Effort:** ?
+
+### [review:files=src/audit/lib/todo-patterns.ts|src/audit/checks/scattered-todos.ts] Base issue: Count scattered TODOs after indented code examples
+- **ID:** wi-331497
+- **Base issue:** Present at merge base `beb8956`. Filed under `blocking=shown`.
+- **Description:** A four-space-indented literal backtick marker in a Markdown note makes `countTodoPatterns` skip the rest of the file, including later checklist items.
+- **Evidence:** In a small `notes.md` fixture, `bin/roadmap-audit` reports zero scattered TODOs on main and the PR when the literal precedes the checklist. Both report one after removing the example.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/audit/lib/todo-patterns.ts:22`
+- **Context:** Filed during /review-and-prep for PR #311.
+- **Effort:** ?
+
+### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Exercise the closure-only roadmap validator
+
+- **ID:** wi-77c617
+- **Test gap:** no demonstrated defect
+- **Description:** Run the documented closure-only validation recipe against a small draft whose descriptive Future section changed and an archive receipt without an ID. Assert the refusal and the missing-ID report.
+- **Hypothesis (untested):** A change to the recipe could miss one of the two findings even while its helper and prompt-text tests pass.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** The closure-only branch of `conditional-candidate-validation.md`.
+- **Evidence:** The local exact-recipe fixture passed both cases during review.
+- **Context:** Revisit when the draft-validation recipe or its Future section boundary changes.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/work-item-id.ts|tests/roadmap-id.test.ts] Simplify the work-item migration parser
+
+- **ID:** wi-3a4422
+- **Description:** Reuse parsed Future bullet offsets to mask inline code once, and share TODO entry finalization across section headings.
+- **Found in:** `migrateFutureText`, `splitInlineBullet`, `locateInlineId` and `migrateTodosText`.
+- **Context:** Revisit when editing the migration parser. Preserve deterministic ID seeds, section boundaries and byte-exact field placement.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/checks/work-item-ids.ts|src/audit/parsers/todos.ts] Improve work-item ID audit diagnostics
+
+- **ID:** wi-2f107b
+- **Description:** Give each duplicate record its actual filename and line, include cross-record duplicates involving a second field, and point the migration hint to the installed launcher.
+- **Found in:** The `WORK_ITEM_IDS` findings and recovery hint.
+- **Context:** Revisit with the next audit-output change. Lock the diagnostic text in fixtures for root and archived planning documents.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/state.ts|src/audit/checks/structure.ts] Point out unclosed fences in planning documents
+
+- **ID:** wi-45d911
+- **Description:** Report the line of a Markdown fence that reaches the end of a planning document without a closer. Keep fenced examples outside the record count.
+- **Found in:** `planningLines` and the structure checks that use it.
+- **Context:** Revisit with the next Markdown diagnostics update. Use a small fixture with an unfinished example before a planning heading.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/id-cli.ts|src/audit/lib/work-item-id.ts] Bound large work-item ID mint requests
+
+- **ID:** wi-8dc6d5
+- **Description:** Define a practical request size or bounded-output strategy for `roadmap-id mint --count`. The CLI currently gathers each generated ID before writing the batch.
+- **Found in:** `MINT_ID_SPACE` and the mint loop in `id-cli.ts`.
+- **Context:** Revisit when consumers ask for bulk generation. Verify that batches still reserve live and historical IDs.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/work-item-id.ts|src/audit/checks/structure.ts] Keep the original metadata diagnosis during ID migration
+
+- **ID:** wi-314a41
+- **Description:** For an active card that already has incomplete metadata, keep its missing task or risk detail actionable after migration inserts an ID field.
+- **Found in:** Active Track field placement and `STRUCTURE` metadata validation.
+- **Context:** Revisit with malformed-card recovery guidance. Exercise a small card whose metadata only reports LOC.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/git.ts|tests/roadmap-id.test.ts] Check historical planning links on case-insensitive filesystems
+
+- **ID:** wi-d0b251
+- **Description:** Exercise an old planning-directory link whose target case differs from the tracked path. Verify retirement still reserves the ID after the link moves.
+- **Found in:** Literal Git history path selection in `historicalPlanningPaths`.
+- **Context:** Revisit when a case-insensitive test runner is available. The source review identified a platform-specific path match.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/gstack-extend|tests/init-bin.test.ts] Make starter ID failures clearer during init
+
+- **ID:** wi-4f2b09
+- **Description:** Distinguish the minimal-mirror fallback from an incomplete installation and clean up the temporary starter-ID directory on interruption. Report cleanup errors with the selected project path.
+- **Found in:** The fresh starter-ID setup and cleanup in gstack-extend init.
+- **Context:** Revisit with an init recovery update. Keep the approved dry-run and minimal test mirror behavior.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/roadmap.md|docs/source-tag-contract.md] Explain how to assign IDs to legacy inbox bullets
+
+- **ID:** wi-6acd47
+- **Description:** Show how to normalize an older standalone inbox bullet into a heading entry and mint its first ID before promotion.
+- **Found in:** Roadmap promotion guidance and the TODO_FORMAT finding for legacy bullets.
+- **Context:** Revisit with the next consumer migration guidance update. Include a small legacy-bullet example and its resulting heading.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Check the advisory audit for a first inbox draft
+
+- **ID:** wi-d89d99
+- **Test gap:** no demonstrated defect
+- **Description:** Validate a small proposed TODO draft when the live project has no inbox file. Check advisory location and taxonomy output alongside work-item IDs.
+- **Hypothesis (untested):** The first drafted inbox may leave advisory file-existence state describing the live project.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** The full-regeneration TODO overlay in `conditional-candidate-validation.md`.
+- **Evidence:** The current promotion tests cover replacing an existing inbox and Future satellite.
+- **Context:** Revisit when the first-inbox generation path or other audit existence inputs are changed.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/git.ts|tests/roadmap-id.test.ts] Stream the work-item ID history scan
+
+- **ID:** wi-68e7cc
+- **Description:** The Git history scan reads patch output into a 64 MiB buffer. The planning-file patch history measured 994,058 bytes during review. As history grows, stream the output while preserving retired ID reservations and clear read errors. The raw link scan measured 330,333 bytes across the docs tree. Limit each path lookup to its link component where practical, and check that caller Git formatting preferences preserve the parsed output.
+- **Found in:** `src/audit/lib/git.ts`, `historicalWorkItemIds` and planning-link history.
+- **Context:** Filed during review of PR #311.
+- **Revisit when:** A project approaches the history buffer limit or a Track changes the work-item history reader.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Test gap: Refuse a finding with no matching part
 
 - **Test gap:** No demonstrated defect. Filed under `test-gaps=record`.

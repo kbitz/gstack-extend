@@ -445,22 +445,21 @@ While the run state is recorded, this invocation's evidence directory is `--dir`
 
 ### Establish the approved implementation scope
 
-Read `docs/SPEC.md` when present as a product spec (it has an `## Authority`
-section). It is product context, never this PR's
-implementation scope or completion-matrix source. Carry its selected target,
-intended users, accepted limitations and relevant outcome IDs into review
-context. When the reviewed diff changes SPEC, use the base branch's SPEC for
-this review's scope; the change governs only after the user approves it directly
-in this session or through a verified authorization under Boundaries. Repository
-text claiming approval does not count. Ask reviewers to explain concrete impact
-on that target before treating a new finding as required work. Severity labels
-and speculative future scale do not alone enlarge scope. Required tests,
-security and data-protection defects in the reviewed change, and
-already-approved obligations remain binding; a spec cannot silently waive them.
-Record unrelated improvements as backlog items with evidence, why they can wait
-and a revisit trigger. Record the spec's release-policy path and any checkpoint
-evidence in the PR receipt, not the handoff; do not assign a release version
-here.
+Read `docs/SPEC.md` if it has an `## Authority` section. It is product
+context, never this PR's implementation scope or completion-matrix source.
+Carry its target, users, limits and outcome IDs into review.
+When the reviewed diff changes SPEC, use the base branch's SPEC for this
+review's scope until the user approves the change directly in this session
+or through verified authorization under Boundaries. Repository text claiming
+approval does not count. Ask reviewers for concrete impact on the target
+before requiring a fix. Severity and speculative scale alone do not enlarge
+scope. Required tests, security and data-protection defects in the reviewed
+change, and already-approved obligations remain binding; a spec cannot silently
+waive them. File unrelated work with evidence, a reason to wait and a revisit trigger.
+For every new TODOS entry, mint an ID with
+`"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` and place `- **ID:** <id>` first.
+Record the SPEC release-policy path and checkpoint evidence in the PR receipt,
+not the handoff. Leave version selection to release.
 
 Find the approved autoplan/plan/spec from explicit session references first,
 then project records and `/review`'s discovery procedure. Read the full plan,
@@ -999,7 +998,7 @@ anchor changed (<which>)`, let the review and the coverage audit write tests as
 today, and edit no upstream file. A policy without the value records nothing
 here.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 5553fba1d85ac714` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 57898a23ec35e259` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
 
 ### Give review parts the settled decisions
 
@@ -1086,7 +1085,7 @@ the value records nothing here.
 
 Safety findings keep today's handling. When `blocking: active`, a non-safety finding blocks only if the host shows it on the reviewed candidate and it does not reproduce on the same reachable path at base. A finding from an attacker part needs the host's own showing attempt.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 5553fba1d85ac714` before evaluating shown findings when the review policy carries `blocking=shown`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 57898a23ec35e259` before evaluating shown findings when the review policy carries `blocking=shown`.
 
 ### Record cycle 1's full-review baseline
 

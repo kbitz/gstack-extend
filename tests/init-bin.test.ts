@@ -201,6 +201,16 @@ describe('init flag matrix', () => {
     expect(registry.projects[0].version_scheme).toBe('4-digit');
   });
 
+  test('fresh init mints a starter ID when TMPDIR is unavailable', () => {
+    const s = scope('fresh-missing-temp');
+    const missingTemp = join(dirname(s.target), 'unavailable-temp');
+    const result = run(['init', s.target, '--no-prompt'], s, { TMPDIR: missingTemp });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const todos = readFileSync(join(s.target, 'docs', 'TODOS.md'), 'utf8');
+    expect(todos).toMatch(/^- \*\*ID:\*\* wi-[0-9a-f]{6,8}$/m);
+    expect(readdirSync(dirname(s.target)).filter(name => name.startsWith('.gstack-init-id.'))).toEqual([]);
+  });
+
   test('empty dir + --dry-run: prints would-write, no filesystem changes', () => {
     const s = scope('empty-dryrun');
     const r = run(['init', s.target, '--dry-run', '--no-prompt'], s);
@@ -1464,6 +1474,50 @@ describe('--migrate preview and re-registration', () => {
     const fresh = runInstalled(other, ['init', other.target, '--no-prompt']);
     expect(fresh.exitCode, fresh.stderr).toBe(0);
     expect(readdirSync(outsideDesigns)).toEqual([]);
+  });
+
+  test('the real mint launcher supports a docs directory linked inside the project', () => {
+    const s = scope('mint-linked-docs');
+    const destination = join(s.target, 'documentation');
+    mkdirSync(destination, { recursive: true });
+    symlinkSync('documentation', join(s.target, 'docs'));
+
+    const result = run(['init', s.target, '--no-prompt'], s);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(readFileSync(join(destination, 'TODOS.md'), 'utf8')).toMatch(/^- \*\*ID:\*\* wi-[0-9a-f]{6,8}$/m);
+  });
+
+  test('re-registering a linked project keeps shared TODOs without minting a starter entry', () => {
+    const s = scope('mint-reregister-linked-docs');
+    const shared = join(dirname(s.target), 'shared-docs');
+    mkdirSync(s.target);
+    mkdirSync(join(shared, 'designs'), { recursive: true });
+    mkdirSync(join(shared, 'archive'));
+    for (const file of ['CLAUDE.md', 'CHANGELOG.md', 'VERSION']) writeFileSync(join(s.target, file), 'existing\n');
+    for (const file of ['ROADMAP.md', 'TODOS.md', 'PROGRESS.md', 'roadmap-future.md', 'roadmap-shipped.md']) {
+      writeFileSync(join(shared, file), 'shared\n');
+    }
+    symlinkSync(shared, join(s.target, 'docs'));
+
+    const result = run(['init', s.target, '--migrate', '--no-prompt'], s);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain('+ registered');
+    expect(result.stdout).not.toContain('+ wrote');
+    expect(readFileSync(join(shared, 'TODOS.md'), 'utf8')).toBe('shared\n');
+  });
+
+  test('the real mint launcher ignores a dangling ROADMAP during init migration', () => {
+    const s = scope('mint-dangling-roadmap');
+    const docs = join(s.target, 'docs');
+    const missing = join(dirname(s.target), 'missing-roadmap');
+    mkdirSync(docs, { recursive: true });
+    symlinkSync(missing, join(docs, 'ROADMAP.md'));
+
+    const result = run(['init', s.target, '--migrate', '--no-prompt'], s);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(readFileSync(join(docs, 'TODOS.md'), 'utf8')).toMatch(/^- \*\*ID:\*\* wi-[0-9a-f]{6,8}$/m);
+    expect(existsSync(join(docs, 'roadmap-future.md'))).toBe(false);
+    expect(existsSync(missing)).toBe(false);
   });
 
   // Value: protects=the dry-run's exit code matches the real run when a canonical dir path is

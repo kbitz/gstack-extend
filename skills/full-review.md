@@ -603,11 +603,13 @@ create it at the end of the file.
 
 ### Step 3: Write approved findings
 
-For each approved cluster, write each finding as a rich-format entry under
-`## Unprocessed`:
+For each approved cluster, mint one unique work-item ID per new finding via
+`"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` (or `--count <N>`) and write
+each finding as a rich-format entry under `## Unprocessed`:
 
 ```markdown
 ### [full-review:<severity>] <finding title>
+- **ID:** <wi-xxxxxx>
 - **Description:** <DESCRIPTION text from the finding — the reviewer agent's framing of what's wrong>
 - **Hypothesis (untested):** <HYPOTHESIS text> — re-investigate before implementing; the reviewer agent did not verify this direction.
 - **Found in:** <the finding's FILE:LINE, copied verbatim from clusters.md>

@@ -188,6 +188,20 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## WORK_ITEM_IDS
+STATUS: warn
+FINDINGS:
+- MISSING_ID: ROADMAP.md ## Future (Cross-device account sync) — missing **ID:** wi-<hex>
+- MISSING_ID: ROADMAP.md ## Future (Investigate Graph rate-limit handling) — missing **ID:** wi-<hex>
+- MISSING_ID: ROADMAP.md Track 3A — missing _id: wi-<hex>_
+- MISSING_ID: ROADMAP.md Track 3B — missing _id: wi-<hex>_
+- MISSING_ID: ROADMAP.md Track 4A — missing _id: wi-<hex>_
+- MISSING_ID: ROADMAP.md Track 4B — missing _id: wi-<hex>_
+- MISSING_ID: ROADMAP.md Track 5A — missing _id: wi-<hex>_
+- MISSING_ID: shipped Track 1A (line 47) — missing **ID:** wi-<hex>
+- MISSING_ID: shipped Track 2A (line 50) — missing **ID:** wi-<hex>
+
+
 ## MODE
 DETECTED: triage
 REASON: Valid Groups > Tracks structure found (5 groups)

@@ -1023,4 +1023,80 @@ describe('future pointer + mergeFutureArchive', () => {
   test('formatFutureIndex of an empty Future prints both header lines', () => {
     expect(formatFutureIndex([])).toBe('FUTURE_INDEX: 0\nFUTURE_TRIGGERS_MISSING: 0\n');
   });
+
+  test('formatFutureIndex extracts ID, strips it from first sentence, and preserves ID-less format', () => {
+    const out = formatFutureIndex([
+      '- **With ID** — **ID:** wi-a1b2c3 — First sentence. Second sentence. **Revisit when:** trigger.',
+      '- **Without ID** — Plain sentence. **Revisit when:** later.',
+    ]);
+    const lines = out.trim().split('\n');
+    expect(lines[2]).toBe('- **With ID** (wi-a1b2c3) — First sentence. — revisit: trigger');
+    expect(lines[3]).toBe('- **Without ID** — Plain sentence. — revisit: later');
+  });
+
+  test('the Future index preserves code examples and reads the actual revisit marker', () => {
+    const [example, legacy] = futureIndexRows([
+      '- **Document `**ID:**`** — **ID:** wi-aabbcc — `Example — **ID:** wi-a1b2c3` **Revisit when:** review `**Revisit when:**` support.',
+      '- **Follow-up**: More work. — **ID:** wi-112233 **Revisit when:** - use **Phase 2** — after GA',
+    ]);
+    expect(example).toEqual({
+      id: 'wi-aabbcc',
+      title: 'Document `**ID:**`',
+      source: null,
+      first: '`Example — **ID:** wi-a1b2c3`',
+      revisit: 'review `**Revisit when:**` support',
+    });
+    expect(legacy?.id).toBe('wi-112233');
+    expect(legacy?.revisit).toBe('- use **Phase 2** — after GA');
+  });
+
+  test('a leading Future ID is excluded from the index summary for a plain title', () => {
+    expect(futureIndexRows(['- Plain title — **ID:** wi-aabbcc — Keep the context.'])[0]).toEqual({
+      id: 'wi-aabbcc', title: 'Plain title', source: null, first: 'Keep the context.', revisit: null,
+    });
+  });
+
+  test('parseRoadmap parses _id:, _blocked-by: work-item IDs, malformed tokens, and legacy shipped bullets', () => {
+    const md = [
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: First',
+      '_1 task · ~50 LOC · low risk_',
+      '_id: wi-000101_',
+      '_touches: src/a.ts_',
+      '_blocked-by: wi-000099, wi-BAD!_',
+      '_blocked-by: after Track 0A._',
+      '- **Do** -- body (S)',
+      '## Shipped',
+      '#### Group 0: Old ✓ Shipped (v0.1.0)',
+      '- Track 0A — **ID:** wi-000099 — _shipped (v0.1.0): old_',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks.find((x) => x.id === '1A')!;
+    expect(t.workItemId).toBe('wi-000101');
+    expect(t.blockedBy).toEqual(['wi-000099', '0A']);
+    expect(t.blockedByMalformed).toEqual(['wi-BAD!']);
+    expect(r.value.legacyShippedTracks).toHaveLength(1);
+    expect(r.value.legacyShippedTracks![0]!.workItemId).toBe('wi-000099');
+  });
+
+  test('a legacy Track blocker followed by a description keeps its dependency', () => {
+    const roadmap = [
+      '## Current Plan', '### Group 3: Next', '#### Track 3B: Second', '_1 task . low risk_',
+      '_blocked-by: Track 3A Wi-Fi driver, wi-12_',
+    ].join('\n');
+    const track = parseRoadmap(roadmap, deps()).value.tracks[0]!;
+    expect(track.blockedBy).toEqual(['3A']);
+    expect(track.blockedByMalformed).toEqual(['wi-12']);
+  });
+
+  test('an ID mentioned in a nested legacy blocker note leaves the Track reference intact', () => {
+    const roadmap = [
+      '## Current Plan', '### Group 1: Current', '#### Track 1B: Second', '_1 task . low risk_',
+      '_blocked-by: Track 1A (see rationale (appendix), follow-up wi-a1b2c3), wi-112233_',
+    ].join('\n');
+    const track = parseRoadmap(roadmap, deps()).value.tracks[0]!;
+    expect(track.blockedBy).toEqual(['1A', 'wi-112233']);
+    expect(track.blockedByMalformed).toEqual([]);
+  });
 });

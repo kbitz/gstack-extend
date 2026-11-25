@@ -95,6 +95,20 @@ describe('parseTodos — entry classification', () => {
     expect(e.kind).toBe('legacyBullet');
   });
 
+  test('standalone checklist and link bullets remain visible as legacy inbox entries', () => {
+    const markdown = [
+      '## Unprocessed', '- [ ] Repair the link', '- [Spec](docs/SPEC.md) needs repair',
+      '### [manual] Another entry', '- [ ] Check the section', '- [Spec](docs/SPEC.md)', '- **ID:** wi-aabbcc',
+    ].join('\n');
+    const entries = parseTodos(markdown).value.entries;
+    expect(entries.map(entry => [entry.kind, entry.line])).toEqual([
+      ['legacyBullet', 2],
+      ['legacyBullet', 3],
+      ['heading', 4],
+    ]);
+    expect(entries[2]!.workItemId).toBe('wi-aabbcc');
+  });
+
   test('mixed entries preserved in document order', () => {
     const md = [
       '## Unprocessed',
@@ -128,18 +142,23 @@ describe('parseTodos — code fence handling', () => {
     expect(r.value.entries[0]!.title).toBe('Real entry');
   });
 
-  test('fence with leading whitespace', () => {
-    const md = [
-      '## Unprocessed',
-      '   ```',
-      '### [manual] Inside indented fence',
-      '   ```',
-      '### [manual] Real',
-    ].join('\n');
-    const r = parseTodos(md);
-    expect(r.value.entries).toHaveLength(1);
-    expect(r.value.entries[0]!.title).toBe('Real');
-  });
+  for (const marker of ['```', '~~~']) {
+    test.each([0, 1, 2, 3])(`${marker} fence with %i leading spaces`, (indent) => {
+      const fence = ' '.repeat(indent) + marker;
+      const md = [
+        '## Unprocessed',
+        fence + 'md',
+        '### [manual] Inside fence',
+        '    ' + marker,
+        '### [manual] Still inside after four spaces',
+        '\t' + marker,
+        '### [manual] Still inside after a tab',
+        fence,
+        '### [manual] Real',
+      ].join('\n');
+      expect(parseTodos(md).value.entries.map(entry => entry.title)).toEqual(['Real']);
+    });
+  }
 
   test('fences outside Unprocessed section have no effect on entries', () => {
     const md = [
@@ -179,5 +198,33 @@ describe('parseTodos — line numbers', () => {
     ].join('\n');
     const r = parseTodos(md);
     expect(r.value.entries[0]!.line).toBe(5);
+  });
+});
+
+describe('parseTodos — work-item IDs', () => {
+  test('captures valid, malformed, duplicate IDs and ## Completed IDs without changing entries count', () => {
+    const md = [
+      '## Unprocessed',
+      '### [manual] Valid',
+      '- **ID:** wi-a1b2c3',
+      '- **Why:** ok',
+      '### [manual] Malformed',
+      '- **ID:** wi-BAD!',
+      '### [manual] Duplicate bullets',
+      '- **ID:** wi-111111',
+      '- **ID:** wi-222222',
+      '## Completed',
+      '### [manual] Done',
+      '- **ID:** wi-dead01',
+    ].join('\n');
+    const r = parseTodos(md);
+    expect(r.value.entries).toHaveLength(3);
+    expect(r.value.entries[0]!.workItemId).toBe('wi-a1b2c3');
+    expect(r.value.entries[0]!.workItemIdError).toBeNull();
+    expect(r.value.entries[1]!.workItemId).toBeNull();
+    expect(r.value.entries[1]!.workItemIdRaw).toBe('wi-BAD!');
+    expect(r.value.entries[1]!.workItemIdError).toBe('malformed');
+    expect(r.value.entries[2]!.workItemIdError).toBe('duplicate');
+    expect(r.value.completedIds).toEqual(['wi-dead01']);
   });
 });

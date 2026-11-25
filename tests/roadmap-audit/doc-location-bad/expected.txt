@@ -159,6 +159,11 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## WORK_ITEM_IDS
+STATUS: skip
+FINDINGS:
+- No inspectable planning records found
+
 ## MODE
 DETECTED: overhaul
 REASON: No ROADMAP.md found

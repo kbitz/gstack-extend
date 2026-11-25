@@ -391,6 +391,9 @@ describe('Track 22D full-review sections and run state', () => {
     expect(missingClauses(skill, PHASE6_ROUTING_CLAUSES)).toEqual([]);
     expect(missingClauses(skill, TODOS_CLAUSES)).toEqual([]);
     expect(missingClauses(skill, HANDOFF_CLAUSES)).toEqual([]);
+    const phase5 = skillSection(skill, '## Phase 5: Persist to TODOS.md');
+    expect(phase5).toContain('bin/roadmap-id" mint');
+    expect(phase5).toContain('- **ID:** <wi-xxxxxx>');
 
     // Value: protects=Phase 5 commits only the TODOS.md path via a git commit pathspec, after a git add of that path;
     // fails_when=-- <path> is dropped from the real commit command, which would sweep other staged work into the commit;

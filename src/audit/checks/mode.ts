@@ -11,6 +11,7 @@
  * CheckResult path so the section format matches bash byte-for-byte.
  */
 
+import { FUTURE_HEADING_RE, planningLines } from '../lib/state.ts';
 import type { AuditCtx } from '../types.ts';
 
 export type ModeResult = {
@@ -25,9 +26,9 @@ export function detectMode(ctx: AuditCtx): ModeResult {
 
   let groupCount = 0;
   let hasFuture = false;
-  for (const line of ctx.files.roadmap.split('\n')) {
+  for (const [, line] of planningLines(ctx.files.roadmap.split('\n'))) {
     if (/^#{2,4} Group/.test(line)) groupCount++;
-    if (/^## Future($| \()/i.test(line)) hasFuture = true;
+    if (FUTURE_HEADING_RE.test(line)) hasFuture = true;
   }
 
   if (groupCount > 0) {

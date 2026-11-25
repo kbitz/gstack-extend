@@ -34,8 +34,25 @@ export type StateRange = {
 const SHIPPED_RE = /^## Shipped[ \t\v\f\r]*$/;
 const IN_PROGRESS_RE = /^## In Progress[ \t\v\f\r]*$/;
 const CURRENT_PLAN_RE = /^## Current Plan[ \t\v\f\r]*$/;
-const FUTURE_RE = /^## Future[ \t\v\f\r]*(\([^)]*\))?[ \t\v\f\r]*$/;
+export const FUTURE_HEADING_RE = /^## Future(?=$|[ \t\v\f\r(:—–]|-+[ \t])/i;
 const ANY_H2_RE = /^## /;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/** Yield document lines outside fenced examples, keeping their original indices. */
+export function* planningLines(lines: readonly string[], start = 0, end = lines.length) {
+  let fence: string | null = null;
+  for (let i = start; i < end; i++) {
+    const line = lines[i]!.replace(/\r$/, '');
+    const delimiter = FENCE_RE.exec(line);
+    if (fence !== null) {
+      if (delimiter && delimiter[1]!.startsWith(fence) && /^[ \t]*$/.test(delimiter[2]!)) fence = null;
+    } else if (delimiter && !(delimiter[1]![0] === '`' && delimiter[2]!.includes('`'))) {
+      fence = delimiter[1]!;
+    } else {
+      yield [i, line] as const;
+    }
+  }
+}
 
 export function detectStateRegions(content: string): StateRegions {
   if (content === '') return { kind: 'v1' };
@@ -51,14 +68,13 @@ export function detectStateRegions(content: string): StateRegions {
     }
   };
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+  for (const [i, line] of planningLines(lines)) {
     const lineNo = i + 1;
     let opened: LifecycleState | null = null;
     if (SHIPPED_RE.test(line)) opened = 'shipped';
     else if (IN_PROGRESS_RE.test(line)) opened = 'in-progress';
     else if (CURRENT_PLAN_RE.test(line)) opened = 'current-plan';
-    else if (FUTURE_RE.test(line)) opened = 'future';
+    else if (FUTURE_HEADING_RE.test(line)) opened = 'future';
 
     if (opened !== null) {
       close(lineNo);

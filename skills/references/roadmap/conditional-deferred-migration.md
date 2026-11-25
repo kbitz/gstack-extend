@@ -32,7 +32,7 @@
      changes` (the reassessment point this section already names) or an
      owner-written trigger.
    - `not located`: from step 2.
-4. **Propose.** Append ` **Revisit when:** <condition>.` to the end of the
+4. **Propose.** Preserve any existing `**ID:** wi-<hex>` on the bullet. Append ` **Revisit when:** <condition>.` to the end of the
    bullet. If no dash separator (`—`, `–` or `-`) directly follows the bullet's
    closing `**`, append ` — **Revisit when:** <condition>.` instead, so the index
    can read it. If the bullet already ends with an empty `**Revisit when:**`,
@@ -85,8 +85,9 @@ the item takes its pending outcome and the filing is reported pending. Reconcile
 an uncertain create with `gh issue list --repo "$REPO" --author @me --state all`
 rather than search, which lags; never remove an item because a create was merely
 attempted. Successful filing replaces the local item's body with one index
-pointer carrying title, URL, first-sentence context and trigger in Future, then
-drains the inbox. The issue owns the detail. After filing, rebuild Future, TODOS
+pointer carrying title, `**ID:** wi-<hex>`, URL, first-sentence context and
+trigger in Future, then drains the inbox. Carry an assigned ID forward or mint
+one for the new pointer if the source item lacks an ID. The issue owns the detail. After filing, rebuild Future, TODOS
 and the Future pointer count from the actual outcomes and revalidate the
 complete candidate before any local write. Repeat the freshness check
 immediately before writing; if it fails, keep the filed-issue receipts and renew

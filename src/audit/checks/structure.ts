@@ -19,6 +19,7 @@
  * wins.
  */
 
+import { FUTURE_HEADING_RE, planningLines } from '../lib/state.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStructure(ctx: AuditCtx): CheckResult {
@@ -30,7 +31,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const lines = ctx.files.roadmap.split('\n');
+  const lines = [...planningLines(ctx.files.roadmap.split('\n'))].map(([, line]) => line);
   const findings: string[] = [];
 
   let groupCount = 0;
@@ -39,7 +40,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
   for (const line of lines) {
     if (/^#{2,4} Group [0-9]+:/.test(line)) groupCount++;
     if (/^#{3,5} Track [0-9]+[A-Z](?:\.[0-9]+)?:/.test(line)) trackCount++;
-    if (/^## Future($| \()/i.test(line)) hasFuture = true;
+    if (FUTURE_HEADING_RE.test(line)) hasFuture = true;
   }
 
   if (groupCount === 0 && !hasFuture) {
@@ -72,6 +73,14 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
       if (/^_touches:/.test(line)) {
         findings.push(
           `- ${trackName}: _touches:_ line appears before metadata (expected metadata first)`,
+        );
+        inTrack = false;
+        trackName = '';
+        continue;
+      }
+      if (/^_id:/i.test(line)) {
+        findings.push(
+          `- ${trackName}: _id:_ line appears before metadata (expected metadata first)`,
         );
         inTrack = false;
         trackName = '';
@@ -155,12 +164,27 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
   }
 
   const trackIds = new Set(ctx.roadmap.value.tracks.map((t) => t.id));
+  const knownWorkItemIds = new Set<string>();
+  for (const t of ctx.roadmap.value.tracks) {
+    if (t.workItemId) knownWorkItemIds.add(t.workItemId);
+  }
+  for (const rec of ctx.roadmap.value.extraTrackWorkItems ?? []) {
+    if ((rec.fromShippedArchive || rec.shipped) && rec.workItemId) knownWorkItemIds.add(rec.workItemId);
+  }
+  for (const leg of ctx.roadmap.value.legacyShippedTracks ?? []) {
+    if (leg.workItemId) knownWorkItemIds.add(leg.workItemId);
+  }
   for (const t of ctx.roadmap.value.tracks) {
     if (t.state === 'shipped' || t.legacy) continue;
+    for (const bad of t.blockedByMalformed ?? []) {
+      findings.push(
+        `- Track ${t.id}: _blocked-by: ${bad} is malformed (expected Track label or wi-<4-8 lowercase hex>)`,
+      );
+    }
     for (const b of t.blockedBy) {
-      if (!trackIds.has(b)) {
+      if (!trackIds.has(b) && !knownWorkItemIds.has(b)) {
         findings.push(
-          `- Track ${t.id}: _blocked-by: ${b} is not a known Track ID`,
+          `- Track ${t.id}: _blocked-by: ${b} is not a known Track ID or work-item ID`,
         );
       }
     }
