@@ -711,6 +711,10 @@ describe('gstack-extend init prerequisite gate, dry-run, --help, and self-regist
   });
 });
 
+// Value: protects=all runtime declarations must be exact and satisfied before execution;
+// fails_when=the checker stops at the first match or accepts an inexact declaration;
+// why_new=the existing missing and mismatched cases use a single exact dependency;
+// seam=none; no_claim=general JSON parsing or transitive package resolution.
 test('missing and mismatched runtime dependencies refuse before executing or scaffolding', () => {
   const mirror = freshDir("runtime deps' mirror");
   const home = freshDir('runtime-deps-home');
@@ -771,6 +775,21 @@ exit 97
       expect(result.stderr).toContain('bun install --production --frozen-lockfile');
     }
     expect(snapshotTree(home)).toEqual([]);
+    expect(snapshotTree(parent)).toEqual([]);
+  }
+
+  writeFileSync(join(installed, 'package.json'), JSON.stringify({ version: '18.1.3' }));
+  for (const [dependencies, expected] of [
+    [{ marked: '18.1.3', '@fixture/second': '1.0.0' }, 'missing or mismatched runtime dependency @fixture/second@1.0.0'],
+    [{ marked: '18.1.3', '@fixture/second': '^1.0.0' }, 'dependency "@fixture/second" must declare an exact version'],
+    ['marked', 'invalid dependencies in package.json'],
+  ] as const) {
+    writeFileSync(join(mirror, 'package.json'), JSON.stringify({ dependencies }));
+    const result = spawnSync('/bin/sh', [join(mirror, 'bin', 'roadmap-audit'), '--help'], options);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr.trim().split('\n')).toHaveLength(1);
+    expect(result.stderr).toContain(`roadmap-audit: PREREQ_DEPS_MISSING ${expected}`);
     expect(snapshotTree(parent)).toEqual([]);
   }
 });

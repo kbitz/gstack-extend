@@ -395,6 +395,79 @@ describe('setup runtime dependencies', () => {
     expect(installedMarkedVersion(install)).toBe(markedVersion(install));
   });
 
+  // Value: protects=setup skips dependency installation on bypasses and verifies results before publication;
+  // fails_when=setup installs outside an admitted run or trusts installer status without the package;
+  // why_new=the existing failure fixture only returns a nonzero installer status;
+  // seam=none; no_claim=every filesystem or host-policy failure.
+  test('dependency install admission and verification precede publication', () => {
+    for (const [scenario, args, status, message, installerRuns] of [
+      ['missing-lock', ['--host', 'claude'], 1, 'restore bun.lock', false],
+      ['missing-temp', ['--host', 'claude'], 1, 'set TMPDIR to a writable directory', false],
+      ['missing-after-install', ['--host', 'claude'], 1, 'PREREQ_DEPS_MISSING', true],
+      ['uninstall', ['--host', 'claude', '--uninstall'], 0, '', false],
+      ['retired-host', ['--host', 'cursor'], 1, 'no longer a supported', false],
+      ['all-skipped', ['--host', 'codex'], 0, 'skipping codex', false],
+      ['preflight', ['--host', 'claude'], 1, 'world-writable', false],
+    ] as const) {
+      const s = scope(`runtime-deps-${scenario}`);
+      const install = join(s.home, 'install');
+      copyInstall(install);
+      copyFileSync(join(ROOT, 'package.json'), join(install, 'package.json'));
+      if (scenario !== 'missing-lock') copyFileSync(join(ROOT, 'bun.lock'), join(install, 'bun.lock'));
+      const skills = join(s.home, '.claude', 'skills');
+      if (scenario === 'preflight' || scenario === 'all-skipped') {
+        mkdirSync(skills, { recursive: true });
+      }
+      if (scenario === 'preflight') chmodSync(skills, 0o777);
+      if (scenario === 'all-skipped') {
+        mkdirSync(join(s.home, '.codex'));
+        symlinkSync(skills, join(s.home, '.codex', 'skills'));
+      }
+      const marker = join(s.state, 'install-ran');
+      const env = offlineFloorBun(ROOT, join(s.state, 'installer'), process.env.PATH ?? '/usr/bin:/bin', {
+        installWithoutPackages: true,
+        installMarker: marker,
+      });
+      if (scenario === 'missing-temp') env.TMPDIR = join(s.state, 'absent');
+
+      const result = runCopied(join(install, 'setup'), s, [...args, '--quiet'], env);
+      expect(result.exitCode, `${scenario}: ${result.stderr}`).toBe(status);
+      if (message !== '') expect(result.stderr).toContain(message);
+      if (scenario === 'all-skipped') expect(result.stdout).toBe('SETUP_SKIPPED_HOSTS codex\n');
+      expect(existsSync(marker), scenario).toBe(installerRuns);
+      expect(existsSync(join(skills, 'implement', 'SKILL.md')), scenario).toBe(false);
+      expect(existsSync(join(s.home, '.gstack-extend', 'bin', 'preamble')), scenario).toBe(false);
+      expect(existsSync(join(s.localBin, 'gstack-extend')), scenario).toBe(false);
+    }
+  });
+
+  // Value: protects=repair installs the runtime package and retains an existing development dependency tree;
+  // fails_when=setup forces a production-only installation on contributor checkouts;
+  // why_new=the current-install case never calls Bun install and fresh installs start without Ajv;
+  // seam=none; no_claim=network registry access (packages come from the isolated cache).
+  test('setup repairs a missing runtime package in a contributor checkout', () => {
+    const s = scope('runtime-deps-dev-repair');
+    const install = join(s.home, 'install');
+    copyInstall(install);
+    for (const rel of ['package.json', 'bun.lock']) copyFileSync(join(ROOT, rel), join(install, rel));
+    const modules = join(install, 'node_modules');
+    mkdirSync(modules);
+    cpSync(join(ROOT, 'node_modules', 'ajv'), join(modules, 'ajv'), { recursive: true, dereference: true });
+    expect(existsSync(join(modules, 'marked'))).toBe(false);
+    expect(existsSync(join(modules, 'fast-deep-equal'))).toBe(false);
+    const env = offlineFloorBun(ROOT, join(s.state, 'offline-runtime'), process.env.PATH ?? '/usr/bin:/bin', {
+      includeDevelopment: true,
+    });
+
+    const result = runCopied(join(install, 'setup'), s, ['--host', 'claude'], env);
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain('Installed runtime dependencies');
+    expect(installedMarkedVersion(install)).toBe(markedVersion(install));
+    expect(readFileSync(join(modules, 'ajv', 'package.json'), 'utf8'))
+      .toBe(readFileSync(join(ROOT, 'node_modules', 'ajv', 'package.json'), 'utf8'));
+    expect(existsSync(join(modules, 'fast-deep-equal', 'package.json'))).toBe(true);
+  });
+
   test('an install failure exits before publishing skills, preamble or CLI links', () => {
     const s = scope('runtime-deps-failure');
     const install = join(s.home, 'install');

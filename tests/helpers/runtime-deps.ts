@@ -16,27 +16,38 @@ export function offlineFloorBun(
   checkout: string,
   dir: string,
   path: string,
-  options: { failInstall?: boolean } = {},
+  options: { failInstall?: boolean; installWithoutPackages?: boolean; installMarker?: string; includeDevelopment?: boolean } = {},
 ): Record<string, string> {
   const version = markedVersion(checkout);
   const cache = join(dir, 'cache');
   const bin = join(dir, 'bin');
-  const cacheVersion = `${version}@@@1`;
-  const cachedPackage = `marked@${cacheVersion}`;
-  mkdirSync(join(cache, 'marked'), { recursive: true });
   mkdirSync(bin, { recursive: true });
-  cpSync(join(checkout, 'node_modules', 'marked'), join(cache, cachedPackage), { recursive: true, dereference: true });
-  symlinkSync(`../${cachedPackage}`, join(cache, 'marked', cacheVersion));
+  const visited = new Set<string>();
+  function seed(name: string, packageVersion?: string) {
+    if (visited.has(name)) return;
+    visited.add(name);
+    const source = join(checkout, 'node_modules', name);
+    const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
+    const cacheVersion = `${packageVersion ?? manifest.version}@@@1`;
+    const cachedPackage = `${name}@${cacheVersion}`;
+    mkdirSync(join(cache, name), { recursive: true });
+    cpSync(source, join(cache, cachedPackage), { recursive: true, dereference: true });
+    symlinkSync(`../${cachedPackage}`, join(cache, name, cacheVersion));
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) seed(dependency);
+  }
+  seed('marked', version);
+  if (options.includeDevelopment) seed('ajv');
   writeFileSync(join(bin, 'bun'), `#!/bin/sh
 case "$1" in
   --version) echo '1.3.3' ;;
   --help) exec "$TEST_REAL_BUN" "$@" ;;
   install)
+    if [ -n "${'$'}{TEST_INSTALL_MARKER-}" ]; then : >"$TEST_INSTALL_MARKER"; fi
     case " $* " in
       *' --no-env-file '*) ;;
       *) echo 'fixture install environment flag missing' >&2; exit 44 ;;
     esac
-    ${options.failInstall ? "echo 'fixture install refused' >&2; exit 43" : `if "$TEST_REAL_BUN" install --help | command -p grep -q -- --offline; then
+    ${options.failInstall ? "echo 'fixture install refused' >&2; exit 43" : options.installWithoutPackages ? 'exit 0' : `if "$TEST_REAL_BUN" install --help | command -p grep -q -- --offline; then
       exec "$TEST_REAL_BUN" "$@" --offline --registry=https://registry.npmjs.org
     fi
     exec "$TEST_REAL_BUN" "$@" --registry=http://127.0.0.1:1`}
@@ -51,5 +62,10 @@ case "$1" in
   *) echo 'fixture runtime flags missing' >&2; exit 44 ;;
 esac
 `, { mode: 0o755 });
-  return { PATH: `${bin}:${path}`, TEST_REAL_BUN: process.execPath, BUN_INSTALL_CACHE_DIR: cache };
+  return {
+    PATH: `${bin}:${path}`,
+    TEST_REAL_BUN: process.execPath,
+    BUN_INSTALL_CACHE_DIR: cache,
+    TEST_INSTALL_MARKER: options.installMarker ?? '',
+  };
 }

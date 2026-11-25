@@ -47,11 +47,16 @@ test('handles the fence length, info strings and closing whitespace', () => {
   ]);
 });
 
+// Value: protects=short delimiters inside a longer nested fence stay hidden;
+// fails_when=the nested fence closes at a three-character delimiter;
+// why_new=existing long and nested fixtures exercise the two properties separately;
+// seam=none; no_claim=all Markdown containers.
 test.each([
   ['- ```md', '  # Hidden'],
   ['- ```md', '  # Hidden', '  ``` \t '],
   ['- Example', '  - ~~~md', '    # Hidden'],
   ['- Example', '  - ~~~md', '    # Hidden', '    ~~~'],
+  ['- Example', '  - ~~~~md', '    ~~~', '    # Hidden', '    ~~~~ \t '],
   ['- Example', '  > ~~~md', '  > # Hidden'],
   ['- Example', '  > ~~~md', '  > # Hidden', '  > ~~~'],
   ['> - Example', '>   ~~~md', '>   # Hidden', '>   ~~~'],
