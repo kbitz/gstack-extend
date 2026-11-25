@@ -34,14 +34,14 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing of the checks that need your judgment or access, prepares each with the agent's evidence, verifies a fix itself before asking you to retest, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
 | [`/ship-and-land`](skills/ship-and-land.md) | Reuses verified preparation, runs remaining release checks, then merges and verifies deployment through gstack. | New |
 | [`/docs-ship`](skills/docs-ship.md) | Takes a docs-only PR to the merge gate in one session: classifies it, checks scope, claims, rules, links and the tests that read the changed files, writes any bump the release policy asks for, and records a receipt. At `PASS` it asks whether to merge and merges only on your explicit answer; with no way to ask it stops with the merge command. | New |
-| [`/full-review`](skills/full-review.md) | Reviews the codebase with three specialist agents and turns approved findings into backlog items. | Stable |
+| [`/full-review`](skills/full-review.md) | Reviews the codebase with three specialist agents, looks for implicit state machines, and turns approved findings into backlog items. | Stable |
 | [`/gstack-extend-upgrade`](skills/gstack-extend-upgrade.md) | Checks for updates and upgrades the installed checkout. | Stable |
 | [`/gstack-extend-init`](skills/gstack-extend-init.md) | Bootstraps project docs, registers the project, and audits the scaffold. | New |
 
 ## Installation
 
 Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/) 1.3.3 or newer (runtime and development floor; `--no-env-file` landed in 1.3.3 while earlier versions silently ignore it and still load `.env`), and Claude Code or
-Codex. `setup`, `gstack-extend init`, and every Bun-backed launcher under `bin/` (`roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `layout-scaffold`, `merge-gate`, `outside-review`, `secret-dispositions`, `docs-ship`, `pregate-deps`, `review-delegate`, `review-state` — and the experimental `gstack-extend-telemetry derive`, which runs it — and `upstream-check`) check for Bun 1.3.3+ before writing or executing and refuse with an actionable fix if it is missing or too old. Install
+Codex. `setup`, `gstack-extend init`, and every Bun-backed launcher under `bin/` (`roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `layout-scaffold`, `merge-gate`, `outside-review`, `secret-dispositions`, `docs-ship`, `pregate-deps`, `full-review-state-machines`, `review-delegate`, `review-state` — and the experimental `gstack-extend-telemetry derive`, which runs it — and `upstream-check`) check for Bun 1.3.3+ before writing or executing and refuse with an actionable fix if it is missing or too old. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
 
