@@ -171,6 +171,31 @@ describe('audit CLI contract: graceful handling of bad input', () => {
       .toBe('- **Parser v2** — Handle the new format. — revisit: a second tenant is admitted');
   });
 
+  test.each([
+    {
+      label: 'revisit text in a Future title',
+      bullet: '- Preserve the **Revisit when:** marker — Keep the field predictable.',
+      missing: 1,
+      row: '- **Preserve the **Revisit when:** marker** — Keep the field predictable. — revisit: MISSING',
+    },
+    {
+      label: 'ID text in a Future description',
+      bullet: '- **Clarify help output** — Include a final example line — **ID:** pending **Revisit when:** Next release.',
+      missing: 0,
+      row: '- **Clarify help output** — Include a final example line — **ID:** pending — revisit: Next release',
+    },
+  ])('--future-index preserves $label', ({ bullet, missing, row }) => {
+    const repo = makeEmptyRepo(baseTmp);
+    seedRoadmap(repo, `# Roadmap\n\n## Future\n${bullet}\n`);
+    const index = run(['--future-index', repo]);
+    expect(index.exitCode).toBe(0);
+    expect(index.stdout).toBe(`FUTURE_INDEX: 1\nFUTURE_TRIGGERS_MISSING: ${missing}\n${row}\n`);
+
+    const audit = run([repo]);
+    expect(audit.exitCode).toBe(0);
+    expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: warn\nFINDINGS:\n- MISSING_ID:');
+  });
+
   // Value: protects=the observed undercount cannot pass SIZE again: a card whose task title merely contains a
   //   marker substring (Executable) is weighed through the real CLI and size-caps; fails_when=marker matching
   //   reverts to substrings; why_new=unit tests do not cross the CLI and size-caps boundary; seam=none;

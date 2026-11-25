@@ -24,8 +24,8 @@ const TODO_ID_BULLET_RE = /^- \*\*ID:\*\*[ \t]*(.*)$/;
 const TRACK_ID_LINE_RE = /^_id:[ \t\v\f\r]*(.*)$/i;
 const INLINE_ID_RE = /^\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*/;
 const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*(?:[—–-]+[ \t]*)?$/;
-// Extra closing stars can end nested emphasis before the outer bold title.
-const BOLD_BULLET_RE = /^(- \*\*((?:(?!\*\*(?!\*)).)+)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
+// Field labels can occur inside a title. A third closing star can end italic emphasis.
+const BOLD_BULLET_RE = /^(- \*\*((?:\*\*(?:ID:|Revisit when:)\*\*|(?!\*\*(?!\*)).)+)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
 const PLAIN_BULLET_RE = /^((?:- )?(.*?)\s+[—–-]+\s+)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const LEGACY_SHIPPED_TRACK_BULLET_RE = /^(- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]+[ \t]*)(.*)$/;
@@ -109,8 +109,13 @@ function maskInlineCode(line: string): string {
 function splitInlineBullet(bullet: string) {
   const line = bullet.replace(/\r$/, '').trimStart();
   const visible = maskInlineCode(line);
+  const titlePrefix = BOLD_BULLET_RE.exec(visible)?.[1]
+    ?? LEGACY_SHIPPED_TRACK_BULLET_RE.exec(visible)?.[1]
+    ?? PLAIN_BULLET_RE.exec(visible)?.[1];
   const marker = visible.lastIndexOf(REVISIT_MARKER);
-  if (marker === -1) return { head: line, visible, trigger: null };
+  if (titlePrefix === undefined || marker < titlePrefix.length) {
+    return { head: line, visible, trigger: null };
+  }
   return {
     head: line.slice(0, marker),
     visible: visible.slice(0, marker),
@@ -119,7 +124,8 @@ function splitInlineBullet(bullet: string) {
 }
 
 function locateInlineId(head: string, visible: string) {
-  const explicitPrefix = BOLD_BULLET_RE.exec(visible)?.[1] ?? LEGACY_SHIPPED_TRACK_BULLET_RE.exec(visible)?.[1];
+  const boldPrefix = BOLD_BULLET_RE.exec(visible)?.[1];
+  const explicitPrefix = boldPrefix ?? LEGACY_SHIPPED_TRACK_BULLET_RE.exec(visible)?.[1];
   const prefix = explicitPrefix ?? PLAIN_BULLET_RE.exec(visible)?.[1];
   const body = prefix === undefined ? undefined : head.slice(prefix.length);
   let leading = body !== undefined && visible.startsWith('**ID:**', prefix!.length)
@@ -131,7 +137,7 @@ function locateInlineId(head: string, visible: string) {
     leading = null;
     remainder = '';
   }
-  const trailing = trailingInlineId(head, visible);
+  const trailing = boldPrefix === undefined ? trailingInlineId(head, visible) : null;
   const raw = leading?.[1] ?? trailing?.[1];
   if (raw === undefined) return null;
   const field: ParsedIdField = { raw, id: isValidWorkItemId(raw) ? raw : null };
