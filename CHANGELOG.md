@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.117.0] - 2026-11-25
+
+### Added
+
+- Every `TODOS.md` entry, Future bullet, active `ROADMAP.md` Track card and shipped Track record now carries an immutable `wi-` hex work-item ID, `_blocked-by:` accepts work-item IDs alongside legacy Track labels, and `docs/source-tag-contract.md` plus `docs/compatibility.md` publish the grammar as a stable compatibility surface.
+- Planning skills assign stable work-item IDs to new entries and cards, and `bin/roadmap-id mint` reserves IDs across the current planning files.
+
+### Changed
+
+- `bin/roadmap-audit` warns about missing legacy IDs and reports malformed and duplicate IDs as failures.
+- `_blocked-by:` accepts work-item IDs alongside Track labels and preserves ID references during renumbering.
+
+### Upgrade notes
+
+- Existing repositories whose planning documents lack work-item IDs will report audit findings under the new `WORK_ITEM_IDS` check in `bin/roadmap-audit` until they run the idempotent one-time migration provided by `bin/roadmap-id`.
+
 ## [0.116.2] - 2026-11-24
 
 ### Changed
