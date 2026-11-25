@@ -44,7 +44,6 @@ export type StubGitOpts = {
   logFirstWithPhrase?: { date: string } | null;
   logSubjectsSince?: string[];
   workingTreePaths?: string[];
-  historicalWorkItemIds?: string[];
 };
 
 export function stubGit(opts: StubGitOpts = {}): GitGateway {
@@ -57,7 +56,6 @@ export function stubGit(opts: StubGitOpts = {}): GitGateway {
     logFirstWithPhrase: () => opts.logFirstWithPhrase ?? null,
     logSubjectsSince: () => opts.logSubjectsSince ?? [],
     workingTreePaths: () => opts.workingTreePaths ?? [],
-    historicalWorkItemIds: () => opts.historicalWorkItemIds ?? [],
   };
 }
 

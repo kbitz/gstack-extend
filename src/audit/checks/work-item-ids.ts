@@ -5,7 +5,8 @@
  * Emits canonical section `WORK_ITEM_IDS`.
  *   - `STATUS: skip` when zero inspectable records exist across all four docs.
  *   - `STATUS: pass` when every record has a valid globally unique `wi-` ID.
- *   - `STATUS: fail` on any `MISSING_ID`, `MALFORMED_ID`, or `DUPLICATE_ID`.
+ *   - `STATUS: warn` when the only findings are `MISSING_ID`.
+ *   - `STATUS: fail` on any `MALFORMED_ID` or `DUPLICATE_ID`.
  */
 
 import { extractInlineBulletId } from '../lib/work-item-id.ts';
@@ -32,11 +33,12 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   const findings: string[] = [];
   const seen = new Map<string, string>(); // id -> first location
   let inspectableCount = 0;
-  let hasMissing = false;
+  let hasBlockingFinding = false;
 
   const registerValidId = (id: string, location: string) => {
     const first = seen.get(id);
     if (first !== undefined) {
+      hasBlockingFinding = true;
       findings.push(
         `- DUPLICATE_ID: ${location} — duplicate work-item ID "${id}" (first seen at ${first})`,
       );
@@ -51,11 +53,12 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     inspectableCount++;
     const { workItemId: id, workItemIdRaw: raw, workItemIdError: error } = record;
     if (error === 'duplicate') {
+      hasBlockingFinding = true;
       findings.push(`- DUPLICATE_ID: ${location} — multiple ID fields on one record`);
     } else if (error === 'malformed') {
+      hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${location} — malformed work-item ID "${raw ?? ''}" (expected wi-<4-8 lowercase hex>)`);
     } else if (!id) {
-      hasMissing = true;
       findings.push(`- MISSING_ID: ${location} — missing ${field}`);
     }
     if (id && register) registerValidId(id, location);
@@ -121,15 +124,9 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     };
   }
 
-  if (hasMissing) {
-    findings.push(
-      '- Hint: run `bin/roadmap-id migrate` to assign deterministic work-item IDs to existing records.',
-    );
-  }
-
   return {
     section: 'WORK_ITEM_IDS',
-    status: 'fail',
+    status: hasBlockingFinding ? 'fail' : 'warn',
     body: ['FINDINGS:', ...findings, ''],
   };
 }

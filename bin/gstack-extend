@@ -946,7 +946,7 @@ EOF
       init_todo_id=$(printf 'wi-%06x' "$(( (RANDOM * 32768 + RANDOM) % 16777216 ))")
     else
       layout_preflight "$target_abs" || return 1
-      # A fresh path has no documents or history. Mint before scaffolding so
+      # A fresh path has no planning documents. Mint before scaffolding so
       # a launcher failure cannot leave a partially initialized project.
       local id_root="$target_abs" mint_dir="$target_abs" empty_root="" mint_status=0
       if [ ! -d "$id_root" ]; then

@@ -291,13 +291,13 @@ The skill surfaces validator failures during triage and blocks until resolved.
 
 ## Work-item IDs and `_blocked-by:` contract (`work-item-id/v1`)
 
-Every `TODOS.md` entry, `## Future` bullet, active `ROADMAP.md` Track card, and shipped Track record carries an immutable work-item ID so external consumers and planning tools can track items across promotions, deferrals, and Track-label renumbering.
+New `TODOS.md` entries, `## Future` bullets, active `ROADMAP.md` Track cards, and shipped Track records carry immutable work-item IDs so consumers and planning tools can track them across promotions, deferrals, and Track-label renumbering. Existing records may lack IDs.
 
 ### Format and immutability
 
 - **Regex:** `^wi-[0-9a-f]{4,8}$` (fixed `wi-` prefix followed by 4 to 8 lowercase hex characters; filename-safe and unambiguous against Track labels like `96A` or Group numbers like `96`).
-- **Default length and collision growth:** new IDs default to 6 lowercase hex characters (`wi-a1b2c3`) and grow to 7 then 8 hex characters on collision with any live or git-historical ID before drawing fresh entropy (for `mint`) or re-salting the hash counter (for `migrate`).
-- **Immutability and never-reuse:** an ID is assigned once at creation, travels unchanged when a `TODOS.md` item or `## Future` bullet is promoted to a Track or shipped, and is never reused after an entry is killed, shipped, or merged into another. Track labels (`96A`, `97B`) remain recyclable display text.
+- **Default length and collision growth.** New IDs default to 6 lowercase hex characters (`wi-a1b2c3`). On collision with an ID in the current planning files or the same mint batch, the generator tries 7 and then 8 characters before drawing fresh entropy.
+- **Immutability.** An assigned ID travels unchanged when an item moves to another planning file, is promoted, or ships. Track labels (`96A`, `97B`) remain recyclable display text.
 
 ### Field shapes across planning documents
 
@@ -315,7 +315,7 @@ Every `TODOS.md` entry, `## Future` bullet, active `ROADMAP.md` Track card, and 
 _blocked-by: <ref>[, <ref>...]_
 ```
 
-- **Canonical write form:** `/roadmap` writes immutable work-item IDs (`_blocked-by: wi-a1b2c3, wi-d4e5f6_`).
+- **Canonical write form.** `/roadmap` writes work-item IDs (`_blocked-by: wi-a1b2c3, wi-d4e5f6_`). Dependencies on existing predecessors without IDs can still use Track labels.
 - **Reader compatibility:** `src/audit/parsers/roadmap.ts`, `bin/roadmap-audit`, and `bin/roadmap-pack` accept both `wi-[0-9a-f]{4,8}` work-item IDs and legacy Track labels (`Track 95C`, `95C`, `11A.2`), resolving live work-item IDs to their current Track labels for packing and filtering satisfied shipped IDs identically to shipped Track labels.
 - **Renumber invariance:** `bin/roadmap-renumber` treats `_id:` as immutable and never rewrites `wi-` IDs on `_blocked-by:` lines when renumbering Track or Group labels.
 - **Validation:** unrecognized tokens on `_blocked-by:` (such as `wi-12`, `wi-ZZZZ`, or unknown IDs) fail `## STRUCTURE`.
@@ -324,14 +324,15 @@ _blocked-by: <ref>[, <ref>...]_
 
 `bin/roadmap-audit` emits a canonical `## WORK_ITEM_IDS` section after `TODO_FORMAT` and before `MODE`. It checks TODO headings under `## Unprocessed` and `## Completed`, Future bullets, active and shipped Track headings, and legacy shipped `- Track` bullets. Fenced examples are outside the record collection.
 
-- `MISSING_ID` — a record lacks its structured ID field (also emits a trailing hint to run `bin/roadmap-id migrate`).
+- `MISSING_ID` — a record lacks its structured ID field.
 - `MALFORMED_ID` — an ID field does not match `^wi-[0-9a-f]{4,8}$`.
 - `DUPLICATE_ID` — two records share the same ID (within or across documents, including `## Completed` and colliding archive records), or a single record carries multiple ID fields.
 
+Missing IDs alone produce `STATUS: warn`. Malformed or duplicate IDs produce `STATUS: fail`.
+
 ### CLI (`bin/roadmap-id`)
 
-- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from live planning documents and available Git history.
-- `bin/roadmap-id migrate [repo-path] [--dry-run] [--rewrite-blocked-by]` idempotently assigns deterministic SHA-256-derived IDs across `roadmap-shipped.md`, `ROADMAP.md`, `roadmap-future.md`, and `TODOS.md`. It validates the UTF-8 planning files before writing, reserves historical IDs, and preserves all other text by default. Optional blocker rewriting converts unannotated Track labels with a unique target. A live Track takes precedence over shipped receipts with the same label. Output includes per-file `ADDED` counts, total `ADDED: <N>`, and `STATUS: ok|dry-run|unchanged`.
+- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`.
 - `bin/roadmap-id --help | -h` — prints usage to stdout, exits `0`, writes nothing.
 
-Both subcommands return `0` on success, `1` when they cannot safely read the project or complete the operation, and `2` on invalid arguments. Migration replaces each changed regular file in place and can be rerun after a partial migration. Migration follows a `docs/` directory link or planning-file link to its regular target inside the project. Each target must serve a single planning document type. Use the owning project checkout to migrate shared planning files stored there. A shallow clone can reserve only the IDs visible in its documents and available Git history.
+The CLI returns `0` on success, `1` on a project read error, and `2` on invalid arguments. Minting writes no files. A later release adds migration for existing records and retirement based on Git history. See [Compatibility](compatibility.md#stable-surfaces).

@@ -175,12 +175,11 @@ FINDINGS:
 - (none)
 
 ## WORK_ITEM_IDS
-STATUS: fail
+STATUS: warn
 FINDINGS:
 - MISSING_ID: docs/roadmap-future.md (Keep the context) — missing **ID:** wi-<hex>
 - MISSING_ID: ROADMAP.md Track 1A — missing _id: wi-<hex>_
 - MISSING_ID: shipped Track 9A (line 6) — missing **ID:** wi-<hex>
-- Hint: run `bin/roadmap-id migrate` to assign deterministic work-item IDs to existing records.
 
 
 ## MODE

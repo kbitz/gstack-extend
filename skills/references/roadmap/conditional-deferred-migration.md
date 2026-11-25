@@ -85,8 +85,9 @@ the item takes its pending outcome and the filing is reported pending. Reconcile
 an uncertain create with `gh issue list --repo "$REPO" --author @me --state all`
 rather than search, which lags; never remove an item because a create was merely
 attempted. Successful filing replaces the local item's body with one index
-pointer carrying title, existing `**ID:** wi-<hex>`, URL, first-sentence context and trigger in Future, then
-drains the inbox. The issue owns the detail. After filing, rebuild Future, TODOS
+pointer carrying title, `**ID:** wi-<hex>`, URL, first-sentence context and
+trigger in Future, then drains the inbox. Carry an assigned ID forward or mint
+one for the new pointer if the source item lacks an ID. The issue owns the detail. After filing, rebuild Future, TODOS
 and the Future pointer count from the actual outcomes and revalidate the
 complete candidate before any local write. Repeat the freshness check
 immediately before writing; if it fails, keep the filed-issue receipts and renew

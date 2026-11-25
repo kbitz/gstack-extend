@@ -400,7 +400,7 @@ extract_referenced_files_from_roadmap | tr '\n' '\0' | xargs -0 -I {} \
   git log --since="$LAST_ROADMAP_RUN" --pretty='%h %s' -- {} 2>/dev/null
 ```
 
-When `WORK_ITEM_IDS` reports `MISSING_ID`, preview `"$_EXTEND_ROOT/bin/roadmap-id" migrate --dry-run "$_ROADMAP_ROOT"` using both resolved root assignments. Obtain approval for the ID-only migration, apply it, and refresh the audit and fingerprints before drafting. This also covers entries filed by hand or by an older producer. Resolve malformed or duplicate IDs before validation.
+Resolve malformed or duplicate IDs before validation. Treat `WORK_ITEM_IDS` `MISSING_ID` on existing records as advisory. Preserve any assigned ID on an item that moves, and mint its first ID when producing a new planning record from a source without one.
 
 **Pre-classify inbox items.** Each Unprocessed item carries a `[source:key=val]` tag. Run the routing helper for each:
 
@@ -592,7 +592,7 @@ reassessment: it never promotes, kills, rewrites or reorders an entry.
 
 Append-only migration: never promote, kill, rewrite, or reorder entries, and validate every approved bullet through the Future index before the first write. A failure blocks before the first write.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-deferred-migration --expect 487cdcc2f68096db` before running a legacy trigger migration when the owner selects the batch and this run does not move Future bullets.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-deferred-migration --expect a55d47c7a8006fd1` before running a legacy trigger migration when the owner selects the batch and this run does not move Future bullets.
 
 For a user-selected GitHub backlog, the approval artifact names the destination
 `owner/repo` (matching `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`), its visibility from
@@ -611,7 +611,7 @@ visibility immediately before filing; a change stops filing and asks again.
 
 Recheck repo visibility immediately before filing, pass title/body/query from files in a private `mktemp -d` directory, and keep pending or failed filings in the inbox or Future with full richness.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-deferred-migration --expect 487cdcc2f68096db` before filing deferred items to a user-selected GitHub backlog after Apply's freshness check passes.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-deferred-migration --expect a55d47c7a8006fd1` before filing deferred items to a user-selected GitHub backlog after Apply's freshness check passes.
 
 Do not automatically import all open issues into the execution plan.
 
@@ -647,7 +647,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 - **What is shipped?** Reconcile the Step 1 inventory with explicit identity and complete approved-scope/acceptance proof. Record verified completed Tracks independently and exactly once before recycling; preserve existing history. Preview legacy inline conversions and report their count. Missing proof keeps work active; surface the discrepancy and retry condition.
 - **What's actually in flight?** User-identified named working branches/sessions or open PRs define active work and pins. Show Track/owning Group/branch-or-PR rows in Summary, including none declared or uncertain. Shipped siblings alone do not make a Group active. Feasible pins preserve labels; infeasible bins defer reconciliation under Exceptions and recovery.
-- **What Tracks does the Current Plan need?** After admission, combine eligible leftover unshipped work (re-derived against HEAD, not copied), inbox items (verified at drain time), closure debt and hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an immutable `_id: wi-<hex>_` right after its `_...risk..._` metadata line, an explicit `_touches:_` footprint, and `_blocked-by: wi-a1b2c3, wi-d4e5f6_` (immutable work-item IDs; Track labels stay display text, and renumbering Track labels preserves every `_id:` and every work-item ID on `_blocked-by:` lines) on **every serialized chain** (settings, cutover-after-X, R1→R6). Every promoted entry carries its existing work-item ID unchanged; brand-new Tracks and deferrals mint fresh IDs via `"$_EXTEND_ROOT/bin/roadmap-id" mint "${_ROADMAP_ROOT}"` (never reusing killed, shipped, or merged IDs). Every deferred Future bullet carries `**ID:** wi-<hex>` immediately after its title dash separator, and every shipped Track receipt carries `_id: wi-<hex>_` directly under its `### Track ... ✓ Shipped` heading. Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `"$_EXTEND_ROOT/bin/roadmap-pack"` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What Tracks does the Current Plan need?** After admission, combine eligible leftover unshipped work (re-derived against HEAD, not copied), inbox items (verified at drain time), closure debt and hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an immutable `_id: wi-<hex>_` right after its `_...risk..._` metadata line, an explicit `_touches:_` footprint, and `_blocked-by: wi-a1b2c3, wi-d4e5f6_` (immutable work-item IDs; Track labels stay display text, and renumbering Track labels preserves every `_id:` and every work-item ID on `_blocked-by:` lines) on **every serialized chain** (settings, cutover-after-X, R1→R6). Carry assigned IDs forward unchanged when promoting, deferring, or shipping items. For newly produced records without an assigned ID, use `"$_EXTEND_ROOT/bin/roadmap-id" mint "${_ROADMAP_ROOT}"`. Mint checks the current planning files. Put `**ID:** wi-<hex>` immediately after a new Future bullet’s title dash and `_id: wi-<hex>_` directly under a new shipped receipt’s `### Track ... ✓ Shipped` heading. Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `"$_EXTEND_ROOT/bin/roadmap-pack"` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Useful later work that is unnecessary for the selected target, uncertain work, or speculative proposals worth retaining. Use the Deferred work policy above for the selected destination and revisit triggers. Keep the filed review context (symptom, source, why deferred, load-bearing file/symbol). Do not collapse a review finding to a title. Do not paste a whole design doc — if it needs headings, write `docs/designs/` and point at it. Items that stay deferred keep their existing text; do not rewrite them shorter. Declined / do-not-re-propose records leave Future (proposal killed list only — never `roadmap-shipped.md`). Promotion to Current Plan is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. Polish or new scope on the same surface must pass admission before becoming a normal Current Plan item. Otherwise defer or reject it; the old Group reference grants no priority. When in doubt, ask.
 
@@ -684,7 +684,7 @@ Hard-fail is **weight ≥ 6**. Weight 5 warns (SIZE `WEIGHT_WARN`) unless you ra
 
 Group assignment is **the packer's job**, not a theme judgment.
 
-1. Draft Tracks only. Each has `_id: wi-<hex>_`, `_touches:_`, tasks, and `_blocked-by: wi-<hex>` on every serialized chain. Splits get ordinary per-Group letters and fresh minted IDs; the renames table carries lineage. Do not invent dotted family IDs.
+1. Draft Tracks only. Each new Track has `_id: wi-<hex>_`, `_touches:_`, tasks, and `_blocked-by: wi-<hex>` on every serialized chain. Use the Track label for a predecessor that remains in the plan without an ID. Splits get ordinary per-Group letters and fresh minted IDs; the renames table carries lineage. Do not invent dotted family IDs.
 2. Pack the **draft**, not the live file:
    ```bash
    # First paste both resolved root assignments from Common path.
@@ -1389,7 +1389,7 @@ Lead the run summary with this table, above the audit detail:
 ```
 
 - `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, PACKING, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET, FUTURE, WORK_ITEM_IDS.
-- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, VERSION, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).
+- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, VERSION, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED), WORK_ITEM_IDS (missing IDs only).
 
 Verdict-to-status mapping:
 

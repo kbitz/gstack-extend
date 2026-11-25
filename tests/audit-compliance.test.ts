@@ -1210,6 +1210,6 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
     expect(contract).toContain('MALFORMED_ID');
     expect(contract).toContain('DUPLICATE_ID');
     expect(contract).toContain('bin/roadmap-id mint');
-    expect(contract).toContain('bin/roadmap-id migrate');
+    expect(contract).toContain('Missing IDs alone produce `STATUS: warn`');
   });
 });

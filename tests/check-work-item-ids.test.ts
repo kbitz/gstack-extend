@@ -40,6 +40,20 @@ describe('runCheckWorkItemIds', () => {
     expect(result.body.join('\n')).not.toContain('MISSING_ID');
   });
 
+  test('warns about a missing ID under a descriptive Future heading', () => {
+    const bullet = '- **Follow-up**: More work. **Revisit when:** - use **Phase 2** — after GA';
+    const roadmap = parseRoadmap([
+      '## Future (deferred) — next release', bullet,
+      '## Future-proof rollout notes', '- Keep the old link',
+    ].join('\n'));
+    expect(roadmap.value.futureBullets).toEqual([bullet]);
+    const result = runCheckWorkItemIds(makeCtx({ parsedRoadmap: roadmap.value }));
+    expect(result.status).toBe('warn');
+    expect(result.body.filter(line => line.includes('MISSING_ID'))).toEqual([
+      '- MISSING_ID: ROADMAP.md ## Future (Follow-up) — missing **ID:** wi-<hex>',
+    ]);
+  });
+
   test('checks shipped receipts with a recycled display label as separate records', () => {
     const roadmap = parseRoadmap([
       '## Shipped', '### Track 1A: First ✓ Shipped', '_id: wi-111111_',
@@ -99,7 +113,7 @@ describe('runCheckWorkItemIds', () => {
     expect(res.body).toEqual(['FINDINGS:', '- (none)']);
   });
 
-  test('fails on missing, malformed, and cross-document duplicate IDs (including Completed and archive collisions)', () => {
+  test('reports missing IDs alongside failing malformed and cross-document duplicate IDs', () => {
     const todos = parseTodos([
       '# TODOS',
       '## Unprocessed',
@@ -148,6 +162,5 @@ describe('runCheckWorkItemIds', () => {
     expect(joined).toContain('DUPLICATE_ID:');
     expect(joined).toContain('TODOS.md ## Completed');
     expect(joined).toContain('docs/roadmap-shipped.md Track 1A');
-    expect(joined).toContain('bin/roadmap-id migrate');
   });
 });

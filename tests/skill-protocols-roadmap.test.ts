@@ -196,6 +196,7 @@ const EXPECTED_ADVISORY_SECTIONS = [
   'DOC_INVENTORY',
   'GROUP_DEPS',
   'STATE_SECTIONS',
+  'WORK_ITEM_IDS',
 ] as const;
 
 const FAIL_LIST_PREFIX = '`<N>` counts audit sections with `STATUS: fail`:';

@@ -181,7 +181,6 @@ FINDINGS:
 - MALFORMED_ID: TODOS.md:10 (Malformed ID entry) — malformed work-item ID "wi-ZZZZ" (expected wi-<4-8 lowercase hex>)
 - DUPLICATE_ID: ROADMAP.md Track 3A — duplicate work-item ID "wi-300001" (first seen at docs/roadmap-future.md (Duplicate future))
 - MISSING_ID: docs/roadmap-shipped.md Track 2A — missing _id: wi-<hex>_
-- Hint: run `bin/roadmap-id migrate` to assign deterministic work-item IDs to existing records.
 
 
 ## MODE
