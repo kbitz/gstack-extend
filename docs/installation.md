@@ -42,13 +42,17 @@ If setup refuses Bun during an update, fix Bun and resume the
 file readers. Fresh `setup` and the setup run by `bin/update-run` during
 `/gstack-extend-upgrade` install missing or mismatched dependencies into the
 checkout's `node_modules/`. Setup uses the frozen lockfile and ignores
-lifecycle scripts, local configuration and environment files. It skips
-installation when the locked versions are already present and preserves
-installed development dependencies in contributor checkouts.
+lifecycle scripts, local configuration and environment files. It verifies
+installed runtime versions before publishing skills, the preamble, or CLI
+links. Setup skips installation when the pinned runtime versions are present
+and includes development dependencies in a repair when Ajv is already installed.
 
 The audit started by `gstack-extend init` and all Bun-backed launchers use
 `--no-env-file --no-install --config=/dev/null`. Planning readers load
 `marked` from the checkout's `node_modules/` without fetching it at runtime.
+`roadmap-audit`, `roadmap-pack`, and `roadmap-touches` check the dependency
+before running. `gstack-extend init` checks it before creating the scaffold
+or registering the project.
 After a manual `git pull`, run `<checkout>/setup --host auto` to recover from
 `PREREQ_DEPS_MISSING`. For a runtime-only checkout, the alternative is to run
 this from the checkout:
@@ -335,6 +339,8 @@ layer.
 
 To upgrade when a spawned run reports a newer version, run `/gstack-extend-upgrade`
 in an interactive session, or run `<checkout>/bin/update-run <checkout>` directly.
+
+See the dated qualification runs in the [install and upgrade record](acceptance/install-upgrade.md).
 
 ### Version numbers
 
