@@ -2,11 +2,12 @@
 
 ## Unprocessed
 
-### [review:files=src/audit/lib/state.ts|tests/pack-cli.test.ts] Handle fence markers in Markdown comments and lists
+### [review:files=src/audit/lib/state.ts|src/audit/lib/work-item-id.ts|tests/pack-cli.test.ts] Handle Markdown comments, lists, and nested bold titles
 - **ID:** wi-b43f6a
 - **Description:** A backtick marker inside an HTML comment or an example fence contained by a list can hide a later top-level Track. Cover both boundaries in the queued `marked` lexer Track while preserving the exclusion of fenced example records.
 - **Evidence:** Main packs Track `1A` for both cases. The current scanner reports `BINS: EMPTY`. See `review-and-prep/mmm-6c091012-20261125T122758Z-continue5/reproduced-blocker.md` in the review evidence.
-- **Context:** PR #311 continuation 7 accepts both cases as lexer follow-ups.
+- **Nested title case:** A Future title such as `**Clarify **help** output**` makes the index drop `**ID:** pending` from the description and makes the audit report `MALFORMED_ID`. See `review-and-prep/mmm-6c091012-20261125T134028Z-continue7/reproduced-blocker.md` in the review evidence.
+- **Context:** PR #311 continuations 7 and 8 accept these cases for the queued `marked` lexer Track. Include the nested title fixture when replacing the hand-written parsing.
 - **Effort:** ?
 
 ### [review:files=src/audit/lib/todo-patterns.ts|src/audit/checks/scattered-todos.ts] Base issue: Count scattered TODOs after indented code examples
