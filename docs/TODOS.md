@@ -2,11 +2,12 @@
 
 ## Unprocessed
 
-### [review:files=src/audit/lib/state.ts|src/audit/lib/work-item-id.ts|tests/pack-cli.test.ts] Handle Markdown comments, lists, and nested bold titles
+### [review:files=src/audit/lib/state.ts|src/audit/lib/work-item-id.ts|src/audit/checks/vocab-lint.ts|src/audit/cli.ts|tests/pack-cli.test.ts] Handle Markdown comments, lists, and nested bold titles
 - **ID:** wi-b43f6a
 - **Description:** A backtick marker inside an HTML comment or an example fence contained by a list can hide a later top-level Track. Cover both boundaries in the queued `marked` lexer Track while preserving the exclusion of fenced example records.
 - **Evidence:** Main packs Track `1A` for both cases. The current scanner reports `BINS: EMPTY`. See `review-and-prep/mmm-6c091012-20261125T122758Z-continue5/reproduced-blocker.md` in the review evidence.
 - **Nested title case:** A Future title such as `**Clarify **help** output**` makes the index drop `**ID:** pending` from the description and makes the audit report `MALFORMED_ID`. See `review-and-prep/mmm-6c091012-20261125T134028Z-continue7/reproduced-blocker.md` in the review evidence.
+- **Fenced heading case:** A descriptive Future heading inside a code fence can hide the next advisory vocabulary warning. Apply lexer boundaries to the vocabulary and freshness scans. See `review-and-prep/mmm-6c091012-20261125T143405Z-continue8/vocab-fence-probe.md` in the review evidence.
 - **Context:** PR #311 continuations 7 and 8 accept these cases for the queued `marked` lexer Track. Include the nested title fixture when replacing the hand-written parsing.
 - **Effort:** ?
 
