@@ -2,6 +2,16 @@
 
 ## Unprocessed
 
+### [review:files=src/audit/lib/todo-patterns.ts|src/audit/checks/scattered-todos.ts] Base issue: Count scattered TODOs after indented code examples
+- **ID:** wi-331497
+- **Base issue:** Present at merge base `beb8956`. Filed under `blocking=shown`.
+- **Description:** A four-space-indented literal backtick marker in a Markdown note makes `countTodoPatterns` skip the rest of the file, including later checklist items.
+- **Evidence:** In a small `notes.md` fixture, `bin/roadmap-audit` reports zero scattered TODOs on main and the PR when the literal precedes the checklist. Both report one after removing the example.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/audit/lib/todo-patterns.ts:22`
+- **Context:** Filed during /review-and-prep for PR #311.
+- **Effort:** ?
+
 ### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Exercise the closure-only roadmap validator
 
 - **ID:** wi-77c617
