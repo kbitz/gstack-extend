@@ -27,6 +27,7 @@
  * Parser is pure: takes content string, returns a value-only result.
  */
 
+import { planningLines } from '../lib/markdown.ts';
 import { effortToLoc, isMarkdownOnlyTouches, sessionWeight, type ConfigDeps } from '../lib/effort.ts';
 import {
   effortFinding,
@@ -34,7 +35,7 @@ import {
   parseEffortTag,
   parseTaskTitle,
 } from '../lib/task-line.ts';
-import { detectStateRegions, FUTURE_HEADING_RE, planningLines, stateAtLine, type LifecycleState } from '../lib/state.ts';
+import { detectStateRegions, FUTURE_HEADING_RE, stateAtLine, type LifecycleState } from '../lib/state.ts';
 import {
   extractInlineBulletId,
   futureBulletParts,
@@ -365,10 +366,7 @@ export function parseRoadmap(
   let futurePointer: { declaredCount: number } | null = null;
   let shippedPointer = false;
 
-  const lines = content.split('\n');
-
-  for (const [i, line] of planningLines(lines)) {
-    const lineNo = i + 1;
+  for (const [lineNo, line] of planningLines(content)) {
 
     // Top-level state section detection.
     const name = FUTURE_HEADING_RE.test(line) ? 'Future' : STATE_HEADING_RE.exec(line)?.[1];

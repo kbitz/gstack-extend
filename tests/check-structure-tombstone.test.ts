@@ -188,3 +188,30 @@ describe('STRUCTURE tombstones', () => {
     expect(detectMode(ctx).detected).toBe('triage');
   });
 });
+
+test.each([
+  ['HTML comment', ['<!--', '```md', '## Future', '#### Group 9: Example', '-->']],
+  ['closed list example', ['- ```md', '  ## Future', '  #### Group 9: Example', '  ```']],
+  ['unclosed list example', ['- ```md', '  ## Future', '  #### Group 9: Example']],
+  ['tilde fence', ['  ~~~md', '## Future', '#### Group 9: Example', '  ~~~ \t ']],
+  ['nonbreaking-space closer', ['~~~md', '~~~\u00a0', '## Future', '#### Group 9: Example', '~~~']],
+] as const)('mode, state sections and structure ignore headings inside a %s', (_, example) => {
+  const plain = makeCtx({ roadmap: CARD, parsedRoadmap: parseRoadmap(CARD).value });
+  const roadmap = [...example, CARD].join('\n');
+  const ctx = makeCtx({ roadmap, parsedRoadmap: parseRoadmap(roadmap).value });
+  expect(detectMode(ctx)).toEqual(detectMode(plain));
+  expect(runCheckStateSections(ctx)).toEqual(runCheckStateSections(plain));
+  expect(runCheckStructure(ctx)).toEqual(runCheckStructure(plain));
+  expect(runCheckStructure(ctx).status).toBe('pass');
+});
+
+// Value: protects=state-order findings retain the source line after hidden HTML;
+// fails_when=the state check numbers visible lines or increments the source line;
+// why_new=the existing state-section comparison has no out-of-order finding;
+// seam=none; no_claim=the locations of other diagnostic types.
+test('reports the original line of a state heading after a hidden example', () => {
+  const roadmap = ['## Future', '<!--', '## Shipped', '-->', '## Current Plan'].join('\n');
+  const result = runCheckStateSections(makeCtx({ roadmap, parsedRoadmap: parseRoadmap(roadmap).value }));
+  expect(result.status).toBe('fail');
+  expect(result.body).toContain('- ## Current Plan appears out of order at line 5 — expected order is In Progress → Current Plan → Future → Shipped');
+});

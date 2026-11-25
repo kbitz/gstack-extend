@@ -1100,3 +1100,20 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(track.blockedByMalformed).toEqual([]);
   });
 });
+
+test.each([
+  ['HTML comment', ['<!--', '```md', '##### Track 9Z: Example', '-->']],
+  ['closed list example', ['- ```md', '  ##### Track 9Z: Example', '  ```']],
+  ['unclosed list example', ['- ```md', '  ##### Track 9Z: Example']],
+  ['tilde fence', [' ~~~md', '##### Track 9Z: Example', ' ~~~ \t ']],
+  ['nonbreaking-space closer', ['~~~md', '~~~\u00a0', '##### Track 9Z: Example', '~~~']],
+] as const)('finds current-plan Tracks after a %s', (_, example) => {
+  const roadmap = [...example, '## Current Plan', '#### Group 1: Core', '##### Track 1A: Real'].join('\n');
+  const parsed = parseRoadmap(roadmap, deps()).value;
+  expect(parsed.tracks.map(track => [track.id, track.state])).toEqual([['1A', 'current-plan']]);
+});
+
+test('reports an empty Future list item as malformed', () => {
+  const roadmap = ['## Current Plan', '', '## Future', '', '- ', '', '## Shipped'].join('\n');
+  expect(parseRoadmap(roadmap, deps()).value.futureMalformed).toEqual(['-']);
+});

@@ -71,6 +71,30 @@ describe('audit snapshot suite', () => {
     expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: warn');
   });
 
+  test.each([
+    ['an HTML comment', ['<!--', '```md', '##### Track 9Z: Example', '-->']],
+    ['a closed list example', ['- ```md', '  ##### Track 9Z: Example', '  ```']],
+    ['an unclosed list example', ['- ```md', '  ##### Track 9Z: Example']],
+  ] as const)('audit and pack agree on real Tracks after %s', (_, example) => {
+    const repo = setupRepo(join(FIXTURES_DIR, 'packing-ok'), baseTmp);
+    const path = join(repo, 'docs', 'ROADMAP.md');
+    const original = readFileSync(path, 'utf8');
+    writeFileSync(path, [...example, original].join('\n'));
+
+    const options = { home: homeDir, gstackExtendDir: ROOT, gstackExtendStateDir: stateDir };
+    const pack = runBin(join(ROOT, 'bin', 'roadmap-pack'), [repo], options);
+    expect(pack.exitCode).toBe(0);
+    expect(pack.stdout).toContain('- bin 1 layer=0 ← {} : 1A 1B');
+    expect(pack.stdout).toContain('- bin 2 layer=1 ← {1A,1B} : 2A');
+    expect(pack.stdout).not.toContain('9Z');
+
+    const audit = runBin(AUDIT, [repo], options);
+    expect(audit.exitCode).toBe(0);
+    expect(audit.stderr).toBe('');
+    expect(audit.stdout).toContain('## PACKING\nSTATUS: pass');
+    expect(audit.stdout).toContain('## STATE_SECTIONS\nSTATUS: pass');
+  });
+
   for (const fix of loadFixtures(FIXTURES_DIR)) {
     test(fix.name, () => {
       const repo = setupRepo(fix.dir, baseTmp);

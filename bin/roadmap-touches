@@ -11,4 +11,8 @@ if ! bun_prereq_probe; then
   bun_prereq_print_shared 'roadmap-touches' >&2
   exit 1
 fi
+if ! bun_runtime_deps_check "$_dir/.."; then
+  bun_runtime_deps_print_shared 'roadmap-touches' >&2
+  exit 1
+fi
 exec "$BUN_PREREQ_RAW_PATH" --no-env-file --no-install --config=/dev/null "$_dir/../src/audit/touches-cli.ts" "$@"

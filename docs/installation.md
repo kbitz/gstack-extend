@@ -16,11 +16,13 @@
 <entry>: PREREQ_BUN_VERSION_UNKNOWN Bun >= 1.3.3 is required (could not determine version at <path>; saw <detail>); run: upgrade or reinstall Bun >= 1.3.3 (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
 <entry>: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.
 setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.
+<entry>: PREREQ_DEPS_MISSING missing or mismatched runtime dependency <package>@<version> in <checkout>; run: '<checkout>/setup' --host auto or run bun install --production --frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file from the checkout. No changes were made. See docs/installation.md#requirements.
 ```
 
 | Entry points | Channel and format | Exit | Error codes / causes |
 |---|---|---|---|
 | `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `review-delegate` | Single line on stderr. For missing Bun, `setup` also prints download and checksum instructions. Dry-run init warns on stderr and keeps its preview exit behavior. | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
+| `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches` | Single line on stderr. Dry-run init warns and still previews. | 1 | `PREREQ_DEPS_MISSING` |
 | `layout-scaffold`, `docs-ship`, `upstream-check` | Two lines on stderr with `ERROR <code>:` and `FIX:`. | 5 | `bun_missing`, `bun_not_absolute`, `bun_too_old`, `bun_version_unknown` |
 | `layout-scaffold`, `docs-ship` | Two lines on stderr with `ERROR <code>:` and `FIX:` for an incomplete installation or broken launcher link. | 5 | `source_missing`, `symlink_loop` |
 | `upstream-check` | Three lines on stderr with `ERROR INTERNAL:`, version context and `FIX:` for an incomplete installation or broken launcher link. | 1 | `source_missing`, `symlink_loop` |
@@ -35,6 +37,29 @@ fails, the launcher reports `PREREQ_BUN_TOO_OLD` with the missing capability.
 
 If setup refuses Bun during an update, fix Bun and resume the
 [update procedure](#update-checks) so the updater can finish migrations.
+
+`package.json` and `bun.lock` pin the `marked` runtime dependency for planning
+file readers. Fresh `setup` and the setup run by `bin/update-run` during
+`/gstack-extend-upgrade` install missing or mismatched dependencies into the
+checkout's `node_modules/`. Setup uses the frozen lockfile and ignores
+lifecycle scripts, local configuration and environment files. It verifies
+installed runtime versions before publishing skills, the preamble, or CLI
+links. Setup skips installation when the pinned runtime versions are present
+and includes development dependencies in a repair when Ajv is already installed.
+
+The audit started by `gstack-extend init` and all Bun-backed launchers use
+`--no-env-file --no-install --config=/dev/null`. Planning readers load
+`marked` from the checkout's `node_modules/` without fetching it at runtime.
+`roadmap-audit`, `roadmap-pack`, and `roadmap-touches` check the dependency
+before running. `gstack-extend init` checks it before creating the scaffold
+or registering the project.
+After a manual `git pull`, run `<checkout>/setup --host auto` to recover from
+`PREREQ_DEPS_MISSING`. For a runtime-only checkout, the alternative is to run
+this from the checkout:
+
+```sh
+bun install --production --frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file
+```
 
 Clone and run setup:
 
@@ -314,6 +339,8 @@ layer.
 
 To upgrade when a spawned run reports a newer version, run `/gstack-extend-upgrade`
 in an interactive session, or run `<checkout>/bin/update-run <checkout>` directly.
+
+See the dated qualification runs in the [install and upgrade record](acceptance/install-upgrade.md).
 
 ### Version numbers
 
