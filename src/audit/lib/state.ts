@@ -45,7 +45,7 @@ export function* planningLines(lines: readonly string[], start = 0, end = lines.
     const line = lines[i]!.replace(/\r$/, '');
     const delimiter = FENCE_RE.exec(line);
     if (fence !== null) {
-      if (delimiter && delimiter[1]!.startsWith(fence) && delimiter[2]!.trim() === '') fence = null;
+      if (delimiter && delimiter[1]!.startsWith(fence) && /^[ \t]*$/.test(delimiter[2]!)) fence = null;
     } else if (delimiter && !(delimiter[1]![0] === '`' && delimiter[2]!.includes('`'))) {
       fence = delimiter[1]!;
     } else {

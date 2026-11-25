@@ -62,6 +62,37 @@ describe('runPackCli', () => {
     expect(out).toContain('Track heading');
   });
 
+  test.each([
+    ['a nonbreaking space', '\u00a0', '2A'],
+    ['spaces and tabs', ' \t ', '1A'],
+  ] as const)('packs the correct Track when a fence line ends with %s', (_, suffix, track) => {
+    const roadmap = [
+      '# Roadmap',
+      '',
+      '```md',
+      '    ```',
+      '```' + suffix,
+      '## Current Plan',
+      '#### Group 1: Example',
+      '##### Track 1A: Example only',
+      '_1 task . ~S . low risk . [example.ts]_',
+      '_touches: src/example.ts_',
+      '- **Show an example** -- body (S)',
+      '```',
+      '',
+      '## Current Plan',
+      '#### Group 2: Actual work',
+      '##### Track 2A: Actual Track',
+      '_1 task . ~S . low risk . [actual.ts]_',
+      '_touches: src/actual.ts_',
+      '- **Do real work** -- body (S)',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'docs/ROADMAP.md'), roadmap);
+    const bins = runPackCli([dir]).split('\n').filter(line => line.startsWith('- bin'));
+    expect(bins).toEqual([`- bin 1 layer=0 ← {} : ${track}`]);
+  });
+
   test('--materialize prints implicit previous-Group edges then bins', () => {
     const live = [
       '## Current Plan',
