@@ -43,6 +43,12 @@ export function* planningLines(content: string): Generator<readonly [lineNo: num
         case 'list': {
           let itemLine = line;
           for (const item of (token as Tokens.List).items) {
+            // Empty list items still have a source marker. The Future parser
+            // uses it to report a bullet with no title as malformed.
+            if (item.tokens.length === 0 && itemLine > lastYieldedLine) {
+              lastYieldedLine = itemLine;
+              yield [itemLine + 1, rawLines[itemLine]!] as const;
+            }
             yield* walk(item.tokens, itemLine);
             itemLine = advanceLine(itemLine, item.raw);
           }

@@ -7,7 +7,8 @@
 # - Every probe command runs in condition context so caller set -e / set -u /
 #   ERR traps never fire before classification.
 # - The version probe runs only shell builtins and the selected Bun:
-#   --version, plus --help at the floor. The runtime-dependency check uses awk.
+#   --version, plus --help at the floor. The runtime-dependency check uses
+#   system awk and formats refusals with system tr and sed.
 # - Probe-derived strings printed in messages are sanitized to a single line
 #   of [0-9A-Za-z.+/_-] truncated at 64 characters.
 
@@ -292,7 +293,7 @@ bun_runtime_deps_check() {
   BUN_PREREQ_DEPS_FIX=''
   [ -f "$1/package.json" ] || return 0
 
-  BUN_PREREQ_DEPS_ROOT=$(CDPATH='' cd -P "$1" && pwd -P) || BUN_PREREQ_DEPS_ROOT=$1
+  BUN_PREREQ_DEPS_ROOT=$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P) || BUN_PREREQ_DEPS_ROOT=$1
   if BUN_PREREQ_DEPS_DECLS=$(_bun_runtime_manifest_field "$BUN_PREREQ_DEPS_ROOT/package.json" dependencies); then
     BUN_PREREQ_DEPS_DETAIL=''
     while IFS=' ' read -r BUN_PREREQ_DEPS_NAME BUN_PREREQ_DEPS_WANT; do
@@ -316,13 +317,15 @@ EOF
   fi
 
   BUN_PREREQ_DEPS_TOKEN='PREREQ_DEPS_MISSING'
-  BUN_PREREQ_DEPS_DISPLAY=$(printf '%s' "$BUN_PREREQ_DEPS_ROOT" | LC_ALL=C tr -d '[:cntrl:]')
+  BUN_PREREQ_DEPS_DISPLAY=$(printf '%s' "$BUN_PREREQ_DEPS_ROOT" | LC_ALL=C command -p tr -d '[:cntrl:]' 2>/dev/null) ||
+    BUN_PREREQ_DEPS_DISPLAY='<checkout>'
   BUN_PREREQ_DEPS_WHAT="${BUN_PREREQ_DEPS_DETAIL:-could not verify runtime dependencies} in $BUN_PREREQ_DEPS_DISPLAY"
   case "$BUN_PREREQ_DEPS_ROOT" in
     *[[:cntrl:]]*) BUN_PREREQ_DEPS_SETUP='./setup' ;;
-    *) BUN_PREREQ_DEPS_SETUP="'$(printf '%s/setup' "$BUN_PREREQ_DEPS_ROOT" | sed "s/'/'\\\\''/g")'" ;;
+    *) BUN_PREREQ_DEPS_SETUP="'$(printf '%s/setup' "$BUN_PREREQ_DEPS_ROOT" | LC_ALL=C command -p sed "s/'/'\\\\''/g" 2>/dev/null)'" ||
+        BUN_PREREQ_DEPS_SETUP='./setup' ;;
   esac
-  BUN_PREREQ_DEPS_FIX="$BUN_PREREQ_DEPS_SETUP --host auto or run bun install --production --frozen-lockfile from the checkout. No changes were made. See docs/installation.md#requirements"
+  BUN_PREREQ_DEPS_FIX="$BUN_PREREQ_DEPS_SETUP --host auto or run bun install --production --frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file from the checkout. No changes were made. See docs/installation.md#requirements"
   return 1
 }
 

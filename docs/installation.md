@@ -16,7 +16,7 @@
 <entry>: PREREQ_BUN_VERSION_UNKNOWN Bun >= 1.3.3 is required (could not determine version at <path>; saw <detail>); run: upgrade or reinstall Bun >= 1.3.3 (bun upgrade, or curl -fsSL https://bun.sh/install | bash and reload your shell), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
 <entry>: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup. No changes were made. See docs/installation.md#requirements.
 setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run ./setup from a complete checkout. No changes were made. See docs/installation.md#requirements.
-<entry>: PREREQ_DEPS_MISSING missing or mismatched runtime dependency <package>@<version> in <checkout>; run: '<checkout>/setup' --host auto or run bun install --production --frozen-lockfile from the checkout. No changes were made. See docs/installation.md#requirements.
+<entry>: PREREQ_DEPS_MISSING missing or mismatched runtime dependency <package>@<version> in <checkout>; run: '<checkout>/setup' --host auto or run bun install --production --frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file from the checkout. No changes were made. See docs/installation.md#requirements.
 ```
 
 | Entry points | Channel and format | Exit | Error codes / causes |
@@ -41,16 +41,21 @@ If setup refuses Bun during an update, fix Bun and resume the
 `package.json` and `bun.lock` pin the `marked` runtime dependency for planning
 file readers. Fresh `setup` and the setup run by `bin/update-run` during
 `/gstack-extend-upgrade` install missing or mismatched dependencies into the
-checkout's `node_modules/` using `bun install --production --frozen-lockfile`.
-Setup skips installation when the locked versions are already present and
-preserves development dependencies in contributor checkouts.
+checkout's `node_modules/`. Setup uses the frozen lockfile and ignores
+lifecycle scripts, local configuration and environment files. It skips
+installation when the locked versions are already present and preserves
+installed development dependencies in contributor checkouts.
 
 The audit started by `gstack-extend init` and all Bun-backed launchers use
 `--no-env-file --no-install --config=/dev/null`. Planning readers load
 `marked` from the checkout's `node_modules/` without fetching it at runtime.
 After a manual `git pull`, run `<checkout>/setup --host auto` to recover from
-`PREREQ_DEPS_MISSING`, or run `bun install --production --frozen-lockfile` from
-the checkout.
+`PREREQ_DEPS_MISSING`. For a runtime-only checkout, the alternative is to run
+this from the checkout:
+
+```sh
+bun install --production --frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file
+```
 
 Clone and run setup:
 

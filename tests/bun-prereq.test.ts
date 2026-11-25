@@ -759,8 +759,10 @@ exit 97
     expect(preview.status, preview.stdout + preview.stderr).toBe(0);
     expect(preview.stderr).toContain('gstack-extend init: warning: PREREQ_DEPS_MISSING');
 
+    // Refusal formatting must work even when the caller's PATH contains only Bun.
+    const launcherOptions = found === null ? { ...options, env: { ...env, PATH: shim } } : options;
     for (const launcher of ['roadmap-audit', 'roadmap-pack', 'roadmap-touches']) {
-      const result = spawnSync('/bin/sh', [join(mirror, 'bin', launcher), '--help'], options);
+      const result = spawnSync('/bin/sh', [join(mirror, 'bin', launcher), '--help'], launcherOptions);
       expect(result.status).toBe(1);
       expect(result.stdout).toBe('');
       expect(result.stderr.trim().split('\n')).toHaveLength(1);

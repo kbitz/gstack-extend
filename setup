@@ -1808,7 +1808,7 @@ ensure_runtime_deps() {
     finish_setup 1
   fi
 
-  local install_args=(--frozen-lockfile --ignore-scripts --config=/dev/null)
+  local install_args=(--frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file)
   if [ ! -d "$SCRIPT_DIR/node_modules/ajv" ]; then
     install_args+=(--production)
   fi

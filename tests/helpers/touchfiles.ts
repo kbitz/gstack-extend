@@ -316,6 +316,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-audit',
     'bin/roadmap-pack',
     'src/audit/**',
+    'package.json',
+    'bun.lock',
     // Track 28A locks the rollback block's update-check pause.
     'docs/installation.md',
   ],
@@ -386,6 +388,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-pack',
     'bin/roadmap-touches',
     'src/audit/**',
+    'package.json',
+    'bun.lock',
     'scripts/init-templates/**',
   ],
   // Track 13A — telemetry wrapper + per-skill emit blocks. The unit/integration

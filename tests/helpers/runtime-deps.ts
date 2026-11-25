@@ -32,6 +32,10 @@ case "$1" in
   --version) echo '1.3.3' ;;
   --help) exec "$TEST_REAL_BUN" "$@" ;;
   install)
+    case " $* " in
+      *' --no-env-file '*) ;;
+      *) echo 'fixture install environment flag missing' >&2; exit 44 ;;
+    esac
     ${options.failInstall ? "echo 'fixture install refused' >&2; exit 43" : `if "$TEST_REAL_BUN" install --help | command -p grep -q -- --offline; then
       exec "$TEST_REAL_BUN" "$@" --offline --registry=https://registry.npmjs.org
     fi

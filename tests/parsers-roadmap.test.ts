@@ -1112,3 +1112,8 @@ test.each([
   const parsed = parseRoadmap(roadmap, deps()).value;
   expect(parsed.tracks.map(track => [track.id, track.state])).toEqual([['1A', 'current-plan']]);
 });
+
+test('reports an empty Future list item as malformed', () => {
+  const roadmap = ['## Current Plan', '', '## Future', '', '- ', '', '## Shipped'].join('\n');
+  expect(parseRoadmap(roadmap, deps()).value.futureMalformed).toEqual(['-']);
+});
