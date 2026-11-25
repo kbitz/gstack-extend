@@ -83,7 +83,9 @@ updated skills use the hedged framing.
 
 Parsers tolerate their absence. Recommended fields:
 
-- `- **ID:**` `wi-<4-8 lowercase hex>` — immutable work-item ID assigned at creation (required by `## WORK_ITEM_IDS` in `bin/roadmap-audit`; minted via `bin/roadmap-id mint`).
+- `- **ID:**` `wi-<4-8 lowercase hex>` — immutable work-item ID.
+  New entries get an ID from `bin/roadmap-id mint` at creation. Missing IDs
+  produce an advisory finding in the `## WORK_ITEM_IDS` section of `bin/roadmap-audit`.
 - `- **Why:**` ... — problem statement or value proposition. Shown in triage.
 - `- **Effort:**` ... — size estimate. Shown in triage.
 - `- **Depends on:**` ... — prerequisites. Flags items that shouldn't be
