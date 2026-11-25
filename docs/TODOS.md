@@ -2,6 +2,15 @@
 
 ## Unprocessed
 
+### [review:files=src/audit/lib/git.ts|tests/roadmap-id.test.ts] Stream the work-item ID history scan
+
+- **ID:** wi-68e7cc
+- **Description:** The Git history scan reads patch output into a 64 MiB buffer. The planning-file patch history measured 994,058 bytes during review. As history grows, stream the output while preserving retired ID reservations and clear read errors.
+- **Found in:** `src/audit/lib/git.ts`, `historicalWorkItemIds` and planning-link history.
+- **Context:** Filed during review of PR #311.
+- **Revisit when:** A project approaches the history buffer limit or a Track changes the work-item history reader.
+- **Effort:** ? (user triages in `/roadmap`)
+
 ### [review:files=src/secret-dispositions/evaluate.ts|tests/secret-dispositions.test.ts] Test gap: Refuse a finding with no matching part
 
 - **ID:** wi-542e1f
