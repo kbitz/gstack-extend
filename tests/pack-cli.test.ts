@@ -55,6 +55,17 @@ describe('runPackCli', () => {
     expect(out).toContain('2A');
   });
 
+  test.each([
+    ['HTML comment', ['<!--', '```md', '##### Track 9Z: Example', '-->']],
+    ['closed list example', ['- ```md', '  ##### Track 9Z: Example', '  ```']],
+    ['unclosed list example', ['- ```md', '  ##### Track 9Z: Example']],
+  ] as const)('packs real Tracks after a %s', (_, example) => {
+    const out = runPackCli(['--stdin', dir], [...example, DRAFT].join('\n'));
+    expect(out).toBe(runPackCli(['--stdin', dir], DRAFT));
+    expect(out).toContain('1A');
+    expect(out).toContain('2A');
+  });
+
   test('emptyHint when headings exist but 0 unshipped', () => {
     writeFileSync(join(dir, 'docs/ROADMAP.md'), SHIPPED_HEADINGS);
     const out = runPackCli([dir]);

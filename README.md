@@ -55,6 +55,10 @@ git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-ext
 Claude Code. See [Retired install hosts](docs/installation.md#retired-install-hosts)
 for leftover Cursor or OpenCode copies.
 
+`setup` installs the pinned `marked` runtime dependency in the checkout. If a
+manual `git pull` leaves a planning command reporting `PREREQ_DEPS_MISSING`,
+rerun `<checkout>/setup --host auto`. See [requirements and recovery](docs/installation.md#requirements).
+
 Check that the start command can find the installed checkout:
 
 ```bash
@@ -208,8 +212,8 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 ## Development
 
 Development and tests need Bun 1.3.3 or newer (`engines.bun` in `package.json`).
-Install the pinned development dependencies once per checkout, before any test
-command:
+Install the pinned runtime and development dependencies once per checkout before
+running tests.
 
 ```bash
 bun install --frozen-lockfile   # Once per checkout; never changes bun.lock
@@ -223,14 +227,17 @@ status.
 
 `bun run test` prints which test files it ran and skipped, and why. A run of
 every file prints that reason once. Editing one
-skill runs that skill's tests plus the shared skill rules. A release commit
-(VERSION, CHANGELOG.md, package.json's version) runs the release and manifest
-checks. Any other `package.json` change still runs everything.
+skill runs that skill's tests plus the shared skill rules. A release-only diff
+(`VERSION`, `CHANGELOG.md`, and the `version` field of `package.json`) selects
+six suites covering release metadata, telemetry, Bun prerequisites, setup and
+upgrades. Any other `package.json` change still runs everything.
 See the [skill-edit selection measurements](docs/acceptance/skill-test-selection.md)
 for the before/after file lists, timings, and limits.
 
-Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
-install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions,
+Setup and upgrade tests install packages in temporary checkouts from an isolated
+cache seeded from this checkout. If Bun reports a missing `ajv` or `marked`
+package in your checkout, run `bun install --frozen-lockfile` there.
+[`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions,
 and [the skill core-versus-reference rule](docs/skill-references.md) governs
 when conditional skill text lives in `skills/references/` and how size budgets
 and digests are maintained.

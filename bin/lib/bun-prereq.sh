@@ -6,7 +6,9 @@
 # - Never mutates IFS; splits via parameter expansion.
 # - Every probe command runs in condition context so caller set -e / set -u /
 #   ERR traps never fire before classification.
-# - Runs only shell builtins and the selected Bun: --version, plus --help at the floor.
+# - The version probe runs only shell builtins and the selected Bun:
+#   --version, plus --help at the floor. The runtime-dependency check uses
+#   system awk and formats refusals with system tr and sed.
 # - Probe-derived strings printed in messages are sanitized to a single line
 #   of [0-9A-Za-z.+/_-] truncated at 64 characters.
 
@@ -227,4 +229,106 @@ bun_prereq_probe() {
 # Prints the single-line shared refusal message to stdout (callers redirect to stderr).
 bun_prereq_print_shared() {
   printf '%s: %s; run: %s.\n' "$1" "$BUN_PREREQ_MSG" "$BUN_PREREQ_FIX"
+}
+
+# Read the top-level dependencies or version field without starting Bun or jq.
+_bun_runtime_manifest_field() {
+  LC_ALL=C command -p awk -v key="\"$2\"" '
+    # Skip quoted strings as a unit so scripts and nested fields cannot
+    # impersonate a top-level dependency or version declaration.
+    function next_token() {
+      sub(/^[[:space:]]+/, "", json)
+      if (match(json, /^"([^"\\]|\\.)*"/)) {
+        token = substr(json, 1, RLENGTH)
+      } else {
+        token = substr(json, 1, 1)
+      }
+      json = substr(json, length(token) + 1)
+      return token
+    }
+    function field(    depth, part, previous) {
+      while ((part = next_token()) != "") {
+        if (depth == 1 && part == key && (previous == "{" || previous == ",")) {
+          if (next_token() == ":") return next_token()
+        }
+        if (part == "{" || part == "[") depth++
+        if (part == "}" || part == "]") depth--
+        previous = part
+      }
+      return ""
+    }
+    function refuse(message) {
+      print message
+      exit 1
+    }
+    { json = json $0 "\n" }
+    END {
+      if (json !~ /^[[:space:]]*\{/) refuse("invalid package.json")
+      part = field()
+      if (key == "\"version\"") {
+        print part
+        exit
+      }
+      if (part == "") exit 0
+      if (part != "{") refuse("invalid dependencies in package.json")
+      while ((name = next_token()) != "}") {
+        if (name !~ /^"(@[a-zA-Z0-9_-][a-zA-Z0-9._-]*\/)?[a-zA-Z0-9_-][a-zA-Z0-9._-]*"$/ ||
+            next_token() != ":") refuse("invalid dependency name in package.json")
+        want = next_token()
+        if (want !~ /^"[0-9]+\.[0-9]+\.[0-9]+([-+][a-zA-Z0-9.+-]+)?"$/)
+          refuse("dependency " name " must declare an exact version")
+        print substr(name, 2, length(name) - 2), want
+        part = next_token()
+        if (part == "}") break
+        if (part != ",") refuse("invalid dependencies in package.json")
+      }
+    }
+  ' 2>/dev/null < "$1"
+}
+
+# bun_runtime_deps_check <checkout_root>
+bun_runtime_deps_check() {
+  BUN_PREREQ_DEPS_CODE=''
+  BUN_PREREQ_DEPS_WHAT=''
+  BUN_PREREQ_DEPS_FIX=''
+  [ -f "$1/package.json" ] || return 0
+
+  BUN_PREREQ_DEPS_ROOT=$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P) || BUN_PREREQ_DEPS_ROOT=$1
+  if BUN_PREREQ_DEPS_DECLS=$(_bun_runtime_manifest_field "$BUN_PREREQ_DEPS_ROOT/package.json" dependencies); then
+    BUN_PREREQ_DEPS_DETAIL=''
+    while IFS=' ' read -r BUN_PREREQ_DEPS_NAME BUN_PREREQ_DEPS_WANT; do
+      [ -n "$BUN_PREREQ_DEPS_NAME" ] || continue
+      BUN_PREREQ_DEPS_MANIFEST="$BUN_PREREQ_DEPS_ROOT/node_modules/$BUN_PREREQ_DEPS_NAME/package.json"
+      if [ ! -f "$BUN_PREREQ_DEPS_MANIFEST" ] || [ ! -r "$BUN_PREREQ_DEPS_MANIFEST" ] ||
+         ! BUN_PREREQ_DEPS_HAVE=$(_bun_runtime_manifest_field "$BUN_PREREQ_DEPS_MANIFEST" version) ||
+         [ "$BUN_PREREQ_DEPS_HAVE" != "$BUN_PREREQ_DEPS_WANT" ]; then
+        BUN_PREREQ_DEPS_VERSION=${BUN_PREREQ_DEPS_WANT#\"}
+        BUN_PREREQ_DEPS_DETAIL="missing or mismatched runtime dependency $BUN_PREREQ_DEPS_NAME@${BUN_PREREQ_DEPS_VERSION%\"}"
+        break
+      fi
+    done <<EOF
+$BUN_PREREQ_DEPS_DECLS
+EOF
+    [ -n "$BUN_PREREQ_DEPS_DETAIL" ] || return 0
+  else
+    # A validation failure can occur after one or more valid entries.
+    BUN_PREREQ_DEPS_DETAIL=${BUN_PREREQ_DEPS_DECLS##*"
+"}
+  fi
+
+  BUN_PREREQ_DEPS_CODE='PREREQ_DEPS_MISSING'
+  BUN_PREREQ_DEPS_DISPLAY=$(printf '%s' "$BUN_PREREQ_DEPS_ROOT" | LC_ALL=C command -p tr -d '[:cntrl:]' 2>/dev/null) ||
+    BUN_PREREQ_DEPS_DISPLAY='<checkout>'
+  BUN_PREREQ_DEPS_WHAT="${BUN_PREREQ_DEPS_DETAIL:-could not verify runtime dependencies} in $BUN_PREREQ_DEPS_DISPLAY"
+  case "$BUN_PREREQ_DEPS_ROOT" in
+    *[[:cntrl:]]*) BUN_PREREQ_DEPS_SETUP='./setup' ;;
+    *) BUN_PREREQ_DEPS_SETUP="'$(printf '%s/setup' "$BUN_PREREQ_DEPS_ROOT" | LC_ALL=C command -p sed "s/'/'\\\\''/g" 2>/dev/null)'" ||
+        BUN_PREREQ_DEPS_SETUP='./setup' ;;
+  esac
+  BUN_PREREQ_DEPS_FIX="$BUN_PREREQ_DEPS_SETUP --host auto or run bun install --production --frozen-lockfile --ignore-scripts --config=/dev/null --no-env-file from the checkout. No changes were made. See docs/installation.md#requirements"
+  return 1
+}
+
+bun_runtime_deps_print_shared() {
+  printf '%s: %s %s; run: %s.\n' "$1" "$BUN_PREREQ_DEPS_CODE" "$BUN_PREREQ_DEPS_WHAT" "$BUN_PREREQ_DEPS_FIX"
 }

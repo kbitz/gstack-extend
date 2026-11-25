@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.118.0] - 2026-11-25
+
+### Changed
+
+- Planning-file readers (`bin/roadmap-audit`, `bin/roadmap-pack`, and `bin/roadmap-touches`) now use the pinned `marked` runtime dependency in `package.json` to lex Markdown block structure instead of hand-written fence scanners.
+- The planning commands now use the pinned `marked` Markdown parser, which `setup` installs during installation and upgrade.
+
+### Upgrade notes
+
+- Existing checkouts updated without `/gstack-extend-upgrade` or `setup` must run `setup` to install the new `marked` runtime dependency before invoking planning or onboarding commands.
+- Run `setup --host auto` after a manual Git pull to install the new planning dependency.
+
 ## [0.117.0] - 2026-11-25
 
 ### Added

@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -54,6 +55,7 @@ import {
   writeUpdateCheck,
 } from './helpers/extend-root.ts';
 import { EXPECTED_SETUP_SKILLS as REAL_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
+import { installedMarkedVersion, markedVersion, offlineFloorBun } from './helpers/runtime-deps.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const UPDATE_RUN = join(ROOT, 'bin', 'update-run');
@@ -203,6 +205,75 @@ function migrationPayload(scripts: Record<string, string>): Record<string, strin
 // ─── bin/update-run ─────────────────────────────────────────────────
 
 describe('bin/update-run', () => {
+  for (const failInstall of [false, true]) {
+    test(`upgrade from 0.117.0 ${failInstall ? 'stops at setup on dependency failure' : 'installs runtime dependencies from the local cache'}`, () => {
+      const name = failInstall ? 'upgrade-runtime-failure' : 'upgrade-runtime-success';
+      const setupText = readFileSync(SETUP, 'utf8');
+      const oldSetup = setupText.replace(/^ensure_runtime_deps\n/m, '');
+      expect(oldSetup).not.toBe(setupText);
+      const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+      const lock = readFileSync(join(ROOT, 'bun.lock'), 'utf8');
+      const oldLock = lock
+        .replace(/^      "dependencies": \{\n        "marked": "[^"]+",\n      \},\n/m, '')
+        .replace(/^    "marked": .*\n/m, '');
+      expect(oldLock).not.toContain('"marked"');
+      const launchers = ['bin/roadmap-audit', 'bin/roadmap-pack'];
+      const repo = createFixtureRepoWithRealSetup(name, {
+        setupText: oldSetup,
+        beforeCommit(dir) {
+          writeFileSync(join(dir, 'VERSION'), '0.117.0\n');
+          writeFileSync(join(dir, 'package.json'), JSON.stringify({ ...pkg, dependencies: undefined, version: '0.117.0' }));
+          writeFileSync(join(dir, 'bun.lock'), oldLock);
+          writeFileSync(join(dir, '.gitignore'), 'node_modules/\n');
+          for (const rel of launchers) copyFileSync(join(ROOT, rel), join(dir, rel));
+        },
+      });
+      const home = join(baseTmp, `${name}-home`);
+      const state = join(baseTmp, `${name}-state`);
+      mkdirSync(home);
+      mkdirSync(state);
+      const extraEnv = offlineFloorBun(ROOT, join(baseTmp, `${name}-runtime`), CLAUDE_PATH, { failInstall });
+      const opts = { home, gstackExtendDir: repo, gstackExtendStateDir: state, extraEnv };
+      const initial = runBin(join(repo, 'setup'), ['--host', 'claude'], opts);
+      expect(initial.exitCode).toBe(0);
+      expect(existsSync(join(repo, 'node_modules'))).toBe(false);
+      const preamble = join(home, '.gstack-extend', 'bin', 'preamble');
+      const oldPreamble = readFileSync(preamble, 'utf8');
+      const newPreamble = oldPreamble + '\n# Runtime dependency upgrade fixture\n';
+
+      const paths = ['bin/lib/bun-prereq.sh', ...launchers, ...new Bun.Glob('src/audit/**/*').scanSync({ cwd: ROOT, onlyFiles: true })];
+      const payload = Object.fromEntries(paths.map((rel) => [rel, readFileSync(join(ROOT, rel), 'utf8')]));
+      pushNewVersion(join(baseTmp, `${name}-remote`), '0.118.0', {
+        ...payload,
+        setup: setupText,
+        'bin/lib/preamble.sh': newPreamble,
+        'package.json': JSON.stringify({ ...pkg, version: '0.118.0' }),
+        'bun.lock': lock,
+      });
+
+      const upgrade = runBin(join(repo, 'bin', 'update-run'), [repo], opts);
+      expect(upgrade.stdout).not.toContain('Installed runtime dependencies');
+      expect(upgrade.stdout).not.toContain('Installed preamble');
+      if (failInstall) {
+        expect(upgrade.exitCode).toBe(1);
+        expect(upgrade.stdout).toContain('UPGRADE_FAILED stage=setup (exit 1)');
+        expect(upgrade.stdout).not.toContain('UPGRADE_OK');
+        expect(upgrade.stderr).toContain('fixture install refused');
+        expect(readFileSync(preamble, 'utf8')).toBe(oldPreamble);
+        expect(existsSync(join(state, 'just-upgraded-from'))).toBe(false);
+      } else {
+        expect(upgrade.exitCode).toBe(0);
+        expect(upgrade.stdout.trimEnd().split('\n').at(-1)).toBe('UPGRADE_OK 0.117.0 0.118.0');
+        expect(installedMarkedVersion(repo)).toBe(markedVersion(repo));
+        expect(readFileSync(preamble, 'utf8')).toBe(newPreamble);
+        for (const [launcher, output] of [['roadmap-audit', '## STRUCTURE'], ['roadmap-pack', 'BINS:']] as const) {
+          const result = runBin(join(repo, 'bin', launcher), [repo], opts);
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).toContain(output);
+        }
+      }
+    });
+  }
   test('forwards real setup skipped hosts alongside checkout upgrade success', () => {
     // bin/update-check makes the pair-review link setup-owned, so a copy pass
     // that failed to skip the shared directory would replace it with a file.

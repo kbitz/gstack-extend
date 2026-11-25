@@ -19,7 +19,8 @@
  * wins.
  */
 
-import { FUTURE_HEADING_RE, planningLines } from '../lib/state.ts';
+import { planningLines } from '../lib/markdown.ts';
+import { FUTURE_HEADING_RE } from '../lib/state.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStructure(ctx: AuditCtx): CheckResult {
@@ -31,7 +32,7 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const lines = [...planningLines(ctx.files.roadmap.split('\n'))].map(([, line]) => line);
+  const lines = [...planningLines(ctx.files.roadmap)].map(([, line]) => line);
   const findings: string[] = [];
 
   let groupCount = 0;

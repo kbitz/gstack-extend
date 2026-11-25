@@ -240,7 +240,8 @@
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
       "tests/layout-scaffold.test.ts",
-      "tests/setup-init-wire.test.ts"
+      "tests/setup-init-wire.test.ts",
+      "tests/update.test.ts"
     ],
     "bin/roadmap-id": [
       "tests/bun-prereq.test.ts",
@@ -251,7 +252,9 @@
     "bin/roadmap-pack": [
       "tests/audit-snapshots.test.ts",
       "tests/bun-prereq.test.ts",
-      "tests/layout-scaffold.test.ts"
+      "tests/layout-scaffold.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/update.test.ts"
     ],
     "bin/roadmap-renumber": [
       "tests/audit-snapshots.test.ts",
@@ -266,7 +269,8 @@
     "bin/roadmap-touches": [
       "tests/audit-snapshots.test.ts",
       "tests/bun-prereq.test.ts",
-      "tests/layout-scaffold.test.ts"
+      "tests/layout-scaffold.test.ts",
+      "tests/setup-init-wire.test.ts"
     ],
     "bin/secret-dispositions": [
       "tests/bun-prereq.test.ts",
@@ -282,6 +286,10 @@
     "bin/upstream-check": [
       "tests/bun-prereq.test.ts",
       "tests/upstream-check.test.ts"
+    ],
+    "bun.lock": [
+      "tests/setup-init-wire.test.ts",
+      "tests/update.test.ts"
     ],
     "docs/**": [
       "tests/skill-references.test.ts"
@@ -389,7 +397,9 @@
     ],
     "package.json": [
       "tests/bun-prereq.test.ts",
-      "tests/release-manifest.test.ts"
+      "tests/release-manifest.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/update.test.ts"
     ],
     "scripts/extract-changelog-section.sh": [
       "tests/release-manifest.test.ts"
@@ -521,7 +531,8 @@
       "tests/init-bin.test.ts",
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
-      "tests/setup-init-wire.test.ts"
+      "tests/setup-init-wire.test.ts",
+      "tests/update.test.ts"
     ],
     "src/full-review/**": [
       "tests/full-review-state-machines.test.ts"
