@@ -142,18 +142,23 @@ describe('parseTodos — code fence handling', () => {
     expect(r.value.entries[0]!.title).toBe('Real entry');
   });
 
-  test('fence with leading whitespace', () => {
-    const md = [
-      '## Unprocessed',
-      '   ```',
-      '### [manual] Inside indented fence',
-      '   ```',
-      '### [manual] Real',
-    ].join('\n');
-    const r = parseTodos(md);
-    expect(r.value.entries).toHaveLength(1);
-    expect(r.value.entries[0]!.title).toBe('Real');
-  });
+  for (const marker of ['```', '~~~']) {
+    test.each([0, 1, 2, 3])(`${marker} fence with %i leading spaces`, (indent) => {
+      const fence = ' '.repeat(indent) + marker;
+      const md = [
+        '## Unprocessed',
+        fence + 'md',
+        '### [manual] Inside fence',
+        '    ' + marker,
+        '### [manual] Still inside after four spaces',
+        '\t' + marker,
+        '### [manual] Still inside after a tab',
+        fence,
+        '### [manual] Real',
+      ].join('\n');
+      expect(parseTodos(md).value.entries.map(entry => entry.title)).toEqual(['Real']);
+    });
+  }
 
   test('fences outside Unprocessed section have no effect on entries', () => {
     const md = [

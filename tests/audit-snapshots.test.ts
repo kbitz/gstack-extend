@@ -47,6 +47,30 @@ describe('audit snapshot suite', () => {
     try { rmSync(baseTmp, { recursive: true, force: true }); } catch {}
   });
 
+  test('an indented Markdown example leaves all three Tracks available to audit and pack', () => {
+    const repo = setupRepo(join(FIXTURES_DIR, 'packing-ok'), baseTmp);
+    const path = join(repo, 'docs', 'ROADMAP.md');
+    const original = readFileSync(path, 'utf8');
+    const roadmap = original.replace(
+      '# Roadmap\n\n',
+      '# Roadmap\n\nThis example shows the literal opening delimiter used in Markdown.\n\n    ```md\n\n',
+    );
+    expect(roadmap).not.toBe(original);
+    writeFileSync(path, roadmap);
+
+    const options = { home: homeDir, gstackExtendDir: ROOT, gstackExtendStateDir: stateDir };
+    const pack = runBin(join(ROOT, 'bin', 'roadmap-pack'), [repo], options);
+    expect(pack.exitCode).toBe(0);
+    expect(pack.stdout).toContain('- bin 1 layer=0 ← {} : 1A 1B');
+    expect(pack.stdout).toContain('- bin 2 layer=1 ← {1A,1B} : 2A');
+
+    const audit = runBin(AUDIT, [repo], options);
+    expect(audit.exitCode).toBe(0);
+    expect(audit.stderr).toBe('');
+    expect(audit.stdout).toContain('## PACKING\nSTATUS: pass');
+    expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: warn');
+  });
+
   for (const fix of loadFixtures(FIXTURES_DIR)) {
     test(fix.name, () => {
       const repo = setupRepo(fix.dir, baseTmp);

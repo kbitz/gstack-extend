@@ -36,7 +36,7 @@ const IN_PROGRESS_RE = /^## In Progress[ \t\v\f\r]*$/;
 const CURRENT_PLAN_RE = /^## Current Plan[ \t\v\f\r]*$/;
 export const FUTURE_HEADING_RE = /^## Future(?=$|[ \t\v\f\r(:—–]|-+[ \t])/i;
 const ANY_H2_RE = /^## /;
-const FENCE_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
 /** Yield document lines outside fenced examples, keeping their original indices. */
 export function* planningLines(lines: readonly string[], start = 0, end = lines.length) {
