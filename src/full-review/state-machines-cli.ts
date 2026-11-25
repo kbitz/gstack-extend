@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DEFAULT_LIMITS, scanDirectory, type ScannerLimits, type ScanResult } from './state-machines.ts';
+import { DEFAULT_LIMITS, scanDirectory, type ScannerLimits, type ScanResult, type StateMachineCandidate } from './state-machines.ts';
 
 const MAX_DISPLAY_SITES = 6;
+const MAX_DISPLAY_FIELD = 160;
+const MAX_DISPLAY_CHARS = 16_000;
 
 export interface CliIo {
   cwd: string;
@@ -137,8 +139,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function singleLine(text: string): string {
-  return JSON.stringify(text).slice(1, -1).replace(/[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g,
+  const escaped = JSON.stringify(text.slice(0, MAX_DISPLAY_FIELD)).slice(1, -1).replace(/[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g,
     char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
+  return escaped.length > MAX_DISPLAY_FIELD || text.length > MAX_DISPLAY_FIELD
+    ? escaped.slice(0, MAX_DISPLAY_FIELD) + '…'
+    : escaped;
+}
+
+function renderFacts(facts: StateMachineCandidate['facts']): string {
+  return Object.entries(facts).map(([name, value]) => {
+    const summary = Array.isArray(value) ? value.slice(0, 4).join(', ') + (value.length > 4 ? ', …' : '') : String(value);
+    return name + '=' + singleLine(summary);
+  }).join(' | ');
 }
 
 export function formatText(result: ScanResult): string {
@@ -148,13 +160,20 @@ export function formatText(result: ScanResult): string {
   const lines: string[] = [
     `CANDIDATES: ${result.candidates.length}${result.truncated ? ` (truncated from ${result.total_candidates})` : ''} | scanned python=${result.scanned_by_language.python} ts_js=${result.scanned_by_language.ts_js} skipped=${result.skipped_files}`,
   ];
+  let size = lines[0]!.length;
   for (const c of result.candidates) {
     const siteList = c.sites
       .slice(0, MAX_DISPLAY_SITES)
       .map(s => `${singleLine(s.file)}:${s.line}${s.function ? `(${singleLine(s.function)})` : ''}`)
       .join(', ');
     const more = c.sites.length > MAX_DISPLAY_SITES ? ` (+${c.sites.length - MAX_DISPLAY_SITES} more)` : '';
-    lines.push(`- [${c.signal}] ${singleLine(c.subject)} | sites: ${siteList}${more}`);
+    const line = `- [${c.signal}] ${singleLine(c.subject)} | sites: ${siteList}${more} | ${renderFacts(c.facts)}`;
+    size += line.length + 1;
+    if (size > MAX_DISPLAY_CHARS) {
+      lines.push('Text output capped. Use --format json for all emitted candidates.');
+      break;
+    }
+    lines.push(line);
   }
   return `${lines.join('\n')}\n`;
 }

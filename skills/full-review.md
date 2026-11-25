@@ -236,7 +236,7 @@ Run the read-only mechanical pre-scanner for implicit state-machine candidates:
 "$_EXTEND_ROOT/bin/full-review-state-machines" "<project_root>"
 ```
 
-If the helper prints `NO_CANDIDATES` or exits non-zero (for example, when Bun is unavailable), pass `none` as `{state_machine_candidates}`, note the gap briefly, and continue without blocking the review. Otherwise pass its output as `{state_machine_candidates}` to the Reviewer and Consistency Auditor prompts.
+Pass `none` as `{state_machine_candidates}` for `NO_CANDIDATES` or a non-zero exit. Briefly note whether the scan found nothing or was unavailable, and continue without blocking the review. Otherwise pass its output to the Reviewer and Consistency Auditor prompts.
 
 ### Step 2: Dispatch agents
 

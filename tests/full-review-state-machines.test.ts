@@ -212,6 +212,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     ]);
   });
 
+  // Value: protects=record identity and evidence sites; fails_when=unrelated source suppresses or manufactures candidates; why_new=cycle 1 regressions
   test('associates typed fields, persisted keys and file probes with their own code', () => {
     const dir = mkdtempSync(join(BASE_TMP, 'associated-'));
     writeFileSync(join(dir, 'order.py'), [
@@ -251,6 +252,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
       ]);
   });
 
+  // Value: protects=signal diversity at the cap; fails_when=one kind consumes all candidate slots; why_new=cycle 1 regression
   test('keeps distinct signals when a noisy signal exceeds the candidate limit', () => {
     const dir = materializeFixture('implicit-sm-ts');
     const records = Array.from({ length: 8 }, (_, i) =>
@@ -262,6 +264,75 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     expect(report.truncated).toBe(true);
     expect(report.candidates.length).toBe(6);
     expect(new Set(report.candidates.map(c => c.signal)).size).toBe(6);
+  });
+
+  // Value: protects=typed imported record members and persisted payload correlation; fails_when=ordinary annotations or options become false candidates; why_new=cycle 2 regressions
+  test('uses imported record types and reads loader bodies after object return annotations', () => {
+    const dir = mkdtempSync(join(BASE_TMP, 'typed-callers-'));
+    writeFileSync(join(dir, 'model.ts'), [
+      'export type JobStatus = "pending" | "running" | "done";',
+      'export interface Job { status: JobStatus; }',
+    ].join('\n'));
+    writeFileSync(join(dir, 'job.ts'), [
+      'import {',
+      '  Job,',
+      '} from "./model";',
+      'function pending(job: Job) { return job.status === "pending"; }',
+      'function running(job: Job) { return job.status === "running"; }',
+      'function done(job: Job) { return job.status === "done"; }',
+      'function saveJob(path, job) {',
+      '  writeFileSync(path, JSON.stringify({ id: job.id, revision: 2 }), { encoding: "utf8" });',
+      '}',
+      'function loadJob(data): { id: string } {',
+      '  if (!Number.isInteger(data.revision)) throw Error("bad revision");',
+      '  return { id: data.id };',
+      '}',
+    ].join('\n'));
+    const result = runMain(['--format', 'json', dir]);
+    expect(result.status).toBe(0);
+    expect((JSON.parse(result.stdout) as ScanResult).candidates).toEqual([]);
+  });
+
+  // Value: protects=Git scans tracked sources under build and lexical strings cannot hide subsequent fields; fails_when=walk exclusions or string braces affect legitimate Git fixtures; why_new=cycle 2 regressions
+  test('scans tracked Git build tooling with strings and nested templates before declarations', () => {
+    const dir = materializeFixture('clean-and-other-langs', { initGit: true });
+    mkdirSync(join(dir, 'build'));
+    const tick = String.fromCharCode(96);
+    writeFileSync(join(dir, 'build/jobs.ts'), [
+      'const label = ' + tick + 'outer ' + '$' + '{' + tick + 'inner' + tick + '}' + tick + ';',
+      'class Job {',
+      '  label = "}";',
+      '  inFlight: boolean = false;',
+      '  pendingRetry: boolean = false;',
+      '  settledAt: string | null = null;',
+      '}',
+    ].join('\n'));
+    const add = spawnSync('git', ['-C', dir, 'add', '-f', 'build/jobs.ts'], { env: cleanGitEnv(), timeout: 15_000 });
+    expect(add.status).toBe(0);
+    const result = runMain(['--format', 'json', dir]);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout) as ScanResult;
+    expect(report.candidates.find(c => c.signal === 'boolean-state-bag')?.sites.map(s => s.line)).toEqual([4, 5, 6]);
+  });
+
+  // Value: protects=branch operands and unique threshold sites; fails_when=unused file probes or one compound condition look like lifecycle fan-out; why_new=cycle 2 regressions
+  test('counts threshold branches and file operands rather than unrelated code', () => {
+    const dir = mkdtempSync(join(BASE_TMP, 'probe-branches-'));
+    const file = join(dir, 'job.ts');
+    writeFileSync(file, [
+      'function choose(ready, attempts) {',
+      '  if (ready && attempts > 2.5 && attempts < 4) console.log("ready");',
+      '  existsSync("job_state.json");',
+      '  existsSync("job_done.flag");',
+      '  existsSync("job_checkpoint.json");',
+      '}',
+    ].join('\n'));
+    const result = runMain(['--format', 'json', dir]);
+    expect(result.status).toBe(0);
+    expect((JSON.parse(result.stdout) as ScanResult).candidates).toEqual([]);
+    const lower = runMain(['--format', 'json', '--min-thresholds', '1', dir]);
+    const counter = (JSON.parse(lower.stdout) as ScanResult).candidates.find(c => c.signal === 'counter-thresholds');
+    expect(counter?.facts).toMatchObject({ thresholds: ['< 4', '> 2.5'], site_count: 1 });
   });
 
   // Value: protects=clean typed code and unsupported languages emit NO_CANDIDATES and exit 0 with accurate skipped counts; fails_when=typed enums, reducer modules, or non-Python/non-TS files trigger false positives or errors; why_new=Track 100A T3; seam=none
@@ -280,6 +351,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     expect(parsed.skipped_files).toBe(3); // main.go, lib.rs, README.md
   });
 
+  // Value: protects=CLI routing, limits and read-only discovery; fails_when=inputs or results violate the published CLI contract; why_new=Track 100A T3
   test('CLI flags, limits, escaping symlinks, --help/-h, and error exit codes behave deterministically', () => {
     for (const flag of ['--help', '-h']) {
       const scratch = mkdtempSync(join(BASE_TMP, 'help-'));
@@ -335,7 +407,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
 });
 
 describe('fixture-backed implicit-state-machine lens classification and source-tag contract', () => {
-  // Value: protects=pre-scanner evidence pairs cleanly with /full-review finding lines, [make explicit now]/[plain check] tags, validateTagExpression, and routeSourceTag; fails_when=classification tags break finding grammar, source-tag validation, or routing; why_new=Track 100A T3 criterion 5; seam=none; no_claim=live LLM judgment
+  // Value: protects=scanner evidence pairs with hand-authored /full-review contract examples, [make explicit now]/[plain check] tags, validateTagExpression, and routeSourceTag; fails_when=classification tags break finding grammar, source-tag validation, or routing; why_new=Track 100A T3 criterion 5; seam=none; no_claim=live LLM judgment
   test('seeded implicit state machine vs plain-check findings satisfy /full-review grammar and source-tag routing', () => {
     const smDir = materializeFixture('implicit-sm-py');
     const smScan = JSON.parse(runMain(['--format', 'json', smDir]).stdout) as ScanResult;
@@ -392,6 +464,7 @@ describe('fixture-backed implicit-state-machine lens classification and source-t
 });
 
 describe('fixture hygiene and consumer independence', () => {
+  // Value: protects=fixture suffix isolation; fails_when=fixture code reaches the repository test selector; why_new=Track 100A T3
   test('every file under tests/fixtures/full-review-state-machines/ ends in .txt', () => {
     const allFixtureFiles = walkFiles(FIXTURES_ROOT);
     expect(allFixtureFiles.length).toBeGreaterThan(0);
@@ -400,6 +473,7 @@ describe('fixture hygiene and consumer independence', () => {
     }
   });
 
+  // Value: protects=consumer independence of shipped assets; fails_when=consumer-specific sample text leaks into the scanner; why_new=Track 100A T3
   test('shipped skill, helper, docs, and fixtures contain no personal or consumer-specific identifiers', () => {
     const filesToCheck = [
       join(REPO_ROOT, 'skills/full-review.md'),
