@@ -17,6 +17,7 @@ class OrderRecord:
 def submit_order(order: OrderRecord) -> None:
     if order.status == "pending":
         order.status = "running"
+        order.in_flight = True
     if order.retries >= 3:
         order.status = "failed"
 
@@ -29,6 +30,7 @@ def cancel_order(order: OrderRecord) -> None:
 def complete_order(order: OrderRecord) -> None:
     if order.status == "running":
         order.status = "completed"
+        order.settled_at = "done"
     if order.retries >= 5:
         order.status = "dead"
 

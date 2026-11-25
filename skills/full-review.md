@@ -490,7 +490,8 @@ Combine all findings into a single list. For deduplication:
   is inconsistent in bin/"), merge into one finding with the combined context
 - Merged findings and cluster descriptions from the implicit-state-machine lens
   retain their `[make explicit now]`, `[make explicit later]`, or `[plain check]`
-  tag in `DESCRIPTION` without adding new severities or finding fields
+  tag in `DESCRIPTION` without adding new severities or finding fields.
+  Keep the tag paired with the retained severity. Resolve ties with the rubric.
 
 **Drop edge-case findings.** Before clustering, filter out every finding with
 `SEVERITY: edge-case`. These represent hypothetical or extreme-edge scenarios that

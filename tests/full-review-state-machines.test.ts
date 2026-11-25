@@ -124,7 +124,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
 
     const gap = parsed.candidates.find(c => c.signal === 'write-decode-gap')!;
     expect(gap.subject).toBe('lease_token');
-    expect(gap.sites).toEqual([{ file: 'workflow.py', line: 40, function: 'save_order' }]);
+    expect(gap.sites).toEqual([{ file: 'workflow.py', line: 42, function: 'save_order' }]);
 
     const crossFile = parsed.candidates.find(c => c.signal === 'cross-file-inferred-state')!;
     expect(crossFile.facts.function).toBe('infer_order_phase');
@@ -335,6 +335,48 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     expect(counter?.facts).toMatchObject({ thresholds: ['< 4', '> 2.5'], site_count: 1 });
   });
 
+  // Value: protects=formatted probes, destination-first saves, typed Literals and code-only assignments; fails_when=the scanner loses real sites or reports illustrative strings; why_new=third-cycle reproduced defects
+  test('keeps multiline branch, save payload, and typed Literal evidence distinct', () => {
+    const dir = mkdtempSync(join(BASE_TMP, 'formatted-evidence-'));
+    writeFileSync(join(dir, 'job.ts'), [
+      'function choose() {',
+      '  if (',
+      '    existsSync("job_state.json") ||',
+      '    existsSync("job_done.flag") ||',
+      '    existsSync("job_checkpoint.json")',
+      '  ) return "ready";',
+      '}',
+      'function saveJob(path, job) {',
+      '  const payload = { id: job.id, revision: 2, note: "opened, checked, closed" };',
+      '  save(path, payload);',
+      '}',
+      'function loadJob(data) { return { id: data.id, note: data.note }; }',
+      'function one() { return "job.status = pending"; }',
+      'function two() { return "job.status = running"; }',
+      'function three() { return "job.status = done"; }',
+    ].join('\n'));
+    writeFileSync(join(dir, 'job.py'), [
+      'from typing import Literal',
+      'class Job:',
+      '    status: Literal["pending", "running", "done"]',
+      'def pending(job: Job):',
+      '    return job.status == "pending"',
+      'def running(job: Job):',
+      '    return job.status == "running"',
+      'def done(job: Job):',
+      '    return job.status == "done"',
+    ].join('\n'));
+    const result = runMain(['--format', 'json', '--min-sites', '2', dir]);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout) as ScanResult;
+    expect(report.candidates.map(candidate => [candidate.signal, candidate.subject])).toEqual([
+      ['cross-file-inferred-state', 'job.ts:choose'],
+      ['write-decode-gap', 'revision'],
+    ]);
+    expect(report.candidates[0]!.sites.map(site => site.line).sort()).toEqual([3, 4, 5]);
+    expect(report.candidates[1]!.sites).toEqual([{ file: 'job.ts', line: 9, function: 'saveJob' }]);
+  });
+
   // Value: protects=clean typed code and unsupported languages emit NO_CANDIDATES and exit 0 with accurate skipped counts; fails_when=typed enums, reducer modules, or non-Python/non-TS files trigger false positives or errors; why_new=Track 100A T3; seam=none
   test('clean-and-other-langs emits zero candidates and skips unsupported extensions cleanly', () => {
     const dir = materializeFixture('clean-and-other-langs');
@@ -413,7 +455,7 @@ describe('fixture-backed implicit-state-machine lens classification and source-t
     const smScan = JSON.parse(runMain(['--format', 'json', smDir]).stdout) as ScanResult;
     expect(smScan.candidates.some(c => c.signal === 'boolean-state-bag')).toBe(true);
     const mutation = smScan.candidates.find(c => c.signal === 'mutation-fanout');
-    expect(mutation?.sites).toContainEqual({ file: 'workflow.py', line: 21, function: 'submit_order' });
+    expect(mutation?.sites).toContainEqual({ file: 'workflow.py', line: 22, function: 'submit_order' });
 
     const pcDir = materializeFixture('plain-check');
     const pcScan = JSON.parse(runMain(['--format', 'json', pcDir]).stdout) as ScanResult;
@@ -427,8 +469,8 @@ describe('fixture-backed implicit-state-machine lens classification and source-t
     const findings = [
       {
         line:
-          'FILE: workflow.py | LINE: 21 | SEVERITY: necessary | DESCRIPTION: [make explicit now] Retrying submit on a cancelled order with three retries changes its terminal status to failed. Both submit and complete apply retry transitions outside their status guards. | HYPOTHESIS: Introduce an explicit OrderState type and transition table that owns retry transitions and validates status at load time.',
-        site: mutation!.sites.find(site => site.line === 21),
+          'FILE: workflow.py | LINE: 22 | SEVERITY: necessary | DESCRIPTION: [make explicit now] Submit marks orders in flight, but cancellation keeps that flag set; completion sets settled_at and can then overwrite completed with dead. Retrying submit can also overwrite cancelled with failed. | HYPOTHESIS: Centralize transitions in an explicit OrderState type and transition table that owns lifecycle flags and validates loaded state.',
+        site: mutation!.sites.find(site => site.line === 22),
         expectedRoute: 'KEEP',
         expectedMarker: '[make explicit now]',
       },

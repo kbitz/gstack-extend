@@ -83,6 +83,7 @@ const MAX_STATE_LITERAL_LENGTH = 48;
 const MIN_VOCAB_OVERLAP_RATIO = 0.5;
 const MAX_VOCAB_PAIR_CHECKS = 250_000;
 const MAX_TEMPLATE_NESTING = 128;
+const MAX_FUNCTION_SPANS = 768;
 
 const TEST_PATH_RE =
   /(?:^|\/)(?:test|tests|__tests__|spec)\/|(?:^|\/)test_[^/]*\.py$|_test\.py$|\.(?:test|spec)\.[^/]+$/i;
@@ -266,6 +267,18 @@ function templateEnd(source: string, start: number, nesting = 0): number {
       if (end < 0) return source.length;
       i = end + 1;
     } else {
+      if (c === '/') {
+        let before = i - 1;
+        while (before > start && /\s/.test(source[before]!)) before--;
+        let wordStart = before;
+        while (wordStart > start && /[\w$]/.test(source[wordStart - 1]!)) wordStart--;
+        const canStartRegex = /[=(:,;!?&|+*{}[\-]/.test(source[before]!) ||
+          /^(?:return|throw|case|yield)$/.test(source.slice(wordStart, before + 1));
+        if (canStartRegex) {
+          const end = regexEnd(source, i);
+          if (end > i) i = end - 1;
+        }
+      }
       if (c === '{') braces++;
       if (c === '}') braces--;
     }
@@ -399,6 +412,7 @@ function pythonSpans(structure: string, lineAt: (offset: number) => number): Fun
         const colon = close < 0 ? -1 : pythonHeaderColon(structure, close + 1);
         if (colon >= 0) {
           signatureThrough = colon + 1;
+          if (stack.length + spans.length >= MAX_FUNCTION_SPANS) throw new Error('function spans exceed the scan limit');
           stack.push({ name: m[1]!, indent, startLine: lineAt(start), bodyOffset: signatureThrough });
           continue;
         }
@@ -463,7 +477,9 @@ function extractFunctionSpans(structure: string, lang: SupportedLanguage): Funct
   const spans: FunctionSpan[] = [];
   const namedBodies = new Set<number>();
   const headers = /^[ \t]*(?:(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?function[ \t]+([A-Za-z_$][\w$]*)[ \t]*(?:<[^>\n]+>[ \t]*)?\(|(?:export[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[ \t]*(?::[^=\n]+)?=[ \t]*(?:async[ \t]+)?(\(|[A-Za-z_$][\w$]*)|(?:(?:public|private|protected|static|async|override)[ \t]+)*([A-Za-z_$][\w$]*)[ \t]*\()/gm;
+  let headersExamined = 0;
   for (const m of structure.matchAll(headers)) {
+    if (++headersExamined > MAX_FUNCTION_SPANS) throw new Error('function headers exceed the scan limit');
     const name = m[1] ?? m[2] ?? m[4]!;
     if (/^(?:if|for|while|switch|catch|with|return)$/.test(name)) continue;
     const start = m.index!;
@@ -480,6 +496,7 @@ function extractFunctionSpans(structure: string, lang: SupportedLanguage): Funct
   for (const match of structure.matchAll(/=>\s*\{/g)) {
     const open = match.index! + match[0].length - 1;
     if (namedBodies.has(open)) continue;
+    if (++headersExamined > MAX_FUNCTION_SPANS) throw new Error('function spans exceed the scan limit');
     const end = closingDelimiter(structure, open, '{', '}');
     if (end < 0) continue;
     const startLine = lineAt(match.index!);
@@ -651,10 +668,10 @@ function importsSymbol(pf: ParsedFile, name: string): boolean {
 
 function typedFieldTokens(pf: ParsedFile, field: string, vocabs: VocabDecl[], declarations = pf.stripped): Set<string> {
   const tokens = new Set<string>();
-  const annotation = new RegExp('\\b' + escapeRegex(field) + '\\s*\\??:\\s*([^,\\n;{}]+)', 'g');
+  const annotation = new RegExp('\\b' + escapeRegex(field) + '\\s*\\??:\\s*((?:typing\\.)?Literal\\s*\\[[^\\]]{0,512}\\]|[^,\\n;{}]+)', 'g');
   for (const match of declarations.matchAll(annotation)) {
     const type = match[1]!;
-    if (/^(?:Literal\s*\[|['"][^'"]+['"]\s*\|)/.test(type)) {
+    if (/^(?:(?:typing\.)?Literal\s*\[|['"][^'"]+['"]\s*\|)/.test(type)) {
       for (const token of extractStringLiterals(type)) tokens.add(token);
     }
     for (const v of vocabs) {
@@ -677,7 +694,7 @@ function collectRecordDeclarations(files: ParsedFile[]): Map<string, RecordDecla
   for (const owner of files) {
     if (owner.file.isTest) continue;
     if (owner.file.language === 'ts_js') {
-      for (const match of owner.structure.matchAll(/\b(?:(?:interface|class)\s+([A-Za-z_$][\w$]*)[^{\n]*|type\s+([A-Za-z_$][\w$]*)\s*=\s*)\{/g)) {
+      for (const match of owner.structure.matchAll(/\b(?:(?:interface|class)\s+([A-Za-z_$][\w$]*)[^{;\n]{0,240}|type\s+([A-Za-z_$][\w$]*)\s*=\s*)\{/g)) {
         const open = match.index! + match[0].length - 1;
         const close = closingDelimiter(owner.structure, open, '{', '}');
         if (close >= 0) appendTo(records, match[1] ?? match[2]!, { owner, body: owner.stripped.slice(open + 1, close) });
@@ -774,7 +791,7 @@ function detectStringStateFanout(
 
       // obj.field == 'lit' | field === 'lit' | field != 'lit'
       for (const m of line.matchAll(
-        /(?:\b[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*)\s*(?:===|!==|==|!=)\s*(['"])([A-Za-z0-9_.-]+)\2/g,
+        /(?<![\w$])(?:[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*)\s*(?:===|!==|==|!=)\s*(['"])([A-Za-z0-9_.-]+)\2/g,
       )) {
         record(m[1]!, m[3]!, m[0], m.index!);
       }
@@ -782,7 +799,9 @@ function detectStringStateFanout(
       for (const m of line.matchAll(
         /\[(['"])([A-Za-z_$][\w$]*)\1\]\s*(?:===|!==|==|!=)\s*(['"])([A-Za-z0-9_.-]+)\3/g,
       )) {
-        record(m[2]!, m[4]!, line.slice(Math.max(0, m.index! - 64), m.index! + m[0].length), Math.max(0, m.index! - 64));
+        if (structureLines[i]!.slice(m.index!, m.index! + m[0].length).includes('=')) {
+          record(m[2]!, m[4]!, line.slice(Math.max(0, m.index! - 64), m.index! + m[0].length), Math.max(0, m.index! - 64));
+        }
       }
       // 'lit' == obj.field
       for (const m of line.matchAll(
@@ -792,7 +811,7 @@ function detectStringStateFanout(
       }
       // field in ('a', 'b') or field in {'a', 'b'} or field in ['a', 'b']
       for (const m of line.matchAll(
-        /(?:\b[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*)\s+(?:not\s+)?in\s*[\(\[\{]([^\)\]\}]*)[\)\]\}]/g,
+        /(?<![\w$])(?:[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*)\s+(?:not\s+)?in\s*[\(\[\{]([^()[\]{}\n]{0,512})[\)\]\}]/g,
       )) {
         for (const lit of extractStringLiterals(m[2]!)) {
           record(m[1]!, lit, m[0], m.index!);
@@ -800,7 +819,7 @@ function detectStringStateFanout(
       }
       // ['a', 'b'].includes(obj.field)
       for (const m of line.matchAll(
-        /\[([^\]]+)\]\.includes\(\s*(?:\b[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*)\s*\)/g,
+        /\[([^[\]\n]{1,512})\]\.includes\(\s*(?:\b[A-Za-z_$][\w$]*\.)?([A-Za-z_$][\w$]*)\s*\)/g,
       )) {
         for (const lit of extractStringLiterals(m[1]!)) {
           record(m[2]!, lit, m[0], m.index!);
@@ -858,10 +877,10 @@ function literalStateBags(pf: ParsedFile, limits: ScannerLimits): StateMachineCa
         if (c === '}' || c === ']' || c === ')') depth--;
       }
       const field = member[2] ?? member[3]!;
-      if (depth === 0 && COUPLED_FIELD_RE.test(field)) {
-        const offset = member.index! + member[0].indexOf(field);
-        fields.set(field, lineAt(start + 1 + offset));
-      }
+      const offset = start + 1 + member.index!;
+      const colon = member[0].indexOf(':');
+      if (depth !== 0 || structure[offset + colon] !== ':' || !COUPLED_FIELD_RE.test(field)) continue;
+      fields.set(field, lineAt(offset + member[0].indexOf(field)));
     }
     if (fields.size >= limits.minCoupledFields) {
       candidates.push({
@@ -994,16 +1013,17 @@ function detectMutationFanout(parsedFiles: ParsedFile[], limits: ScannerLimits):
     if (pf.file.isTest) continue;
     if (TRANSITION_MODULE_RE.test(pf.file.rel)) continue;
     const { rel, language } = pf.file;
+    const structure = pf.structure.split('\n');
 
     for (let i = 0; i < pf.lines.length; i++) {
       const line = pf.lines[i]!;
       const lineNum = i + 1;
       const scope = functionAtLine(pf.spans, lineNum);
-      const fn = scope?.name ?? '<module>';
       if (!scope) continue;
+      const fn = scope.name;
 
       // obj.status = ... (not ==, !=, <=, >=, =>)
-      for (const m of line.matchAll(
+      for (const m of structure[i]!.matchAll(
         /\b[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\s*(?<![=!<>])=(?![=>])/g,
       )) {
         const field = m[1]!;
@@ -1014,6 +1034,8 @@ function detectMutationFanout(parsedFiles: ParsedFile[], limits: ScannerLimits):
       for (const m of line.matchAll(
         /\b[A-Za-z_$][\w$]*\[(['"])([A-Za-z_$][\w$]*)\1\]\s*(?<![=!<>])=(?![=>])/g,
       )) {
+        const eq = m.index! + m[0].length - 1;
+        if (structure[i]![eq] !== '=') continue;
         const field = m[2]!;
         if (!STATE_FIELD_RE.test(field)) continue;
         appendTo(byField, field, { file: rel, line: lineNum, fn, fnOffset: scope.bodyOffset, lang: language });
@@ -1071,8 +1093,13 @@ function persistedKeys(pf: ParsedFile, span: FunctionSpan, lineAt: (offset: numb
   };
   for (const match of code.matchAll(PERSIST_CALL_RE)) {
     const open = match.index! + match[0].length - 1;
-    const valueIndex = /^(?:writeFile|Bun\.write)/.test(match[1]!) ? 1 : 0;
-    const value = callArguments(code, open)[valueIndex];
+    const args = callArguments(code, open);
+    const name = match[1]!;
+    const first = args[0] ? body.slice(...args[0]).trim() : '';
+    const namedDestination = /^(?:save|persist)$/.test(name) && args.length > 1 &&
+      /^(?:['"\x60]|(?:path|file|filename|destination|dest|target)\b|(?:Path|join|resolve)\s*\()/i.test(first);
+    const valueIndex = /^(?:writeFile|Bun\.write)/.test(name) || namedDestination ? 1 : 0;
+    const value = args[valueIndex];
     if (!value) continue;
     if (/^(?:execute|executemany|query)$/.test(match[1]!)) {
       const statement = body.slice(...value);
@@ -1088,10 +1115,10 @@ function persistedKeys(pf: ParsedFile, span: FunctionSpan, lineAt: (offset: numb
       }
       continue;
     }
-    const first = skipWhitespace(code, value[0]);
-    if (code[first] === '{') literalStarts.add(first);
-    const name = code.slice(first, value[1]).trimEnd();
-    if (/^[A-Za-z_$][\w$]*$/.test(name)) payloadNames.add(name);
+    const start = skipWhitespace(code, value[0]);
+    if (code[start] === '{') literalStarts.add(start);
+    const payload = code.slice(start, value[1]).trimEnd();
+    if (/^[A-Za-z_$][\w$]*$/.test(payload)) payloadNames.add(payload);
   }
 
   for (const name of payloadNames) {
@@ -1116,7 +1143,10 @@ function persistedKeys(pf: ParsedFile, span: FunctionSpan, lineAt: (offset: numb
         if (c === '}' || c === ']' || c === ')') depth--;
       }
       const key = match[2] ?? match[3]!;
-      if (depth === 0) add(key, offset + match[0].indexOf(key));
+      const keyOffset = offset + match[0].indexOf(key);
+      const colon = match[0].indexOf(':');
+      const inCode = colon >= 0 ? code[offset + colon] === ':' : code[keyOffset] === key[0];
+      if (depth === 0 && inCode) add(key, keyOffset);
     }
   }
   for (const name of payloadNames) {
@@ -1138,9 +1168,11 @@ function recordName(name: string, prefix: RegExp): string {
 
 function containsRecordKey(text: string, key: string): boolean {
   const id = escapeRegex(key);
-  return new RegExp(
-    '["\']' + id + '["\']|\\.' + id + '\\b|\\b' + id + '\\s*:|\\{[^{}]*\\b' + id + '\\b[^{}]*\\}\\s*=',
-  ).test(text);
+  if (new RegExp('["\']' + id + '["\']|\\.' + id + '\\b|\\b' + id + '\\s*:').test(text)) return true;
+  for (const match of text.matchAll(/\{([^{}]{1,512})\}\s*=/g)) {
+    if (mentionsSymbol(match[1]!, key)) return true;
+  }
+  return false;
 }
 
 function detectWriteDecodeGap(parsedFiles: ParsedFile[]): StateMachineCandidate[] {
@@ -1190,8 +1222,9 @@ function detectWriteDecodeGap(parsedFiles: ParsedFile[]): StateMachineCandidate[
           (loader.file.rel === rel && (!record || !loader.record))
         ));
       if (matching.length === 0) continue;
-      const local = matching.filter(loader => loader.file.rel === rel);
-      const related = local.length > 0 ? local : matching;
+      const exact = matching.filter(loader => record && loader.record === record);
+      const exactLocal = exact.filter(loader => loader.file.rel === rel);
+      const related = exactLocal.length ? exactLocal : exact.length ? exact : matching;
 
       for (const [key, sites] of writes) {
         if (related.some(loader => containsRecordKey(loader.body, key))) continue;
@@ -1220,6 +1253,16 @@ function probeExpressionStart(code: string, call: number): number {
   return call;
 }
 
+function parenthesizedBranches(code: string): Array<[number, number]> {
+  const branches: Array<[number, number]> = [];
+  for (const branch of code.matchAll(/\b(?:if|elif|switch|while)\s*\(/g)) {
+    const open = branch.index! + branch[0].length - 1;
+    const close = closingDelimiter(code, open, '(', ')');
+    if (close >= 0) branches.push([open, close]);
+  }
+  return branches;
+}
+
 function detectCrossFileInferredState(parsedFiles: ParsedFile[], limits: ScannerLimits): StateMachineCandidate[] {
   const candidates: StateMachineCandidate[] = [];
   for (const pf of parsedFiles) {
@@ -1231,6 +1274,7 @@ function detectCrossFileInferredState(parsedFiles: ParsedFile[], limits: Scanner
       const code = pf.structure.slice(span.bodyOffset, span.endOffset);
       if (!BRANCH_RE.test(code)) continue;
       const branchLines = code.split('\n').filter(line => BRANCH_RE.test(line));
+      const conditions = parenthesizedBranches(code);
 
       const filesFound = new Map<string, number>();
       for (const call of code.matchAll(FILE_PROBE_RE)) {
@@ -1243,6 +1287,7 @@ function detectCrossFileInferredState(parsedFiles: ParsedFile[], limits: Scanner
         const prefix = code.slice(lineStart, expression);
         const assigned = /\b([A-Za-z_$][\w$]*)\s*=\s*[\w. \t]*$/.exec(prefix)?.[1];
         const usedByBranch = BRANCH_RE.test(prefix) ||
+          conditions.some(([start, end]) => expression >= start && open < end) ||
           (assigned !== undefined && branchLines.some(line => mentionsSymbol(line, assigned)));
         if (!usedByBranch) continue;
         const operand = begin === expression ? body.slice(...value) : body.slice(expression, begin);
