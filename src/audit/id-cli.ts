@@ -50,7 +50,7 @@ const DOC_NAMES = ['roadmap-shipped.md', 'ROADMAP.md', 'roadmap-future.md', 'TOD
 const DOC_PATHS = DOC_NAMES.flatMap((name) => [name, `docs/${name}`]);
 const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_HEX - 1) + 16 ** WORK_ITEM_ID_MAX_HEX;
 
-type PlanningDoc = { path: string; name: string; text: string; mode: number };
+type PlanningDoc = { path: string; sourcePath: string; name: string; text: string; mode: number };
 type PlanningDocs = { root: string; docs: Map<string, PlanningDoc>; historicalPaths: Set<string> };
 
 function projectRelativePath(root: string, path: string): string | null {
@@ -75,23 +75,21 @@ function readDocs(repoRoot: string, mode: 'mint' | 'migrate'): PlanningDocs {
   for (const name of DOC_PATHS) {
     const path = name.startsWith('docs/') ? join(folder, name.slice(5)) : join(root, name);
     historicalPaths.add(relative(root, path));
-    // Mint reads linked planning files the audit can see. Migrate replaces
-    // regular files and leaves the project's docs directory link intact.
-    const st = mode === 'mint'
-      ? statSync(path, { throwIfNoEntry: false })
-      : lstatSync(path, { throwIfNoEntry: false });
+    const st = statSync(path, { throwIfNoEntry: false });
     if (st === undefined) continue;
     if (!st.isFile()) throw new Error(`refusing non-regular planning document ${name}`);
-    if (mode === 'mint') {
-      const historicalPath = projectRelativePath(root, realpathSync(path));
-      if (historicalPath !== null) historicalPaths.add(historicalPath);
+    const resolved = realpathSync(path);
+    const historicalPath = projectRelativePath(root, resolved);
+    if (mode === 'migrate' && historicalPath === null) {
+      throw new Error(`planning document ${name} must resolve to a file inside the project`);
     }
-    const bytes = readFileSync(path);
+    if (historicalPath !== null) historicalPaths.add(historicalPath);
+    const bytes = readFileSync(resolved);
     const text = bytes.toString('utf8');
     if (mode === 'migrate' && !Buffer.from(text, 'utf8').equals(bytes)) {
       throw new Error(`planning document is not valid UTF-8: ${name}`);
     }
-    docs.set(name, { path, name, text, mode: st.mode & 0o777 });
+    docs.set(name, { path: resolved, sourcePath: join(root, name), name, text, mode: st.mode & 0o777 });
   }
   return { root, docs, historicalPaths };
 }
@@ -123,6 +121,7 @@ function replaceDoc(doc: PlanningDoc, text: string): void {
     writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
     chmodSync(tmp, doc.mode);
     if (!lstatSync(doc.path).isFile() || realpathSync(doc.path) !== doc.path ||
+        realpathSync(doc.sourcePath) !== doc.path ||
         realpathSync(tmp) !== tmp || !readFileSync(doc.path).equals(Buffer.from(doc.text, 'utf8'))) {
       throw new Error(`planning document changed during migration: ${doc.name}`);
     }
@@ -244,6 +243,10 @@ function execute(argv: string[], gitOverride?: GitGateway): CliResult {
     const roadmap = findDoc(docs, 'ROADMAP.md');
     const future = findDoc(docs, 'roadmap-future.md');
     const todos = findDoc(docs, 'TODOS.md');
+    const selected = [shipped, roadmap, future, todos].filter(doc => doc !== undefined);
+    if (new Set(selected.map(doc => doc.path)).size !== selected.length) {
+      throw new Error('multiple planning document types refer to the same file');
+    }
     const archive = shipped === undefined ? undefined : migrateRoadmapText(shipped.text, taken, { fromShippedArchive: true });
     if (shipped !== undefined && archive !== undefined) {
       record(shipped, archive);

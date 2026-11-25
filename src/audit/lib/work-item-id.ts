@@ -72,11 +72,11 @@ export function parseTodoIdBullet(line: string): ParsedIdField | null {
 }
 
 /** Identify entry bullets while keeping checklist and link bullets with their heading. */
-export function legacyTodoBulletKind(line: string): 'compactBullet' | 'legacyBullet' | null {
+export function legacyTodoBulletKind(line: string, withinHeading = true): 'compactBullet' | 'legacyBullet' | null {
   const opener = /^- (\*\*)?\[/.exec(line);
   if (opener === null) return null;
   const label = line.slice(opener[0].length - 1);
-  if (/^\[[ xX]\](?:[ \t]|$)|^\[[^\]]+\](?:\(|\[)/.test(label)) return null;
+  if (withinHeading && /^\[[ xX]\](?:[ \t]|$)|^\[[^\]]+\](?:\(|\[)/.test(label)) return null;
   return opener[1] === undefined ? 'legacyBullet' : 'compactBullet';
 }
 

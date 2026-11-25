@@ -198,7 +198,7 @@ separating prerequisite gathering, reading, agent execution and human understand
 
 Verify land-time identity, approved scope/acceptance and raw archive receipts before recycling any ID. Use the attributable historical release version (or bare `✓ Shipped` with `release version unknown`).
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 2e4a457bff92c922` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 79bb20c597211666` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
 
 Resolve the project root before Step 1's audit using its rule: an explicit audit
 directory when supplied, otherwise Git top-level or the directory being audited.
@@ -244,10 +244,11 @@ empty remainder. This snippet proves packing only, not the whole audit gate.
 
 Validate the complete candidate outside the workspace against real Git/version/cap/scaffold metadata before either write; test stub metadata and live write-and-restore are insufficient.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 2e4a457bff92c922` before validating a complete active/archive candidate before any live write.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 79bb20c597211666` before validating a complete active/archive candidate before any live write.
 
-After copying the script to its actual absolute path, invoke it with Bun and
-the four observed absolute paths as quoted arguments. Inspect **every blocking
+Invoke the copied script with Bun and the four quoted absolute paths. For
+regeneration, append the two planning draft slots described in the reference.
+Inspect **every blocking
 STATUS**, expected section coverage, context completeness, candidate-specific
 raw receipt IDs/evidence, duplicates and archive collision warnings under the
 existing audit policy. CLI exit zero or an all-pass PACKING subsection does not
@@ -258,7 +259,7 @@ and pin feasibility remain mandatory agent gates. Incomplete proof means no writ
 
 Incomplete proof, unresolved raw duplicates, incompatible pins, or Hold candidates that change the unfinished partition or dependencies refuse writes and keep active/archive unchanged.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 2e4a457bff92c922` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 79bb20c597211666` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
 
 Use the existing [Escalation](#escalation) REASON/ATTEMPTED/RECOMMENDATION fields
 for every reconciliation refusal. DONE_WITH_CONCERNS reuses those fields in the

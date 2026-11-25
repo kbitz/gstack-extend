@@ -95,6 +95,20 @@ describe('parseTodos — entry classification', () => {
     expect(e.kind).toBe('legacyBullet');
   });
 
+  test('standalone checklist and link bullets remain visible as legacy inbox entries', () => {
+    const markdown = [
+      '## Unprocessed', '- [ ] Repair the link', '- [Spec](docs/SPEC.md) needs repair',
+      '### [manual] Another entry', '- [ ] Check the section', '- [Spec](docs/SPEC.md)', '- **ID:** wi-aabbcc',
+    ].join('\n');
+    const entries = parseTodos(markdown).value.entries;
+    expect(entries.map(entry => [entry.kind, entry.line])).toEqual([
+      ['legacyBullet', 2],
+      ['legacyBullet', 3],
+      ['heading', 4],
+    ]);
+    expect(entries[2]!.workItemId).toBe('wi-aabbcc');
+  });
+
   test('mixed entries preserved in document order', () => {
     const md = [
       '## Unprocessed',

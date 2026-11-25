@@ -9,13 +9,81 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildAuditCtx } from '../src/audit/cli.ts';
 import { computeRenames, formatRenamesTable } from '../src/audit/lib/renames-diff.ts';
-import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
+import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS, parseAuditSections } from '../src/audit/sections.ts';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { referenceText, resolverSkillText } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
+
+test('roadmap candidate validation reads the drained inbox and Future draft when items are promoted', () => {
+  const scratch = makeBaseTmp('roadmap-promoted-');
+  try {
+    const project = join(scratch, 'project');
+    const docs = join(project, 'docs');
+    mkdirSync(docs, { recursive: true });
+    mkdirSync(join(project, 'src'));
+    writeFileSync(join(project, 'src', 'a.ts'), 'export {};\n');
+    writeFileSync(join(project, 'src', 'b.ts'), 'export {};\n');
+    writeFileSync(join(project, 'VERSION'), '0.1.0\n');
+    const baseRoadmap = [
+      '## In Progress', '', '## Current Plan', '',
+      '## Future', 'Deferred: docs/roadmap-future.md (1 items)', '',
+      '## Shipped', 'History: docs/roadmap-shipped.md', '',
+    ].join('\n');
+    const baseTodos = '## Unprocessed\n### [manual] Inbox follow-up\n- **ID:** wi-aabbcc\n';
+    const baseFuture = '## Future\n- **Deferred follow-up** — **ID:** wi-ddeeff — Work to move. **Revisit when:** ready.\n';
+    writeFileSync(join(docs, 'ROADMAP.md'), baseRoadmap);
+    writeFileSync(join(docs, 'TODOS.md'), baseTodos);
+    writeFileSync(join(docs, 'roadmap-future.md'), baseFuture);
+    const draftRoadmap = join(scratch, 'draft-roadmap.md');
+    const draftArchive = join(scratch, 'draft-shipped.md');
+    const draftTodos = join(scratch, 'draft-todos.md');
+    const draftFuture = join(scratch, 'draft-future.md');
+    const cards = [
+      '### Group 1: Promoted work', '_Depends on: none_',
+      '#### Track 1A: Inbox follow-up', '_1 task . ~20 LOC . low risk_', '_id: wi-aabbcc_',
+      '_touches: src/a.ts_', '- Update the first file (~20 lines).',
+      '#### Track 1B: Deferred follow-up', '_1 task . ~20 LOC . low risk_', '_id: wi-ddeeff_',
+      '_touches: src/b.ts_', '- Update the second file (~20 lines).', '',
+    ].join('\n');
+    writeFileSync(draftRoadmap, baseRoadmap
+      .replace('## Current Plan\n', '## Current Plan\n' + cards)
+      .replace('(1 items)', '(0 items)'));
+    writeFileSync(draftArchive, '## Shipped\n');
+    writeFileSync(draftTodos, '## Unprocessed\n');
+    writeFileSync(draftFuture, '## Future\n');
+    const reference = referenceText('roadmap', 'conditional-candidate-validation');
+    const script = reference.match(/^```typescript\n([\s\S]*?)^```$/m)?.[1];
+    expect(script).toBeDefined();
+    const command = join(scratch, 'candidate-validation.ts');
+    writeFileSync(command, script!);
+    const run = (...extra: string[]) => Bun.spawnSync([
+      process.execPath, '--no-env-file', '--no-install', '--config=/dev/null',
+      command, project, ROOT, draftRoadmap, draftArchive, ...extra,
+    ], { env: scopedEnv(scratch), stdout: 'pipe', stderr: 'pipe', timeout: 15_000 });
+    const workItemSection = (result: ReturnType<typeof run>) =>
+      parseAuditSections(result.stdout.toString()).find(section => section.name === 'WORK_ITEM_IDS');
+
+    const partial = run('-', draftFuture);
+    expect(partial.exitCode).toBe(1);
+    expect(workItemSection(partial)?.body.join('\n')).toContain('duplicate work-item ID "wi-aabbcc"');
+    expect(workItemSection(partial)?.body.join('\n')).not.toContain('duplicate work-item ID "wi-ddeeff"');
+
+    const full = run(draftTodos, draftFuture);
+    expect(full.exitCode, full.stderr.toString()).toBe(0);
+    expect(workItemSection(full)?.body).toContain('STATUS: pass');
+    const live = buildAuditCtx({
+      repoRoot: project, extendDir: ROOT, argv: { repoRoot: project, scanState: false, futureIndex: false, prompt: null },
+    });
+    expect(live.files.todos).toBe(baseTodos);
+    expect(live.files.futureArchive).toBe(baseFuture);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
 
 // ─── Roadmap-only verbatim assertions ─────────────────────────────────
 //

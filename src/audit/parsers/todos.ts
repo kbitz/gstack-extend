@@ -87,7 +87,7 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
 
     if (section === null) continue;
 
-    const legacyKind = section === 'unprocessed' ? legacyTodoBulletKind(line) : null;
+    const legacyKind = section === 'unprocessed' ? legacyTodoBulletKind(line, currentHeading !== null) : null;
     if (legacyKind !== null) {
       currentHeading = null;
       entries.push({ kind: legacyKind, line: lineno, raw: line });

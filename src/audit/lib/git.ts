@@ -138,12 +138,25 @@ function pathParts(path: string): string[] {
   return path.split(sep).filter(part => part !== '' && part !== '.');
 }
 
+function findHistoricalPlanningFiles(spawn: GitSpawn, cwd: string, names: Set<string>): string[] {
+  const pathspecs = [...names].map(name => ':(glob)**/' + name.replace(/[\\*?[\]]/g, '\\$&'));
+  const log = spawn(
+    ['log', '--all', '--full-history', '-m', '--format=', '--name-only', '--no-renames', '--relative',
+      '-z', '--', ...pathspecs],
+    cwd,
+    HISTORY_PATCH_BUFFER_BYTES,
+  );
+  if (!log.ok) throw new Error('could not find historical planning documents by filename');
+  return log.stdout.split('\0').filter(path => path !== '');
+}
+
 /** Follow links in each component before resolving .., across available Git history. */
 function historicalPlanningPaths(spawn: GitSpawn, cwd: string, relPaths: string[], projectRoot: string): string[] {
   const files = new Set(relPaths);
   const links = new Map<string, Set<string>>();
   const blobs = new Map<string, string>();
   const seen = new Set<string>();
+  const searchedNames = new Set<string>();
   const rootPrefix = projectRoot.endsWith(sep) ? projectRoot : projectRoot + sep;
   let pending: PlanningPathRoute[] = relPaths.map(path => ({
     resolved: '.', remaining: pathParts(path), followed: [],
@@ -161,6 +174,11 @@ function historicalPlanningPaths(spawn: GitSpawn, cwd: string, relPaths: string[
     if (paths.size > 0) readHistoricalPlanningLinks(spawn, cwd, paths, links, blobs);
 
     const next: PlanningPathRoute[] = [];
+    const unresolvedNames = new Set<string>();
+    const findByFilename = (parts: Array<string | null>) => {
+      const filename = parts.findLast(part => part !== null && part !== '..');
+      if (typeof filename === 'string' && !searchedNames.has(filename)) unresolvedNames.add(filename);
+    };
     const enqueue = (route: PlanningPathRoute) => {
       const key = JSON.stringify([route.resolved, route.remaining, route.followed]);
       if (seen.has(key)) return;
@@ -179,7 +197,8 @@ function historicalPlanningPaths(spawn: GitSpawn, cwd: string, relPaths: string[
         continue;
       }
       if (part === '..') {
-        if (resolved !== '.') enqueue({ resolved: dirname(resolved), remaining: rest, followed });
+        if (resolved === '.') findByFilename(rest);
+        else enqueue({ resolved: dirname(resolved), remaining: rest, followed });
         continue;
       }
       const path = join(resolved, part);
@@ -188,13 +207,24 @@ function historicalPlanningPaths(spawn: GitSpawn, cwd: string, relPaths: string[
       if (followed.includes(path)) continue;
       for (const target of links.get(path) ?? []) {
         const absolute = isAbsolute(target);
-        if (absolute && target !== projectRoot && !target.startsWith(rootPrefix)) continue;
+        if (absolute && target !== projectRoot && !target.startsWith(rootPrefix)) {
+          findByFilename([...pathParts(target), ...rest]);
+          continue;
+        }
         const localTarget = absolute ? target.slice(rootPrefix.length) : target;
         enqueue({
           resolved: absolute ? '.' : resolved,
           remaining: [...pathParts(localTarget), null, ...rest],
           followed: [...followed, path],
         });
+      }
+    }
+    // A checkout alias may no longer exist. Search the Git paths with the
+    // expected filename and follow any committed links found at those paths.
+    if (unresolvedNames.size > 0) {
+      for (const name of unresolvedNames) searchedNames.add(name);
+      for (const path of findHistoricalPlanningFiles(spawn, cwd, unresolvedNames)) {
+        enqueue({ resolved: '.', remaining: pathParts(path), followed: [] });
       }
     }
     pending = next;

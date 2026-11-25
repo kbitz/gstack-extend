@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 import { runIdCli } from '../src/audit/id-cli.ts';
 import { createGitGateway } from '../src/audit/lib/git.ts';
@@ -345,6 +345,40 @@ describe('bin/roadmap-id CLI', () => {
     expect(readFileSync(todos, 'utf8')).toBe(migrateTodosText(pending, new Set([retired])).text);
   });
 
+  test('migration updates an in-project planning file once through its compatibility link', () => {
+    const repo = freshDir('linked-todo');
+    mkdirSync(join(repo, 'docs'));
+    const path = join(repo, 'docs', 'TODOS.md');
+    const alias = join(repo, 'TODOS.md');
+    const pending = '## Unprocessed\n### [manual] Follow-up\n';
+    writeFileSync(path, pending);
+    symlinkSync('docs/TODOS.md', alias);
+
+    const preview = runIdCli(['migrate', '--dry-run', repo]);
+    expect(preview.exitCode, preview.stderr).toBe(0);
+    expect(preview.stdout).toContain('ADDED: 1\nSTATUS: dry-run');
+    expect(readFileSync(path, 'utf8')).toBe(pending);
+    const result = runIdCli(['migrate', repo]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain('ADDED: 1\nSTATUS: ok');
+    expect(readlinkSync(alias)).toBe('docs/TODOS.md');
+    expect(readFileSync(path, 'utf8')).toBe(migrateTodosText(pending, new Set()).text);
+    expect(runIdCli(['migrate', repo]).stdout).toContain('STATUS: unchanged');
+  });
+
+  test('migration refuses to treat one file as two planning document types', () => {
+    const repo = freshDir('mixed-planning-alias');
+    const path = join(repo, 'TODOS.md');
+    const original = '## Unprocessed\n### [manual] Follow-up\n';
+    writeFileSync(path, original);
+    symlinkSync('TODOS.md', join(repo, 'ROADMAP.md'));
+
+    const result = runIdCli(['migrate', repo]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('multiple planning document types refer to the same file');
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
   test('migration stops before writing any file when a planning document is not UTF-8', () => {
     const repo = freshDir('legacy-encoding');
     const roadmap = join(repo, 'ROADMAP.md');
@@ -365,14 +399,23 @@ describe('bin/roadmap-id CLI', () => {
     expect(readFileSync(todos)).toEqual(legacy);
   });
 
-  test('migration reserves IDs from the previous location of linked project docs', () => {
+  test.each([
+    'direct', 'relative project alias', 'absolute project alias', 'removed project alias',
+  ])('migration reserves IDs from the previous location of linked project docs (%s)', (layout) => {
     const repo = makeEmptyRepo(BASE_TMP);
     const docs = join(repo, 'docs');
     mkdirSync(join(repo, 'planning'));
     mkdirSync(join(repo, 'documentation'));
     const pending = '## Unprocessed\n### Follow-up\n';
     const previous = migrateTodosText(pending, new Set());
-    symlinkSync('planning', docs);
+    const projectAlias = join(BASE_TMP, basename(repo) + '-alias');
+    let oldLink = 'planning';
+    if (layout === 'relative project alias') oldLink = '../' + basename(repo) + '/planning';
+    if (layout === 'absolute project alias' || layout === 'removed project alias') {
+      symlinkSync(repo, projectAlias);
+      oldLink = join(projectAlias, 'planning');
+    }
+    symlinkSync(oldLink, docs);
     const oldTodo = join(repo, 'planning', 'TODOS.md');
     const newTodo = join(repo, 'documentation', 'TODOS.md');
     const commit = (message: string, paths: string[]) => {
@@ -381,12 +424,15 @@ describe('bin/roadmap-id CLI', () => {
     };
     writeFileSync(oldTodo, previous.text);
     commit('record first follow-up', ['docs', 'planning/TODOS.md']);
+    const preview = spawnSync('/bin/sh', [BIN, 'migrate', '--dry-run', repo], { encoding: 'utf8' });
+    expect(preview.status, preview.stderr).toBe(0);
     writeFileSync(oldTodo, '## Unprocessed\n');
     commit('retire first follow-up', ['planning/TODOS.md']);
     unlinkSync(docs);
     symlinkSync('documentation', docs);
     writeFileSync(newTodo, pending);
     commit('move planning docs and add new follow-up', ['docs', 'documentation/TODOS.md']);
+    if (layout === 'removed project alias') unlinkSync(projectAlias);
 
     const result = spawnSync('/bin/sh', [BIN, 'migrate', repo], { encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
