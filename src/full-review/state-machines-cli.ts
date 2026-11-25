@@ -3,6 +3,8 @@ import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DEFAULT_LIMITS, scanDirectory, type ScannerLimits, type ScanResult } from './state-machines.ts';
 
+const MAX_DISPLAY_SITES = 6;
+
 export interface CliIo {
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -134,6 +136,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { dir, format, limits, help: helpFlag };
 }
 
+function singleLine(text: string): string {
+  return JSON.stringify(text).slice(1, -1).replace(/[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g,
+    char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
+}
+
 export function formatText(result: ScanResult): string {
   if (result.candidates.length === 0) {
     return 'NO_CANDIDATES\n';
@@ -143,11 +150,11 @@ export function formatText(result: ScanResult): string {
   ];
   for (const c of result.candidates) {
     const siteList = c.sites
-      .slice(0, 6)
-      .map(s => `${s.file}:${s.line}${s.function ? `(${s.function})` : ''}`)
+      .slice(0, MAX_DISPLAY_SITES)
+      .map(s => `${singleLine(s.file)}:${s.line}${s.function ? `(${singleLine(s.function)})` : ''}`)
       .join(', ');
-    const more = c.sites.length > 6 ? ` (+${c.sites.length - 6} more)` : '';
-    lines.push(`- [${c.signal}] ${c.subject} | sites: ${siteList}${more}`);
+    const more = c.sites.length > MAX_DISPLAY_SITES ? ` (+${c.sites.length - MAX_DISPLAY_SITES} more)` : '';
+    lines.push(`- [${c.signal}] ${singleLine(c.subject)} | sites: ${siteList}${more}`);
   }
   return `${lines.join('\n')}\n`;
 }

@@ -2,7 +2,11 @@ from pathlib import Path
 import json
 
 
-def save_session(path: Path, session_id: str, schema_version: int) -> None:
+def save_session(
+    path: Path,
+    session_id: str,
+    schema_version: int,
+) -> None:
     payload = {
         "session_id": session_id,
         "schema_version": schema_version,
@@ -10,7 +14,9 @@ def save_session(path: Path, session_id: str, schema_version: int) -> None:
     path.write_text(json.dumps(payload))
 
 
-def load_session(path: Path) -> dict:
+def load_session(
+    path: Path,
+) -> dict:
     data = json.loads(path.read_text())
     return {
         "session_id": data["session_id"],

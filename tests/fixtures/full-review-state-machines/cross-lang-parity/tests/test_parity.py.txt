@@ -1,3 +1,11 @@
+from pathlib import Path
+import re
+
+from session_status import SessionStatus
+
+
 def test_session_status_parity():
-    # Verifies session_status.py SessionStatus matches session-status.ts SessionStatus
-    assert True
+    source = Path(__file__).resolve().parents[1]
+    assert {status.value for status in SessionStatus} == set(
+        re.findall(r"'([a-z]+)'", (source / "session-status.ts").read_text())
+    )

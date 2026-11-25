@@ -13,8 +13,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
-import { main, type ScanResult } from '../src/full-review/state-machines-cli.ts';
-import type { ScanResult as EngineScanResult } from '../src/full-review/state-machines.ts';
+import { main } from '../src/full-review/state-machines-cli.ts';
+import { cleanGitEnv, type ScanResult } from '../src/full-review/state-machines.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const BIN = join(REPO_ROOT, 'bin/full-review-state-machines');
@@ -49,7 +49,7 @@ function materializeFixture(name: string, options: { initGit?: boolean } = {}): 
     writeFileSync(target, readFileSync(abs, 'utf8'));
   }
   if (options.initGit) {
-    const init = spawnSync('git', ['init', '--quiet', destRoot], { encoding: 'utf8', timeout: 15_000 });
+    const init = spawnSync('git', ['init', '--quiet', destRoot], { encoding: 'utf8', timeout: 15_000, env: cleanGitEnv() });
     expect(init.status).toBe(0);
   }
   return destRoot;
@@ -75,7 +75,7 @@ function runSubprocess(argv: string[], cwd: string = BASE_TMP): { status: number
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-function assertMechanicsOnly(result: EngineScanResult): void {
+function assertMechanicsOnly(result: ScanResult): void {
   const forbiddenKeys = new Set(['severity', 'verdict', 'classification', 'recommendation']);
   for (const candidate of result.candidates) {
     for (const key of Object.keys(candidate)) {
@@ -99,7 +99,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     const res = runSubprocess(['--format', 'json', dir]);
     expect(res.status).toBe(0);
     expect(res.stderr).toBe('');
-    const parsed = JSON.parse(res.stdout) as EngineScanResult;
+    const parsed = JSON.parse(res.stdout) as ScanResult;
     expect(parsed.schema).toBe('full-review-state-machines/v1');
     expect(parsed.discovery).toBe('git');
     expect(parsed.scanned_by_language).toEqual({ python: 2, ts_js: 0 });
@@ -124,7 +124,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
 
     const gap = parsed.candidates.find(c => c.signal === 'write-decode-gap')!;
     expect(gap.subject).toBe('lease_token');
-    expect(gap.sites[0]!.file).toBe('workflow.py');
+    expect(gap.sites).toEqual([{ file: 'workflow.py', line: 40, function: 'save_order' }]);
 
     const crossFile = parsed.candidates.find(c => c.signal === 'cross-file-inferred-state')!;
     expect(crossFile.facts.function).toBe('infer_order_phase');
@@ -141,7 +141,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     const res = runMain(['--format', 'json', dir]);
     expect(res.status).toBe(0);
     expect(res.stderr).toBe('');
-    const parsed = JSON.parse(res.stdout) as EngineScanResult;
+    const parsed = JSON.parse(res.stdout) as ScanResult;
     expect(parsed.discovery).toBe('walk');
     expect(parsed.scanned_by_language).toEqual({ python: 0, ts_js: 2 });
     assertMechanicsOnly(parsed);
@@ -164,6 +164,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
 
     const gap = parsed.candidates.find(c => c.signal === 'write-decode-gap')!;
     expect(gap.subject).toBe('leaseToken');
+    expect(gap.sites).toEqual([{ file: 'workflow.ts', line: 40, function: 'saveJob' }]);
   });
 
   // Value: protects=cross-language vocabulary drift flags overlapping Python and TS vocabularies without a parity test and stays quiet when a parity test exists; fails_when=S7 misses asymmetric tokens or ignores parity tests; why_new=Track 100A T3; seam=none
@@ -171,7 +172,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     const driftDir = materializeFixture('cross-lang-drift');
     const driftRes = runMain(['--format', 'json', driftDir]);
     expect(driftRes.status).toBe(0);
-    const driftParsed = JSON.parse(driftRes.stdout) as EngineScanResult;
+    const driftParsed = JSON.parse(driftRes.stdout) as ScanResult;
     assertMechanicsOnly(driftParsed);
     const drift = driftParsed.candidates.find(c => c.signal === 'cross-language-enum-drift');
     expect(drift).toBeDefined();
@@ -179,10 +180,19 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     expect(drift!.facts.python_only).toEqual(['paused']);
     expect(drift!.facts.ts_js_only).toEqual(['cancelled']);
 
+    mkdirSync(join(driftDir, 'tests'));
+    writeFileSync(join(driftDir, 'tests/test_status.py'), [
+      '# session_status.py and session-status.ts',
+      'from session_status import SessionStatus',
+      'assert SessionStatus.PENDING == "pending"',
+    ].join('\n'));
+    const stillDrifts = JSON.parse(runMain(['--format', 'json', driftDir]).stdout) as ScanResult;
+    expect(stillDrifts.candidates.some(c => c.signal === 'cross-language-enum-drift')).toBe(true);
+
     const parityDir = materializeFixture('cross-lang-parity');
     const parityRes = runMain(['--format', 'json', parityDir]);
     expect(parityRes.status).toBe(0);
-    const parityParsed = JSON.parse(parityRes.stdout) as EngineScanResult;
+    const parityParsed = JSON.parse(parityRes.stdout) as ScanResult;
     expect(parityParsed.candidates.filter(c => c.signal === 'cross-language-enum-drift')).toEqual([]);
   });
 
@@ -191,13 +201,67 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     const dir = materializeFixture('plain-check');
     const res = runMain(['--format', 'json', dir]);
     expect(res.status).toBe(0);
-    const parsed = JSON.parse(res.stdout) as EngineScanResult;
+    const parsed = JSON.parse(res.stdout) as ScanResult;
     assertMechanicsOnly(parsed);
 
     const signals = new Set(parsed.candidates.map(c => c.signal));
     expect(signals).toEqual(new Set(['write-decode-gap']));
-    const subjects = parsed.candidates.map(c => c.subject).sort();
-    expect(subjects).toEqual(['formatVersion', 'schema_version']);
+    expect(parsed.candidates.map(c => [c.subject, c.sites[0]?.file, c.sites[0]?.function])).toEqual([
+      ['formatVersion', 'store.ts', 'saveConfig'],
+      ['schema_version', 'store.py', 'save_session'],
+    ]);
+  });
+
+  test('associates typed fields, persisted keys and file probes with their own code', () => {
+    const dir = mkdtempSync(join(BASE_TMP, 'associated-'));
+    writeFileSync(join(dir, 'order.py'), [
+      'from typing import Literal',
+      'OtherStatus = Literal["pending", "done", "waiting"]',
+      'def load_order(data):',
+      '    return data["status"]',
+      'def save_order(path, order):',
+      '    path.write_text(json.dumps({"status": order.status, "revision": order.revision}))',
+    ].join('\n'));
+    writeFileSync(join(dir, 'job.js'), [
+      'const job = { inFlight: false, pendingRetry: false, settledAt: null };',
+      'function isPending(job) { return job.status === "pending"; }',
+      'function isDone(job) { return job.status === "done"; }',
+      'function isWaiting(job) { return job.status === "waiting"; }',
+      'function loadAudit(data) { return data.revision; }',
+      'function saveJob(path, job) {',
+      '  writeFileSync(path, JSON.stringify({ status: job.status, revision: 2 }));',
+      '}',
+      'function loadJob(data) { return data.status; }',
+      'function unrelated(ready) {',
+      '  const unused = ["job_state.json", "job_done.flag", "job_checkpoint.json"];',
+      '  if (ready && existsSync("settings.json")) return "ready";',
+      '}',
+    ].join('\n'));
+    const result = runMain(['--format', 'json', dir]);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout) as ScanResult;
+    expect(report.candidates.map(c => c.signal)).not.toContain('cross-file-inferred-state');
+    expect(report.candidates.find(c => c.signal === 'string-state-fanout')?.sites.map(s => s.line)).toEqual([2, 3, 4]);
+    expect(report.candidates.find(c => c.signal === 'boolean-state-bag')?.facts.fields)
+      .toEqual(['inFlight', 'pendingRetry', 'settledAt']);
+    expect(report.candidates.filter(c => c.signal === 'write-decode-gap').map(c => c.sites[0]))
+      .toEqual([
+        { file: 'job.js', line: 7, function: 'saveJob' },
+        { file: 'order.py', line: 6, function: 'save_order' },
+      ]);
+  });
+
+  test('keeps distinct signals when a noisy signal exceeds the candidate limit', () => {
+    const dir = materializeFixture('implicit-sm-ts');
+    const records = Array.from({ length: 8 }, (_, i) =>
+      'const job' + i + ' = { inFlight: false, pendingRetry: false, settledAt: null };');
+    writeFileSync(join(dir, 'later.ts'), records.join('\n'));
+    const capped = runMain(['--format', 'json', '--max-candidates', '6', dir]);
+    expect(capped.status).toBe(0);
+    const report = JSON.parse(capped.stdout) as ScanResult;
+    expect(report.truncated).toBe(true);
+    expect(report.candidates.length).toBe(6);
+    expect(new Set(report.candidates.map(c => c.signal)).size).toBe(6);
   });
 
   // Value: protects=clean typed code and unsupported languages emit NO_CANDIDATES and exit 0 with accurate skipped counts; fails_when=typed enums, reducer modules, or non-Python/non-TS files trigger false positives or errors; why_new=Track 100A T3; seam=none
@@ -210,7 +274,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
 
     const jsonRes = runMain(['--format', 'json', dir]);
     expect(jsonRes.status).toBe(0);
-    const parsed = JSON.parse(jsonRes.stdout) as EngineScanResult;
+    const parsed = JSON.parse(jsonRes.stdout) as ScanResult;
     expect(parsed.candidates).toEqual([]);
     expect(parsed.scanned_by_language).toEqual({ python: 1, ts_js: 1 });
     expect(parsed.skipped_files).toBe(3); // main.go, lib.rs, README.md
@@ -245,11 +309,16 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     const pyDir = materializeFixture('implicit-sm-py');
     const raised = runMain(['--format', 'json', '--min-fields', '5', '--max-candidates', '2', pyDir]);
     expect(raised.status).toBe(0);
-    const raisedParsed = JSON.parse(raised.stdout) as EngineScanResult;
+    const raisedParsed = JSON.parse(raised.stdout) as ScanResult;
     expect(raisedParsed.candidates.some(c => c.signal === 'boolean-state-bag')).toBe(false);
     expect(raisedParsed.candidates.length).toBe(2);
     expect(raisedParsed.truncated).toBe(true);
     expect(raisedParsed.total_candidates).toBeGreaterThan(2);
+    const sites = runMain(['--format', 'json', '--min-sites', '20', '--min-files', '20', pyDir]);
+    expect(sites.status).toBe(0);
+    const sitesParsed = JSON.parse(sites.stdout) as ScanResult;
+    expect(sitesParsed.candidates.map(c => c.signal)).not.toContain('mutation-fanout');
+    expect(sitesParsed.candidates.map(c => c.signal)).not.toContain('string-state-fanout');
 
     // Escaping symlink is skipped
     const outsideDir = mkdtempSync(join(BASE_TMP, 'outside-'));
@@ -259,7 +328,7 @@ describe('bin/full-review-state-machines mechanical pre-scanner', () => {
     symlinkSync(outsideFile, join(cleanDir, 'escaped_link.py'));
     const symRes = runMain(['--format', 'json', cleanDir]);
     expect(symRes.status).toBe(0);
-    const symParsed = JSON.parse(symRes.stdout) as EngineScanResult;
+    const symParsed = JSON.parse(symRes.stdout) as ScanResult;
     expect(symParsed.scanned_by_language).toEqual({ python: 1, ts_js: 1 });
     expect(symParsed.skipped_files).toBe(4);
   });
@@ -269,13 +338,16 @@ describe('fixture-backed implicit-state-machine lens classification and source-t
   // Value: protects=pre-scanner evidence pairs cleanly with /full-review finding lines, [make explicit now]/[plain check] tags, validateTagExpression, and routeSourceTag; fails_when=classification tags break finding grammar, source-tag validation, or routing; why_new=Track 100A T3 criterion 5; seam=none; no_claim=live LLM judgment
   test('seeded implicit state machine vs plain-check findings satisfy /full-review grammar and source-tag routing', () => {
     const smDir = materializeFixture('implicit-sm-py');
-    const smScan = JSON.parse(runMain(['--format', 'json', smDir]).stdout) as EngineScanResult;
+    const smScan = JSON.parse(runMain(['--format', 'json', smDir]).stdout) as ScanResult;
     expect(smScan.candidates.some(c => c.signal === 'boolean-state-bag')).toBe(true);
-    expect(smScan.candidates.some(c => c.signal === 'mutation-fanout')).toBe(true);
+    const mutation = smScan.candidates.find(c => c.signal === 'mutation-fanout');
+    expect(mutation?.sites).toContainEqual({ file: 'workflow.py', line: 21, function: 'submit_order' });
 
     const pcDir = materializeFixture('plain-check');
-    const pcScan = JSON.parse(runMain(['--format', 'json', pcDir]).stdout) as EngineScanResult;
+    const pcScan = JSON.parse(runMain(['--format', 'json', pcDir]).stdout) as ScanResult;
     expect(pcScan.candidates.map(c => c.signal)).toEqual(['write-decode-gap', 'write-decode-gap']);
+    const gap = pcScan.candidates.find(c => c.subject === 'schema_version');
+    expect(gap?.sites).toContainEqual({ file: 'store.py', line: 12, function: 'save_session' });
 
     const findingLineRe =
       /^FILE: (.+?) \| LINE: ([0-9-]+) \| SEVERITY: (critical|necessary|nice-to-have|edge-case) \| DESCRIPTION: (.+?) \| HYPOTHESIS: (.+)$/;
@@ -283,22 +355,22 @@ describe('fixture-backed implicit-state-machine lens classification and source-t
     const findings = [
       {
         line:
-          'FILE: workflow.py | LINE: 8-35 | SEVERITY: critical | DESCRIPTION: [make explicit now] OrderRecord spreads lifecycle state across status strings, in_flight/pending_retry/settled_at flags, and three scattered writers, allowing an order to be settled_at non-null while in_flight is True on crash recovery. | HYPOTHESIS: Introduce an explicit OrderState union/enum, a single transition table, and load-time validation rejecting impossible flag combinations.',
-        tag: '[full-review:critical,files=workflow.py]',
+          'FILE: workflow.py | LINE: 21 | SEVERITY: necessary | DESCRIPTION: [make explicit now] Retrying submit on a cancelled order with three retries changes its terminal status to failed. Both submit and complete apply retry transitions outside their status guards. | HYPOTHESIS: Introduce an explicit OrderState type and transition table that owns retry transitions and validates status at load time.',
+        site: mutation!.sites.find(site => site.line === 21),
         expectedRoute: 'KEEP',
         expectedMarker: '[make explicit now]',
       },
       {
         line:
-          'FILE: store.py | LINE: 5-17 | SEVERITY: necessary | DESCRIPTION: [plain check] save_session persists schema_version but load_session ignores it, allowing a corrupt or incompatible persisted record to decode silently. | HYPOTHESIS: Add a single assertion in load_session validating data["schema_version"] against the supported version before returning.',
-        tag: '[full-review:necessary,files=store.py]',
+          'FILE: store.py | LINE: 12 | SEVERITY: necessary | DESCRIPTION: [plain check] save_session persists schema_version but load_session ignores it, allowing a corrupt or incompatible persisted record to decode silently. | HYPOTHESIS: Add a single assertion in load_session validating data["schema_version"] against the supported version before returning.',
+        site: gap!.sites[0],
         expectedRoute: 'KEEP',
         expectedMarker: '[plain check]',
       },
       {
         line:
           'FILE: order.py | LINE: 12 | SEVERITY: edge-case | DESCRIPTION: is_terminal is a pure derivation over OrderStatus with no reachable impossible state; dropped at source. | HYPOTHESIS: No change needed.',
-        tag: '[full-review:edge-case,files=order.py]',
+        site: undefined,
         expectedRoute: 'KILL',
         expectedMarker: null,
       },
@@ -307,11 +379,14 @@ describe('fixture-backed implicit-state-machine lens classification and source-t
     for (const f of findings) {
       const m = findingLineRe.exec(f.line);
       expect(m, f.line).not.toBeNull();
+      const [, file, line, severity, description] = m!;
       if (f.expectedMarker) {
-        expect(m![4]).toContain(f.expectedMarker);
+        expect(description).toContain(f.expectedMarker);
+        expect(f.site).toMatchObject({ file, line: Number(line) });
       }
-      expect(validateTagExpression(f.tag).ok).toBe(true);
-      expect(routeSourceTag(f.tag).action).toBe(f.expectedRoute);
+      const tag = '[full-review:' + severity + ',files=' + file + ']';
+      expect(validateTagExpression(tag).ok).toBe(true);
+      expect(routeSourceTag(tag).action).toBe(f.expectedRoute);
     }
   });
 });

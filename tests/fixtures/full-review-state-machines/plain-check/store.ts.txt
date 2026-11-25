@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
-export function saveConfig(path: string, name: string, formatVersion: number): void {
+export function saveConfig(
+  path: string,
+  { name, formatVersion }: { name: string; formatVersion: number },
+): void {
   const payload = {
     name: name,
     formatVersion: formatVersion,
