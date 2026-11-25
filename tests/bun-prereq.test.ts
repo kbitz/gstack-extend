@@ -187,6 +187,7 @@ const ALL_LAUNCHERS: LauncherSpec[] = [
   { name: 'outside-review', family: 'bare', srcRel: 'src/outside-review/cli.ts', okArgs: ['--help'] },
   { name: 'secret-dispositions', family: 'bare', srcRel: 'src/secret-dispositions/cli.ts', okArgs: ['--help'] },
   { name: 'pregate-deps', family: 'bare', srcRel: 'src/pregate-deps/cli.ts', okArgs: ['--help'] },
+  { name: 'full-review-state-machines', family: 'bare', srcRel: 'src/full-review/state-machines-cli.ts', okArgs: ['--help'] },
   { name: 'review-delegate', family: 'bare', srcRel: 'src/review-delegate/cli.ts', okArgs: ['--help'] },
   { name: 'layout-scaffold', family: 'hardened', srcRel: 'src/layout-scaffold/cli.ts', okArgs: ['--help'] },
   { name: 'docs-ship', family: 'hardened', srcRel: 'src/docs-ship/cli.ts', okArgs: ['--help'] },
@@ -195,7 +196,7 @@ const ALL_LAUNCHERS: LauncherSpec[] = [
   { name: 'review-state', family: 'review-state', srcRel: 'src/review-state/cli.ts', okArgs: ['--help'] },
 ];
 
-describe('all 14 gated bin/ launchers', () => {
+describe('all 15 gated bin/ launchers', () => {
   const oldBunDir = freshDir('old-bun');
   makeDelegatingShim(oldBunDir, '1.2.0');
   const badBunDir = freshDir('bad-bun');

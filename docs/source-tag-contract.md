@@ -194,6 +194,8 @@ amendment to cut; writing `defer=true` does not supply that approval.
   these at source (never written to TODOS.md). Listed here for completeness;
   will not appear in practice.
 
+`/full-review`'s implicit-state-machine lens places its classification (`[make explicit now]`, `[make explicit later]`, `[plain check]`) inside `**Description:**` (with direction in `**Hypothesis (untested):**`) and maps findings onto the existing four severities with no new severity names or fields.
+
 ## Examples
 
 ```markdown

@@ -229,6 +229,15 @@ passed to each agent's prompt.
 
 If `git log` fails (not a git repo), skip scoping and let agents explore freely.
 
+Run the read-only mechanical pre-scanner for implicit state-machine candidates:
+
+```bash
+# Start with the _EXTEND_ROOT=… line the preamble printed.
+"$_EXTEND_ROOT/bin/full-review-state-machines" "<project_root>"
+```
+
+If the helper prints `NO_CANDIDATES` or exits non-zero (for example, when Bun is unavailable), pass `none` as `{state_machine_candidates}`, note the gap briefly, and continue without blocking the review. Otherwise pass its output as `{state_machine_candidates}` to the Reviewer and Consistency Auditor prompts.
+
 ### Step 2: Dispatch agents
 
 Make **3 Agent tool invocations in a single response block** so they execute
@@ -257,6 +266,8 @@ Prompt:
 >
 > Hot areas (prioritize these, but review everything): {hot_areas}
 >
+> State-machine pre-scan candidates (mechanical hints only; verify in code): {state_machine_candidates}
+>
 > Your responsibilities:
 > 1. Read the codebase and understand the architecture
 > 2. Compare against any specs, PRDs, or design docs in the project
@@ -264,6 +275,16 @@ Prompt:
 > 4. Find untested interaction paths and assumptions that span files
 > 5. Flag error handling that doesn't compose across module boundaries
 > 6. Identify assumptions that aren't validated by tests
+> 7. **Implicit state machines:** inspect pre-scan candidates and any unflagged lifecycle state using this qualitative rubric:
+>    - Judge whether the candidate is genuinely cyclic or multi-path; skip pure derivations, linear pipelines, and one-time migration flags (or log only as `edge-case`).
+>    - Require a concrete impossible combination of values or invalid transition reachable today from code or from interrupted or corrupt persisted state; if none can be named, do not file.
+>    - Judge whether the state sits on a persisted, concurrent, or authority boundary versus ephemeral local runtime state.
+>    - Judge whether a plain check (one or two targeted assertions or loader guards) removes the concrete risk; when it does, recommend only that plain check, not a new state type or transition table.
+>    - Classify each filed finding inside `DESCRIPTION` (never add new severity names or fields) and map it onto existing severities:
+>      - `[make explicit now]`: state `HYPOTHESIS` as an explicit state type or union, transition table, and load validation; use `critical` on a persisted, concurrent, or authority boundary with correctness, data-loss, or security risk, or `necessary` for a concrete multi-path lifecycle defect needing explicit machinery now.
+>      - `[make explicit later]`: state `HYPOTHESIS` as consolidating on next touch; use `nice-to-have` for lower-risk ephemeral or runtime state or duplicated transitions safe to defer.
+>      - `[plain check]`: state `HYPOTHESIS` as the specific one or two assertions or loader guards; use `necessary` for a concrete persisted or boundary defect, or `nice-to-have` for defensive hardening.
+>      - Skip pure derivations, linear pipelines, one-time migration flags, and candidates with no concrete reachable impossible state, or log them only as `edge-case` (dropped at source).
 >
 > Do NOT flag style issues. Do NOT suggest new features. Focus on what would
 > break in production or confuse a future maintainer.
@@ -364,6 +385,8 @@ Prompt:
 >
 > Hot areas (prioritize these, but review everything): {hot_areas}
 >
+> State-machine pre-scan candidates (mechanical hints only; verify in code): {state_machine_candidates}
+>
 > Your process:
 > 1. Read enough of the codebase to identify established patterns:
 >    - Naming conventions (files, functions, variables)
@@ -381,6 +404,7 @@ Prompt:
 > 3. Structural asymmetry — parallel modules organized differently without reason
 > 4. Convention breaks — new code ignores patterns used everywhere else
 > 5. Import/dependency inconsistency — different approaches for the same task
+> 6. Cross-boundary implicit state machines and vocabulary drift: divergent state strings across parallel modules or cross-language vocabularies lacking a parity test. Apply the same qualitative rubric: require a concrete reachable impossible state or invalid transition from code or persisted state (skip pure derivations, linear pipelines, and one-time migration flags), prefer a plain check when one or two assertions remove the risk, and tag `DESCRIPTION` with `[make explicit now]`, `[make explicit later]`, or `[plain check]` mapped onto existing severities (`critical`, `necessary`, `nice-to-have`, or `edge-case` dropped at source).
 >
 > Ignore: intentional deviations documented in comments or CLAUDE.md, style
 > differences handled by a linter, one-off utilities with no parallel.
@@ -461,6 +485,9 @@ Combine all findings into a single list. For deduplication:
   justification and note both agents flagged it
 - If two agents describe the same conceptual issue (e.g., both say "error handling
   is inconsistent in bin/"), merge into one finding with the combined context
+- Merged findings and cluster descriptions from the implicit-state-machine lens
+  retain their `[make explicit now]`, `[make explicit later]`, or `[plain check]`
+  tag in `DESCRIPTION` without adding new severities or finding fields
 
 **Drop edge-case findings.** Before clustering, filter out every finding with
 `SEVERITY: edge-case`. These represent hypothetical or extreme-edge scenarios that

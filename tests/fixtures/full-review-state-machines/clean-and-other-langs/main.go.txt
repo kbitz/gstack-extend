@@ -1,0 +1,8 @@
+package main
+
+func main() {
+  status := "pending"
+  if status == "pending" {
+    status = "done"
+  }
+}

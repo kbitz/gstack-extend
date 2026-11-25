@@ -661,3 +661,52 @@ describe('full-review stage line', () => {
     }
   });
 });
+
+describe('full-review implicit-state-machine lens', () => {
+  const raw = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
+  const skill = flatProse(raw);
+
+  // Value: protects=full-review runs the mechanical pre-scanner with graceful fallback, enforces the four qualitative rubric checks without numeric triggers, and maps the three classifications onto existing severities; fails_when=the pre-scan invocation, fallback, rubric checks, classification tags, or qualitative-only rule drift; why_new=Track 100A T2; seam=none; no_claim=agent behavior (static prose lock)
+  test('Phase 1 Step 1 invokes bin/full-review-state-machines with graceful fallback', () => {
+    const step1 = skillSection(raw, '### Step 1: Identify focus areas');
+    expect(step1).toContain('# Start with the _EXTEND_ROOT=… line the preamble printed.');
+    expect(step1).toContain('"$_EXTEND_ROOT/bin/full-review-state-machines" "<project_root>"');
+    expect(step1).toContain('NO_CANDIDATES');
+    expect(step1).toContain('{state_machine_candidates}');
+    expect(step1).toContain('without blocking the review');
+  });
+
+  test('Agent 1 and Agent 3 enforce the qualitative rubric, three classifications, and no numeric triggers', () => {
+    const step2 = skillSection(raw, '### Step 2: Dispatch agents');
+    const step2Flat = flatProse(step2);
+
+    // Four qualitative rubric checks
+    expect(step2Flat).toContain('genuinely cyclic or multi-path');
+    expect(step2Flat).toContain('pure derivations, linear pipelines, and one-time migration flags');
+    expect(step2Flat).toContain('concrete impossible combination of values or invalid transition reachable today from code or from interrupted or corrupt persisted state; if none can be named, do not file');
+    expect(step2Flat).toContain('persisted, concurrent, or authority boundary');
+    expect(step2Flat).toContain('plain check (one or two targeted assertions or loader guards) removes the concrete risk');
+
+    // Three classifications mapped onto existing severities
+    for (const label of ['[make explicit now]', '[make explicit later]', '[plain check]']) {
+      expect(step2Flat).toContain(label);
+    }
+    expect(step2Flat).toContain('never add new severity names or fields');
+    expect(step2Flat).toContain('Cross-boundary implicit state machines and vocabulary drift');
+
+    // Phase 2 Step 1 retains tags on merge
+    const mergeStep = flatProse(skillSection(raw, '### Step 1: Merge and deduplicate'));
+    expect(mergeStep).toContain('retain their `[make explicit now]`, `[make explicit later]`, or `[plain check]` tag in `DESCRIPTION`');
+
+    // Negative check: no numeric rubric triggers in the lens prose
+    const lensBlocks = [
+      ...step2.matchAll(/Implicit state machines:[\s\S]*?(?=\n> Do NOT flag)/g),
+      ...step2.matchAll(/Cross-boundary implicit state machines[\s\S]*?(?=\n> Ignore:)/g),
+    ].map(m => m[0]);
+    expect(lensBlocks.length).toBe(2);
+    for (const block of lensBlocks) {
+      expect(block).not.toMatch(/(?:>=|≥|<=|≤)\s*\d+/);
+      expect(block).not.toContain('High/Medium');
+    }
+  });
+});

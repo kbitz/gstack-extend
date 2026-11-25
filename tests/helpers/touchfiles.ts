@@ -104,6 +104,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/outside-review',
     'bin/secret-dispositions',
     'bin/pregate-deps',
+    'bin/full-review-state-machines',
     'bin/review-delegate',
     'bin/layout-scaffold',
     'bin/docs-ship',
@@ -139,6 +140,14 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/pregate-deps.test.ts': [
     'bin/pregate-deps', 'bin/lib/bun-prereq.sh', 'src/pregate-deps/**', 'tests/fixtures/pregate-deps/**', 'docs/pregate-deps.md',
+  ],
+  'tests/full-review-state-machines.test.ts': [
+    'bin/full-review-state-machines',
+    'bin/lib/bun-prereq.sh',
+    'src/full-review/**',
+    'tests/fixtures/full-review-state-machines/**',
+    skill('full-review'),
+    'docs/source-tag-contract.md',
   ],
   // The release and manifest checks: what a release commit (VERSION, the
   // CHANGELOG entry and package.json's version field) can break on its own.

@@ -1,0 +1,6 @@
+fn main() {
+    let status = "pending";
+    if status == "pending" {
+        println!("ok");
+    }
+}

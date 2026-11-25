@@ -1,0 +1,5 @@
+export function summarizeJob(job: { status: string }): string {
+  if (job.status === 'failed') return 'bad';
+  if (job.status === 'completed') return 'good';
+  return 'active';
+}

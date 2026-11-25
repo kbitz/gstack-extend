@@ -1,0 +1,58 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+
+export interface JobRecord {
+  jobId: string;
+  status: string;
+  inFlight: boolean;
+  awaitingAck: boolean;
+  settledAt: string | null;
+  retries: number;
+}
+
+export function startJob(job: JobRecord): void {
+  if (job.status === 'pending') {
+    job.status = 'running';
+  }
+  if (job.retries >= 3) {
+    job.status = 'failed';
+  }
+}
+
+export function pauseJob(job: JobRecord): void {
+  if (job.status === 'running') {
+    job.status = 'paused';
+  }
+}
+
+export function finishJob(job: JobRecord): void {
+  if (job.status === 'running') {
+    job.status = 'completed';
+  }
+  if (job.retries >= 5) {
+    job.status = 'aborted';
+  }
+}
+
+export function saveJob(path: string, job: JobRecord): void {
+  const payload = {
+    jobId: job.jobId,
+    status: job.status,
+    leaseToken: 'tok-2',
+  };
+  writeFileSync(path, JSON.stringify(payload));
+}
+
+export function loadJob(path: string): { jobId: string; status: string } {
+  const raw = JSON.parse(readFileSync(path, 'utf8'));
+  return {
+    jobId: raw.jobId,
+    status: raw.status,
+  };
+}
+
+export function inferJobPhase(dir: string): string {
+  if (existsSync(`${dir}/job_lock.flag`)) return 'locked';
+  if (existsSync(`${dir}/job_checkpoint.json`)) return 'resuming';
+  if (existsSync(`${dir}/job_done.marker`)) return 'done';
+  return 'idle';
+}

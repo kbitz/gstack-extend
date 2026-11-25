@@ -1,0 +1,60 @@
+from dataclasses import dataclass
+from pathlib import Path
+import json
+from typing import Optional
+
+
+@dataclass
+class OrderRecord:
+    order_id: str
+    status: str = "pending"
+    in_flight: bool = False
+    pending_retry: bool = False
+    settled_at: Optional[str] = None
+    retries: int = 0
+
+
+def submit_order(order: OrderRecord) -> None:
+    if order.status == "pending":
+        order.status = "running"
+    if order.retries >= 3:
+        order.status = "failed"
+
+
+def cancel_order(order: OrderRecord) -> None:
+    if order.status == "running":
+        order.status = "cancelled"
+
+
+def complete_order(order: OrderRecord) -> None:
+    if order.status == "running":
+        order.status = "completed"
+    if order.retries >= 5:
+        order.status = "dead"
+
+
+def save_order(path: Path, order: OrderRecord) -> None:
+    payload = {
+        "order_id": order.order_id,
+        "status": order.status,
+        "lease_token": "tok-1",
+    }
+    path.write_text(json.dumps(payload))
+
+
+def load_order(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    return {
+        "order_id": data["order_id"],
+        "status": data["status"],
+    }
+
+
+def infer_order_phase(base_dir: Path) -> str:
+    if (base_dir / "order_lock.flag").exists():
+        return "locked"
+    if (base_dir / "order_checkpoint.json").exists():
+        return "resuming"
+    if (base_dir / "order_done.marker").exists():
+        return "done"
+    return "idle"

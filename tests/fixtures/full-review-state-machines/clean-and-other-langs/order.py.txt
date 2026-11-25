@@ -1,0 +1,35 @@
+from enum import StrEnum
+from pathlib import Path
+import json
+
+
+class OrderStatus(StrEnum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    FULFILLED = "fulfilled"
+
+
+def is_terminal(status: OrderStatus) -> bool:
+    return status == "fulfilled"
+
+
+def format_pipeline(raw: str) -> str:
+    step1 = raw.strip()
+    step2 = step1.lower()
+    return step2
+
+
+def save_order(path: Path, order_id: str, status: OrderStatus) -> None:
+    payload = {
+        "order_id": order_id,
+        "status": str(status),
+    }
+    path.write_text(json.dumps(payload))
+
+
+def load_order(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    return {
+        "order_id": data["order_id"],
+        "status": data["status"],
+    }
