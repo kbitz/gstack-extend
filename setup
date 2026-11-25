@@ -1821,7 +1821,7 @@ ensure_runtime_deps() {
   fi
 
   cat "$RUNTIME_DEPS_LOG" >&2
-  printf 'Error: %s %s.\n' "$BUN_PREREQ_DEPS_TOKEN" "$BUN_PREREQ_DEPS_WHAT" >&2
+  printf 'Error: %s %s.\n' "$BUN_PREREQ_DEPS_CODE" "$BUN_PREREQ_DEPS_WHAT" >&2
   printf 'Fix: from the checkout, run bun install %s and retry setup. See docs/installation.md#requirements.\n' "${install_args[*]}" >&2
   finish_setup 1
 }

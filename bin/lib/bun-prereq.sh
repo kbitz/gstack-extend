@@ -288,7 +288,7 @@ _bun_runtime_manifest_field() {
 
 # bun_runtime_deps_check <checkout_root>
 bun_runtime_deps_check() {
-  BUN_PREREQ_DEPS_TOKEN=''
+  BUN_PREREQ_DEPS_CODE=''
   BUN_PREREQ_DEPS_WHAT=''
   BUN_PREREQ_DEPS_FIX=''
   [ -f "$1/package.json" ] || return 0
@@ -316,7 +316,7 @@ EOF
 "}
   fi
 
-  BUN_PREREQ_DEPS_TOKEN='PREREQ_DEPS_MISSING'
+  BUN_PREREQ_DEPS_CODE='PREREQ_DEPS_MISSING'
   BUN_PREREQ_DEPS_DISPLAY=$(printf '%s' "$BUN_PREREQ_DEPS_ROOT" | LC_ALL=C command -p tr -d '[:cntrl:]' 2>/dev/null) ||
     BUN_PREREQ_DEPS_DISPLAY='<checkout>'
   BUN_PREREQ_DEPS_WHAT="${BUN_PREREQ_DEPS_DETAIL:-could not verify runtime dependencies} in $BUN_PREREQ_DEPS_DISPLAY"
@@ -330,5 +330,5 @@ EOF
 }
 
 bun_runtime_deps_print_shared() {
-  printf '%s: %s %s; run: %s.\n' "$1" "$BUN_PREREQ_DEPS_TOKEN" "$BUN_PREREQ_DEPS_WHAT" "$BUN_PREREQ_DEPS_FIX"
+  printf '%s: %s %s; run: %s.\n' "$1" "$BUN_PREREQ_DEPS_CODE" "$BUN_PREREQ_DEPS_WHAT" "$BUN_PREREQ_DEPS_FIX"
 }
