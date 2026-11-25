@@ -400,7 +400,8 @@ describe('bin/roadmap-id CLI', () => {
   });
 
   test.each([
-    'direct', 'relative project alias', 'absolute project alias', 'removed project alias',
+    'direct', 'relative project alias', 'relative project alias with literal Git pathspecs',
+    'absolute project alias', 'removed project alias',
   ])('migration reserves IDs from the previous location of linked project docs (%s)', (layout) => {
     const repo = makeEmptyRepo(BASE_TMP);
     const docs = join(repo, 'docs');
@@ -410,7 +411,7 @@ describe('bin/roadmap-id CLI', () => {
     const previous = migrateTodosText(pending, new Set());
     const projectAlias = join(BASE_TMP, basename(repo) + '-alias');
     let oldLink = 'planning';
-    if (layout === 'relative project alias') oldLink = '../' + basename(repo) + '/planning';
+    if (layout.startsWith('relative project alias')) oldLink = '../' + basename(repo) + '/planning';
     if (layout === 'absolute project alias' || layout === 'removed project alias') {
       symlinkSync(repo, projectAlias);
       oldLink = join(projectAlias, 'planning');
@@ -434,7 +435,8 @@ describe('bin/roadmap-id CLI', () => {
     commit('move planning docs and add new follow-up', ['docs', 'documentation/TODOS.md']);
     if (layout === 'removed project alias') unlinkSync(projectAlias);
 
-    const result = spawnSync('/bin/sh', [BIN, 'migrate', repo], { encoding: 'utf8' });
+    const env = layout.endsWith('literal Git pathspecs') ? { ...GIT_ENV, GIT_LITERAL_PATHSPECS: '1' } : GIT_ENV;
+    const result = spawnSync('/bin/sh', [BIN, 'migrate', repo], { env, encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
     expect(readlinkSync(docs)).toBe('documentation');
     expect(readFileSync(newTodo, 'utf8')).toBe(migrateTodosText(pending, new Set(previous.ids)).text);
@@ -680,6 +682,30 @@ describe('bin/roadmap-id CLI', () => {
     expect(migrated.added).toBe(1);
     expect(migrated.text).toBe(legacy.replace('### [manual] First\n',
       '### [manual] First\n- **ID:** ' + migrated.ids[0] + '\n'));
+  });
+
+  test.each([
+    { label: 'heading needs an ID', ownId: '' },
+    { label: 'heading already has an ID', ownId: 'wi-aabbcc' },
+  ])('Completed legacy records keep their IDs separate ($label)', ({ ownId }) => {
+    const markdown = [
+      '## Completed', '### Completed heading', ...(ownId === '' ? [] : ['- **ID:** ' + ownId]),
+      '- [manual] Earlier legacy entry', '- **ID:** wi-112233', '',
+    ].join('\n');
+    const before = parseTodos(markdown).value;
+    expect(before.completedIds).toContain('wi-112233');
+    expect(before.completedEntries![0]!.workItemId).toBe(ownId || null);
+    expect(before.completedEntries![0]!.workItemIdError).toBeNull();
+
+    const migrated = migrateTodosText(markdown, new Set(before.completedIds));
+    expect(migrated.added).toBe(ownId === '' ? 1 : 0);
+    const id = ownId || migrated.ids[0]!;
+    expect(migrated.text).toBe(ownId === '' ? markdown.replace(
+      '### Completed heading\n',
+      '### Completed heading\n- **ID:** ' + id + '\n',
+    ) : markdown);
+    expect(parseTodos(migrated.text).value.completedIds).toEqual([id, 'wi-112233']);
+    expect(migrateTodosText(migrated.text, new Set([id, 'wi-112233'])).added).toBe(0);
   });
 
   test('migrate --dry-run, migrate, and idempotent second run', () => {

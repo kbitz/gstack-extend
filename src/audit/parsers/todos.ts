@@ -87,10 +87,10 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
 
     if (section === null) continue;
 
-    const legacyKind = section === 'unprocessed' ? legacyTodoBulletKind(line, currentHeading !== null) : null;
+    const legacyKind = legacyTodoBulletKind(line, currentHeading !== null);
     if (legacyKind !== null) {
       currentHeading = null;
-      entries.push({ kind: legacyKind, line: lineno, raw: line });
+      if (section === 'unprocessed') entries.push({ kind: legacyKind, line: lineno, raw: line });
       continue;
     }
 

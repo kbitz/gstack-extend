@@ -317,7 +317,7 @@ export function migrateTodosText(content: string, taken: Set<string>): MigrateRe
       section = null;
       continue;
     }
-    if (section === 'unprocessed' && current !== null && legacyTodoBulletKind(line) !== null) {
+    if (current !== null && legacyTodoBulletKind(line) !== null) {
       current.endIdx = i;
       spans.push(current);
       current = null;
