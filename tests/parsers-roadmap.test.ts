@@ -1080,6 +1080,16 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(r.value.legacyShippedTracks![0]!.workItemId).toBe('wi-000099');
   });
 
+  test('a legacy Track blocker followed by a description keeps its dependency', () => {
+    const roadmap = [
+      '## Current Plan', '### Group 3: Next', '#### Track 3B: Second', '_1 task . low risk_',
+      '_blocked-by: Track 3A Wi-Fi driver, wi-12_',
+    ].join('\n');
+    const track = parseRoadmap(roadmap, deps()).value.tracks[0]!;
+    expect(track.blockedBy).toEqual(['3A']);
+    expect(track.blockedByMalformed).toEqual(['wi-12']);
+  });
+
   test('an ID mentioned in a nested legacy blocker note leaves the Track reference intact', () => {
     const roadmap = [
       '## Current Plan', '### Group 1: Current', '#### Track 1B: Second', '_1 task . low risk_',

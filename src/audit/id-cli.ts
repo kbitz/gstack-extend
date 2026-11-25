@@ -110,8 +110,7 @@ function collectTakenIds({ root, docs, historicalPaths }: PlanningDocs, git: Git
   for (const doc of docs.values()) {
     for (const id of scanAllWorkItemIds(doc.text)) taken.add(id);
   }
-  const layout = { root, directory: 'docs', documentNames: DOC_NAMES };
-  for (const id of git.historicalWorkItemIds([...historicalPaths], layout)) taken.add(id);
+  for (const id of git.historicalWorkItemIds([...historicalPaths], root)) taken.add(id);
   return taken;
 }
 

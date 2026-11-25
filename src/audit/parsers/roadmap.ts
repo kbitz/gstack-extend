@@ -211,7 +211,7 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
   };
   const body = stripItalic(line, /^_blocked-by:/);
   if (/^(?:none|—|-*)$/i.test(body)) return { refs, malformed };
-  for (const { raw, outsideNotes } of splitBlockerReferences(body)) {
+  for (const raw of splitBlockerReferences(body)) {
     const part = trim(raw);
     if (part === '') continue;
     if (isValidWorkItemId(part)) {
@@ -225,7 +225,7 @@ function parseBlockedBy(line: string): { refs: string[]; malformed: string[] } {
     // Legacy readers accepted named Track labels embedded in prose. Keep
     // that path while requiring the new work-item tokens to match exactly.
     const legacy = [...part.matchAll(/\bTrack[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)(?![0-9A-Za-z])(?!\.[0-9A-Za-z])/gi)];
-    if (/\bwi-/i.test(outsideNotes) || legacy.length === 0) malformed.push(part);
+    if (legacy.length === 0) malformed.push(part);
     else for (const match of legacy) pushRef(canonicalizeTrackId(match[1]!));
   }
   return { refs, malformed };

@@ -494,26 +494,21 @@ function canonicalizeTrackLabel(raw: string): string {
   });
 }
 
-export function splitBlockerReferences(body: string): Array<{ raw: string; outsideNotes: string }> {
-  const refs: Array<{ raw: string; outsideNotes: string }> = [];
+export function splitBlockerReferences(body: string): string[] {
+  const refs: string[] = [];
   let depth = 0;
   let start = 0;
-  let outsideNotes = '';
   for (let i = 0; i < body.length; i++) {
     if (body[i] === '(') {
-      if (depth === 0) outsideNotes += ' ';
       depth++;
     } else if (body[i] === ')' && depth > 0) {
       depth--;
     } else if (body[i] === ',' && depth === 0) {
-      refs.push({ raw: body.slice(start, i), outsideNotes });
+      refs.push(body.slice(start, i));
       start = i + 1;
-      outsideNotes = '';
-    } else if (depth === 0) {
-      outsideNotes += body[i]!;
     }
   }
-  refs.push({ raw: body.slice(start), outsideNotes });
+  refs.push(body.slice(start));
   return refs;
 }
 
@@ -526,7 +521,7 @@ function rewriteBlockedByLine(line: string, labelToId: ReadonlyMap<string, strin
   if (body.trim() === '') return line;
 
   let changed = false;
-  const parts = splitBlockerReferences(body).map(({ raw: rawPart }) => {
+  const parts = splitBlockerReferences(body).map((rawPart) => {
     const trimmed = rawPart.trim();
     // Only whole labels can become canonical ID tokens without losing notes.
     const bare = trimmed.replace(/^Track[ \t]+/i, '');

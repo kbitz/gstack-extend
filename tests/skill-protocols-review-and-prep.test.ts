@@ -1713,6 +1713,13 @@ describe('review-and-prep behavior-changing repair review and repair-cycles=ligh
   });
 });
 
+test('review-and-prep gives every new TODOS entry an ID', () => {
+  const scope = skillSection(coreText('review-and-prep'), '### Establish the approved implementation scope').replace(/\s+/g, ' ');
+  expect(scope).toContain('For every new TODOS entry, mint an ID with ');
+  expect(scope).toContain('bin/roadmap-id" mint "<repo-root>"');
+  expect(scope).toContain('place `- **ID:** <id>` first.');
+});
+
 describe('review-and-prep test-gaps=record', () => {
   const prep = coreText('review-and-prep');
   const gapRaw = refHeadingSection(REF_REPAIR_GAPS, H_RECORD_TEST_GAPS);

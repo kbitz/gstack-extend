@@ -201,6 +201,16 @@ describe('init flag matrix', () => {
     expect(registry.projects[0].version_scheme).toBe('4-digit');
   });
 
+  test('fresh init mints a starter ID when TMPDIR is unavailable', () => {
+    const s = scope('fresh-missing-temp');
+    const missingTemp = join(dirname(s.target), 'unavailable-temp');
+    const result = run(['init', s.target, '--no-prompt'], s, { TMPDIR: missingTemp });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const todos = readFileSync(join(s.target, 'docs', 'TODOS.md'), 'utf8');
+    expect(todos).toMatch(/^- \*\*ID:\*\* wi-[0-9a-f]{6,8}$/m);
+    expect(readdirSync(dirname(s.target)).filter(name => name.startsWith('.gstack-init-id.'))).toEqual([]);
+  });
+
   test('empty dir + --dry-run: prints would-write, no filesystem changes', () => {
     const s = scope('empty-dryrun');
     const r = run(['init', s.target, '--dry-run', '--no-prompt'], s);

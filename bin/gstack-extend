@@ -950,10 +950,13 @@ EOF
       # a launcher failure cannot leave a partially initialized project.
       local id_root="$target_abs" mint_dir="$target_abs" empty_root="" mint_status=0
       if [ ! -d "$id_root" ]; then
-        empty_root=$(mktemp -d "${TMPDIR:-/tmp}/gstack-init-id.XXXXXXXX") || return 1
-        id_root="$empty_root"
         mint_dir="${target_abs%/*}"
         mint_dir="${mint_dir:-/}"
+        empty_root=$(mktemp -d "${mint_dir%/}/.gstack-init-id.XXXXXXXX") || {
+          echo "gstack-extend init: cannot create directory $target_abs" >&2
+          return 1
+        }
+        id_root="$empty_root"
       fi
       init_todo_id=$(with_audit_bun "$mint_dir" "$BUN_PREREQ_RAW_PATH" "$REPO_ROOT/bin/roadmap-id" mint "$id_root") || mint_status=$?
       if [ -n "$empty_root" ]; then rm -r -- "$empty_root" || return 1; fi

@@ -26,7 +26,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, sep } from 'node:path';
 import { scanAllWorkItemIds } from './work-item-id.ts';
 
 export type GitSpawnResult = {
@@ -40,12 +40,6 @@ export type GitSpawn = (args: string[], cwd: string, maxBuffer?: number) => GitS
 // History patches include full changed lines. A single planning-document
 // migration can exceed the child process default of 1 MiB.
 const HISTORY_PATCH_BUFFER_BYTES = 64 * 1024 * 1024;
-
-type PlanningHistoryLayout = {
-  root: string;
-  directory: string;
-  documentNames: readonly string[];
-};
 
 export type GitGateway = {
   /** Resolve repository root, or null if not in a repo. */
@@ -65,7 +59,7 @@ export type GitGateway = {
   /** Union of unstaged, staged, and untracked paths (drift check). */
   workingTreePaths(): string[];
   /** Reserve IDs from available Git history. Throws if history cannot be checked. */
-  historicalWorkItemIds(relPaths: string[], layout?: PlanningHistoryLayout): string[];
+  historicalWorkItemIds(relPaths: string[], projectRoot?: string): string[];
 };
 
 export type GitGatewayDeps = {
@@ -104,54 +98,108 @@ function spawnGit(args: string[], cwd: string, maxBuffer?: number, bindToCwd = f
 
 export const defaultSpawn: GitSpawn = spawnGit;
 
-/** Follow committed planning links across moves while keeping the log path-limited. */
-function historicalPlanningPaths(
+function readHistoricalPlanningLinks(
   spawn: GitSpawn,
   cwd: string,
-  relPaths: string[],
-  layout: PlanningHistoryLayout,
-): string[] {
-  const files = new Set(relPaths);
-  const directories = new Set([layout.directory]);
-  const scanned = new Set<string>();
-  const targets = new Map<string, string>();
-  for (;;) {
-    const paths = [...new Set([...files, ...directories])].filter((path) => !scanned.has(path));
-    if (paths.length === 0) return [...files];
-    for (const path of paths) scanned.add(path);
-    const log = spawn(
-      ['--literal-pathspecs', 'log', '--all', '--full-history', '-m', '--format=', '--raw', '--no-color', '--relative',
-        '--no-abbrev', '--no-renames', '-z', '--', ...paths],
-      cwd,
-      HISTORY_PATCH_BUFFER_BYTES,
-    );
-    if (!log.ok) throw new Error('could not read planning document link history');
-    const selected = new Set(paths);
-    const rows = log.stdout.split('\0');
-    for (let i = 0; i + 1 < rows.length; i += 2) {
-      const path = rows[i + 1]!;
-      if (!selected.has(path)) continue;
-      const [oldMode, newMode, oldObject, newObject] = rows[i]!.trimStart().slice(1).split(' ');
-      for (const [mode, object] of [[oldMode, oldObject], [newMode, newObject]] as const) {
-        if (mode !== '120000' || object === undefined) continue;
-        let blob = targets.get(object);
-        if (blob === undefined) {
-          const result = spawn(['cat-file', 'blob', object], cwd);
-          if (!result.ok) throw new Error('could not read a historical planning document link');
-          blob = result.stdout;
-          targets.set(object, blob);
-        }
-        const target = isAbsolute(blob) ? relative(layout.root, blob) : normalize(join(dirname(path), blob));
-        if (target === '..' || target.startsWith(`..${sep}`) || isAbsolute(target)) continue;
-        if (directories.has(path)) {
-          if (target && target !== '.') directories.add(target);
-          for (const name of layout.documentNames) files.add(join(target, name));
-        } else if (target && target !== '.') {
-          files.add(target);
-        }
+  paths: Set<string>,
+  links: Map<string, Set<string>>,
+  blobs: Map<string, string>,
+): void {
+  const log = spawn(
+    ['--literal-pathspecs', 'log', '--all', '--full-history', '-m', '--format=', '--raw', '--no-color', '--relative',
+      '--no-abbrev', '--no-renames', '-z', '--', ...paths],
+    cwd,
+    HISTORY_PATCH_BUFFER_BYTES,
+  );
+  if (!log.ok) throw new Error('could not read planning document link history');
+  for (const path of paths) links.set(path, new Set());
+  const rows = log.stdout.split('\0');
+  for (let i = 0; i + 1 < rows.length; i += 2) {
+    const path = rows[i + 1]!;
+    if (!paths.has(path)) continue;
+    const [oldMode, newMode, oldObject, newObject] = rows[i]!.trimStart().slice(1).split(' ');
+    for (const [mode, object] of [[oldMode, oldObject], [newMode, newObject]] as const) {
+      if (mode !== '120000' || object === undefined) continue;
+      let target = blobs.get(object);
+      if (target === undefined) {
+        const result = spawn(['cat-file', 'blob', object], cwd);
+        if (!result.ok) throw new Error('could not read a historical planning document link');
+        target = result.stdout;
+        blobs.set(object, target);
       }
+      if (target !== '') links.get(path)!.add(target);
     }
   }
+}
+
+type PlanningPathRoute = { resolved: string; remaining: Array<string | null>; followed: string[] };
+
+function pathParts(path: string): string[] {
+  return path.split(sep).filter(part => part !== '' && part !== '.');
+}
+
+/** Follow links in each component before resolving .., across available Git history. */
+function historicalPlanningPaths(spawn: GitSpawn, cwd: string, relPaths: string[], projectRoot: string): string[] {
+  const files = new Set(relPaths);
+  const links = new Map<string, Set<string>>();
+  const blobs = new Map<string, string>();
+  const seen = new Set<string>();
+  const rootPrefix = projectRoot.endsWith(sep) ? projectRoot : projectRoot + sep;
+  let pending: PlanningPathRoute[] = relPaths.map(path => ({
+    resolved: '.', remaining: pathParts(path), followed: [],
+  }));
+  while (pending.length > 0) {
+    const paths = new Set<string>();
+    for (const { resolved, remaining } of pending) {
+      let prefix = resolved;
+      for (const part of remaining) {
+        if (part === null || part === '..') break;
+        prefix = join(prefix, part);
+        if (!links.has(prefix)) paths.add(prefix);
+      }
+    }
+    if (paths.size > 0) readHistoricalPlanningLinks(spawn, cwd, paths, links, blobs);
+
+    const next: PlanningPathRoute[] = [];
+    const enqueue = (route: PlanningPathRoute) => {
+      const key = JSON.stringify([route.resolved, route.remaining, route.followed]);
+      if (seen.has(key)) return;
+      seen.add(key);
+      next.push(route);
+    };
+    for (const { resolved, remaining, followed } of pending) {
+      const [part, ...rest] = remaining;
+      if (part === undefined) {
+        if (resolved !== '.') files.add(resolved);
+        continue;
+      }
+      // Finishing a link target lets a later component follow that link again.
+      if (part === null) {
+        enqueue({ resolved, remaining: rest, followed: followed.slice(0, -1) });
+        continue;
+      }
+      if (part === '..') {
+        if (resolved !== '.') enqueue({ resolved: dirname(resolved), remaining: rest, followed });
+        continue;
+      }
+      const path = join(resolved, part);
+      // The same path can be regular in one commit and a link in another.
+      enqueue({ resolved: path, remaining: rest, followed });
+      if (followed.includes(path)) continue;
+      for (const target of links.get(path) ?? []) {
+        const absolute = isAbsolute(target);
+        if (absolute && target !== projectRoot && !target.startsWith(rootPrefix)) continue;
+        const localTarget = absolute ? target.slice(rootPrefix.length) : target;
+        enqueue({
+          resolved: absolute ? '.' : resolved,
+          remaining: [...pathParts(localTarget), null, ...rest],
+          followed: [...followed, path],
+        });
+      }
+    }
+    pending = next;
+  }
+  return [...files];
 }
 
 export function createGitGateway(deps: GitGatewayDeps): GitGateway {
@@ -229,7 +277,7 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     },
 
-    historicalWorkItemIds(relPaths: string[], layout?: PlanningHistoryLayout): string[] {
+    historicalWorkItemIds(relPaths: string[], projectRoot?: string): string[] {
       if (relPaths.length === 0) return [];
       // The mint and migration commands cannot safely treat a failed Git
       // command as an empty reservation set. A non-repository is legitimate.
@@ -238,7 +286,7 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
         if (/^fatal: not a git repository \(or any\b/.test(repo.stderr)) return [];
         throw new Error('could not establish Git history for work-item IDs');
       }
-      const paths = layout === undefined ? relPaths : historicalPlanningPaths(spawn, cwd, relPaths, layout);
+      const paths = projectRoot === undefined ? relPaths : historicalPlanningPaths(spawn, cwd, relPaths, projectRoot);
       const r = spawn(
         ['--literal-pathspecs', 'log', '--all', '--full-history', '-m', '--no-color', '--no-ext-diff', '--no-textconv', '--text',
           '-G', 'wi-[0-9a-f]{4,8}', '--format=', '-p', '-U0', '--', ...paths],

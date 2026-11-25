@@ -394,6 +394,43 @@ describe('bin/roadmap-id CLI', () => {
     expect(readFileSync(newTodo, 'utf8')).toBe(migrateTodosText(pending, new Set(previous.ids)).text);
   });
 
+  test.each([
+    { docsTarget: 'current/planning', linkLeaf: '' },
+    { docsTarget: 'current/../planning', linkLeaf: 'nested' },
+    { docsTarget: 'current/../../current/../planning', linkLeaf: 'nested' },
+  ])('migration reserves retired IDs when the planning link moves ($docsTarget)', ({ docsTarget, linkLeaf }) => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const docs = join(repo, 'docs');
+    const current = join(repo, 'current');
+    for (const release of ['release-v1', 'release-v2']) {
+      mkdirSync(join(repo, release, linkLeaf), { recursive: true });
+      mkdirSync(join(repo, release, 'planning'));
+    }
+    symlinkSync(docsTarget, docs);
+    symlinkSync(join('release-v1', linkLeaf), current);
+    const oldTodo = join(repo, 'release-v1/planning/TODOS.md');
+    const newTodo = join(repo, 'release-v2/planning/TODOS.md');
+    const pending = '## Unprocessed\n### Follow-up\n';
+    const retired = migrateTodosText(pending, new Set());
+    const commit = (message: string, paths: string[]) => {
+      expect(spawnSync('git', ['add', '--', ...paths], { cwd: repo, env: GIT_ENV }).status).toBe(0);
+      expect(spawnSync('git', ['commit', '-m', message], { cwd: repo, env: GIT_ENV }).status).toBe(0);
+    };
+    writeFileSync(oldTodo, retired.text);
+    commit('record first follow-up', ['docs', 'current', 'release-v1/planning/TODOS.md']);
+    writeFileSync(oldTodo, '## Unprocessed\n');
+    commit('retire first follow-up', ['release-v1/planning/TODOS.md']);
+    unlinkSync(current);
+    symlinkSync(join('release-v2', linkLeaf), current);
+    writeFileSync(newTodo, pending);
+    commit('move the active planning directory', ['current', 'release-v2/planning/TODOS.md']);
+
+    const result = spawnSync('/bin/sh', [BIN, 'migrate', repo], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readlinkSync(docs)).toBe(docsTarget);
+    expect(readFileSync(newTodo, 'utf8')).toBe(migrateTodosText(pending, new Set(retired.ids)).text);
+  });
+
   test('rewrite uses the live label over a shipped label and reads legacy archive Groups', () => {
     const repo = freshDir('rewrite');
     mkdirSync(join(repo, 'docs'));
