@@ -8,13 +8,15 @@
 - **Description:** The parity-only test fix removes the observed limit failure. Call-heavy production files can still spend the header budget on calls and control flow. Repository discovery, source size, template nesting and vocabulary limits can also stop otherwise useful scans.
 - **Hypothesis (untested):** Distinguish actual function spans from ordinary calls. Report bounded omissions at the file or signal level and compare Git and walk discovery under partial failures.
 - **Evidence:** PR #314 continuation found no current production failure on the five largest TypeScript source files in this checkout.
+- **Test gap:** Exercise discovery errors and scan-limit outcomes beyond the current missing-target and symlink fixtures. Include legitimate Git-indexed paths on filesystems that normalize casing or Unicode.
 - **Revisit when:** A representative production file crosses a limit or scanner performance is measured on a larger checkout.
 
 ### [review:files=src/full-review/state-machines.ts] Refine the lexical state-machine signals
 
 - **ID:** wi-87b9cc
-- **Description:** Review identified possible noise and missed matches around JSX and template expressions, TypeScript method parameters, object annotations, state-field identity and generic loader pairing.
+- **Description:** Review identified possible noise and missed matches around JSX and template expressions, TypeScript method parameters and return types, object annotations, chained and bracket-access state fields, and generic loader pairing.
 - **Hypothesis (untested):** Add source examples that show the precision or recall gap before changing the rules. Share vocabulary declaration construction and regex-start keywords where it keeps the cases aligned.
+- **Test gap:** Add persistence fixtures for SQL column detection and records validated only through a schema.
 - **Revisit when:** A real review yields one of these false candidates or misses a known lifecycle transition.
 
 ### [review:files=src/full-review/state-machines.ts] Measure and bound parity matching and branch-prefix work
@@ -22,12 +24,14 @@
 - **ID:** wi-2deb42
 - **Description:** The vocabulary-pair cap leaves extra parity-assertion matching and regex construction per pair. The branch-prefix matcher also scans whitespace using overlapping patterns. The continuation did not measure a slowdown on routine inputs.
 - **Hypothesis (untested):** Index parity evidence by vocabulary, use a simpler prefix parse and measure runtime on representative mixed-language repositories.
+- **Test gap:** Extend the Python parity fixture with TypeScript equality assertions and vocabulary-pair limits. Verify that a failure message or an equality between unrelated symbols cannot stand in for cross-language evidence.
 - **Revisit when:** A real scan stalls or there is a representative fixture large enough for a reliable comparison.
 
-### [review:files=src/full-review/state-machines-cli.ts|tests/full-review-state-machines.test.ts] Exercise the scanner text consumed by full-review
+### [review:files=src/full-review/state-machines-cli.ts|skills/full-review.md|tests/full-review-state-machines.test.ts] Exercise the scanner text consumed by full-review
 
 - **ID:** wi-ca018a
 - **Description:** Tests assert positive candidates mainly through JSON. The default report fed to agents could use a fixture-backed check for representative sites, facts and display boundaries. The classification examples are checked against the source and output contract, with live reviewer judgment still unmeasured.
+- **Test gap:** Verify populated default text at the display limits and evaluate whether live reviewers apply the rubric to unfamiliar source.
 - **Hypothesis (untested):** Add a launcher fixture for candidate text and escaped display fields. Collect a separately scoped live-review example before drawing conclusions about classification quality.
 - **Revisit when:** The formatter or the scanner-to-reviewer prompt boundary changes.
 
