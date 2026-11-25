@@ -93,6 +93,17 @@ function assertMechanicsOnly(result: ScanResult): void {
 }
 
 describe('bin/full-review-state-machines mechanical pre-scanner', () => {
+  // Value: protects=production candidates survive large parity-only test files; fails_when=test calls exhaust the production header budget; why_new=continuation regression
+  test('keeps production candidates when a test has many ordinary calls', () => {
+    const dir = materializeFixture('implicit-sm-ts');
+    writeFileSync(join(dir, 'workflow.test.ts'), 'checkOrder();\n'.repeat(800));
+    const result = runMain(['--format', 'json', dir]);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout) as ScanResult;
+    expect(report.candidates.some(candidate => candidate.signal === 'mutation-fanout')).toBe(true);
+    expect(report.candidates.flatMap(candidate => candidate.sites).some(site => site.file.endsWith('.test.ts'))).toBe(false);
+  });
+
   // Value: protects=all six intra-language mechanical signals fire on seeded Python implicit state machines with accurate sites and zero verdict fields; fails_when=any signal regresses or emits non-mechanical judgments; why_new=Track 100A T3; seam=none
   test('surfaces S1-S6 on seeded Python implicit-state-machine fixture with mechanics-only output', () => {
     const dir = materializeFixture('implicit-sm-py', { initGit: true });

@@ -1489,7 +1489,7 @@ export function scanSources(
   const parsedFiles: ParsedFile[] = files.map(file => {
     const { text: stripped, structure } = lexSource(file.source, file.language);
     const lines = stripped.split('\n');
-    const spans = extractFunctionSpans(structure, file.language);
+    const spans = file.isTest ? [] : extractFunctionSpans(structure, file.language);
     const vocabs = file.isTest ? [] : extractVocabularies(file, lines);
     return { file, stripped, structure, lines, spans, vocabs };
   });
