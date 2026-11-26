@@ -1554,7 +1554,7 @@ row (`next: none; status: needs-context`).
 
 | Field | Required | Value |
 |---|---|---|
-| `refresh` | yes | appears in the invocation prompt (for example `Run /review-and-prep refresh`) |
+| `refresh` | yes | the skill argument or the exact first line `Run /review-and-prep refresh` |
 | `Cause:` | yes | exactly one `Cause: base_moved` line in the invocation prompt |
 | `Review policy:` | no | optional versioned policy line (for example `full-suite=external`) |
 
@@ -1599,7 +1599,7 @@ row (`next: none; status: needs-context`).
 1. Run the capability check: `grep -F 'Cause: base_moved' "<installed skill dir>/SKILL.md"`.
 2. Send the refresh invocation prompt with `Cause: base_moved` (and any policy line).
 3. On a refresh (`Refresh:`), classify the accompanying H-B handoff as usual; the `Refresh:` line never changes an H-B outcome.
-4. On an escalation (`Refresh escalated:`), run an ordinary `/review-and-prep` on the same PR in the same workspace, where the PR is draft and the merge commit is local.
+4. On an escalation (`Refresh escalated:`), run an ordinary full `/review-and-prep` on the same draft PR in the same workspace. The latest candidate stays local. A previous draft push may already exist if the base moved again.
 5. On a refusal (`Refresh refused:`), show the message to the user, because nothing changed.
 6. At an external-gate pause, follow H-F; resuming with `/review-and-prep resume` continues the refresh from its evidence directory.
 
