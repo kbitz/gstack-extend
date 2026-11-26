@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.120.0] - 2026-11-25
+
+### Changed
+
+- `/review-and-prep` now writes machine-generated intake records (recorded test gaps under `test-gaps=record`, base-only issues under `blocking=shown`, and review-filed follow-ups) as one Markdown file per record under `docs/todos/` named by its `wi-` work-item ID instead of appending to `docs/TODOS.md`, while `/roadmap`, `bin/roadmap-audit`, and `bin/roadmap-id` read, validate, reserve IDs across, and drain both `docs/TODOS.md` and `docs/todos/`.
+- `/review-and-prep` writes each machine-generated follow-up to its own Markdown file under `docs/todos/`.
+- `/roadmap` reads both inboxes and removes drained intake files in the same commit that places their records.
+- `bin/roadmap-audit` reports unexpected intake entries by path, and `bin/roadmap-id mint` reserves IDs from intake filenames and record bodies.
+
+### Upgrade notes
+
+- Tools or workflows that read machine-generated review follow-ups from `docs/TODOS.md` alone should also read `docs/todos/` per the `intake-files/v1` contract in `docs/source-tag-contract.md`; existing hand-written `docs/TODOS.md` entries and repositories without `docs/todos/` continue working without migration.
+
 ## [0.119.0] - 2026-11-25
 
 ### Changed

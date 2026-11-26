@@ -2,9 +2,11 @@
  * todo-format.ts — port of check_todo_format (~L3456-3567).
  *
  * Walks the ## Unprocessed section of TODOS.md and validates every
- * candidate entry against the source-tag contract.
+ * candidate entry against the source-tag contract. Also validates each entry
+ * in docs/todos/ against the per-record intake format.
  *
  * Failure modes:
+ *   - MALFORMED_INTAKE_FILE: invalid path, filename, or record structure.
  *   - MALFORMED_HEADING: compact bullet (`- **[tag] Title**`) — flagged
  *     so the writer migrates to canonical heading form.
  *   - MALFORMED_HEADING: legacy bullet (`- [tag] ...`) — same migration ask.
@@ -17,13 +19,14 @@
  * Output: HEADINGS / LEGACY_BULLETS / COMPACT_BULLETS as preamble (count
  * lines mirrored from check_unprocessed but computed independently —
  * preserves bash semantics where the two checks count their own way).
+ * INTAKE_FILES appears when intake entries are present.
  */
 
 import { extractTagFromHeading, extractTitleFromHeading, validateTagExpression } from '../lib/source-tag.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckTodoFormat(ctx: AuditCtx): CheckResult {
-  if (ctx.paths.todos === null) {
+  if (ctx.paths.todos === null && ctx.intakeFiles.length === 0) {
     return {
       section: 'TODO_FORMAT',
       status: 'skip',
@@ -90,11 +93,64 @@ export function runCheckTodoFormat(ctx: AuditCtx): CheckResult {
     }
   }
 
+  for (const f of ctx.intakeFiles) {
+    if (f.unreadable) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — unable to read intake path`);
+      continue;
+    }
+    if (f.rel === 'docs/todos') {
+      failures.push('- MALFORMED_INTAKE_FILE: docs/todos — expected real docs/ and docs/todos/ directories');
+      continue;
+    }
+    if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — expected a regular wi-<4-8 lowercase hex>.md file`);
+      continue;
+    }
+    if (f.filenameId === null) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — filename must match wi-<4-8 lowercase hex>.md`);
+    }
+    if (f.hasFrontmatter) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — YAML frontmatter is not allowed`);
+    } else if (f.headings.length > 0 && !f.headingIsFirst) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — put the record heading before any content`);
+    }
+    for (const h of f.unexpectedHeadings) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel}:${h.line} — unexpected heading '${h.raw.slice(0, 80)}' (expected one '### [source:tag] Title' record with no section wrapper)`);
+    }
+    if (f.headings.length !== 1) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — expected exactly one '### [source:tag] Title' heading, found ${f.headings.length}`);
+    }
+    if (f.workItemIdRaw !== null && !f.idIsFirst) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — put the ID first after the record heading`);
+    }
+    legacy += f.legacyBullets.length;
+    compact += f.compactBullets.length;
+    for (const e of [...f.legacyBullets, ...f.compactBullets]) {
+      failures.push(`- MALFORMED_HEADING: ${f.rel}:${e.line} — unexpected standalone bullet '${e.raw.slice(0, 80)}'`);
+    }
+    for (const h of f.headings) {
+      headingTotal++;
+      const tag = h.tag ?? '';
+      if (h.unclosedTag) {
+        failures.push(`- MALFORMED_HEADING: unclosed tag bracket in '${f.rel}':${h.line}`);
+      } else if (tag === '') {
+        failures.push(`- MALFORMED_HEADING: missing [source:tag] in intake file '${f.rel}' (expected '### [source:tag] Title')`);
+      } else {
+        const r = validateTagExpression(tag);
+        if (!r.ok) failures.push(`- ${r.reason}: '${tag}' in intake file '${f.rel}'`);
+      }
+      if ((h.title ?? '').trim() === '') {
+        failures.push(`- MALFORMED_HEADING: missing title in intake file '${f.rel}':${h.line}`);
+      }
+    }
+  }
+
   const preamble = [
     `HEADINGS: ${headingTotal}`,
     `LEGACY_BULLETS: ${legacy}`,
     `COMPACT_BULLETS: ${compact}`,
   ];
+  if (ctx.intakeFiles.length > 0) preamble.push(`INTAKE_FILES: ${ctx.intakeFiles.length}`);
   if (failures.length === 0) {
     return {
       section: 'TODO_FORMAT',

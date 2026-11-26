@@ -1,12 +1,12 @@
 /**
  * work-item-ids.ts — validates immutable work-item IDs across TODOS, Future,
- * active ROADMAP Tracks, and shipped Track history.
+ * active ROADMAP Tracks, shipped Track history, and per-record intake files.
  *
  * Emits canonical section `WORK_ITEM_IDS`.
- *   - `STATUS: skip` when zero inspectable records exist across all four docs.
+ *   - `STATUS: skip` when zero inspectable records exist.
  *   - `STATUS: pass` when every record has a valid globally unique `wi-` ID.
- *   - `STATUS: warn` when the only findings are `MISSING_ID`.
- *   - `STATUS: fail` on any `MALFORMED_ID` or `DUPLICATE_ID`.
+ *   - `STATUS: warn` when the only findings are missing IDs on legacy records.
+ *   - `STATUS: fail` on malformed or duplicate IDs, missing intake IDs, or an intake ID mismatch.
  */
 
 import { extractInlineBulletId } from '../lib/work-item-id.ts';
@@ -77,6 +77,29 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     if (entry.kind !== 'heading') continue;
     const label = entry.title || entry.raw.replace(/^### /, '').trim();
     inspect(`TODOS.md:${entry.line} (${label})`, TODO_FIELD, entry);
+  }
+
+  for (const f of ctx.intakeFiles) {
+    if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
+      inspectableCount++;
+      hasBlockingFinding = true;
+      const reason = f.unreadable ? 'unable to read intake path' : 'expected a regular intake Markdown file';
+      findings.push(`- MALFORMED_ID: ${f.rel} — ${reason}`);
+      continue;
+    }
+    if (f.filenameId === null) {
+      hasBlockingFinding = true;
+      findings.push(`- MALFORMED_ID: ${f.rel} — filename must match wi-<4-8 lowercase hex>.md`);
+    }
+    if (f.workItemId === null) hasBlockingFinding = true;
+    inspect(f.rel, `${TODO_FIELD} (required in intake files)`, f);
+    if (f.filenameId !== null && f.filenameId !== f.workItemId) {
+      if (f.workItemId !== null) {
+        hasBlockingFinding = true;
+        findings.push(`- ID_MISMATCH: ${f.rel} — filename ID "${f.filenameId}" does not match body ID "${f.workItemId}"`);
+      }
+      registerValidId(f.filenameId, f.rel);
+    }
   }
 
   const roadmap = ctx.roadmap.value;

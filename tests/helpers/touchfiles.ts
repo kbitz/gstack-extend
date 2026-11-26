@@ -193,6 +193,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/audit-cli-contract.test.ts': [
     'bin/lib/bun-prereq.sh',
     'bin/roadmap-audit',
+    'bin/roadmap-id',
     'src/audit/**',
   ],
   'tests/audit-invariants.test.ts': [

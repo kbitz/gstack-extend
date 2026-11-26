@@ -73,6 +73,7 @@ export type MakeCtxOpts = {
   designs?: DesignDoc[];
   scaffoldExists?: ScaffoldResolution;
   mdFiles?: MdFileSnapshot[];
+  intakeFiles?: AuditCtx['intakeFiles'];
   sharedInfra?: SharedInfraSnapshot;
   parallelismCap?: number;
   claudeMd?: string;
@@ -167,6 +168,7 @@ export function makeCtx(opts: MakeCtxOpts = {}): AuditCtx {
 
   const paths: AuditFilePaths = {
     todos: opts.todos !== undefined ? 'TODOS.md' : null,
+    todosDir: null,
     roadmap: opts.roadmap !== undefined ? 'ROADMAP.md' : null,
     progress: opts.progress !== undefined ? 'PROGRESS.md' : null,
     futureArchive: null,
@@ -196,6 +198,7 @@ export function makeCtx(opts: MakeCtxOpts = {}): AuditCtx {
     designs: opts.designs ?? [],
     scaffoldExists: opts.scaffoldExists ?? new Map(),
     mdFiles: opts.mdFiles ?? [],
+    intakeFiles: opts.intakeFiles ?? [],
     sharedInfra: opts.sharedInfra ?? { status: 'missing' },
     parallelismCap: opts.parallelismCap ?? 3,
     claudeMd: opts.claudeMd ?? '',

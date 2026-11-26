@@ -35,6 +35,92 @@
 - **Hypothesis (untested):** Add a launcher fixture for candidate text and escaped display fields. Collect a separately scoped live-review example before drawing conclusions about classification quality.
 - **Revisit when:** The formatter or the scanner-to-reviewer prompt boundary changes.
 
+### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Keep unlisted intake records in a candidate drain
+
+- **ID:** wi-ce12a2
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The candidate fixture proves that the selected intake file is removed from both audit views. It does not assert that another valid, unlisted intake record stays in both views.
+- **Hypothesis (untested):** Give the candidate one placed record and one held record. Check the held file's inbox count, inventory row, and unchanged bytes.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/references/roadmap/conditional-candidate-validation.md`, drain overlay
+- **Evidence:** The fixture uses one live intake file for each selection. Review found no loss of a held file.
+- **Context:** Filed during Track 98A review at 91d3961 (2026-11-25).
+- **Revisit when:** A change touches selective intake draining or candidate inventory.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/intake-files.ts|tests/audit-cli-contract.test.ts] Test gap: Refuse a linked intake directory
+
+- **ID:** wi-432e29
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The CLI fixtures cover a linked parent, a non-directory intake path, and links inside a real directory. They leave the directory entry itself untested as a link.
+- **Hypothesis (untested):** Pair the canonical directories with a linked `docs/todos` fixture and assert the directory refusal without reading its records.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/audit/lib/intake-files.ts, intake directory inspection
+- **Evidence:** The existing CLI fixtures and read-only coverage audit give no current failure.
+- **Context:** Filed during /review-and-prep on https://github.com/kbitz/gstack-extend/pull/315 at 949a429 (2026-11-25).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/lib/intake-files.ts|src/audit/lib/md-walk.ts|tests/audit-cli-contract.test.ts] Test gap: Verify intake spelling on a case-insensitive volume
+
+- **ID:** wi-9cd11b
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Linux launcher fixtures cover canonical spelling and links. The case-folding lookup and exclusion lack a native filesystem fixture.
+- **Hypothesis (untested):** Exercise canonical and alternate directory spellings on a case-insensitive volume and check the refusal, the ordinary documentation inventory and the excluded intake directory.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/audit/lib/intake-files.ts, directory-entry spelling lookup
+- **Evidence:** A temporary simulated case-insensitive lookup passed the identity, refusal and Markdown-walker checks. Native filesystem behavior was not exercised.
+- **Context:** Filed during /review-and-prep on https://github.com/kbitz/gstack-extend/pull/315 at 949a429 (2026-11-25).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/cli.ts|tests/audit-cli-contract.test.ts] Test gap: Report an unreadable intake directory
+
+- **ID:** wi-9f61f8
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The current launcher check covers reading an unreadable regular file. It does not make directory enumeration fail.
+- **Hypothesis (untested):** On a host that enforces mode bits for the test user, exercise an unreadable intake directory and assert the format finding and normal audit output.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/audit/cli.ts, intake directory enumeration
+- **Evidence:** Coverage audit and the passing unreadable-file fixture give no current failure.
+- **Context:** Filed during /review-and-prep on https://github.com/kbitz/gstack-extend/pull/315 at 949a429 (2026-11-25).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=src/audit/cli.ts|tests/audit-cli-contract.test.ts] Test gap: Keep multiline document paths out of move suggestions
+
+- **ID:** wi-292ec8
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The launcher asserts that a malformed intake path prints on one diagnostic line. The fixture does not assert omission of a move suggestion for an ordinary document path that cannot be represented on one line.
+- **Hypothesis (untested):** Extend the inventory fixture to check that such a document remains visible in the diagnostic and produces no move suggestion.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/audit/cli.ts, audit report rendering
+- **Evidence:** Coverage audit found the distinct output guard and no demonstrated current defect.
+- **Context:** Filed during /review-and-prep on https://github.com/kbitz/gstack-extend/pull/315 at 949a429 (2026-11-25).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Refuse a selected intake record with a mismatched ID
+
+- **ID:** wi-5ce124
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The candidate launcher tests a selected file with an invalid heading shape. Filename and body mismatch is asserted in the ID audit separately.
+- **Hypothesis (untested):** Give the candidate a well-formed selected source whose body ID differs from the filename and assert refusal before it can be omitted from the candidate.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/references/roadmap/conditional-candidate-validation.md, selected intake validation
+- **Evidence:** Coverage audit found an independent assertion missing. The existing ID audit fixtures pass.
+- **Context:** Filed during /review-and-prep on https://github.com/kbitz/gstack-extend/pull/315 at 949a429 (2026-11-25).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Require valid remaining inbox entries before a drain
+
+- **ID:** wi-1dc34a
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The committed launcher validates a corrected legacy draft and refuses a malformed selected file. Neither assertion exercises the final validation of a malformed entry remaining in the inbox.
+- **Hypothesis (untested):** Run the drain alongside an uncorrected legacy entry and assert its rewrite diagnostic and refusal, then verify the corrected candidate succeeds with the live entry untouched.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/references/roadmap/conditional-candidate-validation.md, final TODO_FORMAT blocker
+- **Evidence:** The temporary held-legacy and H3 replay checks passed. No new committed assertion exercises this case.
+- **Context:** Filed during /review-and-prep on https://github.com/kbitz/gstack-extend/pull/315 at 949a429 (2026-11-25).
+- **Effort:** ? (user triages in /roadmap)
+
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

@@ -27,7 +27,10 @@ function advanceLine(line: number, raw: string): number {
 }
 
 /** Yield planning text with its original, one-based file coordinates. */
-export function* planningLines(content: string): Generator<readonly [lineNo: number, line: string]> {
+export function* planningLines(
+  content: string,
+  onHeading?: (lineNo: number, heading: Tokens.Heading) => void,
+): Generator<readonly [lineNo: number, line: string]> {
   if (content === '') return;
 
   const rawLines = content.split('\n').map(line => line.replace(/\r$/, ''));
@@ -36,7 +39,7 @@ export function* planningLines(content: string): Generator<readonly [lineNo: num
   const tokens = planningMarked.lexer(lexSource);
   let lastYieldedLine = -1;
 
-  function* walk(blocks: Token[], startLine: number): Generator<readonly [number, string]> {
+  function* walk(blocks: Token[], startLine: number, topLevel = false): Generator<readonly [number, string]> {
     let line = startLine;
     for (const token of blocks) {
       switch (token.type) {
@@ -62,6 +65,7 @@ export function* planningLines(content: string): Generator<readonly [lineNo: num
         case 'space':
           break;
         default: {
+          if (topLevel && token.type === 'heading') onHeading?.(line + 1, token as Tokens.Heading);
           const end = advanceLine(line, token.raw.replace(/\n+$/, ''));
           // For example, a task checkbox and its text share one source line.
           for (let idx = Math.max(line, lastYieldedLine + 1); idx <= end; idx++) {
@@ -74,5 +78,5 @@ export function* planningLines(content: string): Generator<readonly [lineNo: num
     }
   }
 
-  yield* walk(tokens, 0);
+  yield* walk(tokens, 0, true);
 }

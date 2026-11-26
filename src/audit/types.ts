@@ -19,7 +19,7 @@ import type { GitGateway } from './lib/git.ts';
 import type { ParsedPhases } from './parsers/phases.ts';
 import type { ParsedProgress } from './parsers/progress.ts';
 import type { ParsedRoadmap } from './parsers/roadmap.ts';
-import type { ParsedTodos } from './parsers/todos.ts';
+import type { ParsedIntakeFile, ParsedTodos } from './parsers/todos.ts';
 
 // ─── Parser result shape (T1: parsers return value + errors) ──────────
 
@@ -79,6 +79,7 @@ export type AuditEnv = {
 // File paths resolved by find_doc (root first, then docs/). null when neither exists.
 export type AuditFilePaths = {
   todos: string | null;
+  todosDir: string | null;
   roadmap: string | null;
   progress: string | null;
   futureArchive: string | null;
@@ -173,6 +174,7 @@ export type AuditCtx = {
   designs: DesignDoc[];
   scaffoldExists: ScaffoldResolution;
   mdFiles: MdFileSnapshot[];
+  intakeFiles: ParsedIntakeFile[];
   sharedInfra: SharedInfraSnapshot;
   parallelismCap: number;
   claudeMd: string; // CLAUDE.md content (empty when missing). For parallelism cap + future overrides.

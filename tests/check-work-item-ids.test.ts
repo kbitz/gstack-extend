@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { runCheckWorkItemIds } from '../src/audit/checks/work-item-ids.ts';
 import { mergeFutureArchive, mergeShippedArchive, parseRoadmap } from '../src/audit/parsers/roadmap.ts';
-import { parseTodos } from '../src/audit/parsers/todos.ts';
+import { parseIntakeFile, parseTodos } from '../src/audit/parsers/todos.ts';
 import { makeCtx } from './helpers/audit-ctx.ts';
 
 describe('runCheckWorkItemIds', () => {
@@ -162,5 +162,47 @@ describe('runCheckWorkItemIds', () => {
     expect(joined).toContain('DUPLICATE_ID:');
     expect(joined).toContain('TODOS.md ## Completed');
     expect(joined).toContain('docs/roadmap-shipped.md Track 1A');
+  });
+});
+
+describe('per-record intake IDs', () => {
+  const record = (stem: string, id?: string) => parseIntakeFile(
+    'docs/todos/' + stem + '.md', stem + '.md', 'file',
+    '### [manual] An intake record\n' + (id ? '- **ID:** ' + id + '\n' : ''),
+  );
+  const intake = record('wi-a1b2c3', 'wi-a1b2c3');
+  test('detects duplicates across every planning source', () => {
+    const todos = parseTodos('## Unprocessed\n### [manual] Other\n- **ID:** wi-a1b2c3\n').value;
+    const active = parseRoadmap('## Current Plan\n### Group 1: Test\n#### Track 1A: Existing\n_id: wi-a1b2c3_\n');
+    const future = parseRoadmap('## Future\n- **Other** — **ID:** wi-a1b2c3 — test.\n');
+    const shipped = parseRoadmap('## Shipped\n### Track 2A: Shipped ✓ Shipped (v0.1.0)\n_id: wi-a1b2c3_\n', { fromShippedArchive: true });
+    const result = runCheckWorkItemIds(makeCtx({
+      parsedTodos: todos,
+      parsedRoadmap: mergeFutureArchive(mergeShippedArchive(active, shipped), future).value,
+      intakeFiles: [intake, record('wi-aabbcc', 'wi-a1b2c3')],
+    }));
+    expect(result.status).toBe('fail');
+    const duplicates = result.body.filter(line => line.includes('DUPLICATE_ID:'));
+    expect(duplicates).toHaveLength(5);
+    for (const source of ['docs/todos/wi-a1b2c3.md', 'docs/todos/wi-aabbcc.md', 'ROADMAP.md Track 1A', 'docs/roadmap-future.md', 'docs/roadmap-shipped.md Track 2A']) {
+      expect(duplicates.some(line => line.includes(source))).toBe(true);
+    }
+  });
+
+  test('missing intake IDs fail while missing legacy IDs warn', () => {
+    const parsedTodos = parseTodos('## Unprocessed\n### [manual] Existing\n').value;
+    expect(runCheckWorkItemIds(makeCtx({ parsedTodos })).status).toBe('warn');
+    const result = runCheckWorkItemIds(makeCtx({ parsedTodos, intakeFiles: [record('wi-a1b2c3')] }));
+    expect(result.status).toBe('fail');
+    expect(result.body.join('\n')).toContain('MISSING_ID: docs/todos/wi-a1b2c3.md');
+  });
+
+  test('checks and reserves both IDs when the filename and body disagree', () => {
+    const result = runCheckWorkItemIds(makeCtx({
+      intakeFiles: [record('wi-a1b2c3', 'wi-abcdef'), record('wi-abcdef', 'wi-abcdef')],
+    }));
+    expect(result.status).toBe('fail');
+    expect(result.body.join('\n')).toContain('ID_MISMATCH: docs/todos/wi-a1b2c3.md');
+    expect(result.body.join('\n')).toContain('DUPLICATE_ID: docs/todos/wi-abcdef.md');
   });
 });

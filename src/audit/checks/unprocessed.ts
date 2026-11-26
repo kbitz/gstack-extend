@@ -4,6 +4,7 @@
  * Counts items in the ## Unprocessed section of TODOS.md, broken down
  * by canonical-form (heading-style `### [tag] Title`) vs legacy bullet
  * (`- [tag] ...`) vs compact bullet (`- **[tag] Title** ...`).
+ * Adds docs/todos/ entries to the count and emits INTAKE_FILES when present.
  *
  * Emits ITEMS / LEGACY_BULLETS / COMPACT_BULLETS as preamble (before STATUS),
  * then a STATUS that depends on the inbox shape:
@@ -16,7 +17,8 @@
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckUnprocessed(ctx: AuditCtx): CheckResult {
-  if (ctx.paths.todos === null) {
+  const intakeCount = ctx.intakeFiles.length;
+  if (ctx.paths.todos === null && intakeCount === 0) {
     // Bash emits STATUS first, then ITEMS: 0, then FINDINGS — no LEGACY/COMPACT lines.
     return {
       section: 'UNPROCESSED',
@@ -35,11 +37,16 @@ export function runCheckUnprocessed(ctx: AuditCtx): CheckResult {
     else if (e.kind === 'compactBullet') compact++;
   }
 
-  const preamble = [`ITEMS: ${items}`, `LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`];
+  const total = items + intakeCount;
+  const preamble = [`ITEMS: ${total}`];
+  if (intakeCount > 0) preamble.push(`INTAKE_FILES: ${intakeCount}`);
+  preamble.push(`LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`);
   const nonCanonical = legacy + compact;
 
-  if (todos.hasUnprocessedSection && items > 0) {
-    const body = ['FINDINGS:', `- ${items} unprocessed items awaiting triage`];
+  if (intakeCount > 0 || (todos.hasUnprocessedSection && items > 0)) {
+    const breakdown = items > 0 ? `${items} in TODOS.md, ` : '';
+    const sources = intakeCount > 0 ? ` (${breakdown}${intakeCount} in docs/todos/)` : '';
+    const body = ['FINDINGS:', `- ${total} unprocessed items awaiting triage${sources}`];
     if (legacy > 0) {
       body.push(`- ${legacy} legacy bullet-form entries (run /roadmap to migrate to rich format)`);
     }

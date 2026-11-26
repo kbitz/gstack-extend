@@ -1,11 +1,12 @@
 /**
  * doc-inventory.ts — port of check_doc_inventory (~L1513-1568).
  *
- * Lists every `.md` file at maxdepth 2 with its TODO-pattern count and
+ * Lists walked `.md` files and per-record intake with their TODO-pattern count and
  * doc-type label. Informational output — feeds the skill prompt's Doc
  * Discovery step.
  *
  * Doc-type classification (mirrors bash):
+ *   - intake doc:  regular Markdown file under docs/todos/
  *   - root doc:    basename in ROOT_DOCS
  *   - project doc: basename in DOCS_DIR_DOCS, or the /project-spec product spec
  *   - design doc:  path contains `/docs/designs/`
@@ -33,6 +34,7 @@ const ROOT_DOCS = new Set(['README.md', 'CHANGELOG.md', 'CLAUDE.md', 'VERSION', 
 const PROJECT_DOCS = new Set(['TODOS.md', 'ROADMAP.md', 'PROGRESS.md']);
 
 function classify(rel: string, basename: string, content: string): string {
+  if (rel.startsWith('docs/todos/')) return 'intake doc';
   if (ROOT_DOCS.has(basename)) return 'root doc';
   if (PROJECT_DOCS.has(basename) || isProductSpec(rel, content)) return 'project doc';
   if (rel.includes('/docs/designs/') || rel.startsWith('docs/designs/')) return 'design doc';

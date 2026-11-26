@@ -1,10 +1,12 @@
 # Source-Tag Contract
 
-Canonical schema for items written to `TODOS.md` by skills. All producer skills
-(`/pair-review`, `/full-review`, `/review-and-prep`, `/investigate`, manual) emit entries that match this contract. `/roadmap`'s
-scrutiny gate, outcome-based admission, and dedup pipeline parse entries against
-this contract. `bin/roadmap-audit` validates entries and emits `STATUS: fail`
-on malformed ones.
+Canonical schema for items written by producers
+(`/pair-review`, `/full-review`, `/review-and-prep`, `/investigate`, manual).
+`/review-and-prep` writes machine-generated intake to one
+`docs/todos/wi-<hex>.md` file per record in the same item grammar. Hand-written
+entries, entries from other skills, and existing review records can stay in
+`TODOS.md`. `/roadmap` parses both sources for scrutiny, admission, and dedup.
+`bin/roadmap-audit` reports malformed items as `STATUS: fail`.
 
 ## Item grammar
 
@@ -84,8 +86,8 @@ updated skills use the hedged framing.
 Parsers tolerate their absence. Recommended fields:
 
 - `- **ID:**` `wi-<4-8 lowercase hex>` — immutable work-item ID.
-  New entries get an ID from `bin/roadmap-id mint` at creation. Missing IDs
-  produce an advisory finding in the `## WORK_ITEM_IDS` section of `bin/roadmap-audit`.
+  New entries get an ID from `bin/roadmap-id mint` at creation. `TODOS.md`
+  entries with no ID produce an advisory finding in `WORK_ITEM_IDS`.
 - `- **Why:**` ... — problem statement or value proposition. Shown in triage.
 - `- **Effort:**` ... — size estimate. Shown in triage.
 - `- **Depends on:**` ... — prerequisites. Flags items that shouldn't be
@@ -295,7 +297,7 @@ The skill surfaces validator failures during triage and blocks until resolved.
 
 ## Work-item IDs and `_blocked-by:` contract (`work-item-id/v1`)
 
-New `TODOS.md` entries, `## Future` bullets, active `ROADMAP.md` Track cards, and shipped Track records carry immutable work-item IDs so consumers and planning tools can track them across promotions, deferrals, and Track-label renumbering. Existing records may lack IDs.
+New `TODOS.md` entries, per-record intake files, `## Future` bullets, active `ROADMAP.md` Track cards, and shipped Track records carry immutable work-item IDs so consumers and planning tools can track them across promotions, deferrals, and Track-label renumbering. Legacy planning records may lack IDs.
 
 ### Format and immutability
 
@@ -308,6 +310,7 @@ New `TODOS.md` entries, `## Future` bullets, active `ROADMAP.md` Track cards, an
 | Document | Record shape | ID field placement |
 |---|---|---|
 | `TODOS.md` / `docs/TODOS.md` | `### [source:tag] Title` (under `## Unprocessed` and `## Completed`) | `- **ID:** wi-<hex>` as the first attribute bullet |
+| `docs/todos/wi-<hex>.md` | `### [source:tag] Title` | `- **ID:** wi-<hex>` on the next nonblank line, matching the filename stem |
 | `docs/roadmap-future.md` (or inline `## Future`) | `- **Title** — body **Revisit when:** ...` | Inline `**ID:** wi-<hex>` immediately after the title dash separator (`- **Title** — **ID:** wi-<hex> — body`). For a plain legacy bullet, place the ID after a dash at the end of the prose, before any `**Revisit when:**` marker. |
 | `docs/ROADMAP.md` | `#### Track <label>: Title` | `_id: wi-<hex>_` on the line immediately after the `_...risk..._` metadata line (`_id:` before metadata fails `STRUCTURE`) |
 | `docs/roadmap-shipped.md` | `### Track <label>: Title ✓ Shipped ...` | `_id: wi-<hex>_` immediately under the heading |
@@ -326,17 +329,52 @@ _blocked-by: <ref>[, <ref>...]_
 
 ### Audit enforcement (`## WORK_ITEM_IDS`)
 
-`bin/roadmap-audit` emits a canonical `## WORK_ITEM_IDS` section after `TODO_FORMAT` and before `MODE`. It checks TODO headings under `## Unprocessed` and `## Completed`, Future bullets, active and shipped Track headings, and legacy shipped `- Track` bullets. Fenced examples are outside the record collection.
+`bin/roadmap-audit` emits a canonical `## WORK_ITEM_IDS` section after `TODO_FORMAT` and before `MODE`. It checks TODO headings under `## Unprocessed` and `## Completed`, per-record intake files, Future bullets, active and shipped Track headings, and legacy shipped `- Track` bullets. Fenced examples are outside the record collection.
 
 - `MISSING_ID` — a record lacks its structured ID field.
 - `MALFORMED_ID` — an ID field does not match `^wi-[0-9a-f]{4,8}$`.
 - `DUPLICATE_ID` — two records share the same ID (within or across documents, including `## Completed` and colliding archive records), or a single record carries multiple ID fields.
+- `ID_MISMATCH` — an intake file's filename stem and body carry different IDs.
 
-Missing IDs alone produce `STATUS: warn`. Malformed or duplicate IDs produce `STATUS: fail`.
+Missing IDs alone produce `STATUS: warn` on legacy planning records. Missing
+intake IDs and malformed, duplicate, or mismatched IDs produce `STATUS: fail`.
 
 ### CLI (`bin/roadmap-id`)
 
-- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`.
+- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`, plus filename stems and body IDs in `docs/todos/`.
 - `bin/roadmap-id --help | -h` — prints usage to stdout, exits `0`, writes nothing.
 
-The CLI returns `0` on success, `1` on a project read error, and `2` on invalid arguments. Minting writes no files. A later release adds migration for existing records and retirement based on Git history. See [Compatibility](compatibility.md#stable-surfaces).
+The CLI returns `0` on success, `1` on a project read error or refused intake
+path, and `2` on invalid arguments. Minting refuses invalid intake directory
+paths and non-regular `.md` entries. It writes no files. A later release adds
+migration for existing records and retirement based on Git history. See
+[Compatibility](compatibility.md#stable-surfaces).
+
+## Per-record intake files (`intake-files/v1`)
+
+- The directory is `docs/todos/`, relative to the repository root. It may be
+  absent or empty. Either case preserves the `TODOS.md` inbox behavior.
+- Each record is a regular file named `wi-<4-8 lowercase hex>.md`, using the
+  `work-item-id/v1` grammar. The `.gitkeep` entry is ignored. A non-directory
+  intake path, a symlinked `docs/` parent of existing intake, symlinked records,
+  subdirectories, non-Markdown files and other filenames fail validation.
+  The exact directory names `docs/` and `todos/` also apply on case-insensitive
+  filesystems.
+- The first nonblank line is `### [source:tag] Title`, using the source-tag
+  grammar above (including source-only tags). The next nonblank line is
+  `- **ID:** wi-<hex>` and matches the filename stem. Additional attributes
+  and optional prose follow. Each file holds exactly one top-level H3 item without a
+  `# TODOS` or `## Unprocessed` wrapper or YAML frontmatter.
+- `/review-and-prep` writes recorded test gaps, base-only findings and
+  review-filed follow-ups as individual files. Consumers that collect the
+  entire inbox read these files alongside `TODOS.md ## Unprocessed`.
+- `/roadmap` reports priority and landing across both sources and removes
+  drained files in the same commit that places, defers, kills or discharges
+  their records. `bin/roadmap-id mint` reserves filename stems and body IDs
+  from open intake files in addition to the live planning documents.
+- `bin/roadmap-audit` reports `INTAKE_FILES` in `UNPROCESSED` and `TODO_FORMAT`
+  when it has intake entries to check. `TODO_FORMAT` and `WORK_ITEM_IDS` check
+  shape and unique identity. With a roadmap, `--scan-state` includes the intake
+  count in `signals.unprocessed_count`. `DOC_INVENTORY` labels readable intake
+  Markdown files `intake doc`. `SCATTERED_TODOS` and `DOC_TYPE_MISMATCH` skip
+  those files.

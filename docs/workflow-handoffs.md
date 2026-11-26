@@ -957,8 +957,10 @@ authorizes a continuation. While the anchors it relies on drift, the review
 writes tests as today and the receipt says so.
 
 A prepared receipt that records test gaps still emits `review: COMPLETE` in its
-H-B handoff: a recorded gap claims no defect, its TODOS entry carries it, and
-`/ship-and-land` reads the receipt as it would a plain one (`B-RECORDED-GAP-HEAD`).
+H-B handoff. The receipt's `todos=` field gives the path and heading of a new
+`docs/todos/<id>.md` file or an existing `TODOS.md` entry. `/ship-and-land` reads
+the receipt as it would a plain one (`B-RECORDED-GAP-HEAD`).
+[Intake file format](source-tag-contract.md#per-record-intake-files-intake-filesv1)
 
 `blocking=shown` follows the same rollout order and the same check, written as
 `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"` (exit 0 means
@@ -969,8 +971,9 @@ independent of every other key, may be sent alone or with `test-gaps=record`, an
 is never set by the light review default. Under it, a review finding blocks
 readiness only when evidence the host ran at the reviewed head shows it (a failing
 command, test or reproduction with its evidence reference, or a documentation line
-the PR's diff made wrong); a base-only finding goes to TODOS (or to
-`test-gaps=record` when it is a recordable gap); an attacker-part finding blocks
+the PR's diff made wrong). The workflow files a base-only finding in
+`docs/todos/<id>.md` or follows `test-gaps=record` when it is a recordable gap.
+An attacker-part finding blocks
 only once the host's rerun shows it; before a `CRITICAL` finding from an
 attacker part or an outside voice that names a concrete input state and failure
 on changed code is left not shown, the host runs one bounded reproduction probe
@@ -1009,7 +1012,9 @@ bounded parent-side re-audit of its delta before the owner is asked; a change
 touching no documented behavior (`rename`, `tests-only`, `test-tooling`,
 `todos-only`, `mechanical-correction` or `already-documented`) proceeds with that
 classification recorded, and a change touching documented behavior keeps today's
-owner stop. On the classify path only, a change confined to test runners,
+owner stop. The `todos-only` class covers changes confined to `TODOS.md`,
+`docs/TODOS.md` and `docs/todos/wi-<hex>.md` inbox files.
+On the classify path only, a change confined to test runners,
 pregate maps, test-selection maps and test helpers that no doc names no longer
 takes the broad fallback; package manifests, CI workflows and install entry
 points still do, and every test gate still runs on the final head. It keeps
@@ -1774,7 +1779,7 @@ Release note: This fenced copy is not a disclosure.
 | `Repair classification:`, `Repair without review cycle:` and `Repair evidence:` lines | receipt-present | published in the receipt under `repair-review=behavior-changing`, one classification per finding and one repair line plus a committed diff binding per repair that opened no review cycle; a consumer may show them to the user, they never authorize a stage or merge, and `/review`'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`) |
 | `repair-cycles=light` skip records | receipt-present | each skip names `source: repair-cycles=light`; an explicit full cycle instead records `repair-cycles=light: nothing skipped — in-cap=full`; these are evidence, never stage or merge authorization |
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
-| `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`, one `Test gap recorded:` line per recorded gap with its upstream severity unchanged and the TODOS entry that carries it; a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
+| `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`. Each recorded gap has one `Test gap recorded:` line with its upstream severity unchanged and its intake record in `todos=`. For readiness, a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
 | `blocking:` status and `Finding blocking:` and `Finding not blocking:` lines | receipt-present | published in the full receipt under `blocking=shown`, one line per decided finding with its attribution; a non-blocking finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
 | `settled:` status and `Finding settled:` lines | receipt-present | published in the full receipt when settled context is built or checked, one `Finding settled:` line per finding that only contests a settled plan decision or a never-flag rule in `.gstack/review-rules.md`; a safety-class finding is never recorded as settled, a settled finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
 | `delegation:` status and `Delegated part:` lines | receipt-present | published in the receipt under `delegate=<part>`, one `Delegated part:` line per delegated part for each review cycle that ran it, in cycle order, with its provider label, model, outcome, fallback reason, wall time, token counts, finding count and call ID (a part's calls are its distinct `call=` values, its findings are the sum of `findings=` over those distinct calls, and a reader that keeps only a part's last line reads its latest cycle); the configuration's path never appears, and the lines never authorize a stage or merge (`B-DELEGATED-HEAD`) |

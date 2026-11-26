@@ -126,7 +126,7 @@ Groups are launch batches the packer assigns. Tracks are one-PR cards
 `/autoplan` will read. The grammar lives in this file; the packer is
 `bin/roadmap-pack`.
 
-**HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md,
+**HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md, drained `docs/todos/*.md`,
 PROGRESS.md, `docs/roadmap-future.md`, `docs/roadmap-shipped.md`, and
 (during overhaul cleanup) `docs/designs/` / `docs/archive/` reorganization.
 Never modify code, configs, or CI files. VERSION is recommended but never
@@ -140,8 +140,8 @@ Deferred work below. Neither extension authorizes code, configuration or release
 
 **File ownership:**
 - **TODOS.md** = inbox. Other skills write here (pair-review, full-review,
-  investigate, manual). /roadmap reads and
-  drains it.
+  investigate, manual). /roadmap reads and drains it alongside `docs/todos/*.md`
+  (per-record review intake).
 - **ROADMAP.md** = structured execution plan. /roadmap owns this. Phases /
   Groups / Tracks live here, organized by state.
 
@@ -198,7 +198,7 @@ separating prerequisite gathering, reading, agent execution and human understand
 
 Verify land-time identity, approved scope/acceptance and raw archive receipts before recycling any ID. Use the attributable historical release version (or bare `✓ Shipped` with `release version unknown`).
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 79bb20c597211666` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 0d96dcc8ef354f9c` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
 
 Resolve the project root before Step 1's audit using its rule: an explicit audit
 directory when supplied, otherwise Git top-level or the directory being audited.
@@ -244,10 +244,12 @@ empty remainder. This snippet proves packing only, not the whole audit gate.
 
 Validate the complete candidate outside the workspace against real Git/version/cap/scaffold metadata before either write; test stub metadata and live write-and-restore are insufficient.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 79bb20c597211666` before validating a complete active/archive candidate before any live write.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 0d96dcc8ef354f9c` before validating a complete active/archive candidate before any live write.
 
 Invoke the copied script with Bun and the four quoted absolute paths. For
-regeneration, append the two planning draft slots described in the reference.
+regeneration, append both planning draft slots. If draining per-record intake,
+append the absolute path to a draft listing the exact drained `docs/todos/<id>.md`
+paths, one repo-relative path per line, as the seventh argument.
 Inspect **every blocking
 STATUS**, expected section coverage, context completeness, candidate-specific
 raw receipt IDs/evidence, duplicates and archive collision warnings under the
@@ -259,7 +261,7 @@ and pin feasibility remain mandatory agent gates. Incomplete proof means no writ
 
 Incomplete proof, unresolved raw duplicates, incompatible pins, or Hold candidates that change the unfinished partition or dependencies refuse writes and keep active/archive unchanged.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 79bb20c597211666` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 0d96dcc8ef354f9c` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
 
 Use the existing [Escalation](#escalation) REASON/ATTEMPTED/RECOMMENDATION fields
 for every reconciliation refusal. DONE_WITH_CONCERNS reuses those fields in the
@@ -384,9 +386,17 @@ Each separate call must paste both printed root assignments; a missing root stop
 "$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"
 ```
 
+Surface `TODO_FORMAT` and `WORK_ITEM_IDS` failures before reading any intake
+records. Stop on malformed intake and resume after its owner corrects it. Treat
+missing IDs as advisory only on legacy records. Read only regular canonical
+intake files under real `docs/` and `docs/todos/` directories.
+If an interrupted, approved placement left the same ID in a valid intake file
+and its exact approved destination, revalidate the remaining drain against that
+placement. Resolve other duplicates in the candidate before any write.
+
 This first audit prints to stdout, as in [Audit-after-apply](#audit-after-apply). To save audit output, draft Tracks, or a rename map, use this run's scratch subdirectory under `<PROPOSAL_DIR>`. Resolve the durable project directory or its `~/scratch/` fallback in [Structured proposal artifact](#structured-proposal-artifact). Never use a host-private directory or a fixed `/tmp/` path.
 
-Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and Read that output (title + source + first sentence + revisit trigger). Do **not** Read `docs/roadmap-future.md` unless promoting an item, reconciling a shipped source Track or reading flagged bullets for a selected trigger migration (see Deferred work). The index also prints each entry's inline `revisit:` trigger; check triggers there. A row without one ends `revisit: MISSING`, and the `FUTURE_TRIGGERS_MISSING:` line counts those rows. If `docs/roadmap-shipped.md` exists, load an ID+title/lineage index first, inspect raw parser diagnostics, then read candidate receipt bodies for exact identity/merge comparison; do not re-review unrelated shipped essays. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
+Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and Read that output (title + source + first sentence + revisit trigger). Do **not** Read `docs/roadmap-future.md` unless promoting an item, reconciling a shipped source Track or reading flagged bullets for a selected trigger migration (see Deferred work). The index also prints each entry's inline `revisit:` trigger; check triggers there. A row without one ends `revisit: MISSING`, and the `FUTURE_TRIGGERS_MISSING:` line counts those rows. If `docs/roadmap-shipped.md` exists, load an ID+title/lineage index first, inspect raw parser diagnostics, then read candidate receipt bodies for exact identity/merge comparison; do not re-review unrelated shipped essays. Read the full `TODOS.md ## Unprocessed`, each validated intake file, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
 **Default split.** If `## Shipped` still has Group/Phase/Track headings rather than just the pointer, include their archive migration in the complete candidate — no extra scope question. Independently reconcile inline shipped Tracks under the policy above. If `## Future` still has bullets and `docs/roadmap-future.md` is missing **or has no `- ` bullets** (header-only stub from init `--migrate`), move the live bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop. Never delete live Future bullets to "finish" a split against an empty satellite.
 
@@ -400,9 +410,10 @@ extract_referenced_files_from_roadmap | tr '\n' '\0' | xargs -0 -I {} \
   git log --since="$LAST_ROADMAP_RUN" --pretty='%h %s' -- {} 2>/dev/null
 ```
 
-Resolve malformed or duplicate IDs before validation. Treat `WORK_ITEM_IDS` `MISSING_ID` on existing records as advisory. Preserve any assigned ID on an item that moves, and mint its first ID when producing a new planning record from a source without one.
+Preserve assigned IDs unchanged on promotion (`_id: wi-<hex>_`) or deferral
+(`**ID:** wi-<hex>`). Mint an ID for a new planning record whose source has none.
 
-**Pre-classify inbox items.** Each Unprocessed item carries a `[source:key=val]` tag. Run the routing helper for each:
+**Pre-classify inbox items.** Each Unprocessed item carries a `[source:key=val]` tag. Run the routing helper for each item from either inbox:
 
 ```bash
 # Start with the _EXTEND_ROOT=… line the preamble printed.
@@ -818,7 +829,8 @@ Format:
 - Declared pin rows: Track ID | owning Group | named branch/session or PR; none declared or uncertain associations stated explicitly; release/retry conditions
 - Future triggers: <n> missing; migration offered (select it in Revise), run or skipped (Future moved this run); when run: <n> lifted, <n> already met, <n> owner (<n> of them `the selected target changes`), <n> needs owner trigger, <n> not located; predicted missing after apply: <n>
 - Candidate gate: final bins/dependencies, every blocking STATUS, raw history/collision checks, context completeness and feasible labels
-- Approved input fingerprints: active/archive and other affected raw bytes, evidence HEAD and declared pin inventory
+- Inbox: each record from `TODOS.md` or `docs/todos/*.md`, its filed priority (or unprioritized), and landing (Track ID, Future, killed, discharged, or held/pending)
+- Approved input fingerprints: active/archive and other affected raw bytes, `docs/todos/` file list and raw bytes, evidence HEAD and declared pin inventory
 
 ## Discharged
 - **<title>** — discharged@<sha> — <one-line evidence>
@@ -853,7 +865,7 @@ The v1 placement-batch and deferral-batch clusters no longer exist. In Progress 
 
 ## Step 3: Apply
 
-Apply the user's approved proposal to ROADMAP.md and TODOS.md.
+Apply the user's approved proposal to ROADMAP.md and both inbox sources.
 
 For `/project-spec` composition, the wrapper's exact combined-candidate approval
 satisfies the plan approval; do not ask again. Include its named SPEC/instruction/
@@ -866,7 +878,7 @@ wrapper's paths first, then this skill's files, and run Audit-after-apply once
 over every written path before the Step 6 commit.
 
 **Freshness before the first write:** compare active/archive raw-byte fingerprints,
-other affected input fingerprints, Git evidence HEAD and declared pins with the
+other affected input fingerprints including the `docs/todos/` file list and raw bytes, Git evidence HEAD and declared pins with the
 approved proposal. Any changed input requires a renewed proposal and approval.
 This is a check, not a writer lock; simultaneous writers can still race.
 
@@ -886,7 +898,14 @@ reuse is refusal under Exceptions and recovery.
 - **Shipped** is append-only in `docs/roadmap-shipped.md`. ROADMAP `## Shipped`
   contains only its history pointer. Verified inline history migrates on first
   approved apply; independent completed Tracks leave both active sections.
-- **TODOS.md drain.** Every inbox item that the proposal placed, deferred, killed, or discharged is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox, as do deferrals whose GitHub filing is pending or failed (see Deferred work).
+- **Inbox drain.** Remove every placed, deferred, killed, or discharged record
+  from `TODOS.md ## Unprocessed` or delete its `docs/todos/<id>.md` file
+  (`git rm --` for tracked files, `rm --` for untracked files). Leave held items
+  and deferrals with pending or failed GitHub filings in their original inbox.
+  Delete intake only after its approved planning writes succeed.
+  Before deleting, recheck exact on-disk parents in this Git worktree, the
+  regular file and approved bytes.
+  The drained list used in candidate validation must match these removals.
 - **No split-track helper.** Candidate parsing/packing/rename helpers are read-only
   before approval; Apply writes only the validated authorized artifacts.
 - **Track / Group completion conventions:**
@@ -917,11 +936,11 @@ The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PACKIN
 
 ### TODOS.md drain orphan check
 
-Before commit, assert that every item the proposal placed/killed/deferred/discharged is gone from `## Unprocessed`, except a deferral recorded in the candidate as pending GitHub filing; list those separately as pending, not orphans. Any other orphan = something didn't apply. Escalate with the orphan list and current diff state.
+Before commit, assert that every item the proposal placed/killed/deferred/discharged is gone from `TODOS.md ## Unprocessed` and `docs/todos/`. List pending or failed GitHub filings separately and verify they remain, along with held items. Any other orphan = something didn't apply. Escalate with the orphan list and current diff state.
 
 ### Apply summary
 
-Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."`
+Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."` Report each record from both inbox sources with its filed priority (or unprioritized) and landing as recorded in the proposal Summary.
 
 **ID renames table.** After `"$_EXTEND_ROOT/bin/roadmap-renumber"` (or a title-matched
 diff against the pre-edit ROADMAP.md), include the map in the apply
@@ -1067,7 +1086,8 @@ In that fallback, if the audit's `## PHASES` section reports a Phase whose final
 ## Step 6: Commit
 
 Stage only documentation files: ROADMAP.md, TODOS.md (drained inbox),
-PROGRESS.md (if modified), `docs/roadmap-future.md`, `docs/roadmap-shipped.md`.
+PROGRESS.md (if modified), `docs/roadmap-future.md`, `docs/roadmap-shipped.md`,
+and removed `docs/todos/<id>.md` files. Commit the deletions with the planning updates.
 Under `/project-spec` composition, also stage exactly the approved candidate's
 SPEC, project-instruction, stage-entry and document-retirement paths (moves,
 redirects, notices, link edits and extracted supporting documents), and nothing
@@ -1258,6 +1278,7 @@ The audit distinguishes blocker vs advisory:
 | VERSION | root | SemVer source of truth | /roadmap (recommends), /ship (executes) |
 | LICENSE | root | License file | Manual |
 | TODOS.md | docs/ | "Inbox" — unprocessed items | /pair-review, /investigate (write), /roadmap (drain) |
+| `wi-<hex>.md` | `docs/todos/` | Per-record intake | /review-and-prep (write), /roadmap (drain) |
 | SPEC.md | docs/ | Product outcomes, intended users, target, constraints and release policy | /project-spec |
 | ROADMAP.md | docs/ | "Execution plan" — state-organized | /roadmap (owns structure) |
 | roadmap-shipped.md | docs/ | Frozen shipped history | /roadmap |

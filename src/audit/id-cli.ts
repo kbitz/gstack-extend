@@ -2,11 +2,13 @@
  * id-cli.ts — `bin/roadmap-id` entry point.
  */
 
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { createGitGateway } from './lib/git.ts';
+import { inspectIntakeDirectory } from './lib/intake-files.ts';
 import {
+  isValidWorkItemId,
   mintRandomId,
   scanAllWorkItemIds,
   WORK_ITEM_ID_DEFAULT_HEX,
@@ -19,7 +21,7 @@ export const USAGE = `Usage: roadmap-id mint [repo-path] [--count N]
 Mint unique immutable work-item IDs (wi-<hex>) for new planning records.
 
 Subcommands:
-  mint      Mint N unique IDs (default 1) unused in current planning files
+  mint      Mint N unique IDs (default 1) unused in current planning files and docs/todos/
 
 Options:
   [repo-path]           Repository root (defaults to Git toplevel or cwd)
@@ -37,7 +39,7 @@ function resolveRepoRoot(positional: string | undefined): string {
   return resolve(createGitGateway({ cwd }).toplevel() ?? cwd);
 }
 
-function collectTakenIds(repoRoot: string): Set<string> {
+export function collectTakenIds(repoRoot: string): Set<string> {
   if (!statSync(repoRoot).isDirectory()) throw new Error('project path is not a directory');
   const taken = new Set<string>();
   for (const name of DOC_PATHS) {
@@ -45,6 +47,21 @@ function collectTakenIds(repoRoot: string): Set<string> {
     const stat = statSync(path, { throwIfNoEntry: false });
     if (stat === undefined) continue;
     if (!stat.isFile()) throw new Error(`refusing non-regular planning document ${name}`);
+    for (const id of scanAllWorkItemIds(readFileSync(path, 'utf8'))) taken.add(id);
+  }
+  const intakeDir = join(repoRoot, 'docs', 'todos');
+  const { kind: intakeKind } = inspectIntakeDirectory(intakeDir);
+  if (intakeKind === 'absent') return taken;
+  if (intakeKind === 'invalid') throw new Error('refusing non-directory intake path docs/todos');
+  const names = readdirSync(intakeDir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const name of names) {
+    if (!name.endsWith('.md')) continue;
+    const path = join(intakeDir, name);
+    if (!lstatSync(path).isFile()) {
+      throw new Error(`refusing non-regular intake document docs/todos/${name}`);
+    }
+    const stem = name.slice(0, -3);
+    if (isValidWorkItemId(stem)) taken.add(stem);
     for (const id of scanAllWorkItemIds(readFileSync(path, 'utf8'))) taken.add(id);
   }
   return taken;
