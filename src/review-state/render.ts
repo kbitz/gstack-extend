@@ -9,7 +9,7 @@ import { checkDirFile, makeEnvelope, readInputJson, runGit, unlinkQuiet, writeAl
 
 export const RENDER_SCHEMA = 'review-state-render/v1' as const;
 export type RenderOutputKind = 'full-receipt' | 'comment' | 'body' | 'final';
-export type RenderExitState = 'ready' | 'prepared' | 'paused' | 'external-gate' | 'stopped' | 'blocked' | 'needs-context' | 'not-renderable';
+export type RenderExitState = 'ready' | 'prepared' | 'paused' | 'external-gate' | 'stopped' | 'blocked' | 'needs-context' | 'escalated' | 'not-renderable';
 export type ActiveBinding = { head: string; tree: string; base: string; wtree: string | null };
 export type RenderFinalInput = {
   commentUrl?: string | null; saveBeforeShipping?: string | null; requiredUserChecks?: string | null;
@@ -50,7 +50,7 @@ function evidenceLocator(dir: string, rel: string): string {
 export function exitState(state: ReviewRunState): RenderExitState {
   if (state.finish !== null) {
     const out = state.finish.outcome;
-    return out === 'prepared' || out === 'stopped' || out === 'blocked' || out === 'needs-context' ? out : 'not-renderable';
+    return out === 'prepared' || out === 'stopped' || out === 'blocked' || out === 'needs-context' || out === 'escalated' ? out : 'not-renderable';
   }
   const lastSeg = state.segments[state.segments.length - 1], cps = state.checkpoints, lastCp = cps[cps.length - 1];
   if (!lastSeg || !lastCp || lastCp.base === null) return 'not-renderable';
@@ -63,7 +63,7 @@ export function exitState(state: ReviewRunState): RenderExitState {
 
 export function getActiveBinding(state: ReviewRunState): ActiveBinding | null {
   const exit = exitState(state);
-  if (exit === 'prepared' || exit === 'stopped' || exit === 'blocked' || exit === 'needs-context') {
+  if (exit === 'prepared' || exit === 'stopped' || exit === 'blocked' || exit === 'needs-context' || exit === 'escalated') {
     const f = state.finish!;
     return { head: f.head, tree: f.tree, base: f.base, wtree: f.wtree };
   }
@@ -81,6 +81,7 @@ export const EXIT_MATRIX: Record<Exclude<RenderExitState, 'not-renderable'>, {
   stopped: { outputs: ['full-receipt', 'comment', 'body', 'final'], bodyPhrase: 'STOPPED \u2014 review cycle cap', stage: ['review-and-prep', 'stopped'] },
   blocked: { outputs: ['final'], bodyPhrase: 'BLOCKED \u2014 provider failures', stage: ['none', 'blocked'] },
   'needs-context': { outputs: ['final'], stage: ['none', 'needs-context'] },
+  escalated: { outputs: ['final'], stage: ['review-and-prep', 'stopped'] },
 };
 
 export function isOutputAllowed(state: ReviewRunState, output: RenderOutputKind): boolean {
@@ -390,7 +391,7 @@ export function renderFinal(state: ReviewRunState, input: RenderFinalInput, dir:
   if (exit === 'paused') return `\`\`\`text\n${renderBlock('H-C', state, input).trimEnd()}\n\`\`\`\n${stage}\n`;
   if (exit === 'stopped') return `\`\`\`text\n${renderBlock('H-E', state, input).trimEnd()}\n\`\`\`\n${stage}\n`;
   if (exit === 'external-gate') return `${evalGrammar('H-F', state, { ...input, dir }).join('\n')}\n`;
-  if (exit === 'blocked' || exit === 'needs-context') return `${stage}\n`;
+  if (exit === 'blocked' || exit === 'needs-context' || exit === 'escalated') return `${stage}\n`;
   throw new Error(`not-renderable: final on ${exit}`);
 }
 

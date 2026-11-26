@@ -143,6 +143,27 @@
 
 ## From Pause for an external full-suite gate
 
+Before repeating Freeze after a mismatch or preflight fix, inspect what changed,
+confirm ownership, and rerun each affected review, coverage and documentation
+gate under its existing freshness rule and attempt bound. Unknown ownership
+stops for clarification; never commit another actor's edits as this invocation's.
+
+**Preflight.** On the frozen content run `<gstack-pregate> --stage preflight
+--allow-repo-commands --out <temp-path>`, adding `--policy-from head` under item
+1's pin rule. Put `<temp-path>` outside the worktree, as for item 1's probe, so
+it never overwrites the passing stamp; that record never counts as the gate. The
+stage runs no test lanes. Evaluate the untouched preflight record with
+**Reviewed secret findings**, adding `--stage preflight`, before deciding whether
+a fix is needed. Exit 0 satisfies this pre-pause check while the raw verdict
+stays intact. The same approval rules apply; no new disposition is inferred.
+Fix an unsatisfied check (secrets, strays, literals and the stage's other checks)
+like any other: the fix moves the head, so freeze again and rerun the preflight,
+and print no pause line until it passes. An unavailable stage or a failure that
+cannot be resolved within the existing rules stops BLOCKED with its cause,
+never a retry loop or a printed pause. This record still grants no test or
+full-pregate credit. Item 4's pregate still runs after an accepted pass,
+narrowed only as **Narrow the pregate after an accepted pass** allows.
+
 **Checkpoint.** Before every pause, save a new checkpoint in this invocation's
 evidence directory, alongside the pause and policy lines. Bind it to the
 repository, branch, invocation and original start time, frozen head/tree and

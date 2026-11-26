@@ -134,8 +134,11 @@ const ENUMS = {
   pregatePolicy: ['base', 'head'],
   auditName: ['coverage', 'documentation'],
   checkpointKind: ['before-fix', 'next-cycle', 'stop', 'pause', 'resume', 'external-gate', 'ready'],
-  finishOutcome: ['prepared', 'stopped', 'blocked', 'needs-context'],
+  finishOutcome: ['prepared', 'stopped', 'blocked', 'needs-context', 'escalated'],
+  escalationReason: ['reviewed-code-conflict', 'reviewed-behavior-change', 'delta-finding', 'delta-unverified', 'final-gate-failed'],
 } as const;
+
+export const ESCALATION_STOP_REASONS = ENUMS.escalationReason;
 
 export type EvidenceRef = { path: string; sha256: string };
 export type CandidateBinding = { commit: string; tree: string; base: string | null; wtree: string | null };
@@ -804,6 +807,9 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
   }, v);
   if (c.outcome === 'prepared' && c.stop_reason !== null) v.push({ path: 'stop_reason', rule: 'invalid-value', expected: 'null-when-prepared' });
   if (inEnum(ENUMS.finishOutcome)(c.outcome) && c.outcome !== 'prepared' && c.stop_reason === null) v.push({ path: 'stop_reason', rule: 'invalid-value', expected: 'required-when-not-prepared' });
+  if (c.outcome === 'escalated' && c.stop_reason !== null && !inEnum(ENUMS.escalationReason)(c.stop_reason)) {
+    v.push({ path: 'stop_reason', rule: 'invalid-enum', expected: ENUMS.escalationReason.join('|') });
+  }
   if ((c.outcome === 'stopped') !== (c.delta_base !== null)) v.push({ path: 'delta_base', rule: 'invalid-value', expected: c.outcome === 'stopped' ? 'required-when-stopped' : 'null-when-not-stopped' });
   if ((c.outcome === 'stopped') !== (c.stop_count !== null)) v.push({ path: 'stop_count', rule: 'invalid-value', expected: c.outcome === 'stopped' ? 'required-when-stopped' : 'null-when-not-stopped' });
 
@@ -1034,6 +1040,9 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
     if (root.finish !== null) {
       const f = object(root.finish, STATE_KEYS.finish, { outcome: R.enum(ENUMS.finishOutcome), stop_reason: R.strN(1, 500), head: R.hex40, tree: R.hex40, base: R.hex40, delta_base: R.hex40N, stop_count: R.posIntN, wtree: R.wtreeN, review_restriction_resolved: R.bool, readiness_confirmed_at: R.isoZN, user_facing_changes: { check: (x) => Array.isArray(x) && x.every((s) => isStr(s, 1, 500)), expected: 'string-array' }, finished_at: R.isoZ }, 'finish');
       if (f) {
+        if (f.outcome === 'escalated' && !inEnum(ENUMS.escalationReason)(f.stop_reason)) {
+          v.push({ path: 'finish.stop_reason', rule: 'invalid-enum', expected: ENUMS.escalationReason.join('|') });
+        }
         evidence(f.evidence, 'finish.evidence');
         if (f.full_review_evidence !== null) {
           const e = f.full_review_evidence;

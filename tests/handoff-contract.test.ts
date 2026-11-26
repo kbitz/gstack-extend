@@ -918,7 +918,7 @@ describe('(A) the doc is the oracle', () => {
 
   test('embedded fixtures are byte-locked to the fixture files', () => {
     const embedded = [...DOC.matchAll(/^```text fixture=(\S+)\n([\s\S]*?)\n```$/gm)];
-    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'release-disclosures-forms.txt', 'release-disclosures-plan.txt', 'release-disclosures-review.txt', 'stage-line.txt', 'stage-lines.txt']);
+    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'g-escalated.txt', 'g-invocation.txt', 'g-refreshed.txt', 'g-refused.txt', 'release-disclosures-forms.txt', 'release-disclosures-plan.txt', 'release-disclosures-review.txt', 'stage-line.txt', 'stage-lines.txt']);
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
@@ -3792,6 +3792,158 @@ describe('(R) doc-audit-gap=auto', () => {
     );
     expect(qLines[6]).toMatch(
       /^doc-audit-gap: active; reuse=not-applied (?:walk-missed-snapshot|dirty-tree|base-fetch-failed|merge-unqualified|merge-guard-failed|git-too-old|docs-roots-unreadable|command-failed|classify-not-applied) .+; evidence=\S+\/\S+$/,
+    );
+  });
+});
+
+// ─── (M) Merge-only refresh (H-G) ──────────────────────────────────────
+
+describe('(M) merge-only refresh (H-G)', () => {
+  const HG_DOC = DOC.slice(DOC.indexOf('### Grammar H-G base-move refresh'), DOC.indexOf('### Grammar stage line'));
+  const REF_REFRESH = referenceText('review-and-prep', 'conditional-base-move-refresh');
+  const ESCALATION_REASONS = new Set([
+    'reviewed-code-conflict',
+    'reviewed-behavior-change',
+    'delta-finding',
+    'delta-unverified',
+    'final-gate-failed',
+  ]);
+  const REFUSAL_REASONS = new Set(['cause', 'state', 'receipt', 'current']);
+  const HEX40 = /^[0-9a-f]{40}$/;
+
+  const parseRefreshed = (line: string) => {
+    const parts = line.split('; ');
+    if (parts.length !== 7 || parts[0] !== 'Refresh: review-and-prep-refresh/v1') return null;
+    const keys = ['cause', 'reviewed', 'head', 'base', 'delta', 'gate'];
+    const map = new Map<string, string>();
+    for (let i = 0; i < keys.length; i++) {
+      const part = parts[i + 1]!;
+      const prefix = `${keys[i]}: `;
+      if (!part.startsWith(prefix)) return null;
+      map.set(keys[i]!, part.slice(prefix.length));
+    }
+    if (map.get('cause') !== 'base_moved') return null;
+    if (!HEX40.test(map.get('reviewed')!) || !HEX40.test(map.get('head')!) || !HEX40.test(map.get('base')!)) return null;
+    if (!/^base-only=\d+, resolution=\d+$/.test(map.get('delta')!)) return null;
+    if (map.get('gate') !== 'pregate-pass' && map.get('gate') !== 'external-pass') return null;
+    return map;
+  };
+
+  const parseEscalated = (line: string) => {
+    const filesIdx = line.indexOf('; files: ');
+    if (filesIdx === -1) return null;
+    const headParts = line.slice(0, filesIdx).split('; ');
+    if (headParts.length !== 5 || headParts[0] !== 'Refresh escalated: review-and-prep-refresh/v1') return null;
+    const keys = ['reason', 'reviewed', 'head', 'base'];
+    const map = new Map<string, string>();
+    for (let i = 0; i < keys.length; i++) {
+      const part = headParts[i + 1]!;
+      const prefix = `${keys[i]}: `;
+      if (!part.startsWith(prefix)) return null;
+      map.set(keys[i]!, part.slice(prefix.length));
+    }
+    if (!ESCALATION_REASONS.has(map.get('reason')!)) return null;
+    if (!HEX40.test(map.get('reviewed')!) || !HEX40.test(map.get('head')!) || !HEX40.test(map.get('base')!)) return null;
+    try {
+      const files = JSON.parse(line.slice(filesIdx + '; files: '.length));
+      if (!Array.isArray(files) || !files.every((f) => typeof f === 'string' && f.length > 0)) return null;
+      return { map, files };
+    } catch {
+      return null;
+    }
+  };
+
+  const parseRefused = (line: string) => {
+    const parts = line.split('; ');
+    if (parts.length !== 2 || parts[0] !== 'Refresh refused: review-and-prep-refresh/v1') return null;
+    if (!parts[1]!.startsWith('reason: ')) return null;
+    const reason = parts[1]!.slice('reason: '.length);
+    return REFUSAL_REASONS.has(reason) ? reason : null;
+  };
+
+  test('fixtures parse under the H-G grammar and malformed variants are refused', () => {
+    const inv = readFileSync(join(FIXTURES, 'g-invocation.txt'), 'utf8').trimEnd();
+    const invLines = inv.split('\n');
+    expect(invLines[0]).toContain('refresh');
+    expect(invLines.filter((l) => l === 'Cause: base_moved')).toHaveLength(1);
+
+    const refreshed = readFileSync(join(FIXTURES, 'g-refreshed.txt'), 'utf8').trimEnd();
+    expect(parseRefreshed(refreshed)).not.toBeNull();
+    // Malformed refreshed variants: short SHA, reordered field, unknown gate, trailing text
+    expect(parseRefreshed(refreshed.replace('a1'.repeat(20), 'a1a1a1a'))).toBeNull();
+    expect(parseRefreshed(refreshed.replace('cause: base_moved; reviewed: ', `reviewed: ${'a1'.repeat(20)}; cause: base_moved; reviewed: `))).toBeNull();
+    expect(parseRefreshed(refreshed.replace('pregate-pass', 'other-pass'))).toBeNull();
+    expect(parseRefreshed(`${refreshed} extra`)).toBeNull();
+
+    const escalated = readFileSync(join(FIXTURES, 'g-escalated.txt'), 'utf8').trimEnd();
+    const parsedEsc = parseEscalated(escalated);
+    expect(parsedEsc).not.toBeNull();
+    expect(parsedEsc?.files).toEqual(['src/core.ts', 'src/handler.ts']);
+    // Malformed escalated variants: short SHA, unknown reason, reordered field, trailing text
+    expect(parseEscalated(escalated.replace('d4'.repeat(20), 'd4d4d4d4d4d4'))).toBeNull();
+    expect(parseEscalated(escalated.replace('reviewed-code-conflict', 'unknown-reason'))).toBeNull();
+    expect(parseEscalated(escalated.replace('reason: reviewed-code-conflict; reviewed: ', `reviewed: ${'a1'.repeat(20)}; reason: reviewed-code-conflict; `))).toBeNull();
+    expect(parseEscalated(`${escalated} trailing`)).toBeNull();
+
+    const refused = readFileSync(join(FIXTURES, 'g-refused.txt'), 'utf8').trimEnd();
+    expect(parseRefused(refused)).toBe('receipt');
+    // Malformed refused variants: unknown reason, trailing text
+    expect(parseRefused(refused.replace('receipt', 'other'))).toBeNull();
+    expect(parseRefused(`${refused}; extra: 1`)).toBeNull();
+  });
+
+  test('templates in conditional-base-move-refresh match the doc, Versions freezes the three prefixes, and capability literal is published', () => {
+    const templates = [
+      '`Refresh: review-and-prep-refresh/v1; cause: base_moved; reviewed: <40-hex>; head: <40-hex>; base: <40-hex>; delta: base-only=<n>, resolution=<n>; gate: <pregate-pass|external-pass>`',
+      '`Refresh escalated: review-and-prep-refresh/v1; reason: <token>; reviewed: <40-hex>; head: <40-hex>; base: <40-hex>; files: <JSON array of repository-relative paths>`',
+      '`Refresh refused: review-and-prep-refresh/v1; reason: <cause|state|receipt|current>`',
+    ];
+    for (const tpl of templates) {
+      expect(HG_DOC, `doc missing ${tpl}`).toContain(tpl);
+      expect(REF_REFRESH, `ref missing ${tpl}`).toContain(tpl);
+    }
+    expect(HG_DOC).toContain('`Cause: base_moved`');
+    expect(REF_REFRESH).toContain('`Cause: base_moved`');
+
+    const versionsRow = tableRows(section('## Versions')).find((r) => r[0] === 'H-G');
+    expect(versionsRow).toBeDefined();
+    expect(versionsRow![3]).toBe('`review-and-prep-refresh/v1`');
+    for (const prefix of [
+      '`Refresh: review-and-prep-refresh/v1;`',
+      '`Refresh escalated: review-and-prep-refresh/v1;`',
+      '`Refresh refused: review-and-prep-refresh/v1;`',
+    ]) {
+      expect(versionsRow![4], prefix).toContain(prefix);
+    }
+
+    expect(SKILLS['review-and-prep']).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
+    expect(HG_DOC).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
+
+    const bindings = section('## Validated and receipt-present bindings');
+    expect(bindings).toContain('| `Refresh:` line | receipt-present |');
+  });
+
+  test('Refresh line never changes an H-B outcome, and consumers without H-G classify escalation as HOLD and refusal as REFUSE', () => {
+    const refreshed = readFileSync(join(FIXTURES, 'g-refreshed.txt'), 'utf8').trimEnd();
+    const baseVerdict = run('B-TRUSTED');
+    const withPrefix = run('B-TRUSTED', { prefix: `${refreshed}\n` });
+    expect(withPrefix.outcome).toBe('ADVANCE_TRUSTED');
+    expect(withPrefix.mismatches).toEqual(baseVerdict.mismatches);
+
+    const escalated = readFileSync(join(FIXTURES, 'g-escalated.txt'), 'utf8').trimEnd();
+    const escVerdict = classify(escalated, FIX.defaults.provenance, withVars(FIX.defaults.live.D));
+    expect(escVerdict.handoff).toBe('H-D');
+    expect(escVerdict.outcome).toBe('HOLD');
+    expect(escVerdict.mismatches.map((m) => m.binding)).toEqual(['bare-summary']);
+
+    const refused = readFileSync(join(FIXTURES, 'g-refused.txt'), 'utf8').trimEnd();
+    const refVerdict = classify(refused, FIX.defaults.provenance, withVars(FIX.defaults.live.D));
+    expect(refVerdict.handoff).toBe('H-D');
+    expect(refVerdict.outcome).toBe('REFUSE');
+    expect(refVerdict.mismatches.map((m) => m.binding)).toEqual(['bare-summary']);
+
+    expect(squash(HG_DOC)).toContain(
+      'A consumer without H-G reads the escalation line as H-D `HOLD` (a bare summary with a full SHA) and the refusal line as H-D `REFUSE` (a bare summary with no binding).',
     );
   });
 });

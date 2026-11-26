@@ -5108,9 +5108,10 @@ describe('bin/review-state', () => {
     const shFences = [...callsDoc.matchAll(/```sh\n([\s\S]*?)\n```/g)].map((m) =>
       m[1]!.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#')),
     );
-    expect(shFences.length).toBeGreaterThanOrEqual(2);
+    expect(shFences.length).toBeGreaterThanOrEqual(3);
     const seqLines = shFences[0]!;
     const stoppedLines = shFences[1]!;
+    const escalatedLines = shFences[2]!;
 
     const exCommit = '0123456789abcdef0123456789abcdef01234567';
     const exBase = '89abcdef0123456789abcdef0123456789abcdef';
@@ -5190,6 +5191,18 @@ describe('bin/review-state', () => {
     const stopState = JSON.parse(readFileSync(join(dStop, 'review-run-state.json'), 'utf8')) as ReviewRunState;
     expect(stopState.finish?.outcome).toBe('stopped');
     expect(validateStoredState(stopState).ok).toBe(true);
+
+    // Separate escalated finish example after start in a fresh directory
+    const dEsc = newDir();
+    prepFiles(dEsc);
+    expect(runCli(subLine(seqLines[0]!, dEsc)).json.reason).toBe('recorded');
+    for (const [idx, line] of escalatedLines.entries()) {
+      const res = runCli(subLine(line, dEsc));
+      expect(res.json.reason, `escalated line #${idx}: ${line}`).toBe('recorded');
+    }
+    const escState = JSON.parse(readFileSync(join(dEsc, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(escState.finish?.outcome).toBe('escalated');
+    expect(validateStoredState(escState).ok).toBe(true);
 
     const gitInfo: GitInfo = {
       repo: '/fixture/.git',
@@ -8184,5 +8197,145 @@ describe('full-review-record', () => {
     expect(w.err).toBe('');
     expect(w.out.trim()).toBe(REFUSED_UNREADABLE);
     expect(existsSync(join(evDir, 'cycle-1-baseline.json'))).toBe(false);
+  });
+});
+
+describe('finish outcome escalated (H-G refresh escalation)', () => {
+  const planSha = 'a'.repeat(64);
+  const startEscalatedRun = (dir: string) => {
+    expect(callCmd(dir, 'start', {
+      run_id: '019315e0-0000-7000-8000-000000000041',
+      base: baseSha,
+      plan: { ref: 'plan.md', sha256: planSha },
+      policy: { value: null, source: 'none supplied' },
+      continuation: { prior_stops: 0, max: 1 },
+      session_id: 'extend-019315e0-0000-7000-8000-000000000049',
+    }).code).toBe(0);
+  };
+
+  test('requires stop_reason from the closed H-G set and refuses other reasons, delta_base, or stop_count', () => {
+    const reasons = [
+      'reviewed-code-conflict',
+      'reviewed-behavior-change',
+      'delta-finding',
+      'delta-unverified',
+      'final-gate-failed',
+    ] as const;
+
+    for (const reason of reasons) {
+      const dir = newDir();
+      startEscalatedRun(dir);
+      const ok = callCmd(dir, 'finish', { outcome: 'escalated', base: baseSha, stop_reason: reason });
+      expect(ok.code, reason).toBe(0);
+      expect(ok.json.reason, reason).toBe('recorded');
+      const stored = JSON.parse(readFileSync(join(dir, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+      expect(stored.finish?.outcome).toBe('escalated');
+      expect(stored.finish?.stop_reason).toBe(reason);
+      expect(validateStoredState(stored).ok).toBe(true);
+    }
+
+    const dirBad = newDir();
+    startEscalatedRun(dirBad);
+    const missingReason = callCmd(dirBad, 'finish', { outcome: 'escalated', base: baseSha });
+    expect(missingReason.code).toBe(1);
+    expect(missingReason.json.reason).toBe('invalid-input');
+
+    const badReason = callCmd(dirBad, 'finish', { outcome: 'escalated', base: baseSha, stop_reason: 'other-reason' });
+    expect(badReason.code).toBe(1);
+    expect(badReason.json.reason).toBe('invalid-input');
+    expect((badReason.json.detail as { violations: Array<{ path: string; rule: string }> }).violations)
+      .toContainEqual(expect.objectContaining({ path: 'stop_reason', rule: 'invalid-enum' }));
+
+    const withDelta = callCmd(dirBad, 'finish', {
+      outcome: 'escalated',
+      base: baseSha,
+      stop_reason: 'reviewed-code-conflict',
+      delta_base: headSha,
+    });
+    expect(withDelta.code).toBe(1);
+    expect(withDelta.json.reason).toBe('invalid-input');
+
+    const withStopCount = callCmd(dirBad, 'finish', {
+      outcome: 'escalated',
+      base: baseSha,
+      stop_reason: 'reviewed-code-conflict',
+      stop_count: 1,
+    });
+    expect(withStopCount.code).toBe(1);
+    expect(withStopCount.json.reason).toBe('invalid-input');
+  });
+
+  test('renders final as the exact stage line and refuses comment, body, and full-receipt', () => {
+    const dir = newDir();
+    startEscalatedRun(dir);
+    expect(callCmd(dir, 'finish', {
+      outcome: 'escalated',
+      base: baseSha,
+      stop_reason: 'reviewed-behavior-change',
+    }).code).toBe(0);
+
+    const fin = callCmd(dir, 'render', { output: 'final' });
+    expect(fin.code).toBe(0);
+    expect(fin.json.exit).toBe('escalated');
+    const finalFile = (fin.json.files as Array<{ path: string }>)[0]!.path;
+    const text = readFileSync(finalFile, 'utf8');
+    expect(text).toBe(
+      `Stage handoff: stage-handoff/v1; stage: review; next: review-and-prep; status: stopped; head: ${headSha}; plan-sha256: ${planSha}\n`,
+    );
+
+    const fullRef = callCmd(dir, 'render', { output: 'full-receipt' });
+    expect(fullRef.code).toBe(1);
+    expect(fullRef.json.reason).toBe('invalid-input');
+    expect((fullRef.json.detail as { violations: Array<{ rule: string }> }).violations[0]?.rule).toBe('not-renderable');
+
+    const dummyFull = join(dir, 'full-receipt-1.md');
+    writeFileSync(dummyFull, 'dummy\n');
+    const dummySha = createHash('sha256').update('dummy\n').digest('hex');
+    const dummySum = join(dir, 'summary.md');
+    writeFileSync(dummySum, 'Summary text.\n');
+    const sumSha = createHash('sha256').update('Summary text.\n').digest('hex');
+
+    const commentRef = callCmd(dir, 'render', { output: 'comment', full_receipt: { path: 'full-receipt-1.md', sha256: dummySha } });
+    expect(commentRef.code).toBe(1);
+    expect((commentRef.json.detail as { violations: Array<{ rule: string }> }).violations[0]?.rule).toBe('not-renderable');
+
+    const bodyRef = callCmd(dir, 'render', {
+      output: 'body',
+      full_receipt: { path: 'full-receipt-1.md', sha256: dummySha },
+      summary: { path: 'summary.md', sha256: sumSha },
+      comment_url: 'https://github.com/example/project/pull/1#issuecomment-1',
+    });
+    expect(bodyRef.code).toBe(1);
+    expect((bodyRef.json.detail as { violations: Array<{ rule: string }> }).violations[0]?.rule).toBe('not-renderable');
+  });
+
+  test('export reports a blocked segment outcome and no completed run end, and older stored states still validate', () => {
+    const dir = newDir();
+    startEscalatedRun(dir);
+    expect(callCmd(dir, 'finish', {
+      outcome: 'escalated',
+      base: baseSha,
+      stop_reason: 'final-gate-failed',
+    }).code).toBe(0);
+
+    const exp = runCli(['export', '--dir', dir]);
+    expect(exp.code).toBe(0);
+    const segments = exp.json.segments as Array<{ outcome: string }>;
+    expect(segments[0]?.outcome).toBe('blocked');
+    const records = exp.json.records as Array<{ op: string; request: { outcome?: string } }>;
+    const endRecs = records.filter((r) => r.op === 'end');
+    expect(endRecs.length).toBeGreaterThan(0);
+    expect(endRecs.every((r) => r.request.outcome !== 'completed')).toBe(true);
+
+    // Pre-change stored state (e.g. needs-context with no new keys) still validates
+    const dirOld = newDir();
+    startEscalatedRun(dirOld);
+    expect(callCmd(dirOld, 'finish', {
+      outcome: 'needs-context',
+      base: baseSha,
+      stop_reason: 'missing-plan',
+    }).code).toBe(0);
+    const oldStored = JSON.parse(readFileSync(join(dirOld, 'review-run-state.json'), 'utf8'));
+    expect(validateStoredState(oldStored).ok).toBe(true);
   });
 });
