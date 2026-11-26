@@ -3735,6 +3735,8 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(ref).toContain('no nested `/review` cycle, no subagent, no delegated part, no outside voice, no coverage audit, no documentation audit, and no Greptile run');
     expect(ref).toContain('Restore refresh mode only when the file matches the bound SHA-256.');
     expect(ref).toContain('A verified continuation skips A and B.');
+    expect(ref).toContain('The published head starts at `R` and advances only after verified draft-push readback.');
+    expect(ref).toContain('Require the live draft head to match the checkpoint\'s published head');
     expect(ref).toContain('After B or C, never emit A\'s refusal.');
     expect(ref).toContain('omit both audit records so the compact receipt renders `- coverage: not-run` and `- documentation: not-run`');
   });
