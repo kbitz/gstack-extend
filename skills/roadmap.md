@@ -687,6 +687,8 @@ Hard-fail is **weight ≥ 6**. Weight 5 warns (SIZE `WEIGHT_WARN`) unless you ra
 
 **Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A directory touch (`src/`) is scan-scope: it cannot room with anything under that prefix except a path marked `(new)`. It still rooms with disjoint files. It is a singleton only when it collides with every other unpacked Track in the layer.
 
+**One-task Tracks for existing code paths.** When a card changes existing code paths, default to one-task Tracks (one PR each, linked with `_blocked-by:` where sequential) rather than bundling multiple tasks into one Track, so each PR stays small, focused, and quicker to review cleanly. Keep this decision qualitative judgment in skill prose — never use a line-count, task-count, or other numeric threshold to trigger a split; the session-weight and task-count limits above remain the audit's mechanical ceiling, not the decomposition rule. Two exceptions allow a multi-task Track (still within the audit caps above): (1) **0-to-1 exception** — greenfield 0-to-1 work standing up a new module's first version rather than modifying existing code paths may stay whole when splitting would leave fragments that cannot ship meaningfully on their own; (2) **same-files exception** — keep tasks together in one Track when splitting would still edit the same files and force strictly sequential PRs (paying extra full pipeline runs for no parallelism) or leave a half-done change that cannot ship cleanly alone, unless the combined work spans separate concerns or trust boundaries that merit distinct PRs. A recorded test gap (`[review:files=...]`) keeps its existing placement onto a matching Track in `### Verify at drain time`. In the proposal `## Summary`, name every card split into one-task Tracks and every multi-task card kept whole, with its reason (existing code paths split, 0-to-1 exception, or same-files exception).
+
 **The card is the scope.** Do not pre-shrink a Track so `/autoplan` can fill it. Overflow discovered in review goes to `TODOS.md` with its source, target impact and any approved scope amendment; the next regeneration re-evaluates admission before packing. Filing a TODO alone never defers an approved obligation. **No "Ship as N PRs" language ever** (`STRUCTURE: fail`).
 
 **Card leanness.** ROADMAP.md holds the card, not the `/autoplan` essay. Review residue (`## Decision Audit Trail`, dual-voice tables, Completeness scores) belongs in `docs/designs/track-NX.md`. If you catch yourself pasting a review into a Track body, stop and write a design doc instead.
@@ -816,6 +818,7 @@ Format:
 - Admission rows: item | disposition | outcome/impact | evidence or revisit trigger
 - Explicit scope amendments, deferred issue drafts/destinations and preserved acceptance debt
 - Outcome/Done-when lines for each Track; delivery summary for each Group
+- Card sizing decisions: each card split into one-task Tracks and each multi-task card kept whole, with the reason (existing code paths split, 0-to-1 exception, or same-files exception; or none)
 - Version recommendation: policy mode, newly satisfied checkpoint/compatibility change, evidence and bump level (not a reserved version)
 - N Groups newly added to Current Plan
 - M items deferred to Future

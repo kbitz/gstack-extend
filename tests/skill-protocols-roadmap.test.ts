@@ -725,3 +725,93 @@ test('roadmap candidate validation excludes drained intake records only in the o
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+describe('one-task Tracks for existing code paths sizing rule', () => {
+  const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+  const sizingStart = roadmap.indexOf('### Sizing discipline');
+  const groupingStart = roadmap.indexOf('### Collision-driven grouping');
+  const renumberingStart = roadmap.indexOf('### Renumbering');
+  const proposalStart = roadmap.indexOf('### Structured proposal artifact');
+  const summaryStart = roadmap.indexOf('## Summary', proposalStart);
+  const dischargedStart = roadmap.indexOf('## Discharged', summaryStart);
+
+  const sizing = roadmap.slice(sizingStart, groupingStart);
+  const grouping = roadmap.slice(groupingStart, renumberingStart);
+  const proposalSummary = roadmap.slice(summaryStart, dischargedStart);
+
+  const ruleLead = '**One-task Tracks for existing code paths.**';
+  const scopeLead = '**The card is the scope.**';
+  const ruleStart = sizing.indexOf(ruleLead);
+  const scopeStart = sizing.indexOf(scopeLead);
+  const oneTaskSubsection =
+    ruleStart >= 0 && scopeStart > ruleStart ? sizing.slice(ruleStart, scopeStart) : '';
+
+  const NUMERIC_TRIGGER_RE = /\b\d+\s*(?:lines?|LOC|tasks?|items?)\b/i;
+
+  const checkOneTaskSplittingRule = (text: string): boolean => {
+    const flat = text.replace(/\s+/g, ' ');
+    if (!flat.includes(ruleLead)) return false;
+    if (!flat.includes('When a card changes existing code paths, default to one-task Tracks')) return false;
+    if (!flat.includes('one PR each')) return false;
+    if (!flat.includes('qualitative judgment in skill prose')) return false;
+    if (!flat.includes('never use a line-count, task-count, or other numeric threshold to trigger a split')) return false;
+    if (!flat.includes("remain the audit's mechanical ceiling, not the decomposition rule")) return false;
+    if (!flat.includes('**0-to-1 exception**')) return false;
+    if (!flat.includes("new module's first version")) return false;
+    if (!flat.includes('cannot ship meaningfully on their own')) return false;
+    if (!flat.includes('**same-files exception**')) return false;
+    if (!flat.includes('edit the same files and force strictly sequential PRs')) return false;
+    if (!flat.includes('cannot ship cleanly alone')) return false;
+    if (!flat.includes('separate concerns or trust boundaries')) return false;
+    const withoutZeroToOne = flat.replace(/\b0-to-1\b/g, '');
+    if (NUMERIC_TRIGGER_RE.test(withoutZeroToOne)) return false;
+    return true;
+  };
+
+  const summarySizingLine =
+    '- Card sizing decisions: each card split into one-task Tracks and each multi-task card kept whole, with the reason (existing code paths split, 0-to-1 exception, or same-files exception; or none)';
+
+  const checkProposalSummarySizing = (text: string): boolean => {
+    const flat = text.replace(/\s+/g, ' ');
+    return (
+      flat.includes('Card sizing decisions:') &&
+      flat.includes('each card split into one-task Tracks') &&
+      flat.includes('each multi-task card kept whole, with the reason') &&
+      flat.includes('0-to-1 exception') &&
+      flat.includes('same-files exception')
+    );
+  };
+
+  // Value: protects=Sizing discipline states the qualitative one-task default for existing code paths, honours both the 0-to-1 and same-files exceptions, keeps Collision-driven grouping's same-files note, and rejects numeric line/task triggers; fails_when=a required clause is dropped, moved out of Sizing discipline, or a numeric trigger is added; why_new=plan criteria 1, 3, and 4; seam=none
+  test('Sizing discipline locks the qualitative one-task rule, 0-to-1 and same-files exceptions, and no numeric triggers', () => {
+    expect(sizingStart).toBeGreaterThan(-1);
+    expect(groupingStart).toBeGreaterThan(sizingStart);
+    expect(renumberingStart).toBeGreaterThan(groupingStart);
+    expect(sizing.length).toBeGreaterThan(0);
+    expect(grouping.length).toBeGreaterThan(0);
+    expect(oneTaskSubsection.length).toBeGreaterThan(0);
+
+    expect(checkOneTaskSplittingRule(oneTaskSubsection)).toBe(true);
+    expect(grouping.replace(/\s+/g, ' ')).toContain(
+      'Same files → different Groups (or one merged Track).',
+    );
+
+    // Synthetic failing mutations prove the helper rejects dropped clauses and injected numeric triggers.
+    expect(checkOneTaskSplittingRule(oneTaskSubsection.replace('**0-to-1 exception**', ''))).toBe(false);
+    expect(checkOneTaskSplittingRule(oneTaskSubsection.replace('**same-files exception**', ''))).toBe(false);
+    expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards over 200 lines.`)).toBe(false);
+    expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards with 3 tasks.`)).toBe(false);
+  });
+
+  // Value: protects=Structured proposal artifact Summary requires naming each card split into one-task Tracks and each multi-task card kept whole with its reason; fails_when=the Card sizing decisions bullet is removed or weakened; why_new=plan criteria 2 and 3; seam=none
+  test('proposal Summary requires naming each split and kept-whole card with its reason', () => {
+    expect(proposalStart).toBeGreaterThan(-1);
+    expect(summaryStart).toBeGreaterThan(proposalStart);
+    expect(dischargedStart).toBeGreaterThan(summaryStart);
+    expect(proposalSummary.length).toBeGreaterThan(0);
+
+    expect(proposalSummary).toContain(summarySizingLine);
+    expect(checkProposalSummarySizing(proposalSummary)).toBe(true);
+    expect(checkProposalSummarySizing(proposalSummary.replace(summarySizingLine, ''))).toBe(false);
+  });
+});
