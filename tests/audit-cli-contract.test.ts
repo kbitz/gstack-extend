@@ -23,7 +23,7 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -310,6 +310,98 @@ describe('per-record intake audit', () => {
     expect(section(audit.stdout, 'TODO_FORMAT')).toContain('MALFORMED_INTAKE_FILE: docs/todos/nested');
     expect(section(audit.stdout, 'TODO_FORMAT')).toContain('MALFORMED_INTAKE_FILE: docs/todos/unexpected.txt');
     expect(section(audit.stdout, 'DOC_INVENTORY')).not.toContain('docs/todos/');
+  });
+
+  test.each([
+    ['Setext wrapper', 'Unprocessed\n-----------\n\n', ''],
+    ['tab-separated wrapper', '##\tUnprocessed\n\n', ''],
+    ['second H3', '', '\n ### Second section\n'],
+    ['BOM-prefixed frontmatter', '\uFEFF---\nname: metadata\n---\n\n', ''],
+    ['leading priority attribute', '- **Priority:** P0\n\n', ''],
+  ])('rejects a %s in a per-record intake file', (_, prefix, suffix) => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(join(intake, 'wi-a1b2c3.md'), prefix + record('wi-a1b2c3') + suffix);
+    const audit = run([repo]);
+    expect(audit.exitCode).toBe(0);
+    expect(audit.stderr).toBe('');
+    expect(section(audit.stdout, 'TODO_FORMAT')).toContain('STATUS: fail');
+  });
+
+  test('rejects a record heading whose only title text is the closing delimiter', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(join(intake, 'wi-a1b2c3.md'), '### [review] ###\n- **ID:** wi-a1b2c3\n');
+    expect(section(run([repo]).stdout, 'TODO_FORMAT')).toContain('missing title');
+  });
+
+  test('does not audit or mint IDs from intake through a symlinked docs directory', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const other = makeEmptyRepo(baseTmp);
+    const intake = join(other, 'todos');
+    symlinkSync(other, join(repo, 'docs'), 'dir');
+    expect(section(run([repo]).stdout, 'TODO_FORMAT')).toContain('STATUS: skip');
+    mkdirSync(intake);
+    writeFileSync(join(intake, 'wi-a1b2c3.md'), record('wi-a1b2c3'));
+    const audited = run([repo]);
+    expect(audited.exitCode).toBe(0);
+    expect(audited.stderr).toBe('');
+    expect(section(audited.stdout, 'TODO_FORMAT')).toContain('MALFORMED_INTAKE_FILE: docs/todos');
+    expect(section(audited.stdout, 'DOC_INVENTORY')).not.toContain('docs/todos/');
+    const mint = runBin(join(ROOT, 'bin', 'roadmap-id'), ['mint', repo], { cwd: repo, home: homeDir });
+    expect(mint.exitCode).toBe(1);
+    expect(mint.stdout).toBe('');
+    expect(mint.stderr).toContain('refusing non-directory intake path docs/todos');
+  });
+
+  test('keeps the legacy inbox migration findings when intake files also exist', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(join(repo, 'docs', 'TODOS.md'), '## Unprocessed\n\n- [review] Old bullet\n- **[review] Old bold bullet**\n');
+    writeFileSync(join(intake, 'wi-a1b2c3.md'), record('wi-a1b2c3'));
+    const inbox = section(run([repo]).stdout, 'UNPROCESSED');
+    expect(inbox).toContain('1 legacy bullet-form entries');
+    expect(inbox).toContain('1 compact bold-form entries');
+  });
+
+  test('escapes line breaks in diagnostics for a malformed intake filename', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(join(intake, 'bad\nrecord.md'), record('wi-a1b2c3'));
+    const audited = run([repo]);
+    expect(audited.exitCode).toBe(0);
+    expect(audited.stderr).toBe('');
+    expect(audited.stdout).not.toContain('bad\nrecord.md');
+    expect(section(audited.stdout, 'TODO_FORMAT')).toContain('docs/todos/bad\\nrecord.md');
+  });
+
+  test('requires the ID bullet before any fenced example', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(join(intake, 'wi-a1b2c3.md'), '### [review] Record\n~~~md\nExample\n~~~\n- **ID:** wi-a1b2c3\n');
+    expect(section(run([repo]).stdout, 'TODO_FORMAT')).toContain('put the ID first');
+  });
+
+  test.skipIf(process.getuid?.() === 0)('reports unreadable intake as an audit finding', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    const path = join(intake, 'wi-a1b2c3.md');
+    writeFileSync(path, record('wi-a1b2c3'));
+    chmodSync(path, 0o000);
+    try {
+      const audit = run([repo]);
+      expect(audit.exitCode).toBe(0);
+      expect(audit.stderr).toBe('');
+      expect(section(audit.stdout, 'TODO_FORMAT')).toContain('unable to read intake path');
+    } finally {
+      chmodSync(path, 0o600);
+    }
   });
 
   test('two branches from the same base merge separate intake records without conflicts', () => {

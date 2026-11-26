@@ -18,6 +18,7 @@ import { planningLines } from '../lib/markdown.ts';
 import { extractTagFromHeading, extractTitleFromHeading } from '../lib/source-tag.ts';
 import { isValidWorkItemId, legacyTodoBulletKind, parseTodoIdBullet } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
+import type { Tokens } from 'marked';
 
 export type TodoEntryKind = 'heading' | 'compactBullet' | 'legacyBullet';
 
@@ -144,6 +145,8 @@ export type ParsedIntakeFile = {
   workItemIdError: 'malformed' | 'duplicate' | null;
   idIsFirst: boolean;
   hasFrontmatter: boolean;
+  headingIsFirst: boolean;
+  unreadable?: true;
 };
 
 export function parseIntakeFile(
@@ -155,26 +158,33 @@ export function parseIntakeFile(
     rel, basename, kind,
     filenameId: isMarkdown && isValidWorkItemId(stem) ? stem : null,
     headings: [], unexpectedHeadings: [], legacyBullets: [], compactBullets: [],
-    workItemId: null, workItemIdRaw: null, workItemIdError: null, idIsFirst: false,
-    hasFrontmatter: isMarkdown && /^---[ \t]*\r?\n[\s\S]*?^(?:---|\.\.\.)[ \t]*\r?$/m.test(content) && content.startsWith('---'),
+    workItemId: null, workItemIdRaw: null, workItemIdError: null, idIsFirst: false, headingIsFirst: false,
+    hasFrontmatter: isMarkdown && /^(?:\uFEFF)?---[ \t]*\r?\n(?:[^\n]*\n)*?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.test(content),
   };
   if (!isMarkdown) return record;
 
-  let previousLine = 0;
-  for (const [lineno, line] of planningLines(content)) {
+  const markdownHeadings = new Map<number, Tokens.Heading>();
+  const rawLines = content.split('\n');
+  const firstContentLine = rawLines.findIndex(line => line.trim() !== '') + 1;
+  for (const [lineno, line] of planningLines(content, (lineNo, heading) => {
+    markdownHeadings.set(lineNo, heading);
+  })) {
     if (line.trim() === '') continue;
-    const isAfterOpening = record.headings[0]?.line === previousLine && record.headings.length === 1;
-    previousLine = lineno;
-    if (/^#{1,2} /.test(line)) record.unexpectedHeadings.push({ line: lineno, raw: line });
+    const heading = markdownHeadings.get(lineno);
+    const isRecordHeading = heading?.depth === 3 && line.startsWith('### ');
+    if (heading && !isRecordHeading && (heading.depth <= 3 || record.headings.length === 0)) {
+      record.unexpectedHeadings.push({ line: lineno, raw: line });
+    }
     const legacyKind = legacyTodoBulletKind(line, record.headings.length > 0);
     if (legacyKind !== null) {
       const bullets = legacyKind === 'legacyBullet' ? record.legacyBullets : record.compactBullets;
       bullets.push({ kind: legacyKind, line: lineno, raw: line });
     }
-    if (/^### /.test(line)) {
+    if (isRecordHeading) {
+      if (lineno === firstContentLine) record.headingIsFirst = true;
       const tag = extractTagFromHeading(line);
-      const afterTag = line.slice(4 + tag.length);
-      const title = tag !== '' && !/^[ \t]/.test(afterTag) ? '' : extractTitleFromHeading(line);
+      const afterTag = heading.text.slice(tag.length);
+      const title = tag !== '' && !/^[ \t]/.test(afterTag) ? '' : extractTitleFromHeading('### ' + heading.text);
       record.headings.push({
         kind: 'heading', line: lineno, raw: line, tag, title,
         unclosedTag: tag === '' && line.startsWith('### ['),
@@ -185,7 +195,9 @@ export function parseIntakeFile(
       if (record.workItemIdRaw !== null) {
         record.workItemIdError = 'duplicate';
       } else {
-        record.idIsFirst = isAfterOpening;
+        const opening = record.headings[0];
+        record.idIsFirst = opening !== undefined && record.headings.length === 1 && opening.line < lineno
+          && rawLines.slice(opening.line, lineno - 1).every(raw => raw.trim() === '');
         record.workItemIdRaw = id.raw;
         record.workItemId = id.id;
         record.workItemIdError = id.id === null ? 'malformed' : null;

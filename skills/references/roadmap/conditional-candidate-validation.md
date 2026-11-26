@@ -121,10 +121,10 @@ ctx.mdFiles = base.mdFiles.map(file => ({ ...file, content: replacements.get(fil
 for (const [path, content] of replacements) {
   if (!ctx.mdFiles.some(file => file.abs === path)) ctx.mdFiles.push({ abs: path, rel: relative(repoRoot, path), content })
 }
-if (drainedIntakePath && drainedIntakePath !== '-') {
+if (drainedIntakePath !== undefined && drainedIntakePath !== '-') {
   if (!isAbsolute(drainedIntakePath)) throw new Error('Drained intake list needs an absolute path or -')
   const drained = new Set((await Bun.file(drainedIntakePath).text()).split(/\r?\n/).filter(Boolean))
-  const intakePaths = new Set(base.intakeFiles.map(file => file.rel))
+  const intakePaths = new Set(base.intakeFiles.filter(file => file.kind === 'file' && file.filenameId !== null).map(file => file.rel))
   if ([...drained].some(path => !/^docs\/todos\/wi-[0-9a-f]{4,8}\.md$/.test(path) || !intakePaths.has(path))) {
     throw new Error('Drained intake paths must name existing canonical intake files')
   }

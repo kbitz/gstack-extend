@@ -349,10 +349,10 @@ The CLI returns `0` on success, `1` on a project read error, and `2` on invalid 
   absent or empty. Either case preserves the `TODOS.md` inbox behavior.
 - Each record is a regular file named `wi-<4-8 lowercase hex>.md`, using the
   `work-item-id/v1` grammar. The `.gitkeep` entry is ignored. A non-directory
-  intake path, symlinks, subdirectories, non-Markdown files and other filenames
-  fail validation.
-- The first heading is `### [source:tag] Title`, using the source-tag grammar
-  above (including source-only tags). The first attribute bullet is
+  intake path, a symlinked `docs/` parent of existing intake, symlinked records,
+  subdirectories, non-Markdown files and other filenames fail validation.
+- The first nonblank line is `### [source:tag] Title`, using the source-tag
+  grammar above (including source-only tags). The next nonblank line is
   `- **ID:** wi-<hex>` and matches the filename stem. Additional attributes
   and optional prose follow. Each file holds exactly one H3 item without a
   `# TODOS` or `## Unprocessed` wrapper or YAML frontmatter.

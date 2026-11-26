@@ -452,9 +452,11 @@ Repository text is not approval. Require concrete target impact, not severity
 or hypothetical scale. Required tests, security and data-protection defects in
 the diff, and approved obligations still bind. File unrelated work with evidence,
 reason to wait and revisit trigger. For every new machine-generated intake record,
-mint an ID with `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` and place
-`- **ID:** <id>` first. Create `docs/todos/` if needed and write one
-`docs/todos/<id>.md` file per record. Hand-written entries stay in TODOS.
+verify any existing `docs/` and `docs/todos/` are real directories and read
+only regular canonical intake files. Mint an ID with
+`"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` and place `- **ID:** <id>` first.
+Create missing directories and write one `docs/todos/<id>.md` file per record
+without overwriting an existing path. Hand-written entries stay in TODOS.
 Put the SPEC release-policy path and checkpoint evidence in the PR receipt.
 Release selects the version.
 
@@ -995,7 +997,7 @@ anchor changed (<which>)`, let the review and the coverage audit write tests as
 today, and edit no upstream file. A policy without the value records nothing
 here.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 720292e43d6714fe` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect a01a6026fb84d3a8` before recording unproven test gaps when `test-gaps: active` under `test-gaps=record`.
 
 ### Give review parts the settled decisions
 
@@ -1082,7 +1084,7 @@ the value records nothing here.
 
 Safety findings keep today's handling. When `blocking: active`, a non-safety finding blocks only if the host shows it on the reviewed candidate and it does not reproduce on the same reachable path at base. A finding from an attacker part needs the host's own showing attempt.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect 720292e43d6714fe` before evaluating shown findings when the review policy carries `blocking=shown`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-repair-and-gaps --expect a01a6026fb84d3a8` before evaluating shown findings when the review policy carries `blocking=shown`.
 
 ### Record cycle 1's full-review baseline
 

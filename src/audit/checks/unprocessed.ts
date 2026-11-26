@@ -36,22 +36,16 @@ export function runCheckUnprocessed(ctx: AuditCtx): CheckResult {
     else if (e.kind === 'compactBullet') compact++;
   }
 
-  if (intakeCount > 0) {
-    const total = items + intakeCount;
-    const breakdown = items > 0 ? `${items} in TODOS.md, ` : '';
-    return {
-      section: 'UNPROCESSED',
-      preamble: [`ITEMS: ${total}`, `INTAKE_FILES: ${intakeCount}`, `LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`],
-      status: 'found',
-      body: ['FINDINGS:', `- ${total} unprocessed items awaiting triage (${breakdown}${intakeCount} in docs/todos/)`],
-    };
-  }
-
-  const preamble = [`ITEMS: ${items}`, `LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`];
+  const total = items + intakeCount;
+  const preamble = [`ITEMS: ${total}`];
+  if (intakeCount > 0) preamble.push(`INTAKE_FILES: ${intakeCount}`);
+  preamble.push(`LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`);
   const nonCanonical = legacy + compact;
 
-  if (todos.hasUnprocessedSection && items > 0) {
-    const body = ['FINDINGS:', `- ${items} unprocessed items awaiting triage`];
+  if (intakeCount > 0 || (todos.hasUnprocessedSection && items > 0)) {
+    const breakdown = items > 0 ? `${items} in TODOS.md, ` : '';
+    const sources = intakeCount > 0 ? ` (${breakdown}${intakeCount} in docs/todos/)` : '';
+    const body = ['FINDINGS:', `- ${total} unprocessed items awaiting triage${sources}`];
     if (legacy > 0) {
       body.push(`- ${legacy} legacy bullet-form entries (run /roadmap to migrate to rich format)`);
     }

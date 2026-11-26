@@ -91,6 +91,14 @@ export function runCheckTodoFormat(ctx: AuditCtx): CheckResult {
   }
 
   for (const f of ctx.intakeFiles) {
+    if (f.unreadable) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — unable to read intake path`);
+      continue;
+    }
+    if (f.rel === 'docs/todos') {
+      failures.push('- MALFORMED_INTAKE_FILE: docs/todos — expected real docs/ and docs/todos/ directories');
+      continue;
+    }
     if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
       failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — expected a regular wi-<4-8 lowercase hex>.md file`);
       continue;
@@ -100,6 +108,8 @@ export function runCheckTodoFormat(ctx: AuditCtx): CheckResult {
     }
     if (f.hasFrontmatter) {
       failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — YAML frontmatter is not allowed`);
+    } else if (f.headings.length > 0 && !f.headingIsFirst) {
+      failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel} — put the record heading before any content`);
     }
     for (const h of f.unexpectedHeadings) {
       failures.push(`- MALFORMED_INTAKE_FILE: ${f.rel}:${h.line} — unexpected heading '${h.raw.slice(0, 80)}' (expected one '### [source:tag] Title' record with no section wrapper)`);

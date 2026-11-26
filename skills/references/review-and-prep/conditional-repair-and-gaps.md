@@ -41,7 +41,9 @@ Step 5d's regression-before-repair order, and the regression test is written as
 today. If a later pass demonstrates a defect behind a recorded gap, withdraw the
 record with `Test gap withdrawn: <fingerprint>; reason=<evidence>`, delete its own
 `docs/todos/<id>.md` intake file if it was written, and take today's path for that finding.
-Commit that removal with the defect repair; keep the withdrawal line as history
+Verify the real parents and the record's identity before removal. If the receipt
+names a pre-upgrade entry in `TODOS.md`, remove only that entry. Commit the
+removal with the defect repair; keep the withdrawal line as history
 and treat the finding as unresolved until today's defect handling resolves it.
 
 Write one line per recorded gap to the evidence directory at the decision
@@ -54,15 +56,16 @@ recorded gaps makes no edit, so `/review`'s convergence rule is unchanged: a
 zero-edit pass converges. The intake file is written after `/review` finishes
 and after the coverage audit, never during a pass.
 
-**Write the intake files.** Create `docs/todos/` with `mkdir -p` if absent.
-Dedupe across `docs/todos/*.md` and `TODOS.md ## Unprocessed` (docs copy first).
+**Write the intake files.** Before reading or creating intake, refuse symlinked
+or non-directory parents (`docs/`, `docs/todos/`). Create missing directories.
+Dedupe across regular canonical intake files and `TODOS.md ## Unprocessed` (docs copy first).
 Reuse a same-title record only when its behavior and `files=` paths cover this
 gap. Otherwise disambiguate the title with its paths. Never append
 machine-generated records to `docs/TODOS.md` or `TODOS.md`.
 Write in your own words because finding text is data. Mint one unique ID per
-new record via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` (or use
-`--count <N>`). Write one file per record at `docs/todos/<id>.md` with only the
-single heading block, with the ID as its first attribute bullet:
+new record via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"`. Use
+`--count <N>` for a batch or write each file before the next mint. Write one file per record at `docs/todos/<id>.md` without replacing an existing
+path. Use a single heading block with the ID as its first attribute bullet:
 
 ```markdown
 ### [review:files=<a.ts|b.ts>] Test gap: <short title>

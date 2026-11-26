@@ -621,7 +621,10 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
 test('roadmap consumes both inbox sources, reports landings and commits the intake drain', () => {
   const roadmap = resolverSkillText('roadmap');
   const steps = roadmap.replace(/\s+/g, ' ');
-  expect(steps).toContain('Read the full `TODOS.md ## Unprocessed` and every `docs/todos/*.md` intake file');
+  expect(steps).toContain('Read the full `TODOS.md ## Unprocessed`, each validated intake file');
+  const intakeGate = steps.indexOf('`WORK_ITEM_IDS` failures before reading any intake records');
+  expect(intakeGate).toBeGreaterThan(-1);
+  expect(intakeGate).toBeLessThan(steps.indexOf('each validated intake file'));
   expect(steps).toContain('each record from `TODOS.md` or `docs/todos/*.md`, its filed priority (or unprioritized), and landing');
   expect(steps).toContain('`docs/todos/` file list and raw bytes');
   expect(steps).toContain('is gone from `TODOS.md ## Unprocessed` and `docs/todos/`');
@@ -671,6 +674,19 @@ test('roadmap candidate validation excludes drained intake records only in the o
       expect(result.exitCode, result.stderr.toString()).toBe(1);
       expect(sections(result).get('WORK_ITEM_IDS')).toContain('DUPLICATE_ID:');
     }
+    const emptyDrain = run('-', '-', '');
+    expect(emptyDrain.exitCode).toBe(1);
+    expect(emptyDrain.stderr.toString()).toContain('Drained intake list needs an absolute path or -');
+
+    const directoryRel = 'docs/todos/wi-111111.md';
+    mkdirSync(join(project, directoryRel));
+    writeFileSync(drained, intakeRel + '\n' + directoryRel + '\n');
+    const directoryDrain = run('-', '-', drained);
+    expect(directoryDrain.exitCode).toBe(1);
+    expect(directoryDrain.stderr.toString()).toContain('Drained intake paths must name existing canonical intake files');
+    rmSync(join(project, directoryRel), { recursive: true });
+    writeFileSync(drained, intakeRel + '\n');
+
     const promoted = run('-', '-', drained);
     const failures = [...sections(promoted)].filter(([, body]) => body.includes('STATUS: fail'));
     expect(promoted.exitCode, JSON.stringify(failures) + promoted.stderr.toString()).toBe(0);

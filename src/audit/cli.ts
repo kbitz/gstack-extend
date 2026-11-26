@@ -73,6 +73,7 @@ import {
   parseRoadmap,
 } from './parsers/roadmap.ts';
 import { parseIntakeFile, parseTodos, type ParsedIntakeFile } from './parsers/todos.ts';
+import { intakeDirectoryKind } from './lib/intake-files.ts';
 import {
   collectParseErrors,
   type AuditCtx,
@@ -323,24 +324,34 @@ export function buildAuditCtx(args: {
   const mdFiles: MdFileSnapshot[] = [];
   const intakeFiles: ParsedIntakeFile[] = [];
   const intakePath = join(docsDir, 'todos');
-  const intakeStat = exists.docsDir ? lstatSync(intakePath, { throwIfNoEntry: false }) : undefined;
-  const todosDir = intakeStat?.isDirectory() ? intakePath : null;
-  if (todosDir !== null) {
-    const names = readdirSync(todosDir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    for (const name of names) {
-      if (name === '.gitkeep') continue;
-      const abs = join(todosDir, name);
-      const rel = `docs/todos/${name}`;
-      const regular = lstatSync(abs, { throwIfNoEntry: false })?.isFile() === true;
-      let content = '';
-      if (regular && name.endsWith('.md')) {
-        content = readFileSync(abs, 'utf8');
-        mdFiles.push({ abs, rel, content });
-      }
-      intakeFiles.push(parseIntakeFile(rel, name, regular ? 'file' : 'non-file', content));
+  let todosDir: string | null = null;
+  let intakeNames: string[] = [];
+  try {
+    const intakeKind = intakeDirectoryKind(intakePath);
+    if (intakeKind === 'directory') {
+      intakeNames = readdirSync(intakePath).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      todosDir = intakePath;
+    } else if (intakeKind === 'invalid') {
+      intakeFiles.push(parseIntakeFile('docs/todos', 'todos', 'non-file', ''));
     }
-  } else if (intakeStat !== undefined) {
-    intakeFiles.push(parseIntakeFile('docs/todos', 'todos', 'non-file', ''));
+  } catch {
+    intakeFiles.push({ ...parseIntakeFile('docs/todos', 'todos', 'non-file', ''), unreadable: true });
+  }
+  for (const name of intakeNames) {
+    if (name === '.gitkeep') continue;
+    const abs = join(intakePath, name);
+    const rel = `docs/todos/${name}`;
+    let regular: boolean;
+    let content = '';
+    try {
+      regular = lstatSync(abs, { throwIfNoEntry: false })?.isFile() === true;
+      if (regular && name.endsWith('.md')) content = readFileSync(abs, 'utf8');
+    } catch {
+      intakeFiles.push({ ...parseIntakeFile(rel, name, 'non-file', ''), unreadable: true });
+      continue;
+    }
+    if (regular && name.endsWith('.md')) mdFiles.push({ abs, rel, content });
+    intakeFiles.push(parseIntakeFile(rel, name, regular ? 'file' : 'non-file', content));
   }
   for (const f of walkMdFiles(repoRoot, 2, undefined, intakePath)) {
     mdFiles.push({
