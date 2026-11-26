@@ -1212,4 +1212,16 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
     expect(contract).toContain('bin/roadmap-id mint');
     expect(contract).toContain('Missing IDs alone produce `STATUS: warn`');
   });
+
+  // Value: protects=docs/source-tag-contract.md and skills/full-review.md agree on the three implicit-state-machine classification labels mapped onto existing severities; fails_when=either side renames a label or diverges on where the labels live; why_new=Track 100A T2; seam=none
+  test('docs/source-tag-contract.md and skills/full-review.md agree on implicit-state-machine classification labels', () => {
+    const taxonomy = sectionFrom(contract, TAXONOMY_HEADING, /\n## /);
+    for (const label of ['[make explicit now]', '[make explicit later]', '[plain check]']) {
+      expect(taxonomy).toContain(label);
+      expect(skill).toContain(label);
+    }
+    expect(taxonomy).toContain('**Description:**');
+    expect(taxonomy).toContain('**Hypothesis (untested):**');
+    expect(taxonomy).toContain('existing four severities with no new severity names or fields');
+  });
 });

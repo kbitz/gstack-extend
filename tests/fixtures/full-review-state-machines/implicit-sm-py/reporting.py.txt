@@ -1,0 +1,6 @@
+def describe_order(order) -> str:
+    if order.status == "failed":
+        return "failed"
+    if order.status == "completed":
+        return "ok"
+    return "other"

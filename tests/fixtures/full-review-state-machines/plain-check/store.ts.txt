@@ -1,0 +1,19 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+
+export function saveConfig(
+  path: string,
+  { name, formatVersion }: { name: string; formatVersion: number },
+): void {
+  const payload = {
+    name: name,
+    formatVersion: formatVersion,
+  };
+  writeFileSync(path, JSON.stringify(payload));
+}
+
+export function loadConfig(path: string): { name: string } {
+  const data = JSON.parse(readFileSync(path, 'utf8'));
+  return {
+    name: data.name,
+  };
+}

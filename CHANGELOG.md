@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.119.0] - 2026-11-25
+
+### Changed
+
+- `/full-review` now includes an implicit-state-machine lens backed by a read-only `bin/full-review-state-machines` pre-scanner for Python and TypeScript/JavaScript that classifies confirmed findings as `make explicit now`, `make explicit later`, or `plain check` using existing severities.
+- `/full-review` now gives the Reviewer and Consistency Auditor implicit state-machine candidates and uses the labels `[make explicit now]`, `[make explicit later]`, and `[plain check]` for their findings.
+- `bin/full-review-state-machines` reports candidate sites in Python, TypeScript, and JavaScript as text or JSON.
+
 ## [0.118.0] - 2026-11-25
 
 ### Changed

@@ -48,6 +48,10 @@
       "tests/bun-prereq.test.ts",
       "tests/docs-ship.test.ts"
     ],
+    "bin/full-review-state-machines": [
+      "tests/bun-prereq.test.ts",
+      "tests/full-review-state-machines.test.ts"
+    ],
     "bin/gstack-extend": [
       "tests/bun-prereq.test.ts",
       "tests/init-bin.test.ts",
@@ -76,6 +80,7 @@
       "tests/audit-snapshots.test.ts",
       "tests/bun-prereq.test.ts",
       "tests/docs-ship.test.ts",
+      "tests/full-review-state-machines.test.ts",
       "tests/init-bin.test.ts",
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
@@ -361,7 +366,8 @@
       "tests/secret-dispositions.test.ts"
     ],
     "docs/source-tag-contract.md": [
-      "tests/audit-compliance.test.ts"
+      "tests/audit-compliance.test.ts",
+      "tests/full-review-state-machines.test.ts"
     ],
     "docs/stage-runs.schema.json": [
       "tests/telemetry-contract.test.ts",
@@ -444,6 +450,7 @@
       "tests/handoff-contract.test.ts"
     ],
     "skills/full-review.md": [
+      "tests/full-review-state-machines.test.ts",
       "tests/handoff-contract.test.ts",
       "tests/skill-protocols-full-review.test.ts",
       "tests/telemetry.test.ts",
@@ -527,6 +534,9 @@
       "tests/setup-init-wire.test.ts",
       "tests/update.test.ts"
     ],
+    "src/full-review/**": [
+      "tests/full-review-state-machines.test.ts"
+    ],
     "src/layout-scaffold/**": [
       "tests/layout-scaffold.test.ts"
     ],
@@ -548,6 +558,9 @@
     ],
     "tests/fixtures/collision-vectors.json": [
       "tests/lib-pack.test.ts"
+    ],
+    "tests/fixtures/full-review-state-machines/**": [
+      "tests/full-review-state-machines.test.ts"
     ],
     "tests/fixtures/handoffs/**": [
       "tests/handoff-contract.test.ts"

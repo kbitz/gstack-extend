@@ -1,0 +1,19 @@
+export type SessionMode = 'interactive' | 'batch' | 'replay';
+
+export function transitionMode(current: SessionMode, next: SessionMode): SessionMode {
+  const record = { mode: current };
+  if (record.mode === 'interactive') {
+    record.mode = next;
+  } else if (record.mode === 'batch') {
+    record.mode = next;
+  }
+  return record.mode;
+}
+
+export function resetMode(record: { mode: SessionMode }): void {
+  record.mode = 'interactive';
+}
+
+export function replayMode(record: { mode: SessionMode }): void {
+  record.mode = 'replay';
+}
