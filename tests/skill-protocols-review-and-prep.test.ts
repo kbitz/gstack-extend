@@ -3698,8 +3698,9 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(prep).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
     expect(prep).toContain('### Refresh a prepared PR after a base move');
     expect(prep).toMatch(
-      /Run `~\/\.gstack-extend\/bin\/preamble review-and-prep --ref conditional-base-move-refresh --expect [0-9a-f]{16}` before Step 1's PR validation when the invocation names refresh\./,
+      /Run `~\/\.gstack-extend\/bin\/preamble review-and-prep --ref conditional-base-move-refresh --expect [0-9a-f]{16}` before Step 1's PR validation when the invocation names refresh, or when H-F resume finds a checkpoint naming `refresh-1\.md`\./,
     );
+    expect(prep).toContain('For every `refresh` invocation, validate exactly one `Cause: base_moved` line');
   });
 
   test('T7: refresh reference locks refusal order, classes, skill-is-implementation, escalation reasons, --undo once, and no full review or Greptile', () => {
@@ -3731,9 +3732,12 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(ref).toContain('gh pr ready "<number>" --repo "<base-owner/repo>" --undo');
     expect(ref).toContain('Never toggle a PR to draft more than once per refresh');
     expect(ref).toContain('no nested `/review` cycle, no subagent, no delegated part, no outside voice, no coverage audit, no documentation audit, and no Greptile run');
+    expect(ref).toContain('Restore refresh mode only when the file matches the bound SHA-256.');
+    expect(ref).toContain('A verified continuation skips A and B.');
+    expect(ref).toContain('omit both audit records so the compact receipt renders `- coverage: not-run` and `- documentation: not-run`');
   });
 
-  test('T7: executable delta-facts fence classifies all 6 fixture repository cases', () => {
+  test('T7: executable delta-facts fence classifies fixture repository cases', () => {
     const tmp = makeBaseTmp('gstack-refresh-delta-');
     try {
       const fences = extractFences(REF_BASE_MOVE_REFRESH, 'bash');
@@ -3787,6 +3791,9 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         const revB = git(cwd, ['rev-parse', 'HEAD']);
 
         git(cwd, ['checkout', '--quiet', 'feature']);
+        const unmerged = runFence(cwd, revR, revB);
+        expect(unmerged.status).toBe(1);
+        expect(unmerged.stdout).toBe('REFRESH_DELTA_UNVERIFIED: head-missing-reviewed-or-base\n');
         git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
         const res = runFence(cwd, revR, revB);
         expect(res.status, res.stderr).toBe(0);
@@ -3842,6 +3849,18 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         expect(res.status, res.stderr).toBe(0);
         const { rows } = parseDelta(res.stdout);
         expect(rows).toEqual([{ path: 'src/app.ts', side: 'both', merged: 'other' }]);
+
+        git(cwd, ['checkout', '--quiet', '-b', 'keep-reviewed', revR]);
+        const merge = spawnSync('git', ['merge', '--no-edit', 'main'], { cwd, env: GIT_ENV });
+        expect(merge.status).toBe(1);
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 2;\n');
+        git(cwd, ['add', 'src/app.ts']);
+        git(cwd, ['commit', '--quiet', '--no-edit']);
+        expect(git(cwd, ['diff', '--name-only', revR, 'HEAD'])).toBe('');
+
+        const kept = runFence(cwd, revR, revB);
+        expect(kept.status, kept.stderr).toBe(0);
+        expect(parseDelta(kept.stdout).rows).toEqual([{ path: 'src/app.ts', side: 'both', merged: 'other' }]);
       }
 
       // Case 4: follow-up commit to a non-resolution file gives refresh-only
@@ -3924,6 +3943,39 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         expect(res.status, res.stderr).toBe(0);
         const { rows } = parseDelta(res.stdout);
         expect(rows).toEqual([{ path: specialPath, side: 'base-only', merged: 'base' }]);
+      }
+
+      // A literal colon-prefixed path can differ from base or disappear entirely.
+      {
+        const cwd = initRepo();
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        git(cwd, ['commit', '--allow-empty', '--quiet', '-m', 'feature']);
+        const reviewed = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        const specialPath = ':notes.txt';
+        writeFileSync(join(cwd, specialPath), 'base\n');
+        git(cwd, ['add', '-A']);
+        git(cwd, ['commit', '--quiet', '-m', 'base notes']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+        expect(git(cwd, ['merge-base', reviewed, revB])).toBe(revR);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
+        writeFileSync(join(cwd, specialPath), 'different notes\n');
+        git(cwd, ['add', '-A']);
+        git(cwd, ['commit', '--quiet', '-m', 'change notes']);
+        const different = runFence(cwd, reviewed, revB);
+        expect(different.status, different.stderr).toBe(0);
+        expect(parseDelta(different.stdout).rows).toEqual([{ path: specialPath, side: 'base-only', merged: 'other' }]);
+
+        rmSync(join(cwd, specialPath));
+        git(cwd, ['add', '-A']);
+        git(cwd, ['commit', '--quiet', '-m', 'drop notes']);
+        const dropped = runFence(cwd, reviewed, revB);
+        expect(dropped.status, dropped.stderr).toBe(0);
+        expect(parseDelta(dropped.stdout).rows).toEqual([{ path: specialPath, side: 'base-only', merged: 'other' }]);
       }
     } finally {
       rmSync(tmp, { recursive: true, force: true });

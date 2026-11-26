@@ -1583,7 +1583,7 @@ row (`next: none; status: needs-context`).
 | `reviewed` | yes | the earlier reviewed head, 40 lowercase hex |
 | `head` | yes | the local merged head, 40 lowercase hex |
 | `base` | yes | the fetched base tip merged in, 40 lowercase hex |
-| `files` | yes | last field; JSON array of repository-relative paths. Split the earlier fields on `; `, then parse the rest after the first `; files: ` as JSON |
+| `files` | yes | last field; JSON array of repository-relative paths, empty when no affected path can be identified. Split the earlier fields on `; `, then parse the rest after the first `; files: ` as JSON |
 
 #### Refusal line
 
@@ -1602,6 +1602,9 @@ row (`next: none; status: needs-context`).
 4. On an escalation (`Refresh escalated:`), run an ordinary `/review-and-prep` on the same PR in the same workspace, where the PR is draft and the merge commit is local.
 5. On a refusal (`Refresh refused:`), show the message to the user, because nothing changed.
 6. At an external-gate pause, follow H-F; resuming with `/review-and-prep resume` continues the refresh from its evidence directory.
+
+The escalation and the cycle-cap stop share a stage line. Use the preceding
+`Refresh escalated:` line or H-E fence to choose the next invocation.
 
 A consumer without H-G reads the escalation line as H-D `HOLD` (a bare summary with a full SHA) and the refusal line as H-D `REFUSE` (a bare summary with no binding).
 

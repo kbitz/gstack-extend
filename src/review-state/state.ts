@@ -138,8 +138,6 @@ const ENUMS = {
   escalationReason: ['reviewed-code-conflict', 'reviewed-behavior-change', 'delta-finding', 'delta-unverified', 'final-gate-failed'],
 } as const;
 
-export const ESCALATION_STOP_REASONS = ENUMS.escalationReason;
-
 export type EvidenceRef = { path: string; sha256: string };
 export type CandidateBinding = { commit: string; tree: string; base: string | null; wtree: string | null };
 export type PrInfo = { url: string; repo: string; number: number; head_repo: string; head_branch: string; base_ref: string };
