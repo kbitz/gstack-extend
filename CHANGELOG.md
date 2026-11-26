@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.121.0] - 2026-11-26
+
+### Changed
+
+- `/roadmap` now splits cards that change existing code paths into one-task Tracks while allowing 0-to-1 new-module work and same-file sequential work to stay whole, and lists each split or kept-whole card with its reason in the proposal `## Summary`.
+- `/roadmap` defaults to one-task Tracks for existing-code changes, allows cohesive new modules and same-file work to stay together when appropriate, and reports its sizing decisions in the proposal Summary.
+
 ## [0.120.0] - 2026-11-25
 
 ### Changed
