@@ -4,6 +4,7 @@
  * Counts items in the ## Unprocessed section of TODOS.md, broken down
  * by canonical-form (heading-style `### [tag] Title`) vs legacy bullet
  * (`- [tag] ...`) vs compact bullet (`- **[tag] Title** ...`).
+ * Adds docs/todos/ entries to the count and emits INTAKE_FILES when present.
  *
  * Emits ITEMS / LEGACY_BULLETS / COMPACT_BULLETS as preamble (before STATUS),
  * then a STATUS that depends on the inbox shape:

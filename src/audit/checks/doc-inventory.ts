@@ -1,11 +1,12 @@
 /**
  * doc-inventory.ts — port of check_doc_inventory (~L1513-1568).
  *
- * Lists every `.md` file at maxdepth 2 with its TODO-pattern count and
+ * Lists walked `.md` files and per-record intake with their TODO-pattern count and
  * doc-type label. Informational output — feeds the skill prompt's Doc
  * Discovery step.
  *
  * Doc-type classification (mirrors bash):
+ *   - intake doc:  regular Markdown file under docs/todos/
  *   - root doc:    basename in ROOT_DOCS
  *   - project doc: basename in DOCS_DIR_DOCS, or the /project-spec product spec
  *   - design doc:  path contains `/docs/designs/`

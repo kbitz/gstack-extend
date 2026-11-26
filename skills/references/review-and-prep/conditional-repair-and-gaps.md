@@ -56,8 +56,9 @@ recorded gaps makes no edit, so `/review`'s convergence rule is unchanged: a
 zero-edit pass converges. The intake file is written after `/review` finishes
 and after the coverage audit, never during a pass.
 
-**Write the intake files.** Before reading or creating intake, refuse symlinked
-or non-directory parents (`docs/`, `docs/todos/`). Create missing directories.
+**Write the intake files.** Before intake reads and writes, require any existing
+`docs/` and `docs/todos/` to be real directories with these exact on-disk names
+in the same Git worktree. Create missing directories only after this check.
 Dedupe across regular canonical intake files and `TODOS.md ## Unprocessed` (docs copy first).
 Reuse a same-title record only when its behavior and `files=` paths cover this
 gap. Otherwise disambiguate the title with its paths. Never append

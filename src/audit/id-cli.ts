@@ -6,7 +6,7 @@ import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { createGitGateway } from './lib/git.ts';
-import { intakeDirectoryKind } from './lib/intake-files.ts';
+import { inspectIntakeDirectory } from './lib/intake-files.ts';
 import {
   isValidWorkItemId,
   mintRandomId,
@@ -50,7 +50,7 @@ export function collectTakenIds(repoRoot: string): Set<string> {
     for (const id of scanAllWorkItemIds(readFileSync(path, 'utf8'))) taken.add(id);
   }
   const intakeDir = join(repoRoot, 'docs', 'todos');
-  const intakeKind = intakeDirectoryKind(intakeDir);
+  const { kind: intakeKind } = inspectIntakeDirectory(intakeDir);
   if (intakeKind === 'absent') return taken;
   if (intakeKind === 'invalid') throw new Error('refusing non-directory intake path docs/todos');
   const names = readdirSync(intakeDir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));

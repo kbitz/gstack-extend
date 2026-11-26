@@ -2,9 +2,11 @@
  * todo-format.ts — port of check_todo_format (~L3456-3567).
  *
  * Walks the ## Unprocessed section of TODOS.md and validates every
- * candidate entry against the source-tag contract.
+ * candidate entry against the source-tag contract. Also validates each entry
+ * in docs/todos/ against the per-record intake format.
  *
  * Failure modes:
+ *   - MALFORMED_INTAKE_FILE: invalid path, filename, or record structure.
  *   - MALFORMED_HEADING: compact bullet (`- **[tag] Title**`) — flagged
  *     so the writer migrates to canonical heading form.
  *   - MALFORMED_HEADING: legacy bullet (`- [tag] ...`) — same migration ask.
@@ -17,6 +19,7 @@
  * Output: HEADINGS / LEGACY_BULLETS / COMPACT_BULLETS as preamble (count
  * lines mirrored from check_unprocessed but computed independently —
  * preserves bash semantics where the two checks count their own way).
+ * INTAKE_FILES appears when intake entries are present.
  */
 
 import { extractTagFromHeading, extractTitleFromHeading, validateTagExpression } from '../lib/source-tag.ts';

@@ -81,6 +81,8 @@ if (![repoRoot, extendRoot, activeDraftPath, archiveDraftPath].every(p => p && i
 const regeneration = args.length >= 6
 if (regeneration && ![todosDraftPath, futureDraftPath].every(p => p === '-' || (p && isAbsolute(p)))) throw new Error('Planning draft slots need absolute paths or -')
 const { buildAuditCtx, runAudit } = await import(join(extendRoot, 'src/audit/cli.ts'))
+const { runCheckTodoFormat } = await import(join(extendRoot, 'src/audit/checks/todo-format.ts'))
+const { runCheckWorkItemIds } = await import(join(extendRoot, 'src/audit/checks/work-item-ids.ts'))
 const { parseRoadmap, mergeShippedArchive, mergeFutureArchive } = await import(join(extendRoot, 'src/audit/parsers/roadmap.ts'))
 const { parsePhases } = await import(join(extendRoot, 'src/audit/parsers/phases.ts'))
 const { parseTodos } = await import(join(extendRoot, 'src/audit/parsers/todos.ts'))
@@ -127,6 +129,9 @@ if (drainedIntakePath !== undefined && drainedIntakePath !== '-') {
   const intakePaths = new Set(base.intakeFiles.filter(file => file.kind === 'file' && file.filenameId !== null).map(file => file.rel))
   if ([...drained].some(path => !/^docs\/todos\/wi-[0-9a-f]{4,8}\.md$/.test(path) || !intakePaths.has(path))) {
     throw new Error('Drained intake paths must name existing canonical intake files')
+  }
+  if (drained.size > 0 && [runCheckTodoFormat(base), runCheckWorkItemIds(base)].some(check => check.status === 'fail')) {
+    throw new Error('Resolve live inbox format and ID failures before validating a drain')
   }
   ctx.intakeFiles = base.intakeFiles.filter(file => !drained.has(file.rel))
   ctx.mdFiles = ctx.mdFiles.filter(file => !drained.has(file.rel))

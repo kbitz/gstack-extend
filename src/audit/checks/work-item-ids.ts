@@ -80,13 +80,16 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   }
 
   for (const f of ctx.intakeFiles) {
+    if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
+      inspectableCount++;
+      hasBlockingFinding = true;
+      const reason = f.unreadable ? 'unable to read intake path' : 'expected a regular intake Markdown file';
+      findings.push(`- MALFORMED_ID: ${f.rel} — ${reason}`);
+      continue;
+    }
     if (f.filenameId === null) {
       hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${f.rel} — filename must match wi-<4-8 lowercase hex>.md`);
-    }
-    if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
-      inspectableCount++;
-      continue;
     }
     if (f.workItemId === null) hasBlockingFinding = true;
     inspect(f.rel, `${TODO_FIELD} (required in intake files)`, f);

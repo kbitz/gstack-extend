@@ -39,7 +39,7 @@ export function* planningLines(
   const tokens = planningMarked.lexer(lexSource);
   let lastYieldedLine = -1;
 
-  function* walk(blocks: Token[], startLine: number): Generator<readonly [number, string]> {
+  function* walk(blocks: Token[], startLine: number, topLevel = false): Generator<readonly [number, string]> {
     let line = startLine;
     for (const token of blocks) {
       switch (token.type) {
@@ -65,7 +65,7 @@ export function* planningLines(
         case 'space':
           break;
         default: {
-          if (token.type === 'heading') onHeading?.(line + 1, token as Tokens.Heading);
+          if (topLevel && token.type === 'heading') onHeading?.(line + 1, token as Tokens.Heading);
           const end = advanceLine(line, token.raw.replace(/\n+$/, ''));
           // For example, a task checkbox and its text share one source line.
           for (let idx = Math.max(line, lastYieldedLine + 1); idx <= end; idx++) {
@@ -78,5 +78,5 @@ export function* planningLines(
     }
   }
 
-  yield* walk(tokens, 0);
+  yield* walk(tokens, 0, true);
 }

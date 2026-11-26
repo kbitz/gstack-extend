@@ -351,10 +351,11 @@ The CLI returns `0` on success, `1` on a project read error, and `2` on invalid 
   `work-item-id/v1` grammar. The `.gitkeep` entry is ignored. A non-directory
   intake path, a symlinked `docs/` parent of existing intake, symlinked records,
   subdirectories, non-Markdown files and other filenames fail validation.
+  Writers and drains use the exact directory names in the enclosing Git worktree.
 - The first nonblank line is `### [source:tag] Title`, using the source-tag
   grammar above (including source-only tags). The next nonblank line is
   `- **ID:** wi-<hex>` and matches the filename stem. Additional attributes
-  and optional prose follow. Each file holds exactly one H3 item without a
+  and optional prose follow. Each file holds exactly one top-level H3 item without a
   `# TODOS` or `## Unprocessed` wrapper or YAML frontmatter.
 - `/review-and-prep` writes recorded test gaps, base-only findings and
   review-filed follow-ups as individual files. Consumers that collect the

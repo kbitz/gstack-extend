@@ -329,6 +329,17 @@ describe('per-record intake audit', () => {
     expect(section(audit.stdout, 'TODO_FORMAT')).toContain('STATUS: fail');
   });
 
+  test('accepts quoted headings in intake prose', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const intake = join(repo, 'docs', 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(join(intake, 'wi-a1b2c3.md'), record('wi-a1b2c3') + '\n> ## Quoted section\n');
+    const audited = run([repo]);
+    expect(audited.exitCode).toBe(0);
+    expect(audited.stderr).toBe('');
+    expect(section(audited.stdout, 'TODO_FORMAT')).toContain('STATUS: pass');
+  });
+
   test('rejects a record heading whose only title text is the closing delimiter', () => {
     const repo = makeEmptyRepo(baseTmp);
     const intake = join(repo, 'docs', 'todos');

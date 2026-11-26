@@ -687,6 +687,12 @@ test('roadmap candidate validation excludes drained intake records only in the o
     rmSync(join(project, directoryRel), { recursive: true });
     writeFileSync(drained, intakeRel + '\n');
 
+    writeFileSync(join(project, intakeRel), intake + '\n### [review] Undrained second record\n');
+    const malformedDrain = run('-', '-', drained);
+    expect(malformedDrain.exitCode).toBe(1);
+    expect(malformedDrain.stderr.toString()).toContain('Resolve live inbox format and ID failures');
+    writeFileSync(join(project, intakeRel), intake);
+
     const promoted = run('-', '-', drained);
     const failures = [...sections(promoted)].filter(([, body]) => body.includes('STATUS: fail'));
     expect(promoted.exitCode, JSON.stringify(failures) + promoted.stderr.toString()).toBe(0);
