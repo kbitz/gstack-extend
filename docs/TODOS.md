@@ -35,6 +35,19 @@
 - **Hypothesis (untested):** Add a launcher fixture for candidate text and escaped display fields. Collect a separately scoped live-review example before drawing conclusions about classification quality.
 - **Revisit when:** The formatter or the scanner-to-reviewer prompt boundary changes.
 
+### [review:files=skills/references/roadmap/conditional-candidate-validation.md|tests/skill-protocols-roadmap.test.ts] Test gap: Keep unlisted intake records in a candidate drain
+
+- **ID:** wi-ce12a2
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The candidate fixture proves that the selected intake file is removed from both audit views. It does not assert that another valid, unlisted intake record stays in both views.
+- **Hypothesis (untested):** Give the candidate one placed record and one held record. Check the held file's inbox count, inventory row, and unchanged bytes.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `skills/references/roadmap/conditional-candidate-validation.md`, drain overlay
+- **Evidence:** The fixture uses one live intake file for each selection. Review found no loss of a held file.
+- **Context:** Filed during Track 98A review at 91d3961 (2026-11-25).
+- **Revisit when:** A change touches selective intake draining or candidate inventory.
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
