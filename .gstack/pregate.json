@@ -244,6 +244,7 @@
       "tests/update.test.ts"
     ],
     "bin/roadmap-id": [
+      "tests/audit-cli-contract.test.ts",
       "tests/bun-prereq.test.ts",
       "tests/init-bin.test.ts",
       "tests/init-templates.test.ts",

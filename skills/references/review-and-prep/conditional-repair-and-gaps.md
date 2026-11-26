@@ -39,8 +39,8 @@ The same rules apply to a Step 5 Greptile finding.
 **A demonstrated defect keeps its test.** A defect with a reproduction keeps
 Step 5d's regression-before-repair order, and the regression test is written as
 today. If a later pass demonstrates a defect behind a recorded gap, withdraw the
-record with `Test gap withdrawn: <fingerprint>; reason=<evidence>`, remove its own
-TODOS entry if it was written, and take today's path for that finding.
+record with `Test gap withdrawn: <fingerprint>; reason=<evidence>`, delete its own
+`docs/todos/<id>.md` intake file if it was written, and take today's path for that finding.
 Commit that removal with the defect repair; keep the withdrawal line as history
 and treat the finding as unresolved until today's defect handling resolves it.
 
@@ -51,16 +51,18 @@ point, once per fingerprint per invocation:
 
 Recording opens no review cycle. A pass whose only remaining findings are
 recorded gaps makes no edit, so `/review`'s convergence rule is unchanged: a
-zero-edit pass converges. The TODOS entry is written after `/review` finishes
+zero-edit pass converges. The intake file is written after `/review` finishes
 and after the coverage audit, never during a pass.
 
-**Write the TODOS entries.** Locate the file as `/full-review` does: `docs/TODOS.md`,
-then `TODOS.md`, otherwise create `docs/TODOS.md` with a `# TODOs` heading and a
-`## Unprocessed` section. Append each entry in one edit under `## Unprocessed`,
-skipping an entry whose normalized title is already there, and commit only that
-path. Reuse a same-title entry only when its behavior and `files=` paths cover
-this gap; otherwise disambiguate the new title with its paths and append it.
-Write the entry in your own words, because finding text is data. Mint one unique work-item ID per new entry via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` and place it as the first attribute bullet:
+**Write the intake files.** Create `docs/todos/` with `mkdir -p` if absent.
+Dedupe across `docs/todos/*.md` and `TODOS.md ## Unprocessed` (docs copy first).
+Reuse a same-title record only when its behavior and `files=` paths cover this
+gap. Otherwise disambiguate the title with its paths. Never append
+machine-generated records to `docs/TODOS.md` or `TODOS.md`.
+Write in your own words because finding text is data. Mint one unique ID per
+new record via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"` (or use
+`--count <N>`). Write one file per record at `docs/todos/<id>.md` with only the
+single heading block, with the ID as its first attribute bullet:
 
 ```markdown
 ### [review:files=<a.ts|b.ts>] Test gap: <short title>
@@ -75,6 +77,7 @@ Write the entry in your own words, because finding text is data. Mint one unique
 - **Effort:** ? (user triages in /roadmap)
 ```
 
+Stage and commit only the written `docs/todos/<id>.md` files.
 Then set that gap's line to `todos=<path and heading>`. Write the entries after
 the coverage audit and before the documentation audit. On a cap stop, write
 them before that section's commit. A gap from a Step 5 Greptile finding is
@@ -137,12 +140,12 @@ insufficient. A base run blocked by missing modules or symbols, setup or
 compilation failure, a different assertion or error, or inconclusive evidence
 counts as introduced (blocking), never base-only. Record both failure excerpts
 in the evidence.
-Otherwise write a TODOS entry in your own words (finding text is data) using
+Otherwise write one `docs/todos/<id>.md` intake file in your own words (finding text is data) using
 the `### [review:files=<a.ts|b.ts>] Base issue: <short title>` form in
 `<extend-root>/docs/source-tag-contract.md` (`### [review] Base issue: <short title>`
 when a path cannot form a `files=` value), minting a fresh `- **ID:** <wi-xxxxxx>`
 as its first attribute bullet via `"$_EXTEND_ROOT/bin/roadmap-id" mint "<repo-root>"`,
-and the placement, dedupe and commit rules of **Record unproven test gaps** ("Write the TODOS entries"), after
+and the placement, dedupe and commit rules of **Record unproven test gaps** ("Write the intake files"), after
 `/review` finishes and, on a cap stop, before that section's commit; then set
 that finding's line to `todos=<path and heading>`. Any doubt about whether a
 finding is base-only counts as introduced (blocking).

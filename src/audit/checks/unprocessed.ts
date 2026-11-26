@@ -16,7 +16,8 @@
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckUnprocessed(ctx: AuditCtx): CheckResult {
-  if (ctx.paths.todos === null) {
+  const intakeCount = ctx.intakeFiles.length;
+  if (ctx.paths.todos === null && intakeCount === 0) {
     // Bash emits STATUS first, then ITEMS: 0, then FINDINGS — no LEGACY/COMPACT lines.
     return {
       section: 'UNPROCESSED',
@@ -33,6 +34,17 @@ export function runCheckUnprocessed(ctx: AuditCtx): CheckResult {
     if (e.kind === 'heading') items++;
     else if (e.kind === 'legacyBullet') legacy++;
     else if (e.kind === 'compactBullet') compact++;
+  }
+
+  if (intakeCount > 0) {
+    const total = items + intakeCount;
+    const breakdown = items > 0 ? `${items} in TODOS.md, ` : '';
+    return {
+      section: 'UNPROCESSED',
+      preamble: [`ITEMS: ${total}`, `INTAKE_FILES: ${intakeCount}`, `LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`],
+      status: 'found',
+      body: ['FINDINGS:', `- ${total} unprocessed items awaiting triage (${breakdown}${intakeCount} in docs/todos/)`],
+    };
   }
 
   const preamble = [`ITEMS: ${items}`, `LEGACY_BULLETS: ${legacy}`, `COMPACT_BULLETS: ${compact}`];

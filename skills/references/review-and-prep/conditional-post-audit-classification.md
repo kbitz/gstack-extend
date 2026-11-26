@@ -42,7 +42,7 @@ this invocation keeps its recorded line; a later commit gets its own line.
   search finds a doc naming a changed test-tooling path or a contract it
   changes, the change is `documented-behavior`, or `already-documented` when a
   doc line read here already states its behavior, cited as `path:line`;
-- `todos-only`: only the TODOS file (`docs/TODOS.md` or `TODOS.md`) changed;
+- `todos-only`: only TODOS inbox files (`docs/TODOS.md`, `TODOS.md`, or per-record intake files `docs/todos/wi-<hex>.md`) changed;
 - `mechanical-correction`: a doc edit correcting a count, a pointer or a link,
   verified by a recorded check (such as a recount command, the target existing
   or the link resolving) and changing no other claim;

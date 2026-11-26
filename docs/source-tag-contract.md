@@ -1,10 +1,12 @@
 # Source-Tag Contract
 
-Canonical schema for items written to `TODOS.md` by skills. All producer skills
-(`/pair-review`, `/full-review`, `/review-and-prep`, `/investigate`, manual) emit entries that match this contract. `/roadmap`'s
-scrutiny gate, outcome-based admission, and dedup pipeline parse entries against
-this contract. `bin/roadmap-audit` validates entries and emits `STATUS: fail`
-on malformed ones.
+Canonical schema for items written by producers
+(`/pair-review`, `/full-review`, `/review-and-prep`, `/investigate`, manual).
+`/review-and-prep` writes machine-generated intake to one
+`docs/todos/wi-<hex>.md` file per record in the same item grammar. Hand-written
+entries and entries from other skills stay in `TODOS.md`. `/roadmap` parses
+entries for scrutiny, admission, and dedup. `bin/roadmap-audit` reports malformed
+items as `STATUS: fail`.
 
 ## Item grammar
 
@@ -336,7 +338,33 @@ Missing IDs alone produce `STATUS: warn`. Malformed or duplicate IDs produce `ST
 
 ### CLI (`bin/roadmap-id`)
 
-- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`.
+- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`, plus filename stems and body IDs in `docs/todos/`.
 - `bin/roadmap-id --help | -h` — prints usage to stdout, exits `0`, writes nothing.
 
 The CLI returns `0` on success, `1` on a project read error, and `2` on invalid arguments. Minting writes no files. A later release adds migration for existing records and retirement based on Git history. See [Compatibility](compatibility.md#stable-surfaces).
+
+## Per-record intake files (`intake-files/v1`)
+
+- The directory is `docs/todos/`, relative to the repository root. It may be
+  absent or empty. Either case preserves the `TODOS.md` inbox behavior.
+- Each record is a regular file named `wi-<4-8 lowercase hex>.md`, using the
+  `work-item-id/v1` grammar. The `.gitkeep` entry is ignored. A non-directory
+  intake path, symlinks, subdirectories, non-Markdown files and other filenames
+  fail validation.
+- The first heading is `### [source:tag] Title`, using the source-tag grammar
+  above (including source-only tags). The first attribute bullet is
+  `- **ID:** wi-<hex>` and matches the filename stem. Additional attributes
+  and optional prose follow. Each file holds exactly one H3 item without a
+  `# TODOS` or `## Unprocessed` wrapper or YAML frontmatter.
+- `/review-and-prep` writes recorded test gaps, base-only findings and
+  review-filed follow-ups as individual files. Consumers that collect the
+  entire inbox read these files alongside `TODOS.md ## Unprocessed`.
+- `/roadmap` reports priority and landing across both sources and removes
+  drained files in the same commit that places, defers, kills or discharges
+  their records. `bin/roadmap-id mint` reserves filename stems and body IDs
+  from open intake files in addition to the live planning documents.
+- `bin/roadmap-audit` counts the files in `UNPROCESSED` and the
+  `--scan-state` unprocessed count, checks shape and unique identity in
+  `TODO_FORMAT` and `WORK_ITEM_IDS`, lists them as `intake doc` in
+  `DOC_INVENTORY`, and excludes them from `SCATTERED_TODOS` and
+  `DOC_TYPE_MISMATCH`.

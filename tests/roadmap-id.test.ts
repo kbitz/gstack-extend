@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from './helpers/child-stdio.ts';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { runIdCli } from '../src/audit/id-cli.ts';
+import { collectTakenIds, runIdCli } from '../src/audit/id-cli.ts';
 import {
   WORK_ITEM_ID_CONTRACT,
   WORK_ITEM_ID_PREFIX,
@@ -18,6 +18,8 @@ import {
 } from '../src/audit/lib/work-item-id.ts';
 import { parseRoadmap } from '../src/audit/parsers/roadmap.ts';
 import { parseTodos } from '../src/audit/parsers/todos.ts';
+
+import { GIT_ENV } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const BIN = join(REPO_ROOT, 'bin', 'roadmap-id');
@@ -208,4 +210,62 @@ describe('bin/roadmap-id CLI', () => {
     expect(runIdCli(['mint', '--count', '999999999999999999999999']).exitCode).toBe(2);
     expect(runIdCli(['migrate']).exitCode).toBe(2);
   });
+});
+
+test('mint deterministically reserves IDs across root, docs and intake filenames and bodies', () => {
+  const dir = freshDir('intake-reservation');
+  const docs = join(dir, 'docs');
+  mkdirSync(join(docs, 'todos'), { recursive: true });
+  const expected = new Set<string>();
+  const names = ['TODOS.md', 'ROADMAP.md', 'roadmap-future.md', 'roadmap-shipped.md'];
+  for (const [i, path] of [...names, ...names.map(name => 'docs/' + name)].entries()) {
+    const id = 'wi-00000' + i;
+    writeFileSync(join(dir, path), id + '\n');
+    expected.add(id);
+  }
+  expect(collectTakenIds(dir)).toEqual(expected);
+  writeFileSync(join(docs, 'todos', 'wi-a1b2c3.md'), '### [manual] Record\n- **ID:** wi-a1b2c3d\n');
+  expected.add('wi-a1b2c3');
+  expected.add('wi-a1b2c3d');
+  const taken = collectTakenIds(dir);
+  expect(taken).toEqual(expected);
+  expect(mintRandomId(taken, 'a1b2c3de')).toBe('wi-a1b2c3de');
+});
+
+test('mint fails cleanly on non-directory and symlinked intake entries', () => {
+  const dir = freshDir('intake-errors');
+  const docs = join(dir, 'docs');
+  const intake = join(docs, 'todos');
+  mkdirSync(docs);
+  writeFileSync(intake, '');
+  const mint = () => spawnSync(BIN, ['mint', dir], { encoding: 'utf8', env: GIT_ENV });
+  const badDir = mint();
+  expect(badDir.status).toBe(1);
+  expect(badDir.stdout).toBe('');
+  expect(badDir.stderr).toBe('roadmap-id: refusing non-directory intake path docs/todos\n');
+
+  rmSync(intake);
+  mkdirSync(intake);
+  writeFileSync(join(docs, 'example.md'), 'wi-aabbcc\n');
+  symlinkSync('../example.md', join(intake, 'wi-aabbcc.md'));
+  const badEntry = mint();
+  expect(badEntry.status).toBe(1);
+  expect(badEntry.stdout).toBe('');
+  expect(badEntry.stderr).toBe('roadmap-id: refusing non-regular intake document docs/todos/wi-aabbcc.md\n');
+});
+
+test('mint without a path uses the Git toplevel and reports planning read errors there', () => {
+  const dir = freshDir('implicit-repo');
+  expect(spawnSync('git', ['init', '--quiet', dir], { env: GIT_ENV }).status).toBe(0);
+  const cwd = join(dir, 'nested');
+  mkdirSync(cwd);
+  mkdirSync(join(dir, 'ROADMAP.md'));
+  const result = spawnSync(BIN, ['mint'], { cwd, env: GIT_ENV, encoding: 'utf8' });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe('roadmap-id: refusing non-regular planning document ROADMAP.md\n');
+  rmSync(join(dir, 'ROADMAP.md'), { recursive: true });
+  const success = spawnSync(BIN, ['mint'], { cwd, env: GIT_ENV, encoding: 'utf8' });
+  expect(success.status).toBe(0);
+  expect(success.stdout.trim()).toMatch(WORK_ITEM_ID_RE);
 });

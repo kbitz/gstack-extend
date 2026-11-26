@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseTodos } from '../src/audit/parsers/todos.ts';
+import { parseIntakeFile, parseTodos } from '../src/audit/parsers/todos.ts';
 
 describe('parseTodos — section detection', () => {
   test('empty content', () => {
@@ -238,4 +238,51 @@ test.each([
   const content = ['## Unprocessed', ...example, '### [manual] Real'].join('\n');
   const { entries } = parseTodos(content).value;
   expect(entries.map(entry => [entry.title, entry.line])).toEqual([['Real', example.length + 2]]);
+});
+
+describe('parseIntakeFile', () => {
+  const heading = '### [review] Fix the queue';
+  const id = '- **ID:** wi-a1b2c3';
+  const parse = (content: string, name = 'wi-a1b2c3.md', kind: 'file' | 'non-file' = 'file') =>
+    parseIntakeFile('docs/todos/' + name, name, kind, content);
+
+  test('parses one record and ignores examples in fences and comments', () => {
+    const result = parse([heading, id, '', '~~~md', '### Example', id, '~~~',
+      '<!--', '### Another example', id, '-->', '- [ ] Checklist'].join('\n'));
+    expect(result.headings).toMatchObject([{ line: 1, tag: '[review]', title: 'Fix the queue' }]);
+    expect(result).toMatchObject({
+      filenameId: 'wi-a1b2c3', workItemId: 'wi-a1b2c3', workItemIdError: null,
+      idIsFirst: true, legacyBullets: [], compactBullets: [], unexpectedHeadings: [],
+    });
+  });
+
+  test('retains malformed shapes for audit diagnostics', () => {
+    expect(parse('').headings).toHaveLength(0);
+    expect(parse('### [review]').headings[0]?.title).toBe('');
+    expect(parse('### [review]No separator').headings[0]?.title).toBe('');
+    const result = parse(['## Unprocessed', '- [manual] Old', '- **[manual] Compact**',
+      '### Untagged', heading, id].join('\n'), 'bad.md');
+    expect(result.filenameId).toBeNull();
+    expect(result.unexpectedHeadings).toMatchObject([{ line: 1, raw: '## Unprocessed' }]);
+    expect(result.legacyBullets).toMatchObject([{ line: 2 }]);
+    expect(result.compactBullets).toMatchObject([{ line: 3 }]);
+    expect(result.headings).toMatchObject([{ line: 4, tag: '' }, { line: 5, tag: '[review]' }]);
+    expect(parse(['---', 'priority: P0', '---', heading, id].join('\n')).hasFrontmatter).toBe(true);
+  });
+
+  test('distinguishes missing, invalid, duplicate, mismatched, and misordered IDs', () => {
+    expect(parse(heading)).toMatchObject({ workItemId: null, workItemIdRaw: null, workItemIdError: null });
+    expect(parse(heading + '\n- **ID:** wi-BAD').workItemIdError).toBe('malformed');
+    expect(parse([heading, id, id].join('\n')).workItemIdError).toBe('duplicate');
+    expect(parse([heading, '- **ID:** wi-deadbe'].join('\n'))).toMatchObject({
+      filenameId: 'wi-a1b2c3', workItemId: 'wi-deadbe',
+    });
+    expect(parse([heading, '- **Priority:** P1', id].join('\n')).idIsFirst).toBe(false);
+  });
+
+  test('ignores content of non-Markdown or non-regular entries', () => {
+    for (const result of [parse(heading, 'wi-a1b2c3.txt'), parse(heading, 'wi-a1b2c3.md', 'non-file')]) {
+      expect(result).toMatchObject({ filenameId: null, headings: [], workItemId: null });
+    }
+  });
 });

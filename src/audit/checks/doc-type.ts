@@ -158,6 +158,7 @@ export function docTypeMoves(ctx: Pick<AuditCtx, 'repoRoot' | 'mdFiles'>): DocMo
   const findings: Finding[] = [];
 
   for (const f of ctx.mdFiles) {
+    if (f.rel.startsWith('docs/todos/')) continue;
     const basename = basenameOf(f.rel);
     if (ROOT_DOCS.has(basename)) continue;
     if (PROJECT_DOCS.has(basename)) continue;

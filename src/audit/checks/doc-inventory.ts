@@ -33,6 +33,7 @@ const ROOT_DOCS = new Set(['README.md', 'CHANGELOG.md', 'CLAUDE.md', 'VERSION', 
 const PROJECT_DOCS = new Set(['TODOS.md', 'ROADMAP.md', 'PROGRESS.md']);
 
 function classify(rel: string, basename: string, content: string): string {
+  if (rel.startsWith('docs/todos/')) return 'intake doc';
   if (ROOT_DOCS.has(basename)) return 'root doc';
   if (PROJECT_DOCS.has(basename) || isProductSpec(rel, content)) return 'project doc';
   if (rel.includes('/docs/designs/') || rel.startsWith('docs/designs/')) return 'design doc';

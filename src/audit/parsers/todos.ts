@@ -16,7 +16,7 @@
 
 import { planningLines } from '../lib/markdown.ts';
 import { extractTagFromHeading, extractTitleFromHeading } from '../lib/source-tag.ts';
-import { legacyTodoBulletKind, parseTodoIdBullet } from '../lib/work-item-id.ts';
+import { isValidWorkItemId, legacyTodoBulletKind, parseTodoIdBullet } from '../lib/work-item-id.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
 export type TodoEntryKind = 'heading' | 'compactBullet' | 'legacyBullet';
@@ -128,4 +128,69 @@ export function parseTodos(content: string): ParserResult<ParsedTodos> {
   }
 
   return { value: { hasUnprocessedSection, entries, completedIds, completedEntries }, errors };
+}
+
+export type ParsedIntakeFile = {
+  rel: string;
+  basename: string;
+  kind: 'file' | 'non-file';
+  filenameId: string | null;
+  headings: TodoEntry[];
+  unexpectedHeadings: { line: number; raw: string }[];
+  legacyBullets: TodoEntry[];
+  compactBullets: TodoEntry[];
+  workItemId: string | null;
+  workItemIdRaw: string | null;
+  workItemIdError: 'malformed' | 'duplicate' | null;
+  idIsFirst: boolean;
+  hasFrontmatter: boolean;
+};
+
+export function parseIntakeFile(
+  rel: string, basename: string, kind: ParsedIntakeFile['kind'], content: string,
+): ParsedIntakeFile {
+  const isMarkdown = kind === 'file' && basename.endsWith('.md');
+  const stem = basename.slice(0, -3);
+  const record: ParsedIntakeFile = {
+    rel, basename, kind,
+    filenameId: isMarkdown && isValidWorkItemId(stem) ? stem : null,
+    headings: [], unexpectedHeadings: [], legacyBullets: [], compactBullets: [],
+    workItemId: null, workItemIdRaw: null, workItemIdError: null, idIsFirst: false,
+    hasFrontmatter: isMarkdown && /^---[ \t]*\r?\n[\s\S]*?^(?:---|\.\.\.)[ \t]*\r?$/m.test(content) && content.startsWith('---'),
+  };
+  if (!isMarkdown) return record;
+
+  let previousLine = 0;
+  for (const [lineno, line] of planningLines(content)) {
+    if (line.trim() === '') continue;
+    const isAfterOpening = record.headings[0]?.line === previousLine && record.headings.length === 1;
+    previousLine = lineno;
+    if (/^#{1,2} /.test(line)) record.unexpectedHeadings.push({ line: lineno, raw: line });
+    const legacyKind = legacyTodoBulletKind(line, record.headings.length > 0);
+    if (legacyKind !== null) {
+      const bullets = legacyKind === 'legacyBullet' ? record.legacyBullets : record.compactBullets;
+      bullets.push({ kind: legacyKind, line: lineno, raw: line });
+    }
+    if (/^### /.test(line)) {
+      const tag = extractTagFromHeading(line);
+      const afterTag = line.slice(4 + tag.length);
+      const title = tag !== '' && !/^[ \t]/.test(afterTag) ? '' : extractTitleFromHeading(line);
+      record.headings.push({
+        kind: 'heading', line: lineno, raw: line, tag, title,
+        unclosedTag: tag === '' && line.startsWith('### ['),
+      });
+    }
+    const id = parseTodoIdBullet(line);
+    if (id !== null) {
+      if (record.workItemIdRaw !== null) {
+        record.workItemIdError = 'duplicate';
+      } else {
+        record.idIsFirst = isAfterOpening;
+        record.workItemIdRaw = id.raw;
+        record.workItemId = id.id;
+        record.workItemIdError = id.id === null ? 'malformed' : null;
+      }
+    }
+  }
+  return record;
 }

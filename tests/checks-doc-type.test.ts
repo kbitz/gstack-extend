@@ -575,3 +575,15 @@ describe('canonical docs/SPEC.md is a project doc', () => {
     expect(docTypeMoves(ctx).map((m) => m.source)).toEqual(exempt ? [] : ['docs/SPEC.md']);
   });
 });
+
+test('canonical intake is inventory content even with checkboxes and diagrams', () => {
+  const rel = 'docs/todos/wi-a1b2c3.md';
+  const content = [
+    '### [manual] Follow-up', '- **ID:** wi-a1b2c3', '',
+    CHECKBOX_HEAVY_CONTENT, '', '```mermaid', 'graph TD; A-->B;', '```',
+  ].join('\n');
+  const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [makeFile(rel, content)] });
+  expect(runCheckDocType(ctx).status).toBe('pass');
+  expect(runCheckScatteredTodos(ctx).status).toBe('pass');
+  expect(runCheckDocInventory(ctx).body.join('\n')).toMatch(/docs\/todos\/wi-a1b2c3\.md.*intake doc/);
+});

@@ -23,7 +23,7 @@
  * fixtures depend on this exact spacing.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Glob } from 'bun';
 
@@ -72,7 +72,7 @@ import {
   mergeShippedArchive,
   parseRoadmap,
 } from './parsers/roadmap.ts';
-import { parseTodos } from './parsers/todos.ts';
+import { parseIntakeFile, parseTodos, type ParsedIntakeFile } from './parsers/todos.ts';
 import {
   collectParseErrors,
   type AuditCtx,
@@ -321,13 +321,36 @@ export function buildAuditCtx(args: {
   // .md walk for DOC_INVENTORY / SCATTERED_TODOS. Read every file's
   // content here so the checks stay pure.
   const mdFiles: MdFileSnapshot[] = [];
-  for (const f of walkMdFiles(repoRoot)) {
+  const intakeFiles: ParsedIntakeFile[] = [];
+  const intakePath = join(docsDir, 'todos');
+  const intakeStat = exists.docsDir ? lstatSync(intakePath, { throwIfNoEntry: false }) : undefined;
+  const todosDir = intakeStat?.isDirectory() ? intakePath : null;
+  if (todosDir !== null) {
+    const names = readdirSync(todosDir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    for (const name of names) {
+      if (name === '.gitkeep') continue;
+      const abs = join(todosDir, name);
+      const rel = `docs/todos/${name}`;
+      const regular = lstatSync(abs, { throwIfNoEntry: false })?.isFile() === true;
+      let content = '';
+      if (regular && name.endsWith('.md')) {
+        content = readFileSync(abs, 'utf8');
+        mdFiles.push({ abs, rel, content });
+      }
+      intakeFiles.push(parseIntakeFile(rel, name, regular ? 'file' : 'non-file', content));
+    }
+  } else if (intakeStat !== undefined) {
+    intakeFiles.push(parseIntakeFile('docs/todos', 'todos', 'non-file', ''));
+  }
+  for (const f of walkMdFiles(repoRoot, 2, undefined, intakePath)) {
     mdFiles.push({
       abs: f.abs,
       rel: f.rel,
       content: fileExists(f.abs) ? readFileSync(f.abs, 'utf8') : '',
     });
   }
+
+  mdFiles.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
 
   // Shared-infra config (docs/shared-infra.txt) — loaded once.
   const sharedInfra = loadSharedInfra(repoRoot);
@@ -348,6 +371,7 @@ export function buildAuditCtx(args: {
     git,
     paths: {
       todos: todosPath,
+      todosDir,
       roadmap: roadmapPath,
       progress: progressPath,
       futureArchive: futureArchivePath,
@@ -367,6 +391,7 @@ export function buildAuditCtx(args: {
     designs,
     scaffoldExists,
     mdFiles,
+    intakeFiles,
     sharedInfra,
     parallelismCap,
     claudeMd,

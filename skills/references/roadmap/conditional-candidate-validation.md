@@ -63,7 +63,9 @@ extend root, active ROADMAP draft and shipped archive draft. This four-argument
 form validates closure when all other artifacts retain their current bytes.
 
 For regeneration, append the drained TODOS draft and the Future satellite draft
-in that order. Use `-` in either slot to reuse its live bytes.
+in that order. Use `-` in either slot to reuse its live bytes. As an optional
+seventh argument, pass the absolute path to a newline-delimited list of
+repo-relative drained intake files (e.g. `docs/todos/wi-a1b2c3.md`), or `-` for none.
 Validate a promotion after removing the original record from its source draft
 so its immutable ID appears once in the candidate. Include every other changed
 artifact and rebuild its derived context before live writes. The script reads
@@ -73,10 +75,10 @@ A selected trigger migration validates its Future draft with the snippet in Defe
 ```typescript
 import { isAbsolute, join, relative } from 'node:path'
 const args = process.argv.slice(2)
-const [repoRoot, extendRoot, activeDraftPath, archiveDraftPath, todosDraftPath, futureDraftPath] = args
-if (args.length !== 4 && args.length !== 6) throw new Error('Supply four paths and optionally both planning draft slots')
+const [repoRoot, extendRoot, activeDraftPath, archiveDraftPath, todosDraftPath, futureDraftPath, drainedIntakePath] = args
+if (![4, 6, 7].includes(args.length)) throw new Error('Supply four paths, optionally both planning draft slots and a drained intake list')
 if (![repoRoot, extendRoot, activeDraftPath, archiveDraftPath].every(p => p && isAbsolute(p))) throw new Error('Four absolute paths required')
-const regeneration = args.length === 6
+const regeneration = args.length >= 6
 if (regeneration && ![todosDraftPath, futureDraftPath].every(p => p === '-' || (p && isAbsolute(p)))) throw new Error('Planning draft slots need absolute paths or -')
 const { buildAuditCtx, runAudit } = await import(join(extendRoot, 'src/audit/cli.ts'))
 const { parseRoadmap, mergeShippedArchive, mergeFutureArchive } = await import(join(extendRoot, 'src/audit/parsers/roadmap.ts'))
@@ -118,6 +120,16 @@ if (JSON.stringify(scaffolds(ctx.phases)) !== JSON.stringify(scaffolds(base.phas
 ctx.mdFiles = base.mdFiles.map(file => ({ ...file, content: replacements.get(file.abs) ?? file.content }))
 for (const [path, content] of replacements) {
   if (!ctx.mdFiles.some(file => file.abs === path)) ctx.mdFiles.push({ abs: path, rel: relative(repoRoot, path), content })
+}
+if (drainedIntakePath && drainedIntakePath !== '-') {
+  if (!isAbsolute(drainedIntakePath)) throw new Error('Drained intake list needs an absolute path or -')
+  const drained = new Set((await Bun.file(drainedIntakePath).text()).split(/\r?\n/).filter(Boolean))
+  const intakePaths = new Set(base.intakeFiles.map(file => file.rel))
+  if ([...drained].some(path => !/^docs\/todos\/wi-[0-9a-f]{4,8}\.md$/.test(path) || !intakePaths.has(path))) {
+    throw new Error('Drained intake paths must name existing canonical intake files')
+  }
+  ctx.intakeFiles = base.intakeFiles.filter(file => !drained.has(file.rel))
+  ctx.mdFiles = ctx.mdFiles.filter(file => !drained.has(file.rel))
 }
 const report = runAudit(ctx)
 console.log(report)

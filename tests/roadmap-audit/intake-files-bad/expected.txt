@@ -1,0 +1,175 @@
+## VOCAB_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STRUCTURE
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STATE_SECTIONS
+STATUS: pass
+FINDINGS:
+- (none)
+GRAMMAR: v2
+SECTIONS_PRESENT: In Progress, Current Plan, Future, Shipped
+
+## PHASES
+STATUS: skip
+PHASES:
+- (none declared)
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- (none declared)
+
+## VERSION_TAG_STALENESS
+STATUS: pass
+FINDINGS:
+- (none)
+
+## VERSION
+STATUS: skip
+FINDINGS:
+- No VERSION file or pyproject.toml version found
+
+## TAXONOMY
+STATUS: fail
+FINDINGS:
+- PROGRESS.md: missing
+- VERSION: missing (no VERSION file and no pyproject.toml `version = "..."` field)
+
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_TYPE_MISMATCH
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: skip
+FINDINGS:
+- No version source (VERSION file or pyproject.toml) — cannot detect archive candidates
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No Depends on: lines found
+
+## GROUP_DEPS
+STATUS: skip
+FINDINGS:
+- No Groups in ROADMAP.md
+
+## TASK_LIST
+STATUS: info
+TOTAL_TASKS: 0
+TOTAL_CURRENT: 0
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: info
+GROUP_COUNT: 0
+TRACK_COUNT: 0
+TASK_COUNT: 0
+
+## IN_FLIGHT_GROUPS
+STATUS: skip
+IN_FLIGHT:
+COMPLETE:
+PRIMARY:
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 1
+BY_GROUP: 1=1
+
+## SIZE
+STATUS: skip
+FINDINGS:
+- No tracks found
+
+## COLLISIONS
+STATUS: skip
+FINDINGS:
+- No Groups found
+
+## PACKING
+STATUS: skip
+FINDINGS:
+- No unshipped Tracks to pack
+
+## PARALLELISM_BUDGET
+STATUS: skip
+IN_FLIGHT_TRACKS: 0
+CAP: 6
+FINDINGS:
+- No in-flight Groups
+
+## FUTURE
+STATUS: pass
+FINDINGS:
+- (none)
+FUTURE_BULLET_COUNT: 0
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- docs/ROADMAP.md: 0 TODO patterns (project doc)
+- docs/TODOS.md: 0 TODO patterns (project doc)
+- docs/todos/bad-name.md: 0 TODO patterns (intake doc)
+- docs/todos/wi-bbbbbb.md: 0 TODO patterns (intake doc)
+- docs/todos/wi-cccccc.md: 0 TODO patterns (intake doc)
+
+TOTAL_FILES: 5
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 4
+INTAKE_FILES: 3
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: found
+FINDINGS:
+- 4 unprocessed items awaiting triage (1 in TODOS.md, 3 in docs/todos/)
+
+## TODO_FORMAT
+HEADINGS: 5
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+INTAKE_FILES: 3
+STATUS: fail
+FINDINGS:
+- MALFORMED_INTAKE_FILE: docs/todos/bad-name.md — filename must match wi-<4-8 lowercase hex>.md
+- MALFORMED_INTAKE_FILE: docs/todos/wi-cccccc.md — expected exactly one '### [source:tag] Title' heading, found 2
+- UNKNOWN_SOURCE: '[unknown-source]' in intake file 'docs/todos/wi-cccccc.md'
+- MALFORMED_HEADING: missing [source:tag] in intake file 'docs/todos/wi-cccccc.md' (expected '### [source:tag] Title')
+
+## WORK_ITEM_IDS
+STATUS: fail
+FINDINGS:
+- MALFORMED_ID: docs/todos/bad-name.md — filename must match wi-<4-8 lowercase hex>.md
+- DUPLICATE_ID: docs/todos/bad-name.md — duplicate work-item ID "wi-aaaaaa" (first seen at TODOS.md:3 (Hand-written follow-up))
+- MISSING_ID: docs/todos/wi-bbbbbb.md — missing - **ID:** wi-<hex> bullet (required in intake files)
+- ID_MISMATCH: docs/todos/wi-cccccc.md — filename ID "wi-cccccc" does not match body ID "wi-dddddd"
+
+
+## MODE
+DETECTED: triage
+REASON: Future-only roadmap found (all items deferred to future phase)

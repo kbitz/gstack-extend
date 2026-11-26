@@ -33,6 +33,7 @@ export function walkMdFiles(
   repoRoot: string,
   maxDepth = 2,
   onUnreadable?: (dir: string, error: unknown) => void,
+  skipPath?: string,
 ): MdFile[] {
   const out: MdFile[] = [];
   if (!existsSync(repoRoot)) return out;
@@ -48,6 +49,7 @@ export function walkMdFiles(
     for (const name of entries) {
       if (EXCLUDED_DIRS.has(name)) continue;
       const full = join(dir, name);
+      if (full === skipPath) continue;
       let st;
       try {
         st = statSync(full);

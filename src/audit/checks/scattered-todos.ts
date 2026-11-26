@@ -45,6 +45,7 @@ export function runCheckScatteredTodos(ctx: AuditCtx): CheckResult {
   const hits: { rel: string; count: number }[] = [];
 
   for (const f of ctx.mdFiles) {
+    if (f.rel.startsWith('docs/todos/')) continue;
     const bn = basename(f.rel);
     if (ROOT_DOCS.has(bn)) continue;
     if (PROJECT_DOCS.has(bn)) continue;

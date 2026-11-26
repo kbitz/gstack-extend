@@ -1713,11 +1713,17 @@ describe('review-and-prep behavior-changing repair review and repair-cycles=ligh
   });
 });
 
-test('review-and-prep gives every new TODOS entry an ID', () => {
+test('review-and-prep assigns one named intake file per new record', () => {
   const scope = skillSection(coreText('review-and-prep'), '### Establish the approved implementation scope').replace(/\s+/g, ' ');
-  expect(scope).toContain('For every new TODOS entry, mint an ID with ');
+  expect(scope).toContain('For every new machine-generated intake record');
   expect(scope).toContain('bin/roadmap-id" mint "<repo-root>"');
   expect(scope).toContain('place `- **ID:** <id>` first.');
+  expect(scope).toContain('write one `docs/todos/<id>.md` file');
+  const repairs = REF_REPAIR_GAPS.replace(/\s+/g, ' ');
+  expect(repairs).toContain('Never append machine-generated records to `docs/TODOS.md` or `TODOS.md`.');
+  expect(repairs).toContain('Write one file per record at `docs/todos/<id>.md`');
+  expect(repairs).toContain('delete its own `docs/todos/<id>.md` intake file');
+  expect(REF_POST_AUDIT_CLASS).toContain('- `todos-only`: only TODOS inbox files (`docs/TODOS.md`, `TODOS.md`, or per-record intake files `docs/todos/wi-<hex>.md`) changed;');
 });
 
 describe('review-and-prep test-gaps=record', () => {

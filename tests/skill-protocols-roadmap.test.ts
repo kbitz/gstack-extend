@@ -574,6 +574,7 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
     expect(step1bFlat).toContain('<PROPOSAL_DIR>');
     expect(step1bFlat).toContain('~/scratch/');
     expect(step1bFlat).toContain('host-private directory');
+    expect(step1bFlat).toContain('Never use a host-private directory or a fixed `/tmp/` path.');
 
     const grouping = roadmap.slice(
       roadmap.indexOf('### Collision-driven grouping'),
@@ -581,6 +582,7 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
     );
     expect(grouping.length).toBeGreaterThan(0);
     const groupingFence = extractFences(grouping)[0];
+    expect(grouping.replace(/\s+/g, ' ')).toMatch(/Before invoking `--from`[^.]+confirm the file exists and is nonempty/);
     expect(groupingFence?.lang).toBe('bash');
     expect(groupingFence?.body).toContain(
       '"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from \'<PROPOSAL_DIR>/<run>/draft-tracks.md\'',
@@ -614,4 +616,69 @@ describe('Track 94B roadmap scratch paths and no fixed /tmp redirects', () => {
     expect(roadmap).toContain('_blocked-by: wi-a1b2c3, wi-d4e5f6_');
     expect(roadmap).toContain('WORK_ITEM_IDS');
   });
+});
+
+test('roadmap consumes both inbox sources, reports landings and commits the intake drain', () => {
+  const roadmap = resolverSkillText('roadmap');
+  const steps = roadmap.replace(/\s+/g, ' ');
+  expect(steps).toContain('Read the full `TODOS.md ## Unprocessed` and every `docs/todos/*.md` intake file');
+  expect(steps).toContain('each record from `TODOS.md` or `docs/todos/*.md`, its filed priority (or unprioritized), and landing');
+  expect(steps).toContain('`docs/todos/` file list and raw bytes');
+  expect(steps).toContain('is gone from `TODOS.md ## Unprocessed` and `docs/todos/`');
+  expect(steps).toContain('removed `docs/todos/<id>.md` files. Commit the deletions with the planning updates.');
+  expect(steps).toContain('Report each record from both inbox sources with its filed priority (or unprioritized) and landing');
+});
+
+test('roadmap candidate validation excludes drained intake records only in the overlay', () => {
+  const scratch = makeBaseTmp('roadmap-intake-promotion-');
+  try {
+    const project = join(scratch, 'project');
+    const docs = join(project, 'docs');
+    const intakeRel = 'docs/todos/wi-a1b2c3.md';
+    const intake = '### [review] Inbox follow-up\n- **ID:** wi-a1b2c3\n';
+    mkdirSync(join(docs, 'todos'), { recursive: true });
+    mkdirSync(join(project, 'src'));
+    writeFileSync(join(project, 'src', 'a.ts'), 'export {};\n');
+    writeFileSync(join(project, 'VERSION'), '0.1.0\n');
+    writeFileSync(join(project, intakeRel), intake);
+    writeFileSync(join(docs, 'TODOS.md'), '## Unprocessed\n');
+    writeFileSync(join(docs, 'roadmap-future.md'), '## Future\n');
+    const base = '## In Progress\n\n## Current Plan\n\n## Future\nDeferred: docs/roadmap-future.md (0 items)\n\n## Shipped\nHistory: docs/roadmap-shipped.md\n';
+    writeFileSync(join(docs, 'ROADMAP.md'), base);
+    const draft = join(scratch, 'draft-roadmap.md');
+    const shipped = join(scratch, 'draft-shipped.md');
+    const drained = join(scratch, 'drained.txt');
+    writeFileSync(draft, base.replace('## Current Plan\n', [
+      '## Current Plan', '', '### Group 1: Promoted work', '_Depends on: none_',
+      '#### Track 1A: Inbox follow-up', '_1 task . ~20 LOC . low risk_',
+      '_id: wi-a1b2c3_', '_touches: src/a.ts_', '- Update the file (~20 lines).', '',
+    ].join('\n')));
+    writeFileSync(shipped, '## Shipped\n');
+    writeFileSync(drained, intakeRel + '\n');
+    const reference = referenceText('roadmap', 'conditional-candidate-validation');
+    const script = reference.match(/^```typescript\n([\s\S]*?)^```$/m)?.[1];
+    expect(script).toBeDefined();
+    const command = join(scratch, 'candidate-validation.ts');
+    writeFileSync(command, script!);
+    const run = (...extra: string[]) => Bun.spawnSync([
+      process.execPath, '--no-env-file', '--no-install', '--config=/dev/null',
+      command, project, ROOT, draft, shipped, ...extra,
+    ], { env: scopedEnv(scratch), stdout: 'pipe', stderr: 'pipe', timeout: 15_000 });
+    const sections = (result: ReturnType<typeof run>) => new Map(
+      parseAuditSections(result.stdout.toString()).map(section => [section.name, section.body.join('\n')]),
+    );
+    for (const result of [run(), run('-', '-'), run('-', '-', '-')]) {
+      expect(result.exitCode, result.stderr.toString()).toBe(1);
+      expect(sections(result).get('WORK_ITEM_IDS')).toContain('DUPLICATE_ID:');
+    }
+    const promoted = run('-', '-', drained);
+    const failures = [...sections(promoted)].filter(([, body]) => body.includes('STATUS: fail'));
+    expect(promoted.exitCode, JSON.stringify(failures) + promoted.stderr.toString()).toBe(0);
+    expect(sections(promoted).get('WORK_ITEM_IDS')).toContain('STATUS: pass');
+    expect(sections(promoted).get('UNPROCESSED')).toContain('STATUS: empty');
+    expect(sections(promoted).get('DOC_INVENTORY')).not.toContain(intakeRel);
+    expect(readFileSync(join(project, intakeRel), 'utf8')).toBe(intake);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });

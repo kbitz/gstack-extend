@@ -79,6 +79,26 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     inspect(`TODOS.md:${entry.line} (${label})`, TODO_FIELD, entry);
   }
 
+  for (const f of ctx.intakeFiles) {
+    if (f.filenameId === null) {
+      hasBlockingFinding = true;
+      findings.push(`- MALFORMED_ID: ${f.rel} — filename must match wi-<4-8 lowercase hex>.md`);
+    }
+    if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
+      inspectableCount++;
+      continue;
+    }
+    if (f.workItemId === null) hasBlockingFinding = true;
+    inspect(f.rel, `${TODO_FIELD} (required in intake files)`, f);
+    if (f.filenameId !== null && f.filenameId !== f.workItemId) {
+      if (f.workItemId !== null) {
+        hasBlockingFinding = true;
+        findings.push(`- ID_MISMATCH: ${f.rel} — filename ID "${f.filenameId}" does not match body ID "${f.workItemId}"`);
+      }
+      registerValidId(f.filenameId, f.rel);
+    }
+  }
+
   const roadmap = ctx.roadmap.value;
   const archiveSource = 'docs/roadmap-future.md';
   const futureSources = [
