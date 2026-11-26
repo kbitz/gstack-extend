@@ -198,7 +198,7 @@ separating prerequisite gathering, reading, agent execution and human understand
 
 Verify land-time identity, approved scope/acceptance and raw archive receipts before recycling any ID. Use the attributable historical release version (or bare `✓ Shipped` with `release version unknown`).
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 6f7835ea8f53ef20` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 0d96dcc8ef354f9c` before drafting shipped-Track receipts or remainder previews when reconciling landed Tracks.
 
 Resolve the project root before Step 1's audit using its rule: an explicit audit
 directory when supplied, otherwise Git top-level or the directory being audited.
@@ -244,7 +244,7 @@ empty remainder. This snippet proves packing only, not the whole audit gate.
 
 Validate the complete candidate outside the workspace against real Git/version/cap/scaffold metadata before either write; test stub metadata and live write-and-restore are insufficient.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 6f7835ea8f53ef20` before validating a complete active/archive candidate before any live write.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 0d96dcc8ef354f9c` before validating a complete active/archive candidate before any live write.
 
 Invoke the copied script with Bun and the four quoted absolute paths. For
 regeneration, append both planning draft slots. If draining per-record intake,
@@ -261,7 +261,7 @@ and pin feasibility remain mandatory agent gates. Incomplete proof means no writ
 
 Incomplete proof, unresolved raw duplicates, incompatible pins, or Hold candidates that change the unfinished partition or dependencies refuse writes and keep active/archive unchanged.
 
-Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 6f7835ea8f53ef20` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
+Run `~/.gstack-extend/bin/preamble roadmap --ref conditional-candidate-validation --expect 0d96dcc8ef354f9c` before handling reconciliation exceptions when historical identity, duplicates, pins, Hold, or legacy conversion applies.
 
 Use the existing [Escalation](#escalation) REASON/ATTEMPTED/RECOMMENDATION fields
 for every reconciliation refusal. DONE_WITH_CONCERNS reuses those fields in the
@@ -390,6 +390,9 @@ Surface `TODO_FORMAT` and `WORK_ITEM_IDS` failures before reading any intake
 records. Stop on malformed intake and resume after its owner corrects it. Treat
 missing IDs as advisory only on legacy records. Read only regular canonical
 intake files under real `docs/` and `docs/todos/` directories.
+If an interrupted, approved placement left the same ID in a valid intake file
+and its exact approved destination, revalidate the remaining drain against that
+placement. Resolve other duplicates in the candidate before any write.
 
 This first audit prints to stdout, as in [Audit-after-apply](#audit-after-apply). To save audit output, draft Tracks, or a rename map, use this run's scratch subdirectory under `<PROPOSAL_DIR>`. Resolve the durable project directory or its `~/scratch/` fallback in [Structured proposal artifact](#structured-proposal-artifact). Never use a host-private directory or a fixed `/tmp/` path.
 
@@ -899,6 +902,7 @@ reuse is refusal under Exceptions and recovery.
   from `TODOS.md ## Unprocessed` or delete its `docs/todos/<id>.md` file
   (`git rm --` for tracked files, `rm --` for untracked files). Leave held items
   and deferrals with pending or failed GitHub filings in their original inbox.
+  Delete intake only after its approved planning writes succeed.
   Before deleting, recheck exact on-disk parents in this Git worktree, the
   regular file and approved bytes.
   The drained list used in candidate validation must match these removals.

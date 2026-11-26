@@ -82,7 +82,6 @@ const regeneration = args.length >= 6
 if (regeneration && ![todosDraftPath, futureDraftPath].every(p => p === '-' || (p && isAbsolute(p)))) throw new Error('Planning draft slots need absolute paths or -')
 const { buildAuditCtx, runAudit } = await import(join(extendRoot, 'src/audit/cli.ts'))
 const { runCheckTodoFormat } = await import(join(extendRoot, 'src/audit/checks/todo-format.ts'))
-const { runCheckWorkItemIds } = await import(join(extendRoot, 'src/audit/checks/work-item-ids.ts'))
 const { parseRoadmap, mergeShippedArchive, mergeFutureArchive } = await import(join(extendRoot, 'src/audit/parsers/roadmap.ts'))
 const { parsePhases } = await import(join(extendRoot, 'src/audit/parsers/phases.ts'))
 const { parseTodos } = await import(join(extendRoot, 'src/audit/parsers/todos.ts'))
@@ -130,8 +129,14 @@ if (drainedIntakePath !== undefined && drainedIntakePath !== '-') {
   if ([...drained].some(path => !/^docs\/todos\/wi-[0-9a-f]{4,8}\.md$/.test(path) || !intakePaths.has(path))) {
     throw new Error('Drained intake paths must name existing canonical intake files')
   }
-  if (drained.size > 0 && [runCheckTodoFormat(base), runCheckWorkItemIds(base)].some(check => check.status === 'fail')) {
-    throw new Error('Resolve live inbox format and ID failures before validating a drain')
+  const selected = base.intakeFiles.filter(file => drained.has(file.rel))
+  const selectedInbox = {
+    ...base, paths: { ...base.paths, todos: null }, files: { ...base.files, todos: '' },
+    todos: parseTodos(''), intakeFiles: selected,
+  }
+  const invalidId = selected.some(file => file.workItemIdError !== null || file.workItemId !== file.filenameId)
+  if (invalidId || runCheckTodoFormat(selectedInbox).status === 'fail') {
+    throw new Error('Resolve selected intake format and ID failures before validating a drain')
   }
   ctx.intakeFiles = base.intakeFiles.filter(file => !drained.has(file.rel))
   ctx.mdFiles = ctx.mdFiles.filter(file => !drained.has(file.rel))
@@ -143,6 +148,7 @@ console.log('MERGED DIAGNOSTICS', JSON.stringify({ errors: ctx.roadmap.errors, w
 const sections = parseAuditSections(report)
 if (!CANONICAL_SECTIONS.every(name => sections.some(s => s.name === name))) throw new Error('Incomplete audit section coverage')
 const blockers = new Set(['SIZE', 'COLLISIONS', 'PACKING', 'STRUCTURE', 'STATE_SECTIONS', 'VERSION', 'GROUP_DEPS', 'PARALLELISM_BUDGET', 'FUTURE', 'WORK_ITEM_IDS'])
+if (ctx.intakeFiles.length < base.intakeFiles.length) blockers.add('TODO_FORMAT')
 if (rawArchive.errors.length || sections.some(s => blockers.has(s.name) && s.body.includes('STATUS: fail'))) process.exit(1)
 ```
 

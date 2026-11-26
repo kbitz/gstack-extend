@@ -690,7 +690,7 @@ test('roadmap candidate validation excludes drained intake records only in the o
     writeFileSync(join(project, intakeRel), intake + '\n### [review] Undrained second record\n');
     const malformedDrain = run('-', '-', drained);
     expect(malformedDrain.exitCode).toBe(1);
-    expect(malformedDrain.stderr.toString()).toContain('Resolve live inbox format and ID failures');
+    expect(malformedDrain.stderr.toString()).toContain('Resolve selected intake format and ID failures');
     writeFileSync(join(project, intakeRel), intake);
 
     const promoted = run('-', '-', drained);
@@ -700,6 +700,27 @@ test('roadmap candidate validation excludes drained intake records only in the o
     expect(sections(promoted).get('UNPROCESSED')).toContain('STATUS: empty');
     expect(sections(promoted).get('DOC_INVENTORY')).not.toContain(intakeRel);
     expect(readFileSync(join(project, intakeRel), 'utf8')).toBe(intake);
+
+    const placement = readFileSync(draft, 'utf8');
+    const liveRoadmap = join(docs, 'ROADMAP.md');
+    writeFileSync(liveRoadmap, placement);
+    const resumedDrain = run('-', '-', drained);
+    expect(resumedDrain.exitCode, resumedDrain.stderr.toString()).toBe(0);
+    expect(sections(resumedDrain).get('WORK_ITEM_IDS')).toContain('STATUS: pass');
+    expect(readFileSync(liveRoadmap, 'utf8')).toBe(placement);
+    expect(readFileSync(join(project, intakeRel), 'utf8')).toBe(intake);
+
+    writeFileSync(liveRoadmap, base);
+    const legacyTodos = join(docs, 'TODOS.md');
+    const legacy = '## Unprocessed\n\n- [review] Legacy migration\n';
+    writeFileSync(legacyTodos, legacy);
+    const todosDraft = join(scratch, 'draft-todos.md');
+    writeFileSync(todosDraft, '## Unprocessed\n');
+    const migratedDrain = run(todosDraft, '-', drained);
+    expect(migratedDrain.exitCode, migratedDrain.stderr.toString()).toBe(0);
+    expect(sections(migratedDrain).get('TODO_FORMAT')).toContain('STATUS: pass');
+    expect(sections(migratedDrain).get('WORK_ITEM_IDS')).toContain('STATUS: pass');
+    expect(readFileSync(legacyTodos, 'utf8')).toBe(legacy);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
