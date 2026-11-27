@@ -194,6 +194,57 @@ export function futureBulletParts(bullet: string) {
   return { id, title: line.trim().replace(/^\*\*|\*\*$/g, ''), body: '', trigger };
 }
 
+export type InlineInsertEdit = {
+  offset: number;
+  text: string;
+};
+
+/**
+ * Compute the insertion offset and text for assigning `id` to a `## Future`
+ * bullet that currently has no ID field. Returns null when the bullet has no
+ * accepted title dash separator before `**Revisit when:**`.
+ */
+export function futureBulletInsertEdit(line: string, id: string): InlineInsertEdit | null {
+  const clean = line.replace(/\r$/, '');
+  const leadingWs = clean.length - clean.trimStart().length;
+  const trimmed = clean.slice(leadingWs);
+  const fullVisible = maskInlineCode(trimmed);
+  const marker = fullVisible.lastIndexOf(REVISIT_MARKER);
+
+  const bold = BOLD_BULLET_RE.exec(fullVisible);
+  if (bold !== null) {
+    if (marker !== -1 && marker < bold[1]!.length) return null;
+    return { offset: leadingWs + bold[1]!.length, text: `**ID:** ${id} — ` };
+  }
+
+  const plain = PLAIN_BULLET_RE.exec(fullVisible);
+  if (plain !== null) {
+    if (marker !== -1 && marker < plain[1]!.length) return null;
+    const { head } = splitInlineBullet(trimmed);
+    const bodyAfterPrefix = head.slice(plain[1]!.length);
+    if (bodyAfterPrefix.trim() === '') {
+      return { offset: leadingWs + plain[1]!.length, text: `**ID:** ${id} — ` };
+    }
+    return { offset: leadingWs + head.trimEnd().length, text: ` — **ID:** ${id}` };
+  }
+
+  return null;
+}
+
+/**
+ * Compute the insertion offset and text for assigning `id` to a legacy shipped
+ * `- Track <label> — ...` bullet. Returns null if the line does not match.
+ */
+export function legacyShippedBulletInsertEdit(line: string, id: string): InlineInsertEdit | null {
+  const clean = line.replace(/\r$/, '');
+  const leadingWs = clean.length - clean.trimStart().length;
+  const trimmed = clean.slice(leadingWs);
+  const visible = maskInlineCode(trimmed);
+  const match = LEGACY_SHIPPED_TRACK_BULLET_RE.exec(visible);
+  if (match === null) return null;
+  return { offset: leadingWs + match[1]!.length, text: `**ID:** ${id} — ` };
+}
+
 /**
  * Scan raw text for all valid `wi-[0-9a-f]{4,8}` work-item IDs.
  * Returns a deduplicated bytewise-sorted list.

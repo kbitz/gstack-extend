@@ -56,6 +56,7 @@ export function stubGit(opts: StubGitOpts = {}): GitGateway {
     logFirstWithPhrase: () => opts.logFirstWithPhrase ?? null,
     logSubjectsSince: () => opts.logSubjectsSince ?? [],
     workingTreePaths: () => opts.workingTreePaths ?? [],
+    historyWorkItemIds: () => ({ kind: 'not-a-repo' }),
   };
 }
 

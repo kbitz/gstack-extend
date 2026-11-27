@@ -87,7 +87,7 @@ Parsers tolerate their absence. Recommended fields:
 
 - `- **ID:**` `wi-<4-8 lowercase hex>` — immutable work-item ID.
   New entries get an ID from `bin/roadmap-id mint` at creation. `TODOS.md`
-  entries with no ID produce an advisory finding in `WORK_ITEM_IDS`.
+  entries with no ID produce a `MISSING_ID` failure in `WORK_ITEM_IDS`.
 - `- **Why:**` ... — problem statement or value proposition. Shown in triage.
 - `- **Effort:**` ... — size estimate. Shown in triage.
 - `- **Depends on:**` ... — prerequisites. Flags items that shouldn't be
@@ -297,12 +297,12 @@ The skill surfaces validator failures during triage and blocks until resolved.
 
 ## Work-item IDs and `_blocked-by:` contract (`work-item-id/v1`)
 
-New `TODOS.md` entries, per-record intake files, `## Future` bullets, active `ROADMAP.md` Track cards, and shipped Track records carry immutable work-item IDs so consumers and planning tools can track them across promotions, deferrals, and Track-label renumbering. Legacy planning records may lack IDs.
+Every `TODOS.md` entry, per-record intake file, `## Future` bullet, active `ROADMAP.md` Track card, and shipped Track record carries an immutable work-item ID so consumers and planning tools can track items across promotions, deferrals, and Track-label renumbering. Run `bin/roadmap-id migrate` once per project to assign IDs to records created before this contract.
 
 ### Format and immutability
 
 - **Regex:** `^wi-[0-9a-f]{4,8}$` (fixed `wi-` prefix followed by 4 to 8 lowercase hex characters; filename-safe and unambiguous against Track labels like `96A` or Group numbers like `96`).
-- **Default length and collision growth.** New IDs default to 6 lowercase hex characters (`wi-a1b2c3`). On collision with an ID in the current planning files or the same mint batch, the generator tries 7 and then 8 characters before drawing fresh entropy.
+- **Default length and collision growth.** New IDs default to 6 lowercase hex characters (`wi-a1b2c3`). On collision with an ID in the current planning files, `docs/todos/`, the local Git history, or the same mint/migrate batch, the generator tries 7 and then 8 characters before drawing fresh entropy.
 - **Immutability.** An assigned ID travels unchanged when an item moves to another planning file, is promoted, or ships. Track labels (`96A`, `97B`) remain recyclable display text.
 
 ### Field shapes across planning documents
@@ -336,19 +336,44 @@ _blocked-by: <ref>[, <ref>...]_
 - `DUPLICATE_ID` — two records share the same ID (within or across documents, including `## Completed` and colliding archive records), or a single record carries multiple ID fields.
 - `ID_MISMATCH` — an intake file's filename stem and body carry different IDs.
 
-Missing IDs alone produce `STATUS: warn` on legacy planning records. Missing
-intake IDs and malformed, duplicate, or mismatched IDs produce `STATUS: fail`.
+Missing, malformed, duplicate, or mismatched IDs all produce `STATUS: fail`.
+When any `MISSING_ID` finding is present, the section also includes the hint:
+``- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.``
 
 ### CLI (`bin/roadmap-id`)
 
-- `bin/roadmap-id mint [repo-path] [--count N]` prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`, plus filename stems and body IDs in `docs/todos/`.
+- `bin/roadmap-id mint [repo-path] [--count N]` — prints `N` (default `1`) unique `wi-` IDs to stdout after reserving IDs from the current `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` files at the project root and under `docs/`, filename stems and body IDs in `docs/todos/`, and the local Git history. Writes no files.
+- `bin/roadmap-id migrate [repo-path] [--dry-run]` — one-time idempotent migration that assigns work-item IDs to existing planning records lacking an ID across `TODOS.md`, `ROADMAP.md`, `roadmap-future.md`, and `roadmap-shipped.md` without changing any other text. Emits `ASSIGNED <relpath>:<line> <id> <kind> <label>` per target followed by `MIGRATED <n>` (or `DRY_RUN <n>` with `--dry-run`, which writes nothing and does not keep the previewed IDs). All-or-nothing: if any record or document is refused, each refusal is printed as `REFUSED <relpath>:<line> <kind> <reason>` followed by `roadmap-id migrate: <n> records refused; no files were written` on stderr and no file is modified.
 - `bin/roadmap-id --help | -h` — prints usage to stdout, exits `0`, writes nothing.
 
-The CLI returns `0` on success, `1` on a project read error or refused intake
-path, and `2` on invalid arguments. Minting refuses invalid intake directory
-paths and non-regular `.md` entries. It writes no files. A later release adds
-migration for existing records and retirement based on Git history. See
-[Compatibility](compatibility.md#stable-surfaces).
+**Exit codes:** `0` on success (including `MIGRATED 0`), `1` on a refusal, read/write error, shallow clone, Git history failure, or refused intake path (with empty stdout), and `2` on invalid arguments.
+
+**History scope:** `mint` and `migrate` scan every file of every commit reachable from any local ref of the current clone (`git log --all --no-renames -m --root -G 'wi-[0-9a-f]{4,8}' -p -U0`). Commit messages, other clones' unpushed refs, and submodule histories are not scanned. A shallow clone is refused (exit `1`) until full history is fetched. A directory outside any Git repository keeps current-files-only behavior.
+
+**Accepted migration shapes:**
+
+| Kind | Document | Accepted shape | Inserted text |
+|---|---|---|---|
+| TODO heading (T-a) | `TODOS.md` | `### …` under `## Unprocessed` or `## Completed` whose next nonblank line before the entry boundary starts `- ` | `- **ID:** <id>` immediately before that bullet |
+| TODO heading (T-b) | `TODOS.md` | Next nonblank line before the boundary is other text (e.g. a `**What:**` paragraph) | `- **ID:** <id>` plus one blank line immediately before that text |
+| TODO heading (T-c) | `TODOS.md` | Only blank lines before the boundary | `- **ID:** <id>` immediately after the heading |
+| Future, bold title | `roadmap-future.md`, `ROADMAP.md` inline `## Future` | `- **Title** — body` (code-masked), including titles with code spans and bodies starting with `**Revisit when:**` | `**ID:** <id> — ` immediately after the title dash separator |
+| Future, plain title | same | `- Title — body` whose dash separator comes before any `**Revisit when:**` | ` — **ID:** <id>` at the end of trimmed prose before the marker or line end (or `**ID:** <id> — ` when prose after the dash is empty) |
+| ROADMAP Track heading | `ROADMAP.md` | First nonblank planning line after the heading is a `_…_` metadata line (not `_id:` or `_touches:`) | `_id: <id>_` immediately after that metadata line |
+| Shipped-archive Track heading | `roadmap-shipped.md` | `### Track <label>: …` | `_id: <id>_` immediately after the heading |
+| Legacy shipped bullet | `ROADMAP.md`, `roadmap-shipped.md` | `- Track <label> — …` under a shipped `#### Group N:` | `**ID:** <id> — ` immediately after the dash separator |
+
+**Refused migration shapes (no files written):**
+
+- A Future bullet with no title dash separator before `**Revisit when:**` (e.g. `- **Title**: body`).
+- A `ROADMAP.md` Track heading without a metadata line.
+- A duplicate-label Track (`extraTrackWorkItems`) that lacks an ID.
+- Dual root and `docs/` copies of the same planning document.
+- A symlinked or non-regular planning document, or a symlinked/non-directory `docs/`.
+- A document that is not valid UTF-8.
+- Any insertion that fails read-back verification.
+
+See [Compatibility](compatibility.md#stable-surfaces).
 
 ## Per-record intake files (`intake-files/v1`)
 

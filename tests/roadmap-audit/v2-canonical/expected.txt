@@ -189,7 +189,7 @@ FINDINGS:
 - (none)
 
 ## WORK_ITEM_IDS
-STATUS: warn
+STATUS: fail
 FINDINGS:
 - MISSING_ID: ROADMAP.md ## Future (Cross-device account sync) — missing **ID:** wi-<hex>
 - MISSING_ID: ROADMAP.md ## Future (Investigate Graph rate-limit handling) — missing **ID:** wi-<hex>
@@ -200,6 +200,7 @@ FINDINGS:
 - MISSING_ID: ROADMAP.md Track 5A — missing _id: wi-<hex>_
 - MISSING_ID: shipped Track 1A (line 47) — missing **ID:** wi-<hex>
 - MISSING_ID: shipped Track 2A (line 50) — missing **ID:** wi-<hex>
+- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.
 
 
 ## MODE

@@ -1117,3 +1117,65 @@ test('reports an empty Future list item as malformed', () => {
   const roadmap = ['## Current Plan', '', '## Future', '', '- ', '', '## Shipped'].join('\n');
   expect(parseRoadmap(roadmap, deps()).value.futureMalformed).toEqual(['-']);
 });
+
+describe('parseRoadmap — record line coordinates', () => {
+  test('records heading lines for active, shipped-archive, and duplicate Track labels', () => {
+    const md = [
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: Active track',
+      '_1 task · low risk_',
+      '#### Track 1A: Duplicate label',
+      '_1 task · low risk_',
+    ].join('\n');
+    const active = parseRoadmap(md, deps());
+    expect(active.value.tracks[0]?.line).toBe(3);
+    expect(active.value.extraTrackWorkItems?.[0]?.line).toBe(5);
+
+    const archiveMd = [
+      '# Shipped',
+      '## Shipped',
+      '### Track 2A: Archived ✓ Shipped',
+      '- 2026-01-01: merged',
+    ].join('\n');
+    const archive = parseRoadmap(archiveMd, { ...deps(), fromShippedArchive: true });
+    expect(archive.value.tracks[0]?.line).toBe(3);
+
+    const merged = mergeShippedArchive(active, archive);
+    expect(merged.value.tracks.find(t => t.id === '1A')?.line).toBe(3);
+    expect(merged.value.tracks.find(t => t.id === '2A')?.line).toBe(3);
+  });
+
+  test('records futureBulletLines under descriptive headings and excludes non-Future and fenced bullets', () => {
+    const md = [
+      '## Future (deferred) — next release',
+      '- **First** — keep this. **Revisit when:** GA',
+      '```markdown',
+      '- **Fenced example** — ignore this.',
+      '```',
+      '- **Second** — also keep this.',
+      '## Future-proof rollout notes',
+      '- Not a future bullet.',
+    ].join('\n');
+    const parsed = parseRoadmap(md, deps()).value;
+    expect(parsed.futureBullets).toEqual([
+      '- **First** — keep this. **Revisit when:** GA',
+      '- **Second** — also keep this.',
+    ]);
+    expect(parsed.futureBulletLines).toEqual([2, 6]);
+  });
+
+  test('records accurate line coordinates on CRLF input', () => {
+    const md = [
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: CRLF track',
+      '_1 task · low risk_',
+      '## Future',
+      '- **CRLF item** — body.',
+    ].join('\r\n');
+    const parsed = parseRoadmap(md, deps()).value;
+    expect(parsed.tracks[0]?.line).toBe(3);
+    expect(parsed.futureBulletLines).toEqual([6]);
+  });
+});

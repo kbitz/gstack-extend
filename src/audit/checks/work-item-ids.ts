@@ -5,8 +5,7 @@
  * Emits canonical section `WORK_ITEM_IDS`.
  *   - `STATUS: skip` when zero inspectable records exist.
  *   - `STATUS: pass` when every record has a valid globally unique `wi-` ID.
- *   - `STATUS: warn` when the only findings are missing IDs on legacy records.
- *   - `STATUS: fail` on malformed or duplicate IDs, missing intake IDs, or an intake ID mismatch.
+ *   - `STATUS: fail` on missing, malformed, duplicate, or mismatched IDs.
  */
 
 import { extractInlineBulletId } from '../lib/work-item-id.ts';
@@ -34,6 +33,7 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   const seen = new Map<string, string>(); // id -> first location
   let inspectableCount = 0;
   let hasBlockingFinding = false;
+  let hasMissingId = false;
 
   const registerValidId = (id: string, location: string) => {
     const first = seen.get(id);
@@ -59,6 +59,8 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
       hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${location} — malformed work-item ID "${raw ?? ''}" (expected wi-<4-8 lowercase hex>)`);
     } else if (!id) {
+      hasBlockingFinding = true;
+      hasMissingId = true;
       findings.push(`- MISSING_ID: ${location} — missing ${field}`);
     }
     if (id && register) registerValidId(id, location);
@@ -145,6 +147,10 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
       status: 'pass',
       body: ['FINDINGS:', '- (none)'],
     };
+  }
+
+  if (hasMissingId) {
+    findings.push('- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.');
   }
 
   return {

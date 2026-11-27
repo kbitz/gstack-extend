@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from './helpers/child-stdio.ts';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -16,6 +16,7 @@ import {
   parseTrackIdLine,
   scanAllWorkItemIds,
 } from '../src/audit/lib/work-item-id.ts';
+import { planWorkItemMigration } from '../src/audit/lib/work-item-migrate.ts';
 import { parseRoadmap } from '../src/audit/parsers/roadmap.ts';
 import { parseTodos } from '../src/audit/parsers/todos.ts';
 
@@ -23,6 +24,7 @@ import { GIT_ENV } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const BIN = join(REPO_ROOT, 'bin', 'roadmap-id');
+const AUDIT_BIN = join(REPO_ROOT, 'bin', 'roadmap-audit');
 const BASE_TMP = mkdtempSync(join(tmpdir(), 'roadmap-id-test-'));
 
 afterAll(() => {
@@ -208,7 +210,8 @@ describe('bin/roadmap-id CLI', () => {
     expect(runIdCli(['mint', '--count', '0']).exitCode).toBe(2);
     expect(runIdCli(['mint', '--count', 'abc']).exitCode).toBe(2);
     expect(runIdCli(['mint', '--count', '999999999999999999999999']).exitCode).toBe(2);
-    expect(runIdCli(['migrate']).exitCode).toBe(2);
+    expect(runIdCli(['migrate', '--bogus']).exitCode).toBe(2);
+    expect(runIdCli(['migrate', 'a', 'b']).exitCode).toBe(2);
   });
 });
 
@@ -268,4 +271,636 @@ test('mint without a path uses the Git toplevel and reports planning read errors
   const success = spawnSync(BIN, ['mint'], { cwd, env: GIT_ENV, encoding: 'utf8' });
   expect(success.status).toBe(0);
   expect(success.stdout.trim()).toMatch(WORK_ITEM_ID_RE);
+});
+
+// ─── T1: Git history ID reservation ──────────────────────────────────
+
+function gitIn(cwd: string, args: string[], env: NodeJS.ProcessEnv = GIT_ENV): void {
+  const res = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+  if (res.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed (${res.status}): ${res.stderr}`);
+  }
+}
+
+function initGitRepo(prefix: string): string {
+  const dir = freshDir(prefix);
+  gitIn(dir, ['init', '-q', '-b', 'main']);
+  gitIn(dir, ['config', 'user.email', 'test@example.com']);
+  gitIn(dir, ['config', 'user.name', 'Test User']);
+  return dir;
+}
+
+function commitFile(dir: string, relPath: string, content: string, message: string): void {
+  const full = join(dir, relPath);
+  const parent = resolve(full, '..');
+  mkdirSync(parent, { recursive: true });
+  writeFileSync(full, content);
+  gitIn(dir, ['add', relPath]);
+  gitIn(dir, ['commit', '-q', '-m', message]);
+}
+
+describe('Git history ID reservation', () => {
+  test('reserves IDs after a record is deleted (killed) or shipped then removed', () => {
+    const dir = initGitRepo('hist-lifecycle');
+    commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] Killed\n- **ID:** wi-111111\n', 'add killed');
+    writeFileSync(join(dir, 'docs/TODOS.md'), '## Unprocessed\n');
+    gitIn(dir, ['add', 'docs/TODOS.md']);
+    gitIn(dir, ['commit', '-q', '-m', 'kill todo']);
+
+    commitFile(dir, 'docs/roadmap-future.md', '## Future\n- **Item** — **ID:** wi-222222 — body.\n', 'add future');
+    writeFileSync(join(dir, 'docs/roadmap-future.md'), '## Future\n');
+    writeFileSync(join(dir, 'docs/roadmap-shipped.md'), '## Shipped\n### Track 1A: Item ✓ Shipped\n_id: wi-222222_\n');
+    gitIn(dir, ['add', 'docs/roadmap-future.md', 'docs/roadmap-shipped.md']);
+    gitIn(dir, ['commit', '-q', '-m', 'ship item']);
+
+    writeFileSync(join(dir, 'docs/roadmap-shipped.md'), '## Shipped\n');
+    gitIn(dir, ['add', 'docs/roadmap-shipped.md']);
+    gitIn(dir, ['commit', '-q', '-m', 'merge into another record']);
+
+    const taken = collectTakenIds(dir);
+    expect(taken.has('wi-111111')).toBe(true);
+    expect(taken.has('wi-222222')).toBe(true);
+  });
+
+  test('reserves IDs on a non-HEAD branch and on a tag (--all)', () => {
+    const dir = initGitRepo('hist-refs');
+    commitFile(dir, 'README.md', 'base\n', 'base');
+
+    gitIn(dir, ['checkout', '-q', '-b', 'side-branch']);
+    commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] Branch only\n- **ID:** wi-333333\n', 'branch id');
+
+    gitIn(dir, ['checkout', '-q', 'main']);
+    gitIn(dir, ['checkout', '-q', '-b', 'tag-branch']);
+    commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] Tag only\n- **ID:** wi-444444\n', 'tag id');
+    gitIn(dir, ['tag', 'v-only-here']);
+    gitIn(dir, ['checkout', '-q', 'main']);
+    gitIn(dir, ['branch', '-D', 'tag-branch']);
+
+    const taken = collectTakenIds(dir);
+    expect(taken.has('wi-333333')).toBe(true);
+    expect(taken.has('wi-444444')).toBe(true);
+  });
+
+  test('reserves an ID introduced only by a merge commit resolution (-m)', () => {
+    const dir = initGitRepo('hist-merge');
+    commitFile(dir, 'notes.md', 'line 1\n', 'base');
+
+    gitIn(dir, ['checkout', '-q', '-b', 'left']);
+    commitFile(dir, 'notes.md', 'left change\n', 'left');
+
+    gitIn(dir, ['checkout', '-q', 'main']);
+    commitFile(dir, 'notes.md', 'right change\n', 'right');
+
+    const merge = spawnSync('git', ['merge', '--no-commit', 'left'], { cwd: dir, env: GIT_ENV, encoding: 'utf8' });
+    expect(merge.status).not.toBe(0);
+    writeFileSync(join(dir, 'notes.md'), 'resolved with wi-555555\n');
+    gitIn(dir, ['add', 'notes.md']);
+    gitIn(dir, ['commit', '-q', '-m', 'merge resolution']);
+    // Delete the ID on HEAD so it exists only in the merge commit's history.
+    commitFile(dir, 'notes.md', 'cleaned up\n', 'cleanup');
+
+    const taken = collectTakenIds(dir);
+    expect(taken.has('wi-555555')).toBe(true);
+  });
+
+  test('reserves IDs committed under a symlinked directory or an unrelated filename', () => {
+    const dir = initGitRepo('hist-aliases');
+    mkdirSync(join(dir, 'real-docs'), { recursive: true });
+    symlinkSync('real-docs', join(dir, 'alias-docs'));
+    writeFileSync(join(dir, 'real-docs', 'TODOS.md'), '## Unprocessed\n### [manual] Via alias\n- **ID:** wi-666666\n');
+    writeFileSync(join(dir, 'unrelated.txt'), 'archived id wi-777777\n');
+    gitIn(dir, ['add', 'real-docs/TODOS.md', 'alias-docs', 'unrelated.txt']);
+    gitIn(dir, ['commit', '-q', '-m', 'add aliased and unrelated']);
+
+    rmSync(join(dir, 'real-docs', 'TODOS.md'));
+    rmSync(join(dir, 'unrelated.txt'));
+    gitIn(dir, ['add', '-A']);
+    gitIn(dir, ['commit', '-q', '-m', 'remove both']);
+
+    const taken = collectTakenIds(dir);
+    expect(taken.has('wi-666666')).toBe(true);
+    expect(taken.has('wi-777777')).toBe(true);
+  });
+
+  test('returns the same reserved set through symlink alias, sub/.., trailing slash, and case spelling', () => {
+    const dir = initGitRepo('hist-spellings');
+    commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] Entry\n- **ID:** wi-888888\n', 'add');
+    commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n', 'remove');
+    mkdirSync(join(dir, 'sub'), { recursive: true });
+
+    const symlinkPath = join(BASE_TMP, 'symlink-hist-spellings');
+    symlinkSync(dir, symlinkPath);
+
+    const baseline = collectTakenIds(dir);
+    expect(baseline.has('wi-888888')).toBe(true);
+    expect(collectTakenIds(symlinkPath)).toEqual(baseline);
+    expect(collectTakenIds(join(dir, 'sub', '..'))).toEqual(baseline);
+    expect(collectTakenIds(dir + '/')).toEqual(baseline);
+
+    // Case-changed spelling only on case-insensitive filesystems.
+    const upper = dir.slice(0, -1) + (dir.endsWith(dir.slice(-1).toUpperCase())
+      ? dir.slice(-1).toLowerCase()
+      : dir.slice(-1).toUpperCase());
+    if (upper !== dir && existsSync(upper)) {
+      expect(collectTakenIds(upper)).toEqual(baseline);
+    }
+  });
+
+  test('ignores inherited GIT_DIR, GIT_WORK_TREE and pathspec variables', () => {
+    const target = initGitRepo('hist-target');
+    const decoy = initGitRepo('hist-decoy');
+    commitFile(target, 'docs/TODOS.md', '## Unprocessed\n### [manual] Target\n- **ID:** wi-999991\n', 'target');
+    commitFile(target, 'docs/TODOS.md', '## Unprocessed\n', 'clear target');
+    commitFile(decoy, 'docs/TODOS.md', '## Unprocessed\n### [manual] Decoy\n- **ID:** wi-999992\n', 'decoy');
+
+    const envVars: NodeJS.ProcessEnv = {
+      ...GIT_ENV,
+      GIT_DIR: join(decoy, '.git'),
+      GIT_WORK_TREE: decoy,
+      GIT_LITERAL_PATHSPECS: '1',
+      GIT_GLOB_PATHSPECS: '1',
+      GIT_NOGLOB_PATHSPECS: '1',
+      GIT_ICASE_PATHSPECS: '1',
+    };
+
+    const res = spawnSync(BIN, ['mint', target], { encoding: 'utf8', env: envVars });
+    expect(res.status).toBe(0);
+    expect(res.stdout.trim()).toMatch(WORK_ITEM_ID_RE);
+
+    // Also verify collectTakenIds directly with those env vars set in process.env.
+    const saved: Record<string, string | undefined> = {};
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS']) {
+      saved[key] = process.env[key];
+      process.env[key] = envVars[key];
+    }
+    try {
+      const taken = collectTakenIds(target);
+      expect(taken.has('wi-999991')).toBe(true);
+      expect(taken.has('wi-999992')).toBe(false);
+    } finally {
+      for (const [key, val] of Object.entries(saved)) {
+        if (val === undefined) delete process.env[key]; else process.env[key] = val;
+      }
+    }
+  });
+
+  test('shallow clone exits 1 with shallow message and empty stdout for mint and migrate', () => {
+    const upstream = initGitRepo('hist-upstream');
+    commitFile(upstream, 'docs/TODOS.md', '## Unprocessed\n### [manual] One\n- **ID:** wi-aaaaaa\n', 'c1');
+    commitFile(upstream, 'docs/TODOS.md', '## Unprocessed\n### [manual] Two\n', 'c2');
+
+    const shallow = join(BASE_TMP, 'hist-shallow');
+    gitIn(BASE_TMP, ['clone', '--quiet', '--depth', '1', `file://${upstream}`, shallow]);
+
+    const mintRes = spawnSync(BIN, ['mint', shallow], { encoding: 'utf8', env: GIT_ENV });
+    expect(mintRes.status).toBe(1);
+    expect(mintRes.stdout).toBe('');
+    expect(mintRes.stderr).toContain('shallow clone');
+
+    const migRes = spawnSync(BIN, ['migrate', shallow], { encoding: 'utf8', env: GIT_ENV });
+    expect(migRes.status).toBe(1);
+    expect(migRes.stdout).toBe('');
+    expect(migRes.stderr).toContain('shallow clone');
+    expect(readFileSync(join(shallow, 'docs/TODOS.md'), 'utf8')).toBe('## Unprocessed\n### [manual] Two\n');
+  });
+
+  test('repository with no commits reserves only current-file IDs', () => {
+    const dir = initGitRepo('hist-empty');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, 'docs/TODOS.md'), '## Unprocessed\n### [manual] Local\n- **ID:** wi-ababab\n');
+    expect(collectTakenIds(dir)).toEqual(new Set(['wi-ababab']));
+  });
+
+  test('non-repository directory keeps current-files-only behavior', () => {
+    const dir = freshDir('hist-norepo');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, 'docs/TODOS.md'), '## Unprocessed\n### [manual] Local\n- **ID:** wi-cdcdcd\n');
+    expect(collectTakenIds(dir)).toEqual(new Set(['wi-cdcdcd']));
+    const res = spawnSync(BIN, ['mint', dir], { encoding: 'utf8', env: GIT_ENV });
+    expect(res.status).toBe(0);
+    expect(res.stdout.trim()).toMatch(WORK_ITEM_ID_RE);
+  });
+});
+
+// ─── T3: Idempotent migrate subcommand ───────────────────────────────
+
+function deterministicMinter(ids: string[]) {
+  let idx = 0;
+  return (_taken: ReadonlySet<string>): string => {
+    const next = ids[idx++];
+    if (!next) throw new Error('ran out of deterministic IDs');
+    return next;
+  };
+}
+
+describe('work-item migration (accepted shapes)', () => {
+  test('TODO T-a (bullet follows), T-b (paragraph follows), and T-c (blank-only)', () => {
+    const input = [
+      '# TODOS',
+      '',
+      '## Unprocessed',
+      '',
+      '### [manual] Bullet entry',
+      '- **Why:** reason',
+      '',
+      '### [manual] Paragraph entry',
+      '**What:** paragraph body',
+      '',
+      '### [manual] Empty entry',
+      '',
+      '## Completed',
+      '### [manual] Done entry',
+      '- **Why:** done',
+      '',
+    ].join('\n');
+    const result = planWorkItemMigration(
+      [{ kind: 'todos', relPath: 'docs/TODOS.md', content: input }],
+      new Set(),
+      deterministicMinter(['wi-000001', 'wi-000002', 'wi-000003', 'wi-000004']),
+    );
+    expect(result.refusals).toEqual([]);
+    expect(result.assignments).toHaveLength(4);
+    expect(result.files[0]!.content).toBe([
+      '# TODOS',
+      '',
+      '## Unprocessed',
+      '',
+      '### [manual] Bullet entry',
+      '- **ID:** wi-000001',
+      '- **Why:** reason',
+      '',
+      '### [manual] Paragraph entry',
+      '- **ID:** wi-000002',
+      '',
+      '**What:** paragraph body',
+      '',
+      '### [manual] Empty entry',
+      '- **ID:** wi-000003',
+      '',
+      '## Completed',
+      '### [manual] Done entry',
+      '- **ID:** wi-000004',
+      '- **Why:** done',
+      '',
+    ].join('\n'));
+  });
+
+  test('Future bold title (including Revisit when immediately after dash) and plain title', () => {
+    const input = [
+      '## Future',
+      '- **Bold item** — body text. **Revisit when:** GA',
+      '- **Trigger only** — **Revisit when:** next release',
+      '- Plain item — plain body. **Revisit when:** trigger',
+      '- Plain no trigger — plain body only.',
+      '',
+    ].join('\n');
+    const result = planWorkItemMigration(
+      [{ kind: 'future', relPath: 'docs/roadmap-future.md', content: input }],
+      new Set(),
+      deterministicMinter(['wi-000011', 'wi-000012', 'wi-000013', 'wi-000014']),
+    );
+    expect(result.refusals).toEqual([]);
+    expect(result.files[0]!.content).toBe([
+      '## Future',
+      '- **Bold item** — **ID:** wi-000011 — body text. **Revisit when:** GA',
+      '- **Trigger only** — **ID:** wi-000012 — **Revisit when:** next release',
+      '- Plain item — plain body. — **ID:** wi-000013 **Revisit when:** trigger',
+      '- Plain no trigger — plain body only. — **ID:** wi-000014',
+      '',
+    ].join('\n'));
+  });
+
+  test('ROADMAP Track heading, shipped-archive Track heading, and legacy shipped bullets', () => {
+    const roadmap = [
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: Build',
+      '_1 task · ~50 LOC · low risk_',
+      '_touches: src/a.ts_',
+      '',
+    ].join('\n');
+    const shipped = [
+      '## Shipped',
+      '#### Group 1: Early ✓ Shipped (v0.18.3)',
+      '- Track 1A — _shipped (v0.18.3): initial_; removed in Track 7A: old helper',
+      '### Track 22A: Receipt ✓ Shipped (v0.50.0)',
+      '- 2026-06-01: merged',
+      '',
+    ].join('\n');
+    const result = planWorkItemMigration(
+      [
+        { kind: 'roadmap', relPath: 'docs/ROADMAP.md', content: roadmap },
+        { kind: 'shipped', relPath: 'docs/roadmap-shipped.md', content: shipped },
+      ],
+      new Set(),
+      deterministicMinter(['wi-000021', 'wi-000022', 'wi-000023']),
+    );
+    expect(result.refusals).toEqual([]);
+    expect(result.files[0]!.content).toBe([
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: Build',
+      '_1 task · ~50 LOC · low risk_',
+      '_id: wi-000021_',
+      '_touches: src/a.ts_',
+      '',
+    ].join('\n'));
+    expect(result.files[1]!.content).toBe([
+      '## Shipped',
+      '#### Group 1: Early ✓ Shipped (v0.18.3)',
+      '- Track 1A — **ID:** wi-000023 — _shipped (v0.18.3): initial_; removed in Track 7A: old helper',
+      '### Track 22A: Receipt ✓ Shipped (v0.50.0)',
+      '_id: wi-000022_',
+      '- 2026-06-01: merged',
+      '',
+    ].join('\n'));
+  });
+
+  test('Completed heading directly after Unprocessed entry, legacy Completed ID stays single, and **What:** paragraph', () => {
+    const input = [
+      '## Unprocessed',
+      '### [manual] Last unprocessed',
+      '## Completed',
+      '### [manual] Completed right under heading',
+      '**What:** paragraph body',
+      '- [manual] Legacy completed bullet',
+      '- **ID:** wi-112233',
+      '',
+    ].join('\n');
+    const result = planWorkItemMigration(
+      [{ kind: 'todos', relPath: 'docs/TODOS.md', content: input }],
+      new Set(['wi-112233']),
+      deterministicMinter(['wi-000031', 'wi-000032']),
+    );
+    expect(result.refusals).toEqual([]);
+    expect(result.files[0]!.content).toBe([
+      '## Unprocessed',
+      '### [manual] Last unprocessed',
+      '- **ID:** wi-000031',
+      '## Completed',
+      '### [manual] Completed right under heading',
+      '- **ID:** wi-000032',
+      '',
+      '**What:** paragraph body',
+      '- [manual] Legacy completed bullet',
+      '- **ID:** wi-112233',
+      '',
+    ].join('\n'));
+  });
+
+  test('inline code spans that look like ID fields stay reserved and are never read as the field', () => {
+    const future = [
+      '## Future',
+      '- **Document `**ID:**` in recipes** — Shows `**ID:** wi-abc123` in docs. **Revisit when:** GA',
+      '',
+    ].join('\n');
+    const todos = [
+      '## Unprocessed',
+      '### [manual] Quote ID syntax',
+      '- **What:** mentions `- **ID:** wi-abc123` in prose',
+      '',
+    ].join('\n');
+    const result = planWorkItemMigration(
+      [
+        { kind: 'future', relPath: 'docs/roadmap-future.md', content: future },
+        { kind: 'todos', relPath: 'docs/TODOS.md', content: todos },
+      ],
+      new Set(['wi-abc123']),
+      deterministicMinter(['wi-000041', 'wi-000042']),
+    );
+    expect(result.refusals).toEqual([]);
+    expect(result.files[0]!.content).toBe([
+      '## Future',
+      '- **Document `**ID:**` in recipes** — **ID:** wi-000041 — Shows `**ID:** wi-abc123` in docs. **Revisit when:** GA',
+      '',
+    ].join('\n'));
+    expect(result.files[1]!.content).toBe([
+      '## Unprocessed',
+      '### [manual] Quote ID syntax',
+      '- **ID:** wi-000042',
+      '- **What:** mentions `- **ID:** wi-abc123` in prose',
+      '',
+    ].join('\n'));
+  });
+
+  test('descriptive Future heading is migrated while Future-proof rollout notes is untouched', () => {
+    const input = [
+      '## Future (deferred) — next release',
+      '- **Deferred** — keep this. **Revisit when:** GA',
+      '## Future-proof rollout notes',
+      '- Keep the old link',
+      '',
+    ].join('\n');
+    const result = planWorkItemMigration(
+      [{ kind: 'future', relPath: 'docs/roadmap-future.md', content: input }],
+      new Set(),
+      deterministicMinter(['wi-000051']),
+    );
+    expect(result.refusals).toEqual([]);
+    expect(result.files[0]!.content).toBe([
+      '## Future (deferred) — next release',
+      '- **Deferred** — **ID:** wi-000051 — keep this. **Revisit when:** GA',
+      '## Future-proof rollout notes',
+      '- Keep the old link',
+      '',
+    ].join('\n'));
+  });
+
+  test('preserves CRLF, UTF-8 BOM, and handles a final heading with no trailing newline', () => {
+    const crlfBom = '\uFEFF# TODOS\r\n## Unprocessed\r\n### [manual] One\r\n- **Why:** x\r\n';
+    const noTrailingNl = '## Unprocessed\n### [manual] Final';
+    const r1 = planWorkItemMigration(
+      [{ kind: 'todos', relPath: 'docs/TODOS.md', content: crlfBom }],
+      new Set(),
+      deterministicMinter(['wi-000061']),
+    );
+    expect(r1.refusals).toEqual([]);
+    expect(r1.files[0]!.content).toBe('\uFEFF# TODOS\r\n## Unprocessed\r\n### [manual] One\r\n- **ID:** wi-000061\r\n- **Why:** x\r\n');
+
+    const r2 = planWorkItemMigration(
+      [{ kind: 'todos', relPath: 'docs/TODOS.md', content: noTrailingNl }],
+      new Set(),
+      deterministicMinter(['wi-000062']),
+    );
+    expect(r2.refusals).toEqual([]);
+    expect(r2.files[0]!.content).toBe('## Unprocessed\n### [manual] Final\n- **ID:** wi-000062');
+  });
+});
+
+describe('bin/roadmap-id migrate CLI', () => {
+  test('refuses colon/separator-less Future bullets, metadata-less ROADMAP Track, and duplicate-label Track without writing', () => {
+    const dir = freshDir('mig-refuse-shapes');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    const futureText = [
+      '## Future',
+      '- **Follow-up**: More work. **Revisit when:** - use **Phase 2** — after GA',
+      '- **Colon title**: body without dash',
+      '',
+    ].join('\n');
+    const roadmapText = [
+      '## Current Plan',
+      '### Group 1: Core',
+      '#### Track 1A: No metadata',
+      '_touches: src/a.ts_',
+      '#### Track 1A: Duplicate label',
+      '_1 task · low risk_',
+      '',
+    ].join('\n');
+    const todosText = '## Unprocessed\n### [manual] Valid entry\n- **Why:** ok\n';
+    writeFileSync(join(dir, 'docs/roadmap-future.md'), futureText);
+    writeFileSync(join(dir, 'docs/ROADMAP.md'), roadmapText);
+    writeFileSync(join(dir, 'docs/TODOS.md'), todosText);
+
+    const res = spawnSync(BIN, ['migrate', dir], { encoding: 'utf8', env: GIT_ENV });
+    expect(res.status).toBe(1);
+    expect(res.stdout).toBe('');
+    expect(res.stderr).toContain('REFUSED docs/roadmap-future.md:2 future');
+    expect(res.stderr).toContain('REFUSED docs/roadmap-future.md:3 future');
+    expect(res.stderr).toContain('REFUSED docs/ROADMAP.md:3 track');
+    expect(res.stderr).toContain('REFUSED docs/ROADMAP.md:5 track');
+    expect(res.stderr).toContain('records refused; no files were written');
+    expect(readFileSync(join(dir, 'docs/TODOS.md'), 'utf8')).toBe(todosText);
+    expect(readFileSync(join(dir, 'docs/ROADMAP.md'), 'utf8')).toBe(roadmapText);
+    expect(readFileSync(join(dir, 'docs/roadmap-future.md'), 'utf8')).toBe(futureText);
+  });
+
+  test('refuses dual root+docs copies, symlinked docs/files, and non-UTF-8 files without writing', () => {
+    // Dual copy
+    const dual = freshDir('mig-dual');
+    mkdirSync(join(dual, 'docs'), { recursive: true });
+    writeFileSync(join(dual, 'TODOS.md'), '## Unprocessed\n### [manual] Root\n');
+    writeFileSync(join(dual, 'docs/TODOS.md'), '## Unprocessed\n### [manual] Docs\n');
+    const dualRes = spawnSync(BIN, ['migrate', dual], { encoding: 'utf8', env: GIT_ENV });
+    expect(dualRes.status).toBe(1);
+    expect(dualRes.stdout).toBe('');
+    expect(dualRes.stderr).toContain('REFUSED TODOS.md:1 document');
+
+    // Symlinked file
+    const sym = freshDir('mig-symlink');
+    mkdirSync(join(sym, 'docs'), { recursive: true });
+    writeFileSync(join(sym, 'real.md'), '## Unprocessed\n### [manual] Target\n');
+    symlinkSync('../real.md', join(sym, 'docs/TODOS.md'));
+    const symRes = spawnSync(BIN, ['migrate', sym], { encoding: 'utf8', env: GIT_ENV });
+    expect(symRes.status).toBe(1);
+    expect(symRes.stdout).toBe('');
+    expect(symRes.stderr).toContain('REFUSED docs/TODOS.md:1 document');
+
+    // Non-UTF-8 file
+    const badUtf8 = freshDir('mig-utf8');
+    mkdirSync(join(badUtf8, 'docs'), { recursive: true });
+    writeFileSync(join(badUtf8, 'docs/TODOS.md'), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+    const utf8Res = spawnSync(BIN, ['migrate', badUtf8], { encoding: 'utf8', env: GIT_ENV });
+    expect(utf8Res.status).toBe(1);
+    expect(utf8Res.stdout).toBe('');
+    expect(utf8Res.stderr).toContain('REFUSED docs/TODOS.md:1 document');
+  });
+
+  test('--dry-run writes nothing; migrate is idempotent and works through aliases and pathspec env vars', () => {
+    const dir = initGitRepo('mig-e2e');
+    mkdirSync(join(dir, 'sub'), { recursive: true });
+    commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] One\n- **Why:** x\n', 'add todo');
+    const aliasPath = join(BASE_TMP, 'symlink-mig-e2e');
+    symlinkSync(dir, aliasPath);
+
+    const pathspecEnv: NodeJS.ProcessEnv = {
+      ...GIT_ENV,
+      GIT_LITERAL_PATHSPECS: '1',
+      GIT_GLOB_PATHSPECS: '1',
+      GIT_NOGLOB_PATHSPECS: '1',
+      GIT_ICASE_PATHSPECS: '1',
+    };
+
+    const dry = spawnSync(BIN, ['migrate', aliasPath, '--dry-run'], { encoding: 'utf8', env: pathspecEnv });
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain('DRY_RUN 1\n');
+    expect(readFileSync(join(dir, 'docs/TODOS.md'), 'utf8')).toBe('## Unprocessed\n### [manual] One\n- **Why:** x\n');
+
+    const run1 = spawnSync(BIN, ['migrate', join(dir, 'sub', '..') + '/'], { encoding: 'utf8', env: pathspecEnv });
+    expect(run1.status).toBe(0);
+    expect(run1.stdout).toContain('ASSIGNED docs/TODOS.md:2 wi-');
+    expect(run1.stdout).toContain('MIGRATED 1\n');
+    const after1 = readFileSync(join(dir, 'docs/TODOS.md'), 'utf8');
+
+    const run2 = spawnSync(BIN, ['migrate', dir], { encoding: 'utf8', env: pathspecEnv });
+    expect(run2.status).toBe(0);
+    expect(run2.stdout).toBe('MIGRATED 0\n');
+    expect(readFileSync(join(dir, 'docs/TODOS.md'), 'utf8')).toBe(after1);
+  });
+
+  test('composite fixture: full bin/roadmap-audit output before and after migration differs only in WORK_ITEM_IDS', () => {
+    const dir = initGitRepo('mig-audit-parity');
+    commitFile(dir, 'VERSION', '0.1.0\n', 'version');
+    commitFile(dir, 'docs/TODOS.md', [
+      '# TODOS',
+      '',
+      '## Unprocessed',
+      '',
+      '### [manual] First task',
+      '- **Why:** needed',
+      '',
+      '## Completed',
+      '',
+      '### [manual] Old task',
+      '- **Why:** done',
+      '',
+    ].join('\n'), 'todos');
+    commitFile(dir, 'docs/ROADMAP.md', [
+      '# Roadmap',
+      '',
+      '## Current Plan',
+      '',
+      '### Group 1: Core',
+      '_Depends on: none_',
+      '',
+      '#### Track 1A: Build',
+      '_1 task · ~50 LOC · low risk_',
+      '_touches: src/a.ts_',
+      '- **Do** -- body (S)',
+      '',
+      '## Future',
+      '',
+      'Deferred: docs/roadmap-future.md (1 item)',
+      '',
+      '## Shipped',
+      '',
+      'History: docs/roadmap-shipped.md',
+      '',
+    ].join('\n'), 'roadmap');
+    commitFile(dir, 'docs/roadmap-future.md', [
+      '# Roadmap — Future',
+      '',
+      '## Future',
+      '',
+      '- **Later item** — details. **Revisit when:** GA',
+      '',
+    ].join('\n'), 'future');
+    commitFile(dir, 'docs/roadmap-shipped.md', [
+      '# Roadmap — Shipped',
+      '',
+      '## Shipped',
+      '',
+      '#### Group 0: Legacy ✓ Shipped (v0.1.0)',
+      '- Track 0A — _shipped (v0.1.0): old_',
+      '',
+      '### Track 0B: Receipt ✓ Shipped (v0.1.0)',
+      '- 2026-01-01: merged',
+      '',
+    ].join('\n'), 'shipped');
+
+    const stripWorkItemIds = (out: string) =>
+      out.replace(/## WORK_ITEM_IDS[\s\S]*?(?=\n## [A-Z_]+\n|$)/, '## WORK_ITEM_IDS\n<STRIPPED>\n');
+
+    const beforeAudit = spawnSync(AUDIT_BIN, [dir], { encoding: 'utf8', env: GIT_ENV });
+    expect(beforeAudit.status).toBe(0);
+    expect(beforeAudit.stdout).toContain('MISSING_ID:');
+
+    const mig = spawnSync(BIN, ['migrate', dir], { encoding: 'utf8', env: GIT_ENV });
+    expect(mig.status).toBe(0);
+    expect(mig.stdout).toContain('MIGRATED 6\n');
+
+    const afterAudit = spawnSync(AUDIT_BIN, [dir], { encoding: 'utf8', env: GIT_ENV });
+    expect(afterAudit.status).toBe(0);
+    expect(afterAudit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: pass\n');
+    expect(stripWorkItemIds(afterAudit.stdout)).toBe(stripWorkItemIds(beforeAudit.stdout));
+  });
 });

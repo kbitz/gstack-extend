@@ -387,8 +387,8 @@ Each separate call must paste both printed root assignments; a missing root stop
 ```
 
 Surface `TODO_FORMAT` and `WORK_ITEM_IDS` failures before reading any intake
-records. Stop on malformed intake and resume after its owner corrects it. Treat
-missing IDs as advisory only on legacy records. Read only regular canonical
+records. Stop on malformed intake and resume after its owner corrects it. A
+missing ID fails `WORK_ITEM_IDS`; the owner runs the one-time `"$_EXTEND_ROOT/bin/roadmap-id" migrate` (preview with `--dry-run`) before Apply. Read only regular canonical
 intake files under real `docs/` and `docs/todos/` directories.
 If an interrupted, approved placement left the same ID in a valid intake file
 and its exact approved destination, revalidate the remaining drain against that
@@ -1413,7 +1413,7 @@ Lead the run summary with this table, above the audit detail:
 ```
 
 - `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, PACKING, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET, FUTURE, WORK_ITEM_IDS.
-- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, VERSION, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED), WORK_ITEM_IDS (missing IDs only).
+- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, VERSION, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).
 
 Verdict-to-status mapping:
 

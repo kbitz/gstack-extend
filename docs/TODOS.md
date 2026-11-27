@@ -7,6 +7,7 @@
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
 
+- **ID:** wi-7e2223
 - **Why:** Repeated reviewer fan-out on the whole branch diff is most of a review's usage. Private review observations found repeated whole-branch sweeps, lower usage in a repair-only continuation, and later full sweeps whose specialists returned no findings. The defects came from the native adversarial pass and the outside voices. When `/review` stops at its three-cycle cap (`converged:false`), `/review-and-prep` has no instruction at all, so a person decides each continuation ad hoc.
 - **Effort:** M (~560 lines incl. tests)
 - **Priority:** P2
@@ -15,6 +16,7 @@
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output
 
+- **ID:** wi-04c419
 - **Description:** `bin/lib/install-safety.sh:_path_owner_uid` runs `stat -f '%u' path || stat -c '%u' path`. With GNU coreutils ahead of `/usr/bin` in PATH, GNU `stat -f` prints file-system details and fails, the fallback appends the uid, and the captured value no longer equals `id -u`. Every host directory then fails the ownership check, so setup skips all hosts. Track 23C's own stat calls try BSD `-f` first and keep the output only when it has the expected shape, otherwise use `-c` (`setup:_is_stat_id`, `_is_stat_size`); reuse that pattern here. This pre-existing helper sits outside that track's files.
 - **Effort:** S (human: ~30min / CC: ~10min)
 - **Context:** Found during Track 23C review and prep on 2026-10-09 while confirming the same ordering bug in the new install-status code. A probe with `/opt/homebrew/bin/gstat` first in PATH showed the multi-line capture.
@@ -24,6 +26,7 @@
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read
 
+- **ID:** wi-c2103b
 - **Symptom:** `docs/telemetry.md` section "Cursor and quota" says local native SDK runs supply model and effort when readable, otherwise null. The live Conductor store shape is never readable by `cursor_turns()`, so the null is structural, not an occasional miss. A reader can think a null model means the run did not name one.
 - **Repro:** Read the "Cursor and quota" paragraph, then run the repro on `cursor_turns() cannot read the Conductor store shape`. The store record's `model.id` is `grok-4.7` while the reader returns no turn. Update the sentence, and link `docs/designs/review-independence.md` from that section. Track 16B does not edit `docs/telemetry.md`.
 - **Effort:** S (human: ~1h / CC: ~15min)
@@ -33,6 +36,7 @@
 - **Completed:** v0.32.1.0 (2026-09-28). The Cursor section now says the current reader cannot parse numeric timestamps and list-valued model parameters, so model and effort stay null even when the store names a model, and it links the review-independence evidence. The separate `cursor_turns()` reader TODO stays open.
 
 ### [manual] Native Cursor host installation
+- **ID:** wi-fff143
 - **Description:** Add `setup --host cursor` and auto-detection through the Cursor command or home directory. Generate native skill copies with ownership-safe refresh and uninstall, verified home-root probes, and telemetry pointer discovery.
 - **Scope:** Included in Track 16D's PR #113 on 2026-09-25. This explicitly expands its original fence to `setup`, the two additional telemetry-only skills, `tests/telemetry.test.ts`, and the canonical blocks in `docs/telemetry.md`; coordinate the setup overlap with Track 16E during review and prep.
 - **Decision:** When `cursor` is on PATH but `~/.cursor` is absent, create the skill directory. When Cursor is absent, leave it absent. Strip `allowed-tools` as Codex does.
@@ -40,6 +44,7 @@
 - **Completed:** v0.29.4.0 (2026-09-26)
 
 ### [manual] Keep gstack-extend independent of the maintainer's personal tooling
+- **ID:** wi-7eb9fa
 - **Description:** gstack-extend should stand on its own. Its features must be usable by any caller, and no shipped artifact (code, docs, tests, TODOS entries, CHANGELOG, commit or PR text) should require or name the maintainer's private orchestrator or personal cross-machine tooling. Reword references generically and add a consumer-agnostic rule to `CLAUDE.md`.
 - **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P2
@@ -48,6 +53,7 @@
 
 ### [manual] Quota ledger, with Cursor capacity as an open question
 
+- **ID:** wi-dc23fc
 - **Description:** Nothing measures quota spent per stage per configuration; all current figures are wall-clock. Codex and Claude expose readable remaining-capacity endpoints. The Grok Build endpoint is unusable for this purpose because Grok now runs through Cursor (`cursor-agent` or natively in Conductor). Whether Cursor capacity is readable, and whether the CLI and Conductor routes share a pool, are open questions. Acceptance requires evidence of consumption attributable to stage and configuration, documented capacity-read results and pool relationships, and distinct model-vendor and capacity-pool fields: review independence follows the vendor, while capacity follows the pool, which may serve several vendors. A failed capacity read must degrade to a local consumption ledger and must never be interpreted as "no quota."
 - **Effort:** L (human: ~3d / CC: ~1.5h; provisional pending planning)
 - **Priority:** P0
@@ -56,6 +62,8 @@
 - **Completed:** v0.29.0.0 (2026-09-24)
 
 ### Failed-ledger retry with non-semver NEW aborts the helper
+
+- **ID:** wi-b669e1
 
 **What:** Do not call `version_gt` / `semver_lte` unless NEW is semver. If NEW is `unknown` (or any letter-bearing string), skip the compare and either retry every failed name or leave them queued.
 
@@ -70,6 +78,8 @@
 
 ### Setup-fail after pull drops in-window migrations forever
 
+- **ID:** wi-010e76
+
 **What:** Persist the pre-pull version (or pre-register in-window names into `migrations-failed`) before `./setup`. A later `update-run` must still see those names when OLD==NEW.
 
 **Why:** Pull advances VERSION, then setup can exit 1 (`no bun`, install-safety). The helper never runs. Next hop reads OLD==NEW, so unstarted in-window scripts are not in the failed ledger and never execute. Same hole if the helper aborts mid-scan.
@@ -82,6 +92,8 @@
 **Completed:** v0.24.6.0 (2026-08-15)
 
 ### Helper-path tests before the first real `v*.sh`
+
+- **ID:** wi-e0357d
 
 **What:** Add fixtures for: helper missing-args / missing semver.sh / bad-version; empty `migrations/` (`.gitkeep` only); symlink and non-semver name skip; fail-then-succeed clears `migrations-failed`; unexpected helper abort emits `MIGRATION_WARN helper`.
 
