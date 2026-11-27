@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from './helpers/child-stdio.ts';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
-import { collectTakenIds, runIdCli } from '../src/audit/id-cli.ts';
+import { collectTakenIds, runIdCli, type CliResult } from '../src/audit/id-cli.ts';
 import {
   WORK_ITEM_ID_CONTRACT,
   WORK_ITEM_ID_PREFIX,
@@ -452,14 +452,13 @@ describe('Git history ID reservation', () => {
     const baseline = collectTakenIds(dir);
     expect(baseline.has('wi-888888')).toBe(true);
     expect(collectTakenIds(symlinkPath)).toEqual(baseline);
-    expect(collectTakenIds(join(dir, 'sub', '..'))).toEqual(baseline);
+    expect(collectTakenIds(`${dir}/sub/..`)).toEqual(baseline);
     expect(collectTakenIds(dir + '/')).toEqual(baseline);
 
     // Case-changed spelling only on case-insensitive filesystems.
-    const upper = dir.slice(0, -1) + (dir.endsWith(dir.slice(-1).toUpperCase())
-      ? dir.slice(-1).toLowerCase()
-      : dir.slice(-1).toUpperCase());
-    if (upper !== dir && existsSync(upper)) {
+    const name = basename(dir);
+    const upper = join(dirname(dir), name[0]!.toUpperCase() + name.slice(1));
+    if (existsSync(upper)) {
       expect(collectTakenIds(upper)).toEqual(baseline);
     }
   });
@@ -520,6 +519,39 @@ describe('Git history ID reservation', () => {
     expect(migRes.stdout).toBe('');
     expect(migRes.stderr).toContain('shallow clone');
     expect(readFileSync(join(shallow, 'docs/TODOS.md'), 'utf8')).toBe('## Unprocessed\n### [manual] Two\n');
+  });
+
+  // Value: protects=both commands fail closed when local Git discovery or history fails;
+  //   fails_when=Git errors fall back to current files or publish assignments;
+  //   why_new=the launcher was tested for shallow clones and other Git errors were mocked;
+  //   seam=none; no_claim=remote transport behavior (local Git fixtures only).
+  test('mint and migrate refuse broken Git discovery or unreadable local history', () => {
+    const original = '## Unprocessed\n### [manual] Pending entry\n';
+    const badPointer = freshDir('hist-broken-pointer');
+    writeFileSync(join(badPointer, '.git'), 'gitdir: missing-git-directory\n');
+    writeFileSync(join(badPointer, 'TODOS.md'), original);
+
+    const missingTree = initGitRepo('hist-missing-tree');
+    commitFile(missingTree, 'TODOS.md', original, 'add pending entry');
+    const tree = spawnSync('git', ['rev-parse', 'HEAD^{tree}'], {
+      cwd: missingTree, env: GIT_ENV, encoding: 'utf8',
+    });
+    expect(tree.status).toBe(0);
+    const hash = tree.stdout.trim();
+    rmSync(join(missingTree, '.git', 'objects', hash.slice(0, 2), hash.slice(2)));
+
+    for (const [cwd, detail] of [
+      [badPointer, 'could not resolve project root'],
+      [missingTree, 'could not read Git history for work-item IDs'],
+    ]) {
+      for (const command of ['mint', 'migrate']) {
+        const result = spawnSync(BIN, [command], { cwd, env: GIT_ENV, encoding: 'utf8' });
+        expect(result.status, result.stderr).toBe(1);
+        expect(result.stdout).toBe('');
+        expect(result.stderr).toContain(detail);
+        expect(readFileSync(join(cwd, 'TODOS.md'), 'utf8')).toBe(original);
+      }
+    }
   });
 
   test('repository with no commits reserves only current-file IDs', () => {
@@ -643,7 +675,11 @@ describe('work-item migration (accepted shapes)', () => {
     ].join('\n'));
   });
 
-  test('ROADMAP Track heading, shipped-archive Track heading, and legacy shipped bullets', () => {
+  // Value: protects=inline Future and both forms of legacy receipt preserve exact original prose;
+  //   fails_when=the inline branch skips a record or inserts a field at the wrong location;
+  //   why_new=satellite and full audit tests do not pin these exact bytes;
+  //   seam=none; no_claim=filesystem publication (planner fixture).
+  test('ROADMAP Track and inline Future, shipped-archive Track, and legacy shipped bullets', () => {
     const roadmap = [
       '## Current Plan',
       '### Group 1: Core',
@@ -651,11 +687,15 @@ describe('work-item migration (accepted shapes)', () => {
       '_1 task · ~50 LOC · low risk_',
       '_touches: src/a.ts_',
       '',
+      '## Future',
+      '- **Later change** — original context. **Revisit when:** Ready',
+      '',
     ].join('\n');
     const shipped = [
       '## Shipped',
       '#### Group 1: Early ✓ Shipped (v0.18.3)',
       '- Track 1A — _shipped (v0.18.3): initial_; removed in Track 7A: old helper',
+      '- Track 1B — _shipped (v0.18.3): companion_',
       '### Track 22A: Receipt ✓ Shipped (v0.50.0)',
       '- 2026-06-01: merged',
       '',
@@ -666,7 +706,7 @@ describe('work-item migration (accepted shapes)', () => {
         { kind: 'shipped', relPath: 'docs/roadmap-shipped.md', content: shipped },
       ],
       new Set(),
-      deterministicMinter(['wi-000021', 'wi-000022', 'wi-000023']),
+      deterministicMinter(['wi-000021', 'wi-000024', 'wi-000022', 'wi-000023', 'wi-000025']),
     );
     expect(result.refusals).toEqual([]);
     expect(result.files[0]!.content).toBe([
@@ -677,11 +717,15 @@ describe('work-item migration (accepted shapes)', () => {
       '_id: wi-000021_',
       '_touches: src/a.ts_',
       '',
+      '## Future',
+      '- **Later change** — **ID:** wi-000024 — original context. **Revisit when:** Ready',
+      '',
     ].join('\n'));
     expect(result.files[1]!.content).toBe([
       '## Shipped',
       '#### Group 1: Early ✓ Shipped (v0.18.3)',
       '- Track 1A — **ID:** wi-000023 — _shipped (v0.18.3): initial_; removed in Track 7A: old helper',
+      '- Track 1B — **ID:** wi-000025 — _shipped (v0.18.3): companion_',
       '### Track 22A: Receipt ✓ Shipped (v0.50.0)',
       '_id: wi-000022_',
       '- 2026-06-01: merged',
@@ -906,35 +950,65 @@ describe('bin/roadmap-id migrate CLI', () => {
     expect(readFileSync(join(dir, 'docs/roadmap-future.md'), 'utf8')).toBe(futureText);
   });
 
-  test('refuses dual root+docs copies, symlinked docs/files, and non-UTF-8 files without writing', () => {
-    // Dual copy
+  // Value: protects=refused layouts leave every sibling document and symlink target intact;
+  //   fails_when=one invalid path is followed or a valid sibling is published before refusal;
+  //   why_new=the earlier fixtures only exercised three layout errors and checked diagnostics;
+  //   seam=none; no_claim=filesystem races after validation.
+  test('refuses ambiguous or invalid document layouts without writing', () => {
+    const original = '## Unprocessed\n### [manual] Pending entry\n';
+    function refuse(dir: string, detail: string, untouched: string[], links: string[] = []) {
+      const files = untouched.map(path => join(dir, path));
+      const before = files.map(path => readFileSync(path));
+      const linkPaths = links.map(path => join(dir, path));
+      const targets = linkPaths.map(path => readlinkSync(path));
+      const result = spawnSync(BIN, ['migrate', dir], { encoding: 'utf8', env: GIT_ENV });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain(detail);
+      expect(result.stderr).toContain('no files were written');
+      expect(files.map(path => readFileSync(path))).toEqual(before);
+      expect(linkPaths.map(path => readlinkSync(path))).toEqual(targets);
+    }
+
     const dual = freshDir('mig-dual');
     mkdirSync(join(dual, 'docs'), { recursive: true });
-    writeFileSync(join(dual, 'TODOS.md'), '## Unprocessed\n### [manual] Root\n');
+    writeFileSync(join(dual, 'TODOS.md'), original);
     writeFileSync(join(dual, 'docs/TODOS.md'), '## Unprocessed\n### [manual] Docs\n');
-    const dualRes = spawnSync(BIN, ['migrate', dual], { encoding: 'utf8', env: GIT_ENV });
-    expect(dualRes.status).toBe(1);
-    expect(dualRes.stdout).toBe('');
-    expect(dualRes.stderr).toContain('REFUSED TODOS.md:1 document');
+    refuse(dual, 'REFUSED TODOS.md:1 document both TODOS.md and docs/TODOS.md exist', ['TODOS.md', 'docs/TODOS.md']);
 
-    // Symlinked file
     const sym = freshDir('mig-symlink');
     mkdirSync(join(sym, 'docs'), { recursive: true });
-    writeFileSync(join(sym, 'real.md'), '## Unprocessed\n### [manual] Target\n');
-    symlinkSync('../real.md', join(sym, 'docs/TODOS.md'));
-    const symRes = spawnSync(BIN, ['migrate', sym], { encoding: 'utf8', env: GIT_ENV });
-    expect(symRes.status).toBe(1);
-    expect(symRes.stdout).toBe('');
-    expect(symRes.stderr).toContain('REFUSED docs/TODOS.md:1 document');
+    writeFileSync(join(sym, 'TODOS.md'), original);
+    writeFileSync(join(sym, 'target.md'), '## Future\n- **Deferred** — original context.\n');
+    symlinkSync('../target.md', join(sym, 'docs/roadmap-future.md'));
+    refuse(sym, 'REFUSED docs/roadmap-future.md:1 document symbolic link or non-regular file',
+      ['TODOS.md', 'target.md'], ['docs/roadmap-future.md']);
 
-    // Non-UTF-8 file
+    const symlinkDocs = freshDir('mig-symlink-docs');
+    writeFileSync(join(symlinkDocs, 'TODOS.md'), original);
+    mkdirSync(join(symlinkDocs, 'target'));
+    writeFileSync(join(symlinkDocs, 'target/roadmap-future.md'), '## Future\n- **Deferred** — original context.\n');
+    symlinkSync('target', join(symlinkDocs, 'docs'));
+    refuse(symlinkDocs, 'REFUSED docs:1 document docs/ is a symbolic link or not a directory',
+      ['TODOS.md', 'target/roadmap-future.md'], ['docs']);
+
+    const fileDocs = freshDir('mig-file-docs');
+    writeFileSync(join(fileDocs, 'TODOS.md'), original);
+    writeFileSync(join(fileDocs, 'docs'), 'This path is a regular file.\n');
+    refuse(fileDocs, 'REFUSED docs:1 document docs/ is a symbolic link or not a directory', ['TODOS.md', 'docs']);
+
+    const nonregular = freshDir('mig-nonregular-file');
+    writeFileSync(join(nonregular, 'TODOS.md'), original);
+    mkdirSync(join(nonregular, 'ROADMAP.md'));
+    writeFileSync(join(nonregular, 'ROADMAP.md/marker'), 'Keep the directory.\n');
+    refuse(nonregular, 'REFUSED ROADMAP.md:1 document symbolic link or non-regular file',
+      ['TODOS.md', 'ROADMAP.md/marker']);
+
     const badUtf8 = freshDir('mig-utf8');
     mkdirSync(join(badUtf8, 'docs'), { recursive: true });
-    writeFileSync(join(badUtf8, 'docs/TODOS.md'), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
-    const utf8Res = spawnSync(BIN, ['migrate', badUtf8], { encoding: 'utf8', env: GIT_ENV });
-    expect(utf8Res.status).toBe(1);
-    expect(utf8Res.stdout).toBe('');
-    expect(utf8Res.stderr).toContain('REFUSED docs/TODOS.md:1 document');
+    writeFileSync(join(badUtf8, 'TODOS.md'), original);
+    writeFileSync(join(badUtf8, 'docs/ROADMAP.md'), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+    refuse(badUtf8, 'REFUSED docs/ROADMAP.md:1 document file is not valid UTF-8', ['TODOS.md', 'docs/ROADMAP.md']);
   });
 
   test('refuses a shipped archive heading outside the approved H3 shape', () => {
@@ -1005,6 +1079,120 @@ describe('bin/roadmap-id migrate CLI', () => {
     }
   });
 
+  function runMigrationWithFault(
+    dir: string,
+    fault: { publish?: string; rollback?: string; cleanup?: string },
+  ): CliResult {
+    // The child owns the mock; the parent and every other test use real fs.
+    const probe = join(dir, 'migration-fault.test.ts');
+    const output = join(dir, 'migration-result.json');
+    writeFileSync(probe, `
+      import { mock, test } from 'bun:test';
+      import * as fs from 'node:fs';
+
+      const fault = ${JSON.stringify(fault)};
+      const { renameSync, rmSync } = fs;
+      mock.module('node:fs', () => ({
+        ...fs,
+        renameSync(source, destination) {
+          if (destination === fault.publish) throw new Error('fixture publish failure');
+          if (source === fault.rollback) throw new Error('fixture rollback failure');
+          renameSync(source, destination);
+        },
+        rmSync(path, options) {
+          if (path === fault.cleanup) throw new Error('fixture cleanup failure');
+          rmSync(path, options);
+        },
+      }));
+
+      test('run migration in an isolated process', async () => {
+        const { runIdCli } = await import(${JSON.stringify(join(REPO_ROOT, 'src/audit/id-cli.ts'))});
+        const result = runIdCli(['migrate', ${JSON.stringify(dir)}]);
+        fs.writeFileSync(${JSON.stringify(output)}, JSON.stringify(result));
+      });
+    `);
+    const child = spawnSync(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', 'test', probe], {
+      cwd: dir, env: GIT_ENV, encoding: 'utf8',
+    });
+    expect(child.status, child.stderr).toBe(0);
+    return JSON.parse(readFileSync(output, 'utf8'));
+  }
+
+  const recoveryTodo = '## Unprocessed\n\n### [manual] Pending entry\n- **What:** Work.\n';
+  const recoveryFuture = '## Future\n\n- **Deferred** — later.\n';
+
+  // Value: protects=a publish error after the first write restores the original files and mode;
+  //   fails_when=rollback skips a published document or leaves its staging directory behind;
+  //   why_new=the existing permission test fails before publishing anything;
+  //   seam=none; no_claim=process interruption (second rename fails deterministically).
+  test('migration recovery restores earlier bytes and mode after a later publish failure', () => {
+    const dir = realpathSync(freshDir('mig-publish-failure'));
+    const todo = join(dir, 'TODOS.md');
+    const future = join(dir, 'roadmap-future.md');
+    writeFileSync(todo, recoveryTodo);
+    chmodSync(todo, 0o640);
+    writeFileSync(future, recoveryFuture);
+
+    const result = runMigrationWithFault(dir, { publish: future });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('fixture publish failure');
+    expect(result.stderr).toContain('no files were written');
+    expect(readFileSync(todo, 'utf8')).toBe(recoveryTodo);
+    expect(statSync(todo).mode & 0o777).toBe(0o640);
+    expect(readFileSync(future, 'utf8')).toBe(recoveryFuture);
+    expect(existsSync(join(dir, '.TODOS.md.roadmap-id'))).toBe(false);
+    expect(existsSync(join(dir, '.roadmap-future.md.roadmap-id'))).toBe(false);
+  });
+
+  // Value: protects=unresolved rollback retains the original backup and names each failed recovery path;
+  //   fails_when=the command claims no writes or removes a backup still needed for recovery;
+  //   why_new=ordinary staging refusal does not enter rollback or cleanup recovery;
+  //   seam=none; no_claim=process interruption (filesystem operations fail deterministically).
+  test('migration recovery reports distinct rollback and cleanup failures and retains the backup', () => {
+    const dir = realpathSync(freshDir('mig-rollback-failure'));
+    const todo = join(dir, 'TODOS.md');
+    const future = join(dir, 'roadmap-future.md');
+    const todoStage = join(dir, '.TODOS.md.roadmap-id');
+    const futureStage = join(dir, '.roadmap-future.md.roadmap-id');
+    const backup = join(todoStage, 'original');
+    writeFileSync(todo, recoveryTodo);
+    writeFileSync(future, recoveryFuture);
+
+    const result = runMigrationWithFault(dir, { publish: future, rollback: backup, cleanup: futureStage });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('fixture publish failure');
+    expect(result.stderr).toContain(`rollback failed at ${todoStage}: fixture rollback failure`);
+    expect(result.stderr).toContain(`staging cleanup failed at ${futureStage}: fixture cleanup failure`);
+    expect(result.stderr).not.toContain('no files were written');
+    expect(readFileSync(todo, 'utf8')).toContain('- **ID:** wi-');
+    expect(readFileSync(backup, 'utf8')).toBe(recoveryTodo);
+    expect(readFileSync(future, 'utf8')).toBe(recoveryFuture);
+  });
+
+  // Value: protects=published assignments keep exit zero and report the retained staging path;
+  //   fails_when=a cleanup error turns a completed migration into a reported refusal;
+  //   why_new=normal success never hits cleanup failure and staging refusal has no assignments;
+  //   seam=none; no_claim=cleanup retry behavior (one remove fails deterministically).
+  test('migration recovery warns after cleanup fails without losing the published assignment', () => {
+    const dir = realpathSync(freshDir('mig-cleanup-failure'));
+    const todo = join(dir, 'TODOS.md');
+    const staging = join(dir, '.TODOS.md.roadmap-id');
+    writeFileSync(todo, recoveryTodo);
+
+    const result = runMigrationWithFault(dir, { cleanup: staging });
+
+    expect(result.exitCode).toBe(0);
+    const assignment = /^ASSIGNED TODOS\.md:3 (wi-[0-9a-f]{4,8}) todo Pending entry\nMIGRATED 1\n$/.exec(result.stdout);
+    expect(assignment).not.toBeNull();
+    expect(readFileSync(todo, 'utf8')).toContain(`- **ID:** ${assignment![1]}\n`);
+    expect(result.stderr).toContain(`assignments saved; could not remove staging paths ${staging}`);
+    expect(readFileSync(join(staging, 'original'), 'utf8')).toBe(recoveryTodo);
+  });
+
   test('preserves an existing document mode regardless of the process umask', () => {
     const dir = freshDir('mig-mode');
     const path = join(dir, 'TODOS.md');
@@ -1017,6 +1205,10 @@ describe('bin/roadmap-id migrate CLI', () => {
     expect(statSync(path).mode & 0o777).toBe(0o664);
   });
 
+  // Value: protects=apply resolves a literal parent segment and alternate project spelling;
+  //   fails_when=migrate rejects those spellings or writes outside the intended project;
+  //   why_new=join stripped the parent segment and collectTakenIds alone tested case changes;
+  //   seam=none; no_claim=case-alias acceptance on case-sensitive filesystems.
   test('--dry-run writes nothing; migrate is idempotent and works through aliases and pathspec env vars', () => {
     const dir = initGitRepo('mig-e2e');
     mkdirSync(join(dir, 'sub'), { recursive: true });
@@ -1037,7 +1229,10 @@ describe('bin/roadmap-id migrate CLI', () => {
     expect(dry.stdout).toContain('DRY_RUN 1\n');
     expect(readFileSync(join(dir, 'docs/TODOS.md'), 'utf8')).toBe('## Unprocessed\n### [manual] One\n- **Why:** x\n');
 
-    const run1 = spawnSync(BIN, ['migrate', join(dir, 'sub', '..') + '/'], { encoding: 'utf8', env: pathspecEnv });
+    const name = basename(dir);
+    const caseAlias = join(dirname(dir), name[0]!.toUpperCase() + name.slice(1));
+    const applyDir = existsSync(caseAlias) ? caseAlias : dir;
+    const run1 = spawnSync(BIN, ['migrate', `${applyDir}/sub/../`], { encoding: 'utf8', env: pathspecEnv });
     expect(run1.status).toBe(0);
     expect(run1.stdout).toContain('ASSIGNED docs/TODOS.md:2 wi-');
     expect(run1.stdout).toContain('MIGRATED 1\n');
