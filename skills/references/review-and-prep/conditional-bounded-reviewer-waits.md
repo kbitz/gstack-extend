@@ -2,6 +2,12 @@
 
 ## From Hosts with bounded subagent waits
 
+Some hosts return a subagent wait at a fixed timeout and cannot stop a running
+subagent, and start each subagent with a large context. Muse, for example,
+returns waits after 300 seconds, answers cancel with `rejected: not_stoppable`,
+and starts each subagent at about 134k input tokens. On a host that documents or
+shows this behavior:
+
 - A wait that times out means the subagent is still running, not failed. Do
   other ready work and wait again; never re-dispatch a reviewer that may still
   be running. Once the 15 minutes of provider-failure budget expire, stop

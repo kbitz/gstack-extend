@@ -21,6 +21,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-D | blocked and partial outputs | 1 | none; additive-only | the status words `BLOCKED`, `NEEDS_CONTEXT`, `DONE_WITH_CONCERNS`, `DONE` |
 | H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
 | H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
+| H-G | caller to `/review-and-prep refresh` | 1 | `review-and-prep-refresh/v1` | `Refresh: review-and-prep-refresh/v1;` (prefix of the refresh line), `Refresh escalated: review-and-prep-refresh/v1;` (prefix of the escalation line), `Refresh refused: review-and-prep-refresh/v1;` (prefix of the refusal line) |
 | Stage line | the last line of the final message of `/plan-track`, `/implement`, `/review-and-prep`, `/pair-review`, `/ship-and-land`, `/full-review`, `/roadmap` and `/project-spec`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
 | Release disclosures | optional lines in a `/plan-track` plan file and before the stage line of a `/review-and-prep` `next: ship-and-land` exit | 1 | none; additive-only | `Release note:` / `Release notes:`, `Upgrade risk:` / `Upgrade risks:`, `User-facing change:` / `User-facing changes:` |
 | Receipt locators | the evidence paths in `/review-and-prep`'s pull request body and its receipt, paused and stopped comments, and in `/ship-and-land`'s `## Ship and land` body section | 2 | none (value identifies itself; `/` or `~/` is version 1) | `Full receipt:`, `record:`, `section:`, body `Evidence:` |
@@ -1481,9 +1482,11 @@ The caller flow, in order:
    the evidence directory printed at the pause, the same policy line and exactly
    one result line. Preparation restores its verified local checkpoint, including
    earlier attestations and any pending repair chain; no PR or H-C marker is
-   required when no existing manual-testing or cycle-cap hold applies. A fresh
-   invocation without a checkpoint rebuilds
-   missing preparation evidence before evaluating the result; it never resets a
+   required when no existing manual-testing or cycle-cap hold applies. For a
+   [base-move refresh](#grammar-h-g-base-move-refresh), keep the original
+   `refresh--` locator and follow H-G's recovery rules when the checkpoint is
+   missing. Ordinary preparation without a checkpoint rebuilds missing
+   preparation evidence before evaluating the result and never resets a
    consumed repair allowance or claims a missing repair chain. A head that moved
    since the pause, a dirty checkout or a base merge makes the line unusable and the
    preparation prints a new pause line; run the command again on that one.
@@ -1541,6 +1544,94 @@ External gate result: pass; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree
 External gate result: fail; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; command: bun run test:full; exit: 1; log: /home/example/logs/full-suite-2.log
 ```
 
+### Grammar H-G base-move refresh
+
+A caller invokes `/review-and-prep refresh` to bring an already prepared or ready
+PR current after its target base branch moved without running a new full review.
+A fresh refresh requires confirmed live readiness and a verifiable full receipt.
+A draft can resume an already validated refresh through H-F.
+The `Refresh:` line is receipt-present. Escalation and refusal lines are exit
+output. H-G lines grant no stage or merge authorization.
+A refusal uses the NEEDS_CONTEXT stage line (`next: none; status: needs-context`).
+A blocked refresh uses the BLOCKED stage line (`next: none; status: blocked`).
+
+#### Invocation
+
+| Field | Required | Value |
+|---|---|---|
+| `refresh` | yes | the skill argument or the exact first line `Run /review-and-prep refresh` |
+| `Cause:` | yes | exactly one `Cause: base_moved` line in the invocation prompt |
+| `Review policy:` | no | optional versioned policy line (for example `full-suite=external`) |
+
+#### Refresh line
+
+`Refresh: review-and-prep-refresh/v1; cause: base_moved; reviewed: <40-hex>; head: <40-hex>; base: <40-hex>; delta: base-only=<n>, resolution=<n>; gate: <pregate-pass|external-pass>`
+
+| Label | Required | Value |
+|---|---|---|
+| `review-and-prep-refresh/v1` | yes | the version token, right after `Refresh: ` |
+| `cause` | yes | `base_moved` |
+| `reviewed` | yes | the earlier reviewed head, 40 lowercase hex |
+| `head` | yes | the final refresh candidate after merging the base and applying any allowed resolution fix, 40 lowercase hex |
+| `base` | yes | the fetched base tip merged in, 40 lowercase hex |
+| `delta` | yes | `base-only=<n>, resolution=<n>` with non-negative decimal integer counts |
+| `gate` | yes | `pregate-pass` or `external-pass` |
+
+#### Escalation line
+
+`Refresh escalated: review-and-prep-refresh/v1; reason: <token>; reviewed: <40-hex>; head: <40-hex>; base: <40-hex>; files: <JSON array of repository-relative paths>`
+
+| Label | Required | Value |
+|---|---|---|
+| `review-and-prep-refresh/v1` | yes | the version token, right after `Refresh escalated: ` |
+| `reason` | yes | closed set: `reviewed-code-conflict`, `reviewed-behavior-change`, `delta-finding`, `delta-unverified`, `final-gate-failed` |
+| `reviewed` | yes | the earlier reviewed head, 40 lowercase hex |
+| `head` | yes | the local refresh candidate, 40 lowercase hex |
+| `base` | yes | the fetched base tip merged in, 40 lowercase hex |
+| `files` | yes | last field; JSON array of repository-relative paths, empty when no affected path can be identified. Split the earlier fields on `; `, then parse the rest after the first `; files: ` as JSON |
+
+#### Refusal line
+
+`Refresh refused: review-and-prep-refresh/v1; reason: <cause|state|receipt|current>`
+
+| Label | Required | Value |
+|---|---|---|
+| `review-and-prep-refresh/v1` | yes | the version token, right after `Refresh refused: ` |
+| `reason` | yes | closed set: `cause`, `state`, `receipt`, `current` |
+
+#### Caller flow
+
+1. Run the capability check: `grep -F 'Cause: base_moved' "<installed skill dir>/SKILL.md"`.
+2. Send the refresh invocation prompt with `Cause: base_moved` (and any policy line).
+3. On a refresh (`Refresh:`), classify the accompanying H-B handoff as usual; the `Refresh:` line never changes an H-B outcome.
+4. On an escalation (`Refresh escalated:`), run an ordinary full `/review-and-prep` on the same draft PR in the same workspace. The latest candidate stays local. A previous draft push may already exist if the base moved again.
+5. On a refusal (`Refresh refused:`), show the message to the user, because nothing changed.
+6. At an external-gate pause, follow H-F and pass the original `refresh--` evidence-directory locator. The locator routes `/review-and-prep resume` to the refresh even if its evidence is unavailable. An unverifiable refresh cannot resume preparation inline.
+7. On BLOCKED, stop and show the reported PR and checkout state to the user.
+
+The escalation and the cycle-cap stop share a stage line. Use the preceding
+`Refresh escalated:` line or H-E fence to choose the next invocation.
+
+A consumer without H-G reads the escalation line as H-D `HOLD` (a bare summary with a full SHA) and the refusal line as H-D `REFUSE` (a bare summary with no binding).
+
+```text fixture=g-invocation.txt
+Run /review-and-prep refresh
+Cause: base_moved
+Review policy: review-and-prep-policy/v1; full-suite=external
+```
+
+```text fixture=g-refreshed.txt
+Refresh: review-and-prep-refresh/v1; cause: base_moved; reviewed: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; head: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4; base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3; delta: base-only=2, resolution=1; gate: pregate-pass
+```
+
+```text fixture=g-escalated.txt
+Refresh escalated: review-and-prep-refresh/v1; reason: reviewed-code-conflict; reviewed: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; head: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4; base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3; files: ["src/core.ts","src/handler.ts"]
+```
+
+```text fixture=g-refused.txt
+Refresh refused: review-and-prep-refresh/v1; reason: receipt
+```
+
 ### Grammar stage line
 
 `/plan-track`, `/implement`, `/review-and-prep`, `/pair-review`, `/ship-and-land`,
@@ -1577,7 +1668,7 @@ for each exit:
 | `/implement` BLOCKED or NEEDS_CONTEXT | `implement` | `none` | `blocked`, `needs-context` | HEAD | the plan file's SHA-256, or `none` |
 | `/review-and-prep` H-B | `review` | `ship-and-land` | `done` | Prepared HEAD | the prompt's `SHA-256` |
 | `/review-and-prep` H-C pause | `review` | `pair-review` | `paused` | the checkpoint SHA | the plan hash the receipt records, or `none` |
-| `/review-and-prep` H-E | `review` | `review-and-prep` | `stopped` | `Stopped at` | the plan hash the receipt records, or `none` |
+| `/review-and-prep` H-E (and H-G escalation) | `review` | `review-and-prep` | `stopped` | `Stopped at` (or the escalation line's `head`) | the plan hash the receipt records, or `none` |
 | `/review-and-prep` BLOCKED or NEEDS_CONTEXT | `review` | `none` | `blocked`, `needs-context` | HEAD or `none` | the plan hash the receipt records, or `none` |
 | `/pair-review` Step 3 `paused` route (H-C resume prompt) | `pair-review` | `review-and-prep` | `done`, `done-with-concerns` | HEAD at the exit (the prompt's `current HEAD`) | `none` |
 | `/pair-review` Step 3, every other route (`closed-paused`, `lookup-failure`, `no-github`, `no-pr`, `no-pause`) | `pair-review` | `none` | `done`, `done-with-concerns` | HEAD at the exit | `none` |
@@ -1793,6 +1884,7 @@ Release note: This fenced copy is not a disclosure.
 | `post-audit:` status and `Post-audit change:` lines | receipt-present | published in the full receipt under `post-audit=classify`, one line per post-audit change naming why it did or did not need the owner; the documentation status they accompany stays the accepted audit's own and a blocked audit is never upgraded; the lines never authorize a stage or merge |
 | `doc-audit-gap:` status and `Doc-audit extra:` lines, and `Post-audit change:` classes `undocumented-internal` and `base-merge` | receipt-present | with `doc-audit-gap=auto`, the full receipt reports the latest reuse decision (pre-attempt reuse, blocked/failed re-audit fallback without upgrading the blocked/failed attempt, or post-exhaustion) or why the value was inactive. The extra-audit lines and the two new classes require both companions. The change line names the reused audit on `carried-audit=`. Reuse writes no new `record audit`. The compact receipt's `- documentation:` line is `not-run` when no audit matches the final binding. The lines never authorize a stage or merge. On fallback the full documentation detail preserves the rejected re-audit's id, actual failure and child-stop evidence. The existing `reason=` field names the trigger, such as `pre-attempt`, `blocked-re-audit` or `failed-re-audit`. |
 | `Review overlap:` line | receipt-present | published in the receipt under `first-cycle=overlap`; never authorizes a stage or merge |
+| `Refresh:` line | receipt-present | published in the full receipt, body summary, and final message on a base-move refresh (H-G); never a binding and never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.
@@ -1938,7 +2030,7 @@ current v<current>; removal: <release, or "none scheduled">`, and a newer one wi
 `newer: saw review-and-prep/v<seen>, current v<current>; update this consumer`. No
 removal is scheduled for `v1`. H-A, H-C and H-D have no in-band token: they are
 additive-only, and a breaking change to one first needs a contract revision that adds a
-token. The stage line carries `stage-handoff/v1` and follows its own rule 7.
+token. The stage line carries `stage-handoff/v1` and follows its own rule 7. H-G carries `review-and-prep-refresh/v1` and bumps to `v2` on a breaking change to its lines or closed reason sets.
 
 ## State root
 

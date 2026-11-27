@@ -45,6 +45,10 @@ const REF_POST_AUDIT_REAUDIT = referenceText('review-and-prep', 'conditional-pos
 const REF_DOC_AUDIT_GATES = referenceText('review-and-prep', 'conditional-doc-audit-and-gates');
 const REF_PREGATE_REPAIR = referenceText('review-and-prep', 'conditional-pregate-and-final-repair');
 const REF_RESUME_MANUAL = referenceText('review-and-prep', 'resume-manual-testing');
+const REF_BASE_MOVE_REFRESH = [
+  referenceText('review-and-prep', 'conditional-base-move-refresh'),
+  referenceText('review-and-prep', 'conditional-base-move-refresh-completion'),
+].join('\n');
 
 const REF_BY_HEADING: Record<string, string[]> = {
   '### Workflow metrics (optional, local)': [REF_WORKFLOW_METRICS],
@@ -3675,5 +3679,400 @@ describe('Track 86B single-statement locks', () => {
     const mutated = mutate(target);
     expect(mutated).not.toBe(target);
     expect(lock(mutated).length).toBeGreaterThan(0);
+  });
+});
+
+describe('defensive context paragraph and base-move refresh (H-G)', () => {
+  const prep = coreText('review-and-prep');
+
+  test('T3: defensive-context paragraph appears verbatim once in core before Boundaries and Step 1', () => {
+    const paragraph =
+      "This is the repository owner's own project, reviewed at the owner's request before merge. Every probe of file handling, paths or inputs in this review is a defensive correctness check of this repository's code. Write no exploit code, attack technique or reproduction against other systems. Describe each probe and finding in correctness terms: expected input accepted, unexpected input refused with a clear message.";
+    expect(prep.split(paragraph).length - 1).toBe(1);
+    const idx = prep.indexOf(paragraph);
+    expect(idx).toBeGreaterThan(-1);
+    expect(idx).toBeLessThan(prep.indexOf('## Boundaries'));
+    expect(idx).toBeLessThan(prep.indexOf('## 1. Establish the branch, PR, and review inputs'));
+  });
+
+  test('T7: core refresh entry, capability literal, read instruction, and Draft-once exception are locked', () => {
+    expect(prep.split('**Draft-once rule:').length - 1).toBe(1);
+    expect(prep).toMatch(/the only exception\s+is one return to draft in a validated refresh and its pushes while draft/);
+    const entry = skillSection(prep, '### Refresh a prepared PR after a base move');
+    expect(entry).toMatch(
+      /Run `~\/\.gstack-extend\/bin\/preamble review-and-prep --ref conditional-base-move-refresh --expect [0-9a-f]{16}` before PR validation on `refresh` or exact first line `Run \/review-and-prep refresh`, or on H-F resume with a `refresh--` locator or `refresh-1\.md` checkpoint\./,
+    );
+    expect(entry).toMatch(/--ref conditional-base-move-refresh-completion --expect [0-9a-f]{16}` before H-F refresh recovery, fast path or inline exit\./);
+    expect(entry).toContain('For every `refresh` invocation, validate exactly one `Cause: base_moved` line');
+    expect(entry).toContain('before creating evidence or starting run state');
+  });
+
+  test('T7: refresh reference locks refusal order, classes, skill-is-implementation, escalation reasons, --undo once, and no full review or Greptile', () => {
+    const ref = REF_BASE_MOVE_REFRESH;
+    const idxCause = ref.indexOf('**Cause (`cause`).**');
+    const idxState = ref.indexOf('**Live PR and checkout state (`state`).**');
+    const idxReceipt = ref.indexOf('**Receipt corroboration (`receipt`).**');
+    const idxCurrent = ref.indexOf('**Base tip currency (`current`).**');
+    expect(idxCause).toBeGreaterThan(-1);
+    expect(idxState).toBeGreaterThan(idxCause);
+    expect(idxReceipt).toBeGreaterThan(idxState);
+    expect(idxCurrent).toBeGreaterThan(idxReceipt);
+
+    for (const cls of ['**`base-only`**', '**`resolution`**', '**`reviewed-code`**']) {
+      expect(ref, cls).toContain(cls);
+    }
+    expect(ref).toContain('skill and prompt instructions are implementation');
+
+    for (const reason of [
+      '`reviewed-code-conflict`',
+      '`reviewed-behavior-change`',
+      '`delta-finding`',
+      '`delta-unverified`',
+      '`final-gate-failed`',
+    ]) {
+      expect(ref, reason).toContain(reason);
+    }
+
+    expect(ref).toContain('gh pr ready "<number>" --repo "<base-owner/repo>" --undo');
+    expect(ref).toContain('Never toggle a PR to draft more than once per refresh');
+    expect(ref).toContain('no nested `/review` cycle, no subagent, no delegated part, no outside voice, no coverage audit, no documentation audit, and no Greptile run');
+    expect(ref).toContain('Restore refresh mode only when the file matches the bound SHA-256.');
+    expect(ref).toContain('The basename selects the route only.');
+    expect(ref).toContain('Hold BLOCKED if a binding cannot be verified, and end the refresh in either case.');
+    expect(ref).toContain('Require HEAD and its tree to match `S` before recording the pass, freezing the final gate, pushing or marking ready.');
+    expect(ref).toContain('use the verified `S` as the source of the normal feature-branch push');
+    expect(ref).toContain('A verified continuation skips A and B.');
+    expect(ref).toContain('The published head starts at `R` and advances only after verified draft-push readback.');
+    expect(ref).toContain('Require the live draft head to match the checkpoint\'s published head');
+    expect(ref).toContain('After B or C, never emit A\'s refusal.');
+    expect(ref).toContain('omit both audit records so the compact receipt renders `- coverage: not-run` and `- documentation: not-run`');
+  });
+
+  test('T7: refresh corroborates readiness before draft conversion and binds carried evidence across pauses', () => {
+    const ref = REF_BASE_MOVE_REFRESH;
+    const draftStart = ref.indexOf('### B. Return to draft');
+    const evidenceStart = ref.indexOf('### C. Evidence and run state');
+    const mergeStart = ref.indexOf('### D. Merge');
+    const classificationStart = ref.indexOf('### E. Delta facts and classification');
+    expect(ref.slice(0, draftStart)).toContain("Require Step 1's verified feature branch and exact open PR with `isDraft: false`");
+    expect(ref.slice(0, draftStart)).toContain("resolve `Full receipt:` by Step 6's locator rules and verify its SHA-256 before converting to draft");
+    expect(ref.slice(0, draftStart)).toContain('follow each predecessor comment back to the original full review');
+    expect(ref.slice(0, draftStart)).toContain('if the prior recorded run is readable, require a prepared finish that matches the receipt');
+    expect(ref.slice(draftStart, evidenceStart)).toContain("Recheck A's checkout, receipt, holds, base and `isDraft: false` before converting the PR");
+    const evidence = ref.slice(evidenceStart, mergeStart);
+    expect(evidence).toContain('prefixing its basename with `refresh--` for H-F routing');
+    expect(evidence).toContain('Include any corroborated `reviewRestrictionResolved: true` and the disclosure evidence below in that same file before hashing it');
+    expect(evidence).toContain('Save the disclosure values verbatim in `refresh-1.md`');
+    expect(evidence).toContain("G's `Disclosure evidence: unavailable` line, record that marker instead");
+    expect(ref).toContain('Restore its restriction and disclosures');
+    expect(ref).toContain("Before each push, verify A's chain and current plan SHA-256 and repeat E's checkout checks");
+    expect(ref).toContain('Preserve `Disclosure evidence: unavailable` in the full receipt');
+    expect(ref.slice(mergeStart, classificationStart)).toContain(
+      "`build finish --outcome blocked --base <last-merged-base> --stop-reason merge-blocked` (use A's earlier receipt base before the first committed merge)",
+    );
+  });
+
+  test('T7: executable delta-facts fence classifies fixture repository cases', () => {
+    const tmp = makeBaseTmp('gstack-refresh-delta-');
+    try {
+      const fences = extractFences(REF_BASE_MOVE_REFRESH, 'bash');
+      expect(fences).toHaveLength(1);
+      const scriptTemplate = fences[0]!.body;
+
+      const git = (cwd: string, args: string[]) => {
+        const r = spawnSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8' });
+        if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+        return r.stdout.trim();
+      };
+      const runFence = (cwd: string, revR: string, revB: string, candidate = git(cwd, ['rev-parse', 'HEAD'])) => {
+        const cmd = scriptTemplate
+          .replace('"<workspace>"', JSON.stringify(cwd))
+          .replace('"<reviewed-head>"', JSON.stringify(revR))
+          .replace('"<base-tip>"', JSON.stringify(revB))
+          .replace('"<candidate-head>"', JSON.stringify(candidate));
+        return spawnSync('bash', ['-c', cmd], { cwd, env: GIT_ENV, encoding: 'utf8' });
+      };
+      const parseDelta = (stdout: string) => {
+        const lines = stdout.trim().split('\n').filter(Boolean);
+        const rows = lines
+          .filter((l) => l.startsWith('REFRESH_DELTA: '))
+          .map((l) => JSON.parse(l.slice('REFRESH_DELTA: '.length)) as { path: string; side: string; merged: string });
+        const done = lines.find((l) => l.startsWith('REFRESH_DELTA_DONE: '));
+        return { rows, done };
+      };
+      const initRepo = () => {
+        const cwd = makeEmptyRepo(tmp);
+        mkdirSync(join(cwd, 'src'), { recursive: true });
+        mkdirSync(join(cwd, 'docs'), { recursive: true });
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 1;\n');
+        writeFileSync(join(cwd, 'docs', 'notes.md'), 'line1\nline2\nline3\nline4\nline5\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: init']);
+        return cwd;
+      };
+
+      // Case 1: base-only change gives base-only and base
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'feat.ts'), 'export const f = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: add feature']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'base-only.ts'), 'export const b = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: base change']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        const unmerged = runFence(cwd, revR, revB);
+        expect(unmerged.status).toBe(1);
+        expect(unmerged.stdout).toBe('REFRESH_DELTA_UNVERIFIED: head-missing-reviewed-or-base\n');
+        git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
+        const candidate = git(cwd, ['rev-parse', 'HEAD']);
+        const res = runFence(cwd, revR, revB, candidate);
+        expect(res.status, res.stderr).toBe(0);
+        const { rows, done } = parseDelta(res.stdout);
+        expect(rows).toEqual([{ path: 'src/base-only.ts', side: 'base-only', merged: 'base' }]);
+        expect(done).toBe(`REFRESH_DELTA_DONE: ${JSON.stringify({ count: 1, head: candidate })}`);
+
+        writeFileSync(join(cwd, 'src', 'after.ts'), 'export const after = true;\n');
+        git(cwd, ['add', 'src/after.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: subsequent clean commit']);
+        const moved = runFence(cwd, revR, revB, candidate);
+        expect(moved.status).toBe(1);
+        expect(moved.stdout).toBe('REFRESH_DELTA_UNVERIFIED: candidate-moved\n');
+      }
+
+      // Case 2: prose file edited on both sides and resolved gives both and other
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'docs', 'notes.md'), 'feat1\nline2\nline3\nline4\nline5\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'docs: feat edit']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'docs', 'notes.md'), 'line1\nline2\nline3\nline4\nbase5\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'docs: base edit']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        const { rows } = parseDelta(res.stdout);
+        expect(rows).toEqual([{ path: 'docs/notes.md', side: 'both', merged: 'other' }]);
+      }
+
+      // Case 3: code file edited on both sides gives both
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 2;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: edit app']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 3;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: base edit app']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        spawnSync('git', ['merge', '--no-edit', 'main'], { cwd, env: GIT_ENV });
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 4;\n');
+        git(cwd, ['add', 'src/app.ts']);
+        git(cwd, ['commit', '--quiet', '--no-edit']);
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        const { rows } = parseDelta(res.stdout);
+        expect(rows).toEqual([{ path: 'src/app.ts', side: 'both', merged: 'other' }]);
+
+        git(cwd, ['checkout', '--quiet', '-b', 'keep-reviewed', revR]);
+        const merge = spawnSync('git', ['merge', '--no-edit', 'main'], { cwd, env: GIT_ENV });
+        expect(merge.status).toBe(1);
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 2;\n');
+        git(cwd, ['add', 'src/app.ts']);
+        git(cwd, ['commit', '--quiet', '--no-edit']);
+        expect(git(cwd, ['diff', '--name-only', revR, 'HEAD'])).toBe('');
+
+        const kept = runFence(cwd, revR, revB);
+        expect(kept.status, kept.stderr).toBe(0);
+        expect(parseDelta(kept.stdout).rows).toEqual([{ path: 'src/app.ts', side: 'both', merged: 'other' }]);
+      }
+
+      // An identical code edit still belongs to both sides even if the merge adds no content.
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        const identicalEdit = 'export const a = 2;\n';
+        writeFileSync(join(cwd, 'src', 'app.ts'), identicalEdit);
+        git(cwd, ['commit', '--quiet', '-am', 'feat: edit app']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), identicalEdit);
+        git(cwd, ['commit', '--quiet', '-am', 'chore: same app edit']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', revB]);
+        const candidate = git(cwd, ['rev-parse', 'HEAD']);
+        const expected = {
+          rows: [{ path: 'src/app.ts', side: 'both', merged: 'base' }],
+          done: `REFRESH_DELTA_DONE: ${JSON.stringify({ count: 1, head: candidate })}`,
+        };
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        expect(parseDelta(res.stdout)).toEqual(expected);
+
+        git(cwd, ['config', 'diff.relative', 'true']);
+        const relative = runFence(join(cwd, 'docs'), revR, revB);
+        expect(relative.status, relative.stderr).toBe(0);
+        expect(parseDelta(relative.stdout)).toEqual(expected);
+
+        git(cwd, ['update-index', '--assume-unchanged', 'src/app.ts']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 3;\n');
+        expect(git(cwd, ['status', '--porcelain=v1'])).toBe('');
+        const hiddenEdit = runFence(join(cwd, 'docs'), revR, revB);
+        expect(hiddenEdit.status).toBe(1);
+        expect(hiddenEdit.stdout).toBe('REFRESH_DELTA_UNVERIFIED: hidden-index-entry\n');
+
+        git(cwd, ['update-index', '--no-assume-unchanged', 'src/app.ts']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), identicalEdit);
+        const merged = git(cwd, ['rev-parse', 'HEAD']);
+        const tree = git(cwd, ['rev-parse', 'HEAD^{tree}']);
+        const pending = git(cwd, ['commit-tree', tree, '-p', merged, '-m', 'pending merge']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '--no-commit', pending]);
+        expect(git(cwd, ['rev-parse', 'MERGE_HEAD'])).toBe(pending);
+        expect(git(cwd, ['status', '--porcelain=v1'])).toBe('');
+        const unfinishedMerge = runFence(cwd, revR, revB);
+        expect(unfinishedMerge.status).toBe(1);
+        expect(unfinishedMerge.stdout).toBe('REFRESH_DELTA_UNVERIFIED: git-operation-in-progress\n');
+      }
+
+      // Case 4: follow-up commit to a non-resolution file gives refresh-only
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'feat.ts'), 'export const f = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: add feature']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'base-only.ts'), 'export const b = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: base change']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
+        writeFileSync(join(cwd, 'src', 'extra.ts'), 'export const x = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: follow-up']);
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        const { rows } = parseDelta(res.stdout);
+        expect(rows).toContainEqual({ path: 'src/extra.ts', side: 'refresh-only', merged: 'other' });
+      }
+
+      // Case 5: criss-cross merge bases exit 1 with REFRESH_DELTA_UNVERIFIED
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'b1']);
+        writeFileSync(join(cwd, 'src', 'b1.ts'), 'export const b1 = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'b1']);
+        const cB1 = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        git(cwd, ['checkout', '--quiet', '-b', 'b2']);
+        writeFileSync(join(cwd, 'src', 'b2.ts'), 'export const b2 = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'b2']);
+        const cB2 = git(cwd, ['rev-parse', 'HEAD']);
+
+        // b1 merges cB2, b2 merges cB1 -> criss-cross
+        git(cwd, ['checkout', '--quiet', 'b1']);
+        git(cwd, ['merge', '--quiet', '--no-edit', cB2]);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'b2']);
+        git(cwd, ['merge', '--quiet', '--no-edit', cB1]);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'b1']);
+        git(cwd, ['merge', '--quiet', '--no-edit', revB]);
+        const res = runFence(cwd, revR, revB);
+        expect(res.status).toBe(1);
+        expect(res.stdout).toContain('REFRESH_DELTA_UNVERIFIED:');
+      }
+
+      // Case 6: path with spaces and non-ASCII characters round-trips through JSON
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        writeFileSync(join(cwd, 'src', 'feat.ts'), 'export const f = 1;\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'feat: add feature']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        const specialPath = 'docs/café notes v2.md';
+        writeFileSync(join(cwd, specialPath), '# Café\n');
+        git(cwd, ['add', '.']);
+        git(cwd, ['commit', '--quiet', '-m', 'docs: add non-ascii path']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        const { rows } = parseDelta(res.stdout);
+        expect(rows).toEqual([{ path: specialPath, side: 'base-only', merged: 'base' }]);
+      }
+
+      // A literal colon-prefixed path can differ from base or disappear entirely.
+      {
+        const cwd = initRepo();
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        git(cwd, ['commit', '--allow-empty', '--quiet', '-m', 'feature']);
+        const reviewed = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        const specialPath = ':notes.txt';
+        writeFileSync(join(cwd, specialPath), 'base\n');
+        git(cwd, ['add', '-A']);
+        git(cwd, ['commit', '--quiet', '-m', 'base notes']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+        expect(git(cwd, ['merge-base', reviewed, revB])).toBe(revR);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
+        writeFileSync(join(cwd, specialPath), 'different notes\n');
+        git(cwd, ['add', '-A']);
+        git(cwd, ['commit', '--quiet', '-m', 'change notes']);
+        const different = runFence(cwd, reviewed, revB);
+        expect(different.status, different.stderr).toBe(0);
+        expect(parseDelta(different.stdout).rows).toEqual([{ path: specialPath, side: 'base-only', merged: 'other' }]);
+
+        rmSync(join(cwd, specialPath));
+        git(cwd, ['add', '-A']);
+        git(cwd, ['commit', '--quiet', '-m', 'drop notes']);
+        const dropped = runFence(cwd, reviewed, revB);
+        expect(dropped.status, dropped.stderr).toBe(0);
+        expect(parseDelta(dropped.stdout).rows).toEqual([{ path: specialPath, side: 'base-only', merged: 'other' }]);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
