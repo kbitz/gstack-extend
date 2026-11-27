@@ -175,14 +175,22 @@ if [ "$CHANNEL" = stable ]; then
 
   if [ -n "$RELEASE_TAG" ]; then
     MISMATCH=""
+    CONFIRMED_COMMIT=""
+    if [ "$RECORDED_OFFER" -eq 1 ]; then
+      if CONFIRMED_COMMIT=$(update_remote_tag_commit "$INSTALL_DIR" "$RELEASE_TAG" 2>/dev/null); then
+        :
+      elif [ "$?" -ne 2 ]; then
+        fail_upgrade "stage=resolve-release could not verify origin release tag $RELEASE_TAG; retry when origin is reachable"
+      fi
+    fi
     if [ "$RECORDED_OFFER" -eq 1 ] &&
-       ! [ "$(update_remote_tag_commit "$INSTALL_DIR" "$RELEASE_TAG" 2>/dev/null)" = "$RELEASE_COMMIT" ]; then
+       [ "$CONFIRMED_COMMIT" != "$RELEASE_COMMIT" ]; then
       MISMATCH="origin no longer confirms the offered tag commit"
     elif [ "$(git -C "$INSTALL_DIR" cat-file -t "$RELEASE_COMMIT" 2>/dev/null || true)" != commit ]; then
       MISMATCH="commit is missing after fetch"
     elif ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$RELEASE_COMMIT" refs/remotes/origin/main 2>/dev/null; then
       MISMATCH="commit is outside origin/main"
-    elif [ "$(git -C "$INSTALL_DIR" show "$RELEASE_COMMIT:VERSION" 2>/dev/null || true)" != "$RELEASE_VERSION" ]; then
+    elif [ "$(git -C "$INSTALL_DIR" show "$RELEASE_COMMIT:VERSION" 2>/dev/null | tr -d '[:space:]' || true)" != "$RELEASE_VERSION" ]; then
       MISMATCH="commit VERSION differs from the tag"
     elif [ "$RECORDED_OFFER" -eq 1 ] && [ "$OFFER_VERSION" != "$RELEASE_VERSION" ]; then
       MISMATCH="offered VERSION differs from the tag"

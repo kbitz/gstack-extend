@@ -503,13 +503,17 @@ mkdir -p "$STATE_DIR"
 
 REMOTE=""
 RELEASE_TAG=- RELEASE_COMMIT=- FETCH_MAIN=1
-if [ "$CHANNEL" = stable ] && git -C "$EXTEND_DIR" remote get-url origin >/dev/null 2>&1; then
-  if RELEASE=$(update_latest_release "$EXTEND_DIR" 2>/dev/null); then
-    read -r REMOTE RELEASE_TAG RELEASE_COMMIT <<< "$RELEASE"
-    FETCH_MAIN=0
-  elif [ "$?" -ne 2 ]; then
-    # An unreadable tag listing is not evidence that the origin is tagless.
-    FETCH_MAIN=0
+if [ "$CHANNEL" = stable ] && [ -e "$EXTEND_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+  # Only an absent origin or an empty release listing permits the main fallback.
+  FETCH_MAIN=0
+  if git -C "$EXTEND_DIR" remote get-url origin >/dev/null 2>&1; then
+    if RELEASE=$(update_latest_release "$EXTEND_DIR" 2>/dev/null); then
+      read -r REMOTE RELEASE_TAG RELEASE_COMMIT <<< "$RELEASE"
+    elif [ "$?" -eq 2 ]; then
+      FETCH_MAIN=1
+    fi
+  elif [ "$?" -eq 2 ]; then
+    FETCH_MAIN=1
   fi
 fi
 if [ "$FETCH_MAIN" -eq 1 ]; then
@@ -519,10 +523,17 @@ fi
 
 write_cache() {
   local tmp
+  if [ -d "$CACHE_FILE" ]; then
+    printf 'update-check: cache path is a directory: %s\n' "$CACHE_FILE" >&2
+    return 1
+  fi
   tmp=$(mktemp "$CACHE_FILE.XXXXXX")
-  printf '%s\nIDENTITY channel=%s tag=%s commit=%s\n' \
-    "$1" "$CHANNEL" "$RELEASE_TAG" "$RELEASE_COMMIT" > "$tmp"
-  mv -f "$tmp" "$CACHE_FILE"
+  if ! printf '%s\nIDENTITY channel=%s tag=%s commit=%s\n' \
+       "$1" "$CHANNEL" "$RELEASE_TAG" "$RELEASE_COMMIT" > "$tmp" ||
+     ! mv -f "$tmp" "$CACHE_FILE"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 # Validate: must look like a version number (reject HTML error pages)

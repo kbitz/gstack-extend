@@ -14,11 +14,22 @@ update_channel() {
 _update_remote_tags() (
   # Job control gives Git and its transport helpers their own process group.
   # Cancel and reap the watchdog when Git exits early.
-  local repo="$1" git_pid watchdog status=0
+  local repo="$1" git_pid="" watchdog="" status=0
   shift
+  # Keep Git's selected transport. BatchMode is the default for OpenSSH;
+  # a configured command or wrapper keeps its own arguments.
+  if [ -z "${GIT_SSH_COMMAND+x}" ] && [ -z "${GIT_SSH+x}" ] &&
+     ! git -C "$repo" config --get core.sshCommand >/dev/null 2>&1; then
+    export GIT_SSH_COMMAND='ssh -oBatchMode=yes'
+  fi
   set -m
-  GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=false SSH_ASKPASS=false \
-    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -oBatchMode=yes" \
+  trap '
+    if [ -n "$git_pid" ]; then kill -KILL -- "-$git_pid" 2>/dev/null || true; fi
+    if [ -n "$watchdog" ]; then kill -KILL -- "-$watchdog" 2>/dev/null || true; fi
+    wait 2>/dev/null || true
+    exit 1
+  ' HUP INT TERM
+  GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=false SSH_ASKPASS=false SSH_ASKPASS_REQUIRE=force \
     git -C "$repo" ls-remote --tags origin "$@" </dev/null &
   git_pid=$!
   (
@@ -27,7 +38,8 @@ _update_remote_tags() (
   ) >/dev/null 2>&1 &
   watchdog=$!
   wait "$git_pid" || status=$?
-  kill -TERM -- "-$watchdog" 2>/dev/null || true
+  git_pid=""
+  kill -KILL -- "-$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
   return "$status"
 )

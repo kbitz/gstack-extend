@@ -2139,6 +2139,60 @@ describe('stable release channel', () => {
     expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(main);
   });
 
+  test('a non-Git install nested in another checkout uses the VERSION fallback', () => {
+    const fx = releaseChannelFixture('stable-parent-origin');
+    fx.release('1.1.0');
+    fx.newMain('1.2.0');
+    const nested = join(fx.repo, 'archive');
+    mkdirSync(join(nested, 'bin'), { recursive: true });
+    writeFileSync(join(nested, 'VERSION'), '1.0.0\n');
+    seedUpdateCheckBinaries(nested);
+
+    const result = runBin(UPDATE_CHECK, ['--force'], { ...fx.opts, gstackExtendDir: nested });
+    expect(result).toEqual({ exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.2.0\n', stderr: '' });
+  });
+
+  test.each(['core.sshCommand', 'GIT_SSH'])('stable check and upgrade honor %s', (transport) => {
+    const fx = releaseChannelFixture(`stable-ssh-${transport}`);
+    const release = fx.release('1.1.0');
+    const tools = join(baseTmp, `stable-ssh-${transport}-bin`);
+    mkdirSync(tools);
+    writeFileSync(join(tools, 'ssh'), '#!/bin/sh\nexit 83\n', { mode: 0o755 });
+    const wrapper = join(tools, 'fixture-ssh');
+    writeFileSync(wrapper, '#!/bin/sh\nexec git upload-pack "$FIXTURE_REMOTE"\n', { mode: 0o755 });
+    fixtureGit(fx.repo, 'remote', 'set-url', 'origin', 'ssh://fixture.invalid/release.git');
+    if (transport === 'core.sshCommand') fixtureGit(fx.repo, 'config', transport, 'fixture-ssh');
+
+    const opts = {
+      ...fx.opts,
+      extraEnv: {
+        ...fx.opts.extraEnv,
+        PATH: `${tools}:${process.env.PATH ?? '/bin:/usr/bin'}`,
+        FIXTURE_REMOTE: fx.remote,
+        GIT_SSH_VARIANT: 'simple',
+        ...(transport === 'GIT_SSH' ? { GIT_SSH: wrapper } : {}),
+      },
+    };
+    expect(runBin(UPDATE_CHECK, ['--force'], opts)).toEqual({
+      exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.1.0\n', stderr: '',
+    });
+    const result = runBin(UPDATE_RUN, [fx.repo], opts);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
+  });
+
+  test('does not print an offer when the cache path is a directory', () => {
+    const fx = releaseChannelFixture('stable-cache-directory');
+    fx.release('1.1.0');
+    mkdirSync(fx.cache);
+
+    const result = fx.check();
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(readdirSync(fx.cache)).toEqual([]);
+  });
+
   test('a failed tag listing stays quiet at check and fails closed at upgrade', () => {
     const fx = releaseChannelFixture('stable-list-failure');
     const before = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
@@ -2158,6 +2212,35 @@ describe('stable release channel', () => {
     expect(result.stdout).not.toContain('UPGRADE_OK');
     expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(before);
     expect(existsSync(fx.marker)).toBe(false);
+  });
+
+  test('a transport failure during recorded tag confirmation preserves the offer', () => {
+    const fx = releaseChannelFixture('stable-confirmation-transport');
+    const before = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+    fx.release('1.1.0');
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+    const offer = readFileSync(fx.cache, 'utf8');
+    const shim = gitListingShim('stable-confirmation-transport', '    exit 1');
+
+    const result = runBin(UPDATE_RUN, [fx.repo], { ...fx.opts, extraEnv: { ...fx.opts.extraEnv, ...shim } });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.match(/^UPGRADE_FAILED .+$/gm)).toEqual([
+      'UPGRADE_FAILED stage=resolve-release could not verify origin release tag v1.1.0; retry when origin is reachable',
+    ]);
+    expect(readFileSync(fx.cache, 'utf8')).toBe(offer);
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(before);
+    expect(existsSync(fx.marker)).toBe(false);
+  });
+
+  test('a completed lookup cancels its watchdog when TERM is inherited as ignored', () => {
+    const fx = releaseChannelFixture('stable-watchdog-cleanup');
+    fx.release('1.1.0');
+
+    const result = runBin('bash', ['-c', 'trap "" TERM; exec "$@"', 'watchdog-fixture', UPDATE_CHECK, '--force'], {
+      ...fx.opts,
+      timeout: 8_000,
+    });
+    expect(result).toEqual({ exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.1.0\n', stderr: '' });
   });
 
   test('stable check bounds an unresponsive tag transport and passes non-interactive settings', () => {
@@ -2327,6 +2410,32 @@ describe('stable release channel', () => {
     expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
   });
 
+  test.each([
+    ['CRLF VERSION', '1.1.0\r\n', true],
+    ['different VERSION', '1.2.0\n', false],
+  ])('stable verifies the release tag against %s', (_, contents, matches) => {
+    const fx = releaseChannelFixture(`stable-tag-version-${matches}`);
+    const before = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+    pushNewVersion(fx.remote, '1.1.0', { VERSION: contents });
+    const release = fixtureGit(fx.remote, 'rev-parse', 'main');
+    fx.tag('v1.1.0', release);
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+
+    const result = fx.upgrade();
+    if (matches) {
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
+    } else {
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout.match(/^UPGRADE_FAILED .+$/gm)).toEqual([
+        expect.stringContaining('commit VERSION differs from the tag'),
+      ]);
+      expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(before);
+      expect(existsSync(fx.marker)).toBe(false);
+    }
+  });
+
   test('refuses a stable upgrade when local main is already beyond the release', () => {
     const fx = releaseChannelFixture('stable-local-ahead');
     fx.release('1.1.0');
@@ -2346,14 +2455,15 @@ describe('stable release channel', () => {
     expect(existsSync(fx.marker)).toBe(false);
   });
 
-  test.each([false, true])('main ignores tags and reports only a changed offer (moved=%s)', (moved) => {
-    const fx = releaseChannelFixture(`stable-main-${moved}`);
+  test.each(['unchanged', 'moved', 'moved-legacy'])('main ignores tags and reports only a changed offer (%s)', (scenario) => {
+    const fx = releaseChannelFixture(`stable-main-${scenario}`);
     fx.release('1.1.0');
     const offeredCommit = fx.newMain('1.2.0');
     expect(fx.config('set', 'update_channel', 'main').exitCode).toBe(0);
     expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.2.0\n');
-    // The moved case also verifies old one-line main offers are still recognized.
-    if (moved) writeFileSync(fx.cache, 'UPGRADE_AVAILABLE 1.0.0 1.2.0\n');
+    // Exercise both the current identity line and the previous one-line cache.
+    if (scenario === 'moved-legacy') writeFileSync(fx.cache, 'UPGRADE_AVAILABLE 1.0.0 1.2.0\n');
+    const moved = scenario !== 'unchanged';
     const main = moved ? fx.newMain('1.3.0') : offeredCommit;
     const upgrade = fx.upgrade();
     expect(upgrade.exitCode).toBe(0);

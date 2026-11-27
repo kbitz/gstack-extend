@@ -316,16 +316,21 @@ verified checkout. A skill follows its upgrade flow when the check prints
 changes on `main`. The updater installs the exact tag commit the check
 offered. If that release no longer matches the offer, the updater reports
 `UPGRADE_FAILED release mismatch`. Run `bin/update-check --force` from the
-checkout to refresh the offer, then rerun the updater.
+checkout to refresh the offer, then rerun the updater. If the refreshed
+offer still names a tag with an invalid commit or `VERSION`, the release
+owner needs to correct the tag on `origin`. If the updater could not reach
+`origin` to confirm the recorded tag, retry with the same offer once the
+connection is available.
 
 Set `update_channel` to `main` to keep using the published `VERSION` from
 `main` and fast-forwarding to the tip of `origin/main`. If the `VERSION` that
 lands differs from the offer, the updater prints
 `UPGRADE_MISMATCH offered=<version> installed=<version> channel=main`
 before its normal result. On `stable`, a direct run with no recorded offer
-uses the newest release tag. An origin with no release tags falls back to
-main tracking when there is no recorded tag offer. A failed tag lookup leaves
-the checker quiet and makes the updater fail.
+uses the newest release tag. The stable updater refuses to move local `main`
+backward if it is already past that tag. An origin with no release tags falls
+back to main tracking when there is no recorded tag offer. A failed tag
+lookup leaves the checker quiet and makes the updater fail.
 
 In an interactive session (`GSTACK_SESSION_KIND` unset or any value other than
 `spawned` or `unattended`), the flow checks `auto_upgrade`. With `auto_upgrade=true`
@@ -444,6 +449,9 @@ and their capable readers. Inspect warnings and preserve user-owned
 files. To resume upgrades, return to the install's main branch, re-enable checks
 and rerun its updater: `git checkout main`, `./bin/config set update_check true`,
 then `./bin/update-run "$PWD"`. It reinstalls according to `update_channel`.
+If `main` is already past the selected stable tag, run `./setup --host auto`
+to refresh skills from that checkout. Leave update checks enabled for the
+next stable offer.
 If setup failed, follow the reported setup recovery before relying on refreshed
 skills.
 
