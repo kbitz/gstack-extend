@@ -111,6 +111,8 @@ export type LegacyShippedTrack = {
   workItemIdRaw: string | null;
   workItemIdError: 'malformed' | 'duplicate' | null;
   line: number;
+  /** Source line of the enclosing Group heading. */
+  groupLine?: number;
 };
 
 export type TrackWorkItemRecord = {
@@ -367,6 +369,7 @@ export function parseRoadmap(
   type Section = 'none' | 'skip' | 'group' | 'track' | 'future' | 'shipped';
   let section: Section = 'none';
   let groupNum = '';
+  let currentGroupLine = 0;
   let inShipped = false;
   let groupIsShipped = false;
   let trackId = '';
@@ -408,6 +411,7 @@ export function parseRoadmap(
     // Group heading.
     if (groupHeading) {
       groupNum = groupHeading[1]!;
+      currentGroupLine = lineNo;
       let groupName = trim(groupHeading[2]!);
       let inlineComplete = false;
       if (COMPLETE_SUFFIX_RE.test(groupName)) {
@@ -510,6 +514,7 @@ export function parseRoadmap(
           workItemIdRaw: parsed?.raw ?? null,
           workItemIdError: parsed?.duplicate ? 'duplicate' : parsed !== null && parsed.id === null ? 'malformed' : null,
           line: lineNo,
+          groupLine: currentGroupLine,
         });
         continue;
       }

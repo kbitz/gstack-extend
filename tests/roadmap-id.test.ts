@@ -320,6 +320,21 @@ describe('Git history ID reservation', () => {
     expect([...collectTakenIds(bare)]).toEqual(['wi-00abcf']);
   });
 
+  test('reserves original contents even when a local Git replacement changes the blob', () => {
+    const dir = initGitRepo('hist-replacement');
+    commitFile(dir, 'entry.txt', 'historical wi-00aabd\n', 'commit historical file');
+    function objectName(args: string[]): string {
+      const result = spawnSync('git', args, { cwd: dir, env: GIT_ENV, encoding: 'utf8' });
+      expect(result.status, result.stderr ?? '').toBe(0);
+      return result.stdout.trim();
+    }
+    const original = objectName(['rev-parse', 'HEAD:entry.txt']);
+    writeFileSync(join(dir, 'entry.txt'), 'replacement fixture body\n');
+    const replacement = objectName(['hash-object', '-w', 'entry.txt']);
+    gitIn(dir, ['replace', original, replacement]);
+    expect([...collectTakenIds(dir)]).toEqual(['wi-00aabd']);
+  });
+
   test('reserves IDs after a record is deleted (killed) or shipped then removed', () => {
     const dir = initGitRepo('hist-lifecycle');
     commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] Killed\n- **ID:** wi-111111\n', 'add killed');
@@ -748,6 +763,54 @@ describe('work-item migration (accepted shapes)', () => {
 });
 
 describe('bin/roadmap-id migrate CLI', () => {
+  test('refuses a bold colon title even when its prose contains a dash', () => {
+    const dir = freshDir('mig-colon-dash');
+    const future = join(dir, 'roadmap-future.md');
+    const original = '## Future\n\n- **Legacy title**: revisit later — more detail.\n';
+    writeFileSync(future, original);
+    const result = runIdCli(['migrate', dir]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('REFUSED roadmap-future.md:3 future');
+    expect(readFileSync(future, 'utf8')).toBe(original);
+  });
+
+  test('refuses a legacy shipped bullet under a Group heading outside the H4 shape', () => {
+    const dir = freshDir('mig-legacy-group-depth');
+    const shipped = join(dir, 'roadmap-shipped.md');
+    const original = '## Shipped\n\n### Group 1: Legacy\n\n- Track 1A — _shipped: archived._\n';
+    writeFileSync(shipped, original);
+    const result = runIdCli(['migrate', dir]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('REFUSED roadmap-shipped.md:5 legacy-track');
+    expect(readFileSync(shipped, 'utf8')).toBe(original);
+  });
+
+  test('refuses an explicit empty project path without writing to the current directory', () => {
+    const dir = freshDir('mig-empty-project-path');
+    const file = join(dir, 'TODOS.md');
+    const original = '## Unprocessed\n\n### [manual] Existing entry\n- **What:** Work.\n';
+    writeFileSync(file, original);
+    const result = spawnSync(BIN, ['migrate', ''], { cwd: dir, env: GIT_ENV, encoding: 'utf8' });
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(readFileSync(file, 'utf8')).toBe(original);
+  });
+
+  test('identifies the shipped Track line and kind if an assignment fails read-back', () => {
+    const original = '## Shipped\n\n### Track 1A: Older receipt\n';
+    const result = planWorkItemMigration(
+      [{ kind: 'shipped', relPath: 'roadmap-shipped.md', content: original }],
+      new Set(),
+      () => 'invalid-assignment',
+    );
+    expect(result.refusals).toMatchObject([{
+      relPath: 'roadmap-shipped.md', line: 3, kind: 'shipped-track',
+      reason: expect.stringContaining('read-back verification failed'),
+    }]);
+  });
+
   test('refuses colon/separator-less Future bullets, metadata-less ROADMAP Track, and duplicate-label Track without writing', () => {
     const dir = freshDir('mig-refuse-shapes');
     mkdirSync(join(dir, 'docs'), { recursive: true });

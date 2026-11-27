@@ -246,7 +246,7 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       }
 
       const historyArgs = [
-        '-c', 'core.quotepath=off',
+        '-c', 'core.quotepath=off', '--no-replace-objects',
         'log', '--all', '--no-relative', '--no-renames', '-m', '--root',
         '--no-color', '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=',
       ];

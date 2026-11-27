@@ -176,7 +176,7 @@ function assertMigrationSnapshot(doc: LoadedMigrationDoc, expected: Stats, bytes
   }
 }
 
-function writeMigration(loaded: LoadedMigrationDoc[], files: MigrateFileOutput[]): void {
+function writeMigration(loaded: LoadedMigrationDoc[], files: MigrateFileOutput[]): string[] {
   const byRel = new Map(loaded.map(doc => [doc.relPath, doc]));
   const staged: StagedMigrationDoc[] = [];
   const recovery: string[] = [];
@@ -227,10 +227,11 @@ function writeMigration(loaded: LoadedMigrationDoc[], files: MigrateFileOutput[]
       recovery.push(staging);
     }
   }
-  if (recovery.length > 0) {
+  if (failure !== undefined && recovery.length > 0) {
     throw new MigrationRecoveryError(`could not finish migration recovery; inspect staged files at ${recovery.join(', ')}`);
   }
   if (failure !== undefined) throw failure;
+  return recovery;
 }
 
 function executeMigrate(args: string[]): CliResult {
@@ -252,6 +253,9 @@ function executeMigrate(args: string[]): CliResult {
   }
   if (positionals.length > 1) {
     return { stdout: '', stderr: `roadmap-id migrate: too many arguments\n${USAGE}`, exitCode: 2 };
+  }
+  if (positionals[0] === '') {
+    return { stdout: '', stderr: `roadmap-id migrate: project path is empty\n${USAGE}`, exitCode: 2 };
   }
 
   const repoRoot = resolveRepoRoot(positionals[0]);
@@ -340,13 +344,16 @@ function executeMigrate(args: string[]): CliResult {
     return { stdout: '', stderr: formatRefusals(plan.refusals), exitCode: 1 };
   }
 
-  if (!dryRun) writeMigration(loaded, plan.files);
+  const retainedStaging = dryRun ? [] : writeMigration(loaded, plan.files);
 
   const outLines = plan.assignments.map(
     a => `ASSIGNED ${a.relPath}:${a.line} ${a.id} ${a.kind} ${a.label}`,
   );
   outLines.push(`${dryRun ? 'DRY_RUN' : 'MIGRATED'} ${plan.assignments.length}`);
-  return { stdout: outLines.join('\n') + '\n', stderr: '', exitCode: 0 };
+  const stderr = retainedStaging.length === 0
+    ? ''
+    : `roadmap-id migrate: assignments saved; could not remove staging paths ${retainedStaging.join(', ')}\n`;
+  return { stdout: outLines.join('\n') + '\n', stderr, exitCode: 0 };
 }
 
 function execute(argv: string[]): CliResult {

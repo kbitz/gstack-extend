@@ -334,33 +334,34 @@ function verifyRoadmapReadback(
   const fail = (line: number, recKind: string, reason: string): MigrateRefusal => ({
     relPath, line, kind: recKind, reason: `read-back verification failed: ${reason}`,
   });
+  const trackKind = kind === 'shipped' ? 'shipped-track' : 'track';
 
   if (before.tracks.length !== after.tracks.length) {
-    return fail(1, 'track', `track count changed (${before.tracks.length} -> ${after.tracks.length})`);
+    return fail(1, trackKind, `track count changed (${before.tracks.length} -> ${after.tracks.length})`);
   }
   for (let i = 0; i < before.tracks.length; i++) {
     const b = before.tracks[i]!;
     const a = after.tracks[i]!;
     const line = b.line ?? 1;
-    if (b.id !== a.id) return fail(line, 'track', `track label changed (${b.id} -> ${a.id})`);
+    if (b.id !== a.id) return fail(line, trackKind, `track label changed (${b.id} -> ${a.id})`);
     const assigned = trackTargets.get(i);
     if (assigned !== undefined) {
       if (a.workItemId !== assigned || a.workItemIdError !== null) {
-        return fail(line, 'track', `assigned ID ${assigned} did not read back cleanly`);
+        return fail(line, trackKind, `assigned ID ${assigned} did not read back cleanly`);
       }
     } else if (
       b.workItemIdRaw !== a.workItemIdRaw ||
       b.workItemId !== a.workItemId ||
       b.workItemIdError !== a.workItemIdError
     ) {
-      return fail(line, 'track', `non-target track ID changed`);
+      return fail(line, trackKind, `non-target track ID changed`);
     }
   }
 
   const beforeExtra = before.extraTrackWorkItems ?? [];
   const afterExtra = after.extraTrackWorkItems ?? [];
   if (beforeExtra.length !== afterExtra.length) {
-    return fail(1, 'track', `duplicate-label track count changed`);
+    return fail(1, trackKind, `duplicate-label track count changed`);
   }
   for (let i = 0; i < beforeExtra.length; i++) {
     const b = beforeExtra[i]!;
@@ -371,7 +372,7 @@ function verifyRoadmapReadback(
       b.workItemId !== a.workItemId ||
       b.workItemIdError !== a.workItemIdError
     ) {
-      return fail(b.line ?? 1, 'track', `duplicate-label track changed`);
+      return fail(b.line ?? 1, trackKind, `duplicate-label track changed`);
     }
   }
 
@@ -645,6 +646,13 @@ export function planWorkItemMigration(
       const legacy = legacyTracks[i]!;
       if (legacy.workItemIdRaw !== null || legacy.workItemIdError !== null) continue;
       const lineNo = legacy.line;
+      if (!planLineMap.get(legacy.groupLine ?? 0)?.startsWith('#### Group ')) {
+        refusals.push({
+          relPath: doc.relPath, line: lineNo, kind: 'legacy-track',
+          reason: `Track ${legacy.label} must be under a level-four shipped Group heading`,
+        });
+        continue;
+      }
       const rawLine = lines[lineNo - 1]!.text;
       const id = nextId();
       const edit = legacyShippedBulletInsertEdit(rawLine, id);

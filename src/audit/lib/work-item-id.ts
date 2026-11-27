@@ -25,7 +25,9 @@ const TRACK_ID_LINE_RE = /^_id:[ \t\v\f\r]*(.*)$/i;
 const INLINE_ID_RE = /^\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*/;
 const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—–]*)[ \t]*(?:[—–-]+[ \t]*)?$/;
 // Field labels can occur inside a title. A third closing star can end italic emphasis.
-const BOLD_BULLET_RE = /^(- \*\*((?:\*\*(?:ID:|Revisit when:)\*\*|(?!\*\*(?!\*)).)+)\*\*[ \t]*[—–-]+[ \t]*)(.*)$/;
+const BOLD_TITLE = '- \\*\\*((?:\\*\\*(?:ID:|Revisit when:)\\*\\*|(?!\\*\\*(?!\\*)).)+)\\*\\*';
+const BOLD_BULLET_RE = new RegExp('^(' + BOLD_TITLE + '[ \\t]*[—–-]+[ \\t]*)(.*)$');
+const BOLD_COLON_TITLE_RE = new RegExp('^' + BOLD_TITLE + '[ \\t]*:');
 const PLAIN_BULLET_RE = /^((?:- )?(.*?)\s+[—–-]+\s+)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const LEGACY_SHIPPED_TRACK_BULLET_RE = /^(- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]+[ \t]*)(.*)$/;
@@ -217,6 +219,8 @@ export function futureBulletInsertEdit(line: string, id: string): InlineInsertEd
     return { offset: leadingWs + bold[1]!.length, text: `**ID:** ${id} — ` };
   }
 
+  // A dash in the body of a colon-titled record is not a title separator.
+  if (BOLD_COLON_TITLE_RE.test(fullVisible)) return null;
   const plain = PLAIN_BULLET_RE.exec(fullVisible);
   if (plain !== null) {
     if (marker !== -1 && marker < plain[1]!.length) return null;

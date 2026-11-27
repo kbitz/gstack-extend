@@ -348,7 +348,7 @@ When any `MISSING_ID` finding is present, the section also includes the hint:
 
 **Exit codes:** `0` on success (including `MIGRATED 0`), `1` on a refusal, read/write error, shallow clone, Git history failure, or refused intake path (with empty stdout), and `2` on invalid arguments.
 
-**History scope:** `mint` and `migrate` scan file contents and paths of commits reachable from any local ref in the current clone. This includes the enclosing repository when a project is nested and IDs recorded only in retired intake filenames. Commit messages, other clones' unpushed refs, and submodule histories are excluded. The CLI exits `1` with shallow history or missing Git objects. Fetch the missing history or objects before retrying. A directory outside any Git repository uses current files only.
+**History scope:** `mint` and `migrate` scan original file contents and paths of commits reachable from any local ref in the current clone. This includes the enclosing repository when a project is nested and IDs recorded only in retired intake filenames. Git replacement objects cannot hide original history. Commit messages, other clones' unpushed refs, and submodule histories are excluded. The CLI exits `1` with shallow history or missing Git objects. Fetch the missing history or objects before retrying. A directory outside any Git repository uses current files only.
 
 Run the launcher from the gstack-extend installation. For a consumer project,
 pass its path to `<gstack-extend checkout>/bin/roadmap-id migrate`. Migration
@@ -358,6 +358,8 @@ filename stem as the entry's `- **ID:**` field.
 Apply stages all replacements before publishing them. If an interrupted write
 leaves a staging directory, check its `original` backup against the current
 document before retrying. A failed rollback reports any retained staging paths.
+If all documents were updated and only staging cleanup failed, migration emits
+the assignments and warns about the retained paths.
 
 **Accepted migration shapes:**
 
@@ -374,9 +376,10 @@ document before retrying. A failed rollback reports any retained staging paths.
 
 **Refused migration shapes (no files written):**
 
-- A Future bullet with no title dash separator before `**Revisit when:**` (e.g. `- **Title**: body`).
+- A Future bullet with no title dash separator before `**Revisit when:**`, including a bold title followed by a colon.
 - A `ROADMAP.md` Track heading without a metadata line.
 - A shipped-archive Track heading at a level other than `###`.
+- A legacy shipped Track bullet under a Group heading at a level other than `####`.
 - A duplicate-label Track (`extraTrackWorkItems`) that lacks an ID.
 - Dual root and `docs/` copies of the same planning document.
 - A symlinked or non-regular planning document, or a symlinked/non-directory `docs/`.

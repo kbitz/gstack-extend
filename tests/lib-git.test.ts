@@ -292,7 +292,7 @@ describe('createGitGateway — mocked', () => {
     });
     expect(shallow.historyWorkItemIds()).toEqual({ kind: 'shallow' });
 
-    const logArgs = '-c core.quotepath=off log --all --no-relative --no-renames -m --root --no-color --no-ext-diff --no-textconv --no-show-signature --format= --text -G wi-[0-9a-f]{4,8} -p -U0';
+    const logArgs = '-c core.quotepath=off --no-replace-objects log --all --no-relative --no-renames -m --root --no-color --no-ext-diff --no-textconv --no-show-signature --format= --text -G wi-[0-9a-f]{4,8} -p -U0';
     const failedLog = createGitGateway({
       cwd: '/tmp',
       spawn: mockSpawn({
