@@ -8,7 +8,10 @@
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/) **1.3.3 or newer** (verified runtime and development floor). Every Bun-backed launcher passes `--no-env-file --no-install --config=/dev/null`; `--no-env-file` was introduced in Bun 1.3.3, and earlier builds (such as 1.2.0 and 1.3.2) silently ignore it and still load `.env`.
 
-The workflow skills require upstream [gstack](https://github.com/garrytan/gstack), and `setup` emits a `GSTACK_MISSING` warning when it cannot find it.
+The workflow skills require upstream [gstack](https://github.com/garrytan/gstack).
+On install runs, `setup` warns on stderr with `GSTACK_MISSING` if it cannot find
+an executable `gstack-config` in the [helper lookup paths](telemetry.md#gstack-helper-lookup),
+even with `--quiet`. Setup continues. Install upstream gstack and rerun setup.
 
 `setup`, `gstack-extend init`, and all 15 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. `gstack-extend init` also checks Bun from the project directory (its parent for a new project), where its post-render audit runs, so a version manager that pins an older Bun there is refused before anything is written. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
 
@@ -310,7 +313,8 @@ On a fresh start, the start command runs `bin/update-check` after it finds a
 verified checkout. A skill follows its upgrade flow when the check prints
 `UPGRADE_AVAILABLE <old> <new>`.
 
-`update_channel` defaults to `stable` for every install. Stable follows the
+`bin/config set update_channel` accepts `stable` or `main`. The updater defaults
+to `stable` when the key is missing or has an unrecognized value. Stable follows the
 `v<VERSION>` release tags on the checkout's `origin`, which the
 [auto-tag workflow](../.github/workflows/auto-tag.yml) creates when `VERSION`
 changes on `main`. The updater installs the exact tag commit the check
@@ -434,8 +438,9 @@ fi
 
 Pause update checks first. The restored checker can offer an upgrade, and
 accepting it or setting `auto_upgrade=true` can undo the rollback. The
-channel-aware updater reinstalls the newest release tag on `stable` or the
-tip of `main` on `main`. Older updaters follow `main`. The pause also hides
+channel-aware updater uses the recorded release offer or, without one, the
+newest release tag on `stable`. On `main` and with older updaters it uses the tip
+of `main`. The pause also hides
 `INSTALL_WARN` lines.
 This leaves detached HEAD. The diff before checkout lists skills that the older
 setup cannot refresh. Every skill added after that tag (for example, `plan-track`
