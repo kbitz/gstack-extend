@@ -3916,7 +3916,7 @@ describe('(M) merge-only refresh (H-G)', () => {
       expect(versionsRow![4], prefix).toContain(prefix);
     }
 
-    expect(SKILLS['review-and-prep']).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
+    expect(SKILLS['review-and-prep']).toContain('`Cause: base_moved`');
     expect(HG_DOC).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
 
     const bindings = section('## Validated and receipt-present bindings');

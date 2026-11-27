@@ -3695,13 +3695,12 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
   test('T7: core refresh entry, capability literal, read instruction, and Draft-once exception are locked', () => {
     expect(prep.split('**Draft-once rule:').length - 1).toBe(1);
     expect(prep).toMatch(/the only exception\s+is one return to draft in a validated refresh and its pushes while draft/);
-    expect(prep).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
-    expect(prep).toContain('### Refresh a prepared PR after a base move');
-    expect(prep).toMatch(
+    const entry = skillSection(prep, '### Refresh a prepared PR after a base move');
+    expect(entry).toMatch(
       /Run `~\/\.gstack-extend\/bin\/preamble review-and-prep --ref conditional-base-move-refresh --expect [0-9a-f]{16}` before Step 1's PR validation for the `refresh` argument or first line `Run \/review-and-prep refresh`, or when H-F resume finds a checkpoint naming `refresh-1\.md`\./,
     );
-    expect(prep).toContain('For every `refresh` invocation, validate exactly one `Cause: base_moved` line');
-    expect(prep).toContain('before creating evidence or starting run state');
+    expect(entry).toContain('For every `refresh` invocation, validate exactly one `Cause: base_moved` line');
+    expect(entry).toContain('before creating evidence or starting run state');
   });
 
   test('T7: refresh reference locks refusal order, classes, skill-is-implementation, escalation reasons, --undo once, and no full review or Greptile', () => {

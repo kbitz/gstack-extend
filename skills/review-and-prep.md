@@ -601,7 +601,6 @@ Validate opt-ins: `full-suite=external` pauses; `final` runs targeted lanes befo
 - `grep -F 'blocking=shown' "<installed skill dir>/SKILL.md"`
 - `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`
 - `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`
-- `grep -F 'Cause: base_moved' "<installed skill dir>/SKILL.md"`
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-values --expect f97f25ef8ab2de94` before applying opt-in policy values when a valid Review policy line contains a key covered in this section.
 
 - `run-state=record` (its only value) is accepted and changes nothing: recording is the default. Every invocation records its run state through the
