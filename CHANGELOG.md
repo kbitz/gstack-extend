@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.125.0] - 2026-11-27
+
+### Added
+
+- Review continuations can carry forward earlier finding keys using a digest-verified state copy.
+
+### Changed
+
+- Stopped review receipts now report advisory counts for new, carried, repeated-premise, and unkeyed findings.
+
 ## [0.124.0] - 2026-11-27
 
 ### Changed
