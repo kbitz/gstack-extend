@@ -101,6 +101,8 @@ export type TrackInfo = {
   blockedByMalformed?: string[];
   /** True when this Track was merged from `docs/roadmap-shipped.md`. */
   fromShippedArchive?: boolean;
+  /** 1-indexed heading line in the source document. */
+  line?: number;
 };
 
 export type LegacyShippedTrack = {
@@ -109,6 +111,8 @@ export type LegacyShippedTrack = {
   workItemIdRaw: string | null;
   workItemIdError: 'malformed' | 'duplicate' | null;
   line: number;
+  /** Source line of the enclosing Group heading. */
+  groupLine?: number;
 };
 
 export type TrackWorkItemRecord = {
@@ -118,6 +122,8 @@ export type TrackWorkItemRecord = {
   workItemIdError: 'malformed' | 'duplicate' | null;
   fromShippedArchive?: boolean;
   shipped?: boolean;
+  /** 1-indexed heading line in the source document. */
+  line?: number;
 };
 
 export type SizeLabelMismatch = {
@@ -136,6 +142,7 @@ export type ParsedRoadmap = {
   trackDepCycles: string[];
   hasV2Grammar: boolean; // true when at least one ## In Progress/Current Plan/Future/Shipped seen
   futureBullets: string[]; // raw bullet lines from ## Future (when v2)
+  futureBulletLines?: number[]; // 1-indexed source lines parallel to futureBullets
   futureMalformed: string[]; // non-bullet content seen inside ## Future (validation hint)
   /** `Deferred: docs/roadmap-future.md (N items)` in ## Future. */
   futurePointer: { declaredCount: number } | null;
@@ -298,6 +305,7 @@ export function parseRoadmap(
         trackDepCycles: [],
         hasV2Grammar: false,
         futureBullets: [],
+        futureBulletLines: [],
         futureMalformed: [],
         futurePointer: null,
         shippedPointer: false,
@@ -354,12 +362,14 @@ export function parseRoadmap(
 
   // Future bullets and validation hints.
   const futureBullets: string[] = [];
+  const futureBulletLines: number[] = [];
   const futureMalformed: string[] = [];
   const effortTagFindings: string[] = [];
 
   type Section = 'none' | 'skip' | 'group' | 'track' | 'future' | 'shipped';
   let section: Section = 'none';
   let groupNum = '';
+  let currentGroupLine = 0;
   let inShipped = false;
   let groupIsShipped = false;
   let trackId = '';
@@ -401,6 +411,7 @@ export function parseRoadmap(
     // Group heading.
     if (groupHeading) {
       groupNum = groupHeading[1]!;
+      currentGroupLine = lineNo;
       let groupName = trim(groupHeading[2]!);
       let inlineComplete = false;
       if (COMPLETE_SUFFIX_RE.test(groupName)) {
@@ -503,6 +514,7 @@ export function parseRoadmap(
           workItemIdRaw: parsed?.raw ?? null,
           workItemIdError: parsed?.duplicate ? 'duplicate' : parsed !== null && parsed.id === null ? 'malformed' : null,
           line: lineNo,
+          groupLine: currentGroupLine,
         });
         continue;
       }
@@ -519,6 +531,7 @@ export function parseRoadmap(
         workItemIdError: null,
         shipped: COMPLETE_SUFFIX_RE.test(line) || stateAtLine(regions, lineNo) === 'shipped'
           || groupInlineComplete.has(groupNum),
+        line: lineNo,
       };
       let headingTitle = trim(line.replace(TRACK_HEADING_RE, ''));
       if (COMPLETE_SUFFIX_RE.test(headingTitle)) {
@@ -731,6 +744,7 @@ export function parseRoadmap(
       if (FUTURE_PLACEHOLDER_RE.test(stripped)) continue;
       if (/^- /.test(stripped)) {
         futureBullets.push(stripped);
+        futureBulletLines.push(lineNo);
         continue;
       }
       // Anything inside ## Future that isn't a bullet is malformed.
@@ -845,6 +859,7 @@ export function parseRoadmap(
       workItemIdRaw: workItem?.workItemIdRaw ?? null,
       workItemIdError: workItem?.workItemIdError ?? null,
       blockedByMalformed: trackBlockedByMalformed.get(id) ?? [],
+      line: trackHeadingLine.get(id),
     };
   });
 
@@ -857,6 +872,7 @@ export function parseRoadmap(
       trackDepCycles,
       hasV2Grammar,
       futureBullets,
+      futureBulletLines,
       futureMalformed,
       futurePointer,
       shippedPointer,
@@ -904,6 +920,7 @@ export function mergeShippedArchive(
         workItemId: t.workItemId ?? null,
         workItemIdRaw: t.workItemIdRaw ?? null,
         workItemIdError: t.workItemIdError ?? null,
+        line: t.line,
       });
       continue;
     }
@@ -946,6 +963,7 @@ export function mergeFutureArchive(
     value: {
       ...active.value,
       futureBullets: [...archive.value.futureBullets],
+      futureBulletLines: [...(archive.value.futureBulletLines ?? [])],
       futureFromArchive: true,
       futureMalformed: [
         ...active.value.futureMalformed,

@@ -5,8 +5,7 @@
  * Emits canonical section `WORK_ITEM_IDS`.
  *   - `STATUS: skip` when zero inspectable records exist.
  *   - `STATUS: pass` when every record has a valid globally unique `wi-` ID.
- *   - `STATUS: warn` when the only findings are missing IDs on legacy records.
- *   - `STATUS: fail` on malformed or duplicate IDs, missing intake IDs, or an intake ID mismatch.
+ *   - `STATUS: fail` on missing, malformed, duplicate, or mismatched IDs.
  */
 
 import { extractInlineBulletId } from '../lib/work-item-id.ts';
@@ -33,12 +32,11 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   const findings: string[] = [];
   const seen = new Map<string, string>(); // id -> first location
   let inspectableCount = 0;
-  let hasBlockingFinding = false;
+  let hasMissingId = false;
 
   const registerValidId = (id: string, location: string) => {
     const first = seen.get(id);
     if (first !== undefined) {
-      hasBlockingFinding = true;
       findings.push(
         `- DUPLICATE_ID: ${location} — duplicate work-item ID "${id}" (first seen at ${first})`,
       );
@@ -53,12 +51,11 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     inspectableCount++;
     const { workItemId: id, workItemIdRaw: raw, workItemIdError: error } = record;
     if (error === 'duplicate') {
-      hasBlockingFinding = true;
       findings.push(`- DUPLICATE_ID: ${location} — multiple ID fields on one record`);
     } else if (error === 'malformed') {
-      hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${location} — malformed work-item ID "${raw ?? ''}" (expected wi-<4-8 lowercase hex>)`);
     } else if (!id) {
+      hasMissingId = true;
       findings.push(`- MISSING_ID: ${location} — missing ${field}`);
     }
     if (id && register) registerValidId(id, location);
@@ -82,20 +79,16 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   for (const f of ctx.intakeFiles) {
     if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
       inspectableCount++;
-      hasBlockingFinding = true;
       const reason = f.unreadable ? 'unable to read intake path' : 'expected a regular intake Markdown file';
       findings.push(`- MALFORMED_ID: ${f.rel} — ${reason}`);
       continue;
     }
     if (f.filenameId === null) {
-      hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${f.rel} — filename must match wi-<4-8 lowercase hex>.md`);
     }
-    if (f.workItemId === null) hasBlockingFinding = true;
     inspect(f.rel, `${TODO_FIELD} (required in intake files)`, f);
     if (f.filenameId !== null && f.filenameId !== f.workItemId) {
       if (f.workItemId !== null) {
-        hasBlockingFinding = true;
         findings.push(`- ID_MISMATCH: ${f.rel} — filename ID "${f.filenameId}" does not match body ID "${f.workItemId}"`);
       }
       registerValidId(f.filenameId, f.rel);
@@ -147,9 +140,13 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     };
   }
 
+  if (hasMissingId) {
+    findings.push('- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.');
+  }
+
   return {
     section: 'WORK_ITEM_IDS',
-    status: hasBlockingFinding ? 'fail' : 'warn',
+    status: 'fail',
     body: ['FINDINGS:', ...findings, ''],
   };
 }

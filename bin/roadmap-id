@@ -1,5 +1,5 @@
 #!/bin/sh
-# gstack-extend roadmap-id — work-item ID mint CLI, run via bun.
+# gstack-extend roadmap-id — work-item ID mint and migrate CLI, run via bun.
 _dir=${0%/*}
 [ "$_dir" != "$0" ] || _dir=.
 if [ ! -f "$_dir/lib/bun-prereq.sh" ] || [ ! -r "$_dir/lib/bun-prereq.sh" ]; then

@@ -1210,7 +1210,8 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
     expect(contract).toContain('MALFORMED_ID');
     expect(contract).toContain('DUPLICATE_ID');
     expect(contract).toContain('bin/roadmap-id mint');
-    expect(contract).toContain('Missing IDs alone produce `STATUS: warn`');
+    expect(contract).toContain('bin/roadmap-id migrate');
+    expect(contract).toContain('Missing, malformed, duplicate, or mismatched IDs all produce `STATUS: fail`');
   });
 
   // Value: protects=docs/source-tag-contract.md and skills/full-review.md agree on the three implicit-state-machine classification labels mapped onto existing severities; fails_when=either side renames a label or diverges on where the labels live; why_new=Track 100A T2; seam=none

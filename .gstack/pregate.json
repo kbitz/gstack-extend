@@ -240,6 +240,7 @@
       "tests/init-distribution.test.ts",
       "tests/init-templates.test.ts",
       "tests/layout-scaffold.test.ts",
+      "tests/roadmap-id.test.ts",
       "tests/setup-init-wire.test.ts",
       "tests/update.test.ts"
     ],

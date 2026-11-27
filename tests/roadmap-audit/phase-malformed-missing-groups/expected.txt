@@ -182,10 +182,11 @@ FINDINGS:
 - (none)
 
 ## WORK_ITEM_IDS
-STATUS: warn
+STATUS: fail
 FINDINGS:
 - MISSING_ID: ROADMAP.md Track 1A — missing _id: wi-<hex>_
 - MISSING_ID: ROADMAP.md Track 2A — missing _id: wi-<hex>_
+- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.
 
 
 ## MODE
