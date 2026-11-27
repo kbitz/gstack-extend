@@ -5108,10 +5108,11 @@ describe('bin/review-state', () => {
     const shFences = [...callsDoc.matchAll(/```sh\n([\s\S]*?)\n```/g)].map((m) =>
       m[1]!.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith('#')),
     );
-    expect(shFences.length).toBeGreaterThanOrEqual(3);
+    expect(shFences.length).toBeGreaterThanOrEqual(4);
     const seqLines = shFences[0]!;
     const stoppedLines = shFences[1]!;
     const escalatedLines = shFences[2]!;
+    const blockedLines = shFences[3]!;
 
     const exCommit = '0123456789abcdef0123456789abcdef01234567';
     const exBase = '89abcdef0123456789abcdef0123456789abcdef';
@@ -5203,6 +5204,14 @@ describe('bin/review-state', () => {
     const escState = JSON.parse(readFileSync(join(dEsc, 'review-run-state.json'), 'utf8')) as ReviewRunState;
     expect(escState.finish?.outcome).toBe('escalated');
     expect(validateStoredState(escState).ok).toBe(true);
+
+    const dBlocked = newDir();
+    expect(runCli(subLine(seqLines[0]!, dBlocked)).json.reason).toBe('recorded');
+    for (const line of blockedLines) {
+      expect(runCli(subLine(line, dBlocked)).json.reason, line).toBe('recorded');
+    }
+    const blockedState = JSON.parse(readFileSync(join(dBlocked, 'review-run-state.json'), 'utf8')) as ReviewRunState;
+    expect(blockedState.finish?.outcome).toBe('blocked');
 
     const gitInfo: GitInfo = {
       repo: '/fixture/.git',
@@ -8309,7 +8318,7 @@ describe('finish outcome escalated (H-G refresh escalation)', () => {
     expect((bodyRef.json.detail as { violations: Array<{ rule: string }> }).violations[0]?.rule).toBe('not-renderable');
   });
 
-  test('export reports a blocked segment outcome and no completed run end, and older stored states still validate', () => {
+  test('export reports a blocked segment outcome and no completed run end', () => {
     const dir = newDir();
     startEscalatedRun(dir);
     expect(callCmd(dir, 'finish', {
@@ -8326,16 +8335,35 @@ describe('finish outcome escalated (H-G refresh escalation)', () => {
     const endRecs = records.filter((r) => r.op === 'end');
     expect(endRecs.length).toBeGreaterThan(0);
     expect(endRecs.every((r) => r.request.outcome !== 'completed')).toBe(true);
+  });
 
-    // Pre-change stored state (e.g. needs-context with no new keys) still validates
-    const dirOld = newDir();
-    startEscalatedRun(dirOld);
-    expect(callCmd(dirOld, 'finish', {
-      outcome: 'needs-context',
-      base: baseSha,
-      stop_reason: 'missing-plan',
-    }).code).toBe(0);
-    const oldStored = JSON.parse(readFileSync(join(dirOld, 'review-run-state.json'), 'utf8'));
-    expect(validateStoredState(oldStored).ok).toBe(true);
+  test('reads a pre-refresh stored state and rejects an unknown recorded escalation reason', () => {
+    // Captured from the 0.120.0 state writer at 6cd4603 before the escalation outcome existed.
+    const legacy = JSON.parse(`{
+      "schema": "review-run-state/v1",
+      "rev": 2,
+      "writer": "0.120.0",
+      "host": "fixture",
+      "run": {"run_id":"019315e0-0000-7000-8000-000000000041","skill":"review-and-prep","repo":"/fixture/project/.git","branch":"feature","pr":null,"gh_login":null,"started_at":"2026-11-10T18:00:00Z"},
+      "binding": {"head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","tree":"cccccccccccccccccccccccccccccccccccccccc","base":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","wtree":null},
+      "plan": {"ref":"plan.md","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "policy": {"value":null,"source":"none supplied","delegation":null},
+      "continuation": {"prior_stops":0,"max":0,"continues":null},
+      "segments": [{"segment":1,"started_at":"2026-11-10T18:00:00Z","ended_at":"2026-11-10T18:02:00Z","end":"finished","session_id":null,"toplevel":"/fixture/project"}],
+      "passes": [],
+      "corrections": [],
+      "gates": [],
+      "audits": [],
+      "checkpoints": [],
+      "finish": {"outcome":"needs-context","stop_reason":"missing-plan","head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","tree":"cccccccccccccccccccccccccccccccccccccccc","base":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","delta_base":null,"stop_count":null,"wtree":null,"review_restriction_resolved":false,"readiness_confirmed_at":null,"full_review_evidence":null,"user_facing_changes":[],"evidence":[],"finished_at":"2026-11-10T18:02:00Z"}
+    }`) as ReviewRunState;
+    expect(validateStoredState(legacy).ok).toBe(true);
+
+    const invalid = { ...legacy, finish: { ...legacy.finish, outcome: 'escalated', stop_reason: 'other-reason' } };
+    expect(validateStoredState(invalid)).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      detail: { path: 'review-run-state.json', message: 'invalid-enum at finish.stop_reason' },
+    });
   });
 });

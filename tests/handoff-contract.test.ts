@@ -3864,7 +3864,7 @@ describe('(M) merge-only refresh (H-G)', () => {
   test('fixtures parse under the H-G grammar and malformed variants are refused', () => {
     const inv = readFileSync(join(FIXTURES, 'g-invocation.txt'), 'utf8').trimEnd();
     const invLines = inv.split('\n');
-    expect(invLines[0]).toContain('refresh');
+    expect(invLines[0]).toBe('Run /review-and-prep refresh');
     expect(invLines.filter((l) => l === 'Cause: base_moved')).toHaveLength(1);
 
     const refreshed = readFileSync(join(FIXTURES, 'g-refreshed.txt'), 'utf8').trimEnd();

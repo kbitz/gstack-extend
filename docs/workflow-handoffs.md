@@ -1548,7 +1548,8 @@ A caller invokes `/review-and-prep refresh` to bring an already prepared or read
 PR current after its target base branch moved without running a new full review.
 A fresh refresh requires confirmed live readiness and a verifiable full receipt.
 A draft can resume an already validated refresh through H-F.
-Every H-G line is receipt-present, never a binding, and never a merge authorization.
+The `Refresh:` line is receipt-present. Escalation and refusal lines are exit
+output. H-G lines grant no stage or merge authorization.
 A refusal uses the existing `/review-and-prep` BLOCKED or NEEDS_CONTEXT stage-line
 row (`next: none; status: needs-context`).
 

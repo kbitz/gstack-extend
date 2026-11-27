@@ -3749,8 +3749,9 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     const classificationStart = ref.indexOf('### E. Delta facts and classification');
     expect(ref.slice(0, draftStart)).toContain('Require the exact open PR with `isDraft: false`');
     expect(ref.slice(0, draftStart)).toContain("resolve `Full receipt:` by Step 6's locator rules and verify its SHA-256 before converting to draft");
+    expect(ref.slice(0, draftStart)).toContain('follow each predecessor comment back to the original full review');
     expect(ref.slice(0, draftStart)).toContain('if the prior recorded run is readable, require a prepared finish that matches the receipt');
-    expect(ref.slice(draftStart, evidenceStart)).toContain('Recheck the validated head, base, holds and `isDraft: false`');
+    expect(ref.slice(draftStart, evidenceStart)).toContain("Recheck A's checkout, receipt, holds, base and `isDraft: false` before converting the PR");
     const evidence = ref.slice(evidenceStart, mergeStart);
     expect(evidence).toContain('Include any corroborated `reviewRestrictionResolved: true` and the disclosure evidence below in that same file before hashing it');
     expect(evidence).toContain('Save the disclosure values verbatim in `refresh-1.md`');
@@ -3758,7 +3759,7 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(ref).toContain('Restore the restriction and disclosure evidence from that file');
     expect(ref).toContain('Preserve `Disclosure evidence: unavailable` in the full receipt');
     expect(ref.slice(mergeStart, classificationStart)).toContain(
-      "`build finish --outcome blocked --base <last-merged-base>` (use A's earlier receipt base before the first committed merge)",
+      "`build finish --outcome blocked --base <last-merged-base> --stop-reason merge-blocked` (use A's earlier receipt base before the first committed merge)",
     );
   });
 
@@ -3904,12 +3905,18 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
 
         git(cwd, ['checkout', '--quiet', 'feature']);
         git(cwd, ['merge', '--quiet', '--no-edit', revB]);
-        const res = runFence(cwd, revR, revB);
-        expect(res.status, res.stderr).toBe(0);
-        expect(parseDelta(res.stdout)).toEqual({
+        const expected = {
           rows: [{ path: 'src/app.ts', side: 'both', merged: 'base' }],
           done: 'REFRESH_DELTA_DONE: 1',
-        });
+        };
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        expect(parseDelta(res.stdout)).toEqual(expected);
+
+        git(cwd, ['config', 'diff.relative', 'true']);
+        const relative = runFence(join(cwd, 'docs'), revR, revB);
+        expect(relative.status, relative.stderr).toBe(0);
+        expect(parseDelta(relative.stdout)).toEqual(expected);
       }
 
       // Case 4: follow-up commit to a non-resolution file gives refresh-only
