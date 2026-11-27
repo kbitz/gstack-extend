@@ -1892,8 +1892,9 @@ consistency test checks that the producer still publishes it.
 
 ### Finding identity and cycle counts
 
-On a recorded stop with recorded passes, the stopped comment and full receipt
-include `Finding cycle:` lines after `Continuation:`. See the
+When the run-state renderer produces a stopped comment or full receipt for a
+run with recorded passes, it includes `Finding cycle:` lines after
+`Continuation:`. See the
 [stopped-receipt fixture](../tests/fixtures/handoffs/e-stopped-receipt.txt).
 
 ```text
@@ -1907,8 +1908,8 @@ the passes or `mixed` when full and delta passes share the line. `observed`
 is `partial` when a pass is still open or a required voice has neither a
 selected attempt nor a `not_applicable` result. Only selected attempts
 contribute, and the counts describe findings as raised before adjudication.
-An absent line means an older producer, inline output without run state or
-a run with no recorded passes. A line with zero counts is an observation.
+An absent line can mean an older producer, inline output or a run with no
+recorded passes. A line with zero counts is an observation.
 
 Within a line, reports of the same `finding_id` count once using its first
 keyed report in that line. Identical keys across selected reports also count
@@ -1940,14 +1941,15 @@ when no matching stopped comment or usable locator exists, the evidence is on
 another host, verification fails, or the source cannot safely be copied.
 Legacy continuations without an import field report `not-recorded`.
 
-`Finding identity: unavailable (<reason>)` is written by the skill in the
-full-receipt sections if the helper reports downgraded identity inputs or the
-capability or reference is unavailable. A recorded stopped full receipt has
-`Run state digest: run=<run_id>; sha256=<sha256>` for the final state bytes. A
-continuation can import those findings by copying the state from the stopped
-evidence directory and checking the digest in the verified full receipt.
-Missing provenance leaves a legacy import partial. The digest and import
-affect advisory counts only. Consumers can read the counts from the comment.
+The skill writes `Finding identity: unavailable (<reason>)` in the full-receipt
+sections when the helper downgrades identity inputs or when the capability,
+skill reference or frozen anchor commit is unavailable. The stopped
+full-receipt renderer adds `Run state digest: run=<run_id>; sha256=<sha256>` for
+the final state bytes. A continuation can import those findings by copying the
+state from the stopped evidence directory and checking the digest in the
+verified full receipt. An import without a verified digest is partial. The
+digest and import affect advisory counts only. Consumers can read the counts
+from the comment.
 
 | Identifier | Where it is used |
 |---|---|
