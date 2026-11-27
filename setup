@@ -1521,8 +1521,33 @@ report_retired_host_leftovers() {
     printf '  See: %q\n' "$SCRIPT_DIR/docs/installation.md#retired-install-hosts" >&2
   done
 }
+
+# Use the helper lookup order in docs/telemetry.md. Only absolute directories
+# are eligible, so a checkout-relative PATH entry or override cannot count.
+has_gstack_config() {
+  local directory
+  local -a directories
+  IFS=: read -r -a directories <<< "${PATH:-}"
+  directories+=(
+    "${GSTACK_DIR:-.}/bin"
+    "${CLAUDE_CONFIG_DIR:-.}/skills/gstack/bin"
+    "$HOME/.claude/skills/gstack/bin"
+    "${CODEX_HOME:-.}/skills/gstack/bin"
+    "$HOME/.codex/skills/gstack/bin"
+  )
+  for directory in "${directories[@]}"; do
+    case "$directory" in
+      /*) [ -f "$directory/gstack-config" ] && [ -x "$directory/gstack-config" ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
 if [ "$UNINSTALL" -eq 0 ]; then
   report_retired_host_leftovers || true
+  if ! has_gstack_config; then
+    printf '%s\n' 'setup: GSTACK_MISSING Workflow skills require upstream gstack. Install gstack from https://github.com/garrytan/gstack, then rerun setup. See docs/installation.md#requirements.' >&2
+  fi
 fi
 
 # ─── Resolve which hosts to touch ──────────────────────────────────

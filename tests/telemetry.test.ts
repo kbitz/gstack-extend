@@ -5363,16 +5363,13 @@ describe('deliberate pauses finish as blocked, and each resume is its own segmen
 });
 
 describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per-host files, and report', () => {
-  test('run_mode and run_mode_source cover every amended branch without reading credential sentinels or spawning process-inspection utilities', () => {
-    const fix = makeTelemetryFixture('off');
-    const customGstackHome = join(fix.home, 'custom-gstack-root');
-    mkdirSync(customGstackHome, { recursive: true });
-
+  describe('run_mode and run_mode_source cover every amended branch without reading credential sentinels or spawning process-inspection utilities', () => {
     const cases: Array<{
       name: string;
       startEnv?: Record<string, string>;
       finishEnv?: Record<string, string>;
       finishArgs?: string[];
+      gstackHome?: 'custom' | 'default';
       mode: string;
       source: string;
     }> = [
@@ -5441,19 +5438,22 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       },
       {
         name: 'non-default GSTACK_HOME blocks user-directed',
-        finishEnv: { GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        gstackHome: 'custom',
         mode: 'unknown',
         source: 'launcher-state-root',
       },
       {
         name: 'spawned signal remains orchestrated with relocated GSTACK_HOME',
-        finishEnv: { GSTACK_SESSION_KIND: 'spawned', GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        finishEnv: { GSTACK_SESSION_KIND: 'spawned', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        gstackHome: 'custom',
         mode: 'orchestrated',
         source: 'session-kind',
       },
       {
         name: 'default ~/.gstack GSTACK_HOME allows user-directed',
-        finishEnv: { GSTACK_HOME: join(fix.home, '.gstack') + '/', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        finishEnv: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        gstackHome: 'default',
         mode: 'user-directed',
         source: 'cli',
       },
@@ -5634,48 +5634,6 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       },
     ];
 
-    const codexRolloutPath = (tid: string) =>
-      join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
-    const writeCodexMeta = (tid: string, originator: string, source: unknown) => {
-      writeJsonl(codexRolloutPath(tid), [
-        { timestamp: iso(1790000000), type: 'session_meta', payload: { id: tid, originator, source } },
-      ]);
-    };
-    const writeMuseOpen = (sid: string, clientName: string | null) => {
-      museLog(fix.home, sid, [
-        museRecord(1, 2, sid, 'session.opened.observed', {
-          kind: 'session_opened',
-          record: clientName !== null ? { client_info_name: clientName } : {},
-        }),
-      ]);
-    };
-    const grokSessionPath = (sid: string) =>
-      join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(process.cwd())), sid);
-    const writeGrokContext = (sid: string, context: object, summary?: object) => {
-      const dir = grokSessionPath(sid);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(context, null, 2) + '\n');
-      if (summary !== undefined) {
-        writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
-      }
-    };
-    writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
-    writeCodexMeta('codex-rm-tui', 'codex-tui', 'vscode');
-    writeCodexMeta('codex-rm-sub', 'codex_cli_rs', { subagent: 'review' });
-    writeGrokContext('grok-audit-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-audit-term' } });
-    writeGrokContext('grok-audit-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-audit-headless' }, session_kind: 'headless' });
-    writeMuseOpen('muse-rm-host', 'paseo');
-    writeMuseOpen('muse-rm-nocli', null);
-    const agyAuditPath = (cid: string) =>
-      join(fix.home, '.gemini/antigravity-cli/brain', cid, '.system_generated/logs/transcript.jsonl');
-    writeJsonl(agyAuditPath('agy-audit-term'), [
-      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(1790000000) },
-      { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: iso(1790000001) },
-    ]);
-    writeJsonl(agyAuditPath('agy-audit-sub'), [
-      { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: iso(1790000000) },
-    ]);
-
     // Value: protects=explicit orchestration wins for all harness/owner combinations; fails_when=host or harness qualification runs before override; why_new=T5 requires the cross product; seam=none
     for (const [name, harness] of [
       ['Claude cli', { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }],
@@ -5695,11 +5653,63 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       finishEnv: { GSTACK_HOME: 'relative-root', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
       mode: 'unknown', source: 'malformed-signal' });
 
-    for (const tc of cases) {
-      const start = runHelper({ ...fix.env, ...(tc.startEnv ?? tc.finishEnv ?? {}) }, ['start', '--skill', 'extend:roadmap']);
+    function makeRunModeFixture() {
+      const fix = makeTelemetryFixture('off');
+      const customGstackHome = join(fix.home, 'custom-gstack-root');
+      mkdirSync(customGstackHome, { recursive: true });
+
+      const codexRolloutPath = (tid: string) =>
+        join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
+      const writeCodexMeta = (tid: string, originator: string, source: unknown) => {
+        writeJsonl(codexRolloutPath(tid), [
+          { timestamp: iso(1790000000), type: 'session_meta', payload: { id: tid, originator, source } },
+        ]);
+      };
+      const writeMuseOpen = (sid: string, clientName: string | null) => {
+        museLog(fix.home, sid, [
+          museRecord(1, 2, sid, 'session.opened.observed', {
+            kind: 'session_opened',
+            record: clientName !== null ? { client_info_name: clientName } : {},
+          }),
+        ]);
+      };
+      const grokSessionPath = (sid: string) =>
+        join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(process.cwd())), sid);
+      const writeGrokContext = (sid: string, context: object, summary?: object) => {
+        const dir = grokSessionPath(sid);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(context, null, 2) + '\n');
+        if (summary !== undefined) {
+          writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+        }
+      };
+      writeCodexMeta('codex-rm-term', 'codex_cli_rs', 'vscode');
+      writeCodexMeta('codex-rm-tui', 'codex-tui', 'vscode');
+      writeCodexMeta('codex-rm-sub', 'codex_cli_rs', { subagent: 'review' });
+      writeGrokContext('grok-audit-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-audit-term' } });
+      writeGrokContext('grok-audit-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-audit-headless' }, session_kind: 'headless' });
+      writeMuseOpen('muse-rm-host', 'paseo');
+      writeMuseOpen('muse-rm-nocli', null);
+      const agyAuditPath = (cid: string) =>
+        join(fix.home, '.gemini/antigravity-cli/brain', cid, '.system_generated/logs/transcript.jsonl');
+      writeJsonl(agyAuditPath('agy-audit-term'), [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: iso(1790000000) },
+        { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: iso(1790000001) },
+      ]);
+      writeJsonl(agyAuditPath('agy-audit-sub'), [
+        { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: iso(1790000000) },
+      ]);
+      return { fix, customGstackHome, codexRolloutPath, grokSessionPath };
+    }
+
+    function verifyRunMode(tc: (typeof cases)[number], { fix, customGstackHome }: ReturnType<typeof makeRunModeFixture>) {
+      const caseEnv = { ...fix.env };
+      if (tc.gstackHome === 'custom') caseEnv.GSTACK_HOME = customGstackHome;
+      if (tc.gstackHome === 'default') caseEnv.GSTACK_HOME = join(fix.home, '.gstack') + '/';
+      const start = runHelper({ ...caseEnv, ...(tc.startEnv ?? tc.finishEnv ?? {}) }, ['start', '--skill', 'extend:roadmap']);
       expect(start.status, tc.name).toBe(0);
       const finish = runHelper(
-        { ...fix.env, ...(tc.finishEnv ?? {}) },
+        { ...caseEnv, ...(tc.finishEnv ?? {}) },
         ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', ...(tc.finishArgs ?? [])],
       );
       expect(finish.status, tc.name).toBe(0);
@@ -5709,111 +5719,121 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       expect(validRow(row), tc.name).toBe(true);
     }
 
-    // Plant only synthetic credentials under the fixture HOME; the audit must never open them.
-    const credentialSentinels = join(fix.home, 'credential-sentinels');
-    mkdirSync(credentialSentinels);
-    for (const name of ['credentials.json', 'token-store.json', 'cli-auth.json']) {
-      writeFileSync(join(credentialSentinels, name), 'SYNTHETIC_CREDENTIAL_CANARY');
+    for (const tc of cases) {
+      test(tc.name, () => verifyRunMode(tc, makeRunModeFixture()), 60_000);
     }
-    const auditSid = '0c7f2e29-0000-4000-8000-000000000093';
-    writeJsonl(join(fix.home, '.claude/projects/audit', `${auditSid}.jsonl`), [
-      {
-        type: 'assistant', timestamp: iso(1790000001),
-        message: {
-          id: 'audit-assistant', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'tool_use',
-          content: [{ type: 'tool_use', id: 'audit-question', name: 'AskUserQuestion', input: { question: 'AUDIT_QUESTION_CANARY' } }],
-        },
-      },
-      {
-        type: 'user', timestamp: iso(1790000004),
-        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'audit-question', content: 'AUDIT_ANSWER_CANARY' }] },
-      },
-    ]);
 
-    // Criterion 6: Verify via Python sys.addaudithook and inspect.getsource that run_mode,
-    // head_records, the launch-surface readers, claude_user_signals, host_file_name,
-    // stage_run_files, and run_report never use network, subprocess, sqlite3, or credential paths.
-    const auditScript = [
-      'import inspect, io, json, pathlib, sys',
-      'from unittest import mock',
-      'sys.path.insert(0, sys.argv[1])',
-      'import telemetry',
-      'for fn in (telemetry.run_mode, telemetry._open_regular_log, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.antigravity_app_data_dir, telemetry.antigravity_logs, telemetry.antigravity_turns, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.antigravity_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
-      '    src = inspect.getsource(fn)',
-      '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl", "sqlite3"):',
-      '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
-      'bad = []',
-      'def hook(event, args):',
-      '    if event.startswith("socket.") or event in ("subprocess.Popen", "os.system", "sqlite3.connect"):',
-      '        bad.append((event, str(args[:1])))',
-      '    elif event in ("os.listdir", "os.scandir", "open", "os.stat"):',
-      '        target = str(args[0]) if args else ""',
-      '        if "credential-sentinels" in target:',
-      '            bad.append((event, target))',
-      'sys.addaudithook(hook)',
-      'state = pathlib.Path(sys.argv[2])',
-      'assert list(telemetry.head_records(pathlib.Path(sys.argv[3]), telemetry.codex_home_dir()))',
-      'assert isinstance(telemetry.head_json(pathlib.Path(sys.argv[4]), telemetry.grok_home_dir()), dict)',
-      'assert telemetry.claude_launch_surface() == "terminal"',
-      'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-term", "PASEO_AGENT_ID": "paseo-codex-rm"}, clear=False):',
-      '    assert telemetry.codex_launch_surface() == "terminal"',
-      '    assert telemetry.run_mode("codex", "codex", None) == ("user-directed", "terminal-session")',
-      'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-tui"}, clear=False):',
-      '    assert telemetry.codex_launch_surface() == "terminal"',
-      '    assert telemetry.run_mode("codex", "codex", None) == ("user-directed", "terminal-session")',
-      'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-sub"}, clear=False):',
-      '    assert telemetry.codex_launch_surface() == "other"',
-      '    assert telemetry.run_mode("codex", "codex", None) == ("unknown", "entrypoint-unqualified")',
-      'with mock.patch.dict(telemetry.os.environ, {"GROK_AGENT": "1", "GROK_SESSION_ID": "grok-audit-term"}, clear=False):',
-      '    assert telemetry.grok_launch_surface() == "terminal"',
-      '    assert telemetry.run_mode("grok", "grok", None) == ("user-directed", "terminal-session")',
-      'with mock.patch.dict(telemetry.os.environ, {"GROK_AGENT": "1", "GROK_SESSION_ID": "grok-audit-headless"}, clear=False):',
-      '    assert telemetry.grok_launch_surface() == "other"',
-      '    assert telemetry.run_mode("grok", "grok", None) == ("unknown", "entrypoint-unqualified")',
-      'with mock.patch.dict(telemetry.os.environ, {"GROK_SESSION_ID": "grok-audit-missing"}, clear=False):',
-      '    assert telemetry.grok_launch_surface() is None',
-      '    assert telemetry.run_mode("grok", "grok", None) == ("unknown", "entrypoint-unavailable")',
-      'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-host"}, clear=False):',
-      '    assert telemetry.muse_launch_surface() == "host-app"',
-      '    assert telemetry.run_mode("muse", "muse", None) == ("user-directed", "host-app-session")',
-      'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-nocli"}, clear=False):',
-      '    assert telemetry.muse_launch_surface() is None',
-      '    assert telemetry.run_mode("muse", "muse", None) == ("unknown", "entrypoint-unavailable")',
-      'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-term", "PASEO_AGENT_ID": "paseo-agy-audit"}, clear=False):',
-      '    assert len(telemetry.antigravity_logs("agy-audit-term")) == 1',
-      '    assert telemetry.antigravity_turns("agy-audit-term")[0][1] == "gemini-4-neon-xhigh"',
-      '    assert telemetry.antigravity_launch_surface() == "terminal"',
-      '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("user-directed", "terminal-session")',
-      'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-sub"}, clear=False):',
-      '    assert telemetry.antigravity_launch_surface() == "other"',
-      '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("unknown", "entrypoint-unqualified")',
-      'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-missing"}, clear=False):',
-      '    assert telemetry.antigravity_launch_surface() is None',
-      '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("unknown", "entrypoint-unavailable")',
-      'telemetry.run_mode("claude", "claude", None)',
-      'with mock.patch.dict(telemetry.os.environ, {}, clear=True):',
-      '    assert telemetry.run_mode("claude", "claude", "bad\\nitem") == ("unknown", "malformed-signal")',
-      'signals = telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000093", 1790000000, 1790000010)',
-      'telemetry.host_file_name(state, "My.Host_01.local")',
-      'telemetry.stage_run_files(state)',
-      'buf = io.StringIO()',
-      'old_stdout = sys.stdout',
-      'sys.stdout = buf',
-      'try:',
-      '    rc = telemetry.run_report(["--json"])',
-      'finally:',
-      '    sys.stdout = old_stdout',
-      'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
-      'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 4, "signals": signals}))',
-    ].join('\n');
-    const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend'), codexRolloutPath('codex-rm-term'), join(grokSessionPath('grok-audit-term'), 'prompt_context.json')], {
-      env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    expect([audit.status, audit.stderr]).toEqual([0, '']);
-    expect(JSON.parse(audit.stdout)).toEqual({ bad: [], rc: 0, ok: true, signals: [1, 3, 0] });
-  }, 60_000);
+    test('audit launch-surface and report helpers with a populated ledger', () => {
+      const fixture = makeRunModeFixture();
+      const { fix, codexRolloutPath, grokSessionPath } = fixture;
+      verifyRunMode(cases[0]!, fixture);
+
+      // Plant only synthetic credentials under the fixture HOME; the audit must never open them.
+      const credentialSentinels = join(fix.home, 'credential-sentinels');
+      mkdirSync(credentialSentinels);
+      for (const name of ['credentials.json', 'token-store.json', 'cli-auth.json']) {
+        writeFileSync(join(credentialSentinels, name), 'SYNTHETIC_CREDENTIAL_CANARY');
+      }
+      const auditSid = '0c7f2e29-0000-4000-8000-000000000093';
+      writeJsonl(join(fix.home, '.claude/projects/audit', `${auditSid}.jsonl`), [
+        {
+          type: 'assistant', timestamp: iso(1790000001),
+          message: {
+            id: 'audit-assistant', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'tool_use',
+            content: [{ type: 'tool_use', id: 'audit-question', name: 'AskUserQuestion', input: { question: 'AUDIT_QUESTION_CANARY' } }],
+          },
+        },
+        {
+          type: 'user', timestamp: iso(1790000004),
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'audit-question', content: 'AUDIT_ANSWER_CANARY' }] },
+        },
+      ]);
+
+      // Criterion 6: Verify via Python sys.addaudithook and inspect.getsource that run_mode,
+      // head_records, the launch-surface readers, claude_user_signals, host_file_name,
+      // stage_run_files, and run_report never use network, subprocess, sqlite3, or credential paths.
+      const auditScript = [
+        'import inspect, io, json, pathlib, sys',
+        'from unittest import mock',
+        'sys.path.insert(0, sys.argv[1])',
+        'import telemetry',
+        'for fn in (telemetry.run_mode, telemetry._open_regular_log, telemetry.head_records, telemetry.head_json, telemetry.codex_home_dir, telemetry.codex_log_store, telemetry.grok_home_dir, telemetry.muse_data_home, telemetry.muse_log_store, telemetry.antigravity_app_data_dir, telemetry.antigravity_logs, telemetry.antigravity_turns, telemetry.claude_launch_surface, telemetry.codex_launch_surface, telemetry.grok_launch_surface, telemetry.muse_launch_surface, telemetry.antigravity_launch_surface, telemetry.claude_user_signals, telemetry.host_file_name, telemetry.stage_run_files, telemetry.run_report):',
+        '    src = inspect.getsource(fn)',
+        '    for forbidden in ("socket", "subprocess", "urllib.request", "http", "ssl", "sqlite3"):',
+        '        assert forbidden not in src, f"{fn.__name__} references {forbidden}"',
+        'bad = []',
+        'def hook(event, args):',
+        '    if event.startswith("socket.") or event in ("subprocess.Popen", "os.system", "sqlite3.connect"):',
+        '        bad.append((event, str(args[:1])))',
+        '    elif event in ("os.listdir", "os.scandir", "open", "os.stat"):',
+        '        target = str(args[0]) if args else ""',
+        '        if "credential-sentinels" in target:',
+        '            bad.append((event, target))',
+        'sys.addaudithook(hook)',
+        'state = pathlib.Path(sys.argv[2])',
+        'assert list(telemetry.head_records(pathlib.Path(sys.argv[3]), telemetry.codex_home_dir()))',
+        'assert isinstance(telemetry.head_json(pathlib.Path(sys.argv[4]), telemetry.grok_home_dir()), dict)',
+        'assert telemetry.claude_launch_surface() == "terminal"',
+        'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-term", "PASEO_AGENT_ID": "paseo-codex-rm"}, clear=False):',
+        '    assert telemetry.codex_launch_surface() == "terminal"',
+        '    assert telemetry.run_mode("codex", "codex", None) == ("user-directed", "terminal-session")',
+        'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-tui"}, clear=False):',
+        '    assert telemetry.codex_launch_surface() == "terminal"',
+        '    assert telemetry.run_mode("codex", "codex", None) == ("user-directed", "terminal-session")',
+        'with mock.patch.dict(telemetry.os.environ, {"CODEX_THREAD_ID": "codex-rm-sub"}, clear=False):',
+        '    assert telemetry.codex_launch_surface() == "other"',
+        '    assert telemetry.run_mode("codex", "codex", None) == ("unknown", "entrypoint-unqualified")',
+        'with mock.patch.dict(telemetry.os.environ, {"GROK_AGENT": "1", "GROK_SESSION_ID": "grok-audit-term"}, clear=False):',
+        '    assert telemetry.grok_launch_surface() == "terminal"',
+        '    assert telemetry.run_mode("grok", "grok", None) == ("user-directed", "terminal-session")',
+        'with mock.patch.dict(telemetry.os.environ, {"GROK_AGENT": "1", "GROK_SESSION_ID": "grok-audit-headless"}, clear=False):',
+        '    assert telemetry.grok_launch_surface() == "other"',
+        '    assert telemetry.run_mode("grok", "grok", None) == ("unknown", "entrypoint-unqualified")',
+        'with mock.patch.dict(telemetry.os.environ, {"GROK_SESSION_ID": "grok-audit-missing"}, clear=False):',
+        '    assert telemetry.grok_launch_surface() is None',
+        '    assert telemetry.run_mode("grok", "grok", None) == ("unknown", "entrypoint-unavailable")',
+        'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-host"}, clear=False):',
+        '    assert telemetry.muse_launch_surface() == "host-app"',
+        '    assert telemetry.run_mode("muse", "muse", None) == ("user-directed", "host-app-session")',
+        'with mock.patch.dict(telemetry.os.environ, {"MUSE_SESSION_ID": "muse-rm-nocli"}, clear=False):',
+        '    assert telemetry.muse_launch_surface() is None',
+        '    assert telemetry.run_mode("muse", "muse", None) == ("unknown", "entrypoint-unavailable")',
+        'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-term", "PASEO_AGENT_ID": "paseo-agy-audit"}, clear=False):',
+        '    assert len(telemetry.antigravity_logs("agy-audit-term")) == 1',
+        '    assert telemetry.antigravity_turns("agy-audit-term")[0][1] == "gemini-4-neon-xhigh"',
+        '    assert telemetry.antigravity_launch_surface() == "terminal"',
+        '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("user-directed", "terminal-session")',
+        'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-sub"}, clear=False):',
+        '    assert telemetry.antigravity_launch_surface() == "other"',
+        '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("unknown", "entrypoint-unqualified")',
+        'with mock.patch.dict(telemetry.os.environ, {"ANTIGRAVITY_AGENT": "1", "ANTIGRAVITY_CONVERSATION_ID": "agy-audit-missing"}, clear=False):',
+        '    assert telemetry.antigravity_launch_surface() is None',
+        '    assert telemetry.run_mode("antigravity", "antigravity", None) == ("unknown", "entrypoint-unavailable")',
+        'telemetry.run_mode("claude", "claude", None)',
+        'with mock.patch.dict(telemetry.os.environ, {}, clear=True):',
+        '    assert telemetry.run_mode("claude", "claude", "bad\\nitem") == ("unknown", "malformed-signal")',
+        'signals = telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000093", 1790000000, 1790000010)',
+        'telemetry.host_file_name(state, "My.Host_01.local")',
+        'telemetry.stage_run_files(state)',
+        'buf = io.StringIO()',
+        'old_stdout = sys.stdout',
+        'sys.stdout = buf',
+        'try:',
+        '    rc = telemetry.run_report(["--json"])',
+        'finally:',
+        '    sys.stdout = old_stdout',
+        'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
+        'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 4, "signals": signals}))',
+      ].join('\n');
+      const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend'), codexRolloutPath('codex-rm-term'), join(grokSessionPath('grok-audit-term'), 'prompt_context.json')], {
+        env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+      expect([audit.status, audit.stderr]).toEqual([0, '']);
+      expect(JSON.parse(audit.stdout)).toEqual({ bad: [], rc: 0, ok: true, signals: [1, 3, 0] });
+    }, 60_000);
+  });
 
   test('qualified harnesses follow the shared by-hand rule and run_mode_source vocabulary', () => {
     // Value: protects=every qualified harness goes through the same by-hand rule and shared run_mode_source vocabulary; fails_when=a qualified harness diverges on terminal/host-app/orchestrated/workspace-owner/other/unavailable/override cases; why_new=Track 90B T3 shared case list; seam=none

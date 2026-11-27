@@ -11,6 +11,7 @@
 #   UPGRADE_OK <old> <new>      — checkout upgraded; hosts in SETUP_SKIPPED_HOSTS were not refreshed
 #   UPGRADE_FAILED <reason>     — upgrade failed
 # Additional lines, before the result:
+#   UPGRADE_MISMATCH offered=<v> installed=<v> channel=main — main changed since the offer
 #   SETUP_SKIPPED_HOSTS <csv>   — forwarded from setup: it left these hosts untouched
 #   MIGRATION_WARN <script> exit=<n> — forwarded from run-migrations.sh: a migration or its helper failed
 #   INSTALL_WARN ...            — forwarded from setup when install diagnostics could not be saved
@@ -70,15 +71,26 @@ restore_stash() {
   fi
 }
 
+restore_checkout() {
+  if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
+    git -C "$INSTALL_DIR" checkout "$_PREV_BRANCH" 2>/dev/null || true
+  fi
+  restore_stash
+}
+
+fail_upgrade() {
+  restore_checkout
+  _RESULT_EMITTED=1
+  echo "UPGRADE_FAILED $1"
+  exit 1
+}
+
 on_exit() {
   _ec=$?
   [ "$_ec" -eq 0 ] && return 0
   [ -n "$_RESULT_EMITTED" ] && return 0
   # Best-effort restoration: leave the worktree as if we never ran.
-  if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
-    git -C "$INSTALL_DIR" checkout "$_PREV_BRANCH" 2>/dev/null || true
-  fi
-  restore_stash
+  restore_checkout
   _RESULT_EMITTED=1
   echo "UPGRADE_FAILED stage=$_STAGE (exit $_ec)"
 }
@@ -87,6 +99,14 @@ trap on_exit EXIT
 # ─── Step 1: Save old version ─────────────────────────────────
 _STAGE="read-version"
 OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+PRE_PULL_VERSION=$OLD_VERSION
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+CHANNEL=main
+if [ -f "$SCRIPT_DIR/lib/update-channel.sh" ]; then
+  source "$SCRIPT_DIR/lib/semver.sh"
+  source "$SCRIPT_DIR/lib/update-channel.sh"
+  CHANNEL=$(update_channel "$INSTALL_DIR")
+fi
 
 # ─── Step 2: Upgrade via git ──────────────────────────────────
 _STAGE="mkdir-state"
@@ -125,6 +145,62 @@ fi
 _STAGE="fetch"
 git -C "$INSTALL_DIR" fetch origin
 
+# Both lines are read from the same cache snapshot. A one-line cache was
+# written by the main-tracking checker.
+CACHED="" CACHED_IDENTITY=""
+{
+  read -r CACHED || true
+  read -r CACHED_IDENTITY || true
+} 2>/dev/null < "$STATE_DIR/last-update-check" || true
+read -r OFFER_STATUS OFFER_LOCAL OFFER_VERSION <<< "$CACHED"
+if [ "$OFFER_STATUS" != UPGRADE_AVAILABLE ] || [ "$OFFER_LOCAL" != "$PRE_PULL_VERSION" ]; then
+  OFFER_VERSION=""
+fi
+
+RELEASE_TAG="" RELEASE_COMMIT=""
+if [ "$CHANNEL" = stable ]; then
+  _STAGE="resolve-release"
+  STABLE_IDENTITY_RE='^IDENTITY channel=stable tag=(v[^ ]+) commit=([0-9a-f]{40})$'
+  RECORDED_OFFER=0
+  if [ -n "$OFFER_VERSION" ] && [[ "$CACHED_IDENTITY" =~ $STABLE_IDENTITY_RE ]]; then
+    RELEASE_TAG=${BASH_REMATCH[1]}
+    RELEASE_COMMIT=${BASH_REMATCH[2]}
+    RELEASE_VERSION=${RELEASE_TAG#v}
+    RECORDED_OFFER=1
+  elif RELEASE=$(update_latest_release "$INSTALL_DIR" 2>/dev/null); then
+    read -r RELEASE_VERSION RELEASE_TAG RELEASE_COMMIT <<< "$RELEASE"
+  elif [ "$?" -ne 2 ]; then
+    fail_upgrade "stage=resolve-release could not list origin release tags"
+  fi
+
+  if [ -n "$RELEASE_TAG" ]; then
+    MISMATCH=""
+    CONFIRMED_COMMIT=""
+    if [ "$RECORDED_OFFER" -eq 1 ]; then
+      if CONFIRMED_COMMIT=$(update_remote_tag_commit "$INSTALL_DIR" "$RELEASE_TAG" 2>/dev/null); then
+        :
+      elif [ "$?" -ne 2 ]; then
+        fail_upgrade "stage=resolve-release could not verify origin release tag $RELEASE_TAG; retry when origin is reachable"
+      fi
+    fi
+    if [ "$RECORDED_OFFER" -eq 1 ] &&
+       [ "$CONFIRMED_COMMIT" != "$RELEASE_COMMIT" ]; then
+      MISMATCH="origin no longer confirms the offered tag commit"
+    elif [ "$(git -C "$INSTALL_DIR" cat-file -t "$RELEASE_COMMIT" 2>/dev/null || true)" != commit ]; then
+      MISMATCH="commit is missing after fetch"
+    elif ! git -C "$INSTALL_DIR" merge-base --is-ancestor "$RELEASE_COMMIT" refs/remotes/origin/main 2>/dev/null; then
+      MISMATCH="commit is outside origin/main"
+    elif [ "$(git -C "$INSTALL_DIR" show "$RELEASE_COMMIT:VERSION" 2>/dev/null | tr -d '[:space:]' || true)" != "$RELEASE_VERSION" ]; then
+      MISMATCH="commit VERSION differs from the tag"
+    elif [ "$RECORDED_OFFER" -eq 1 ] && [ "$OFFER_VERSION" != "$RELEASE_VERSION" ]; then
+      MISMATCH="offered VERSION differs from the tag"
+    fi
+    if [ -n "$MISMATCH" ]; then
+      fail_upgrade "release mismatch: $RELEASE_TAG ${RELEASE_COMMIT:0:12}: $MISMATCH. Run bin/update-check --force, then rerun the updater."
+    fi
+  fi
+fi
+
 # Switch to main if on a different branch
 if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
   _STAGE="checkout-main"
@@ -134,16 +210,16 @@ fi
 
 # Fast-forward only — if main has diverged locally, fail safely instead of destroying work
 _STAGE="pull-ff-only"
-if ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
-  # Restore previous branch if we switched
-  if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
-    git -C "$INSTALL_DIR" checkout "$_PREV_BRANCH" 2>/dev/null || true
+if [ -n "$RELEASE_TAG" ]; then
+  # Git also reports success when HEAD is already ahead of the target.
+  # Require the installed commit to be the release commit.
+  if ! git -C "$INSTALL_DIR" merge-base --is-ancestor HEAD "$RELEASE_COMMIT" ||
+     ! git -C "$INSTALL_DIR" merge --ff-only "$RELEASE_COMMIT" ||
+     [ "$(git -C "$INSTALL_DIR" rev-parse HEAD)" != "$RELEASE_COMMIT" ]; then
+    fail_upgrade "local main cannot fast-forward to release $RELEASE_TAG (ff-only failed)"
   fi
-  # Restore stashed changes (branch-checked + clears _STASHED on success)
-  restore_stash
-  _RESULT_EMITTED=1
-  echo "UPGRADE_FAILED local main has diverged from origin/main (ff-only failed)"
-  exit 1
+elif ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
+  fail_upgrade "local main has diverged from origin/main (ff-only failed)"
 fi
 
 _STAGE="setup"
@@ -156,6 +232,13 @@ _STAGE="setup"
 # reach this call site — first reliable hop is the upgrade after 15B.
 _STAGE="read-new-version"
 NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+if [ "$CHANNEL" = main ] && [ -n "$OFFER_VERSION" ] && [ "$OFFER_VERSION" != "$NEW_VERSION" ]; then
+  case "$CACHED_IDENTITY" in
+    ""|"IDENTITY channel=main "*)
+      echo "UPGRADE_MISMATCH offered=$OFFER_VERSION installed=$NEW_VERSION channel=main"
+      ;;
+  esac
+fi
 
 if [ -f "$_HOP_FROM" ]; then
   _HOP_OLD=$(tr -d '[:space:]' < "$_HOP_FROM" || true)
