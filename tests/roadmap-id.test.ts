@@ -538,6 +538,21 @@ describe('Git history ID reservation', () => {
     expect(res.status).toBe(0);
     expect(res.stdout.trim()).toMatch(WORK_ITEM_ID_RE);
   });
+
+  test('non-repository mint and migration preview still work with Git tracing enabled', () => {
+    const dir = freshDir('hist-norepo-traced');
+    const path = join(dir, 'TODOS.md');
+    const original = '## Unprocessed\n\n### [manual] Entry\n- **What:** Work.\n';
+    writeFileSync(path, original);
+    const options = { cwd: dir, env: { ...GIT_ENV, GIT_TRACE: '1' }, encoding: 'utf8' as const };
+    const mint = spawnSync(BIN, ['mint'], options);
+    expect(mint.status).toBe(0);
+    expect(mint.stdout.trim()).toMatch(WORK_ITEM_ID_RE);
+    const migrate = spawnSync(BIN, ['migrate', dir, '--dry-run'], options);
+    expect(migrate.status).toBe(0);
+    expect(migrate.stdout).toEndWith('DRY_RUN 1\n');
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
 });
 
 // ─── T3: Idempotent migrate subcommand ───────────────────────────────

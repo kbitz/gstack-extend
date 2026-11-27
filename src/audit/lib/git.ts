@@ -113,7 +113,10 @@ function buildIsolatedEnv(): NodeJS.ProcessEnv {
 }
 
 function isNotGitRepository(result: GitSpawnResult): boolean {
-  return /^fatal: not a git repository(?:[ (:]|$)/i.test(result.stderr);
+  // Git tracing can precede the fatal line. A path-qualified error refers
+  // to an invalid Git directory, rather than a search that found no repo.
+  return /^fatal: not a git repository(?:\r?$| \(or any (?:of the parent directories|parent up to mount point)\b)/m
+    .test(result.stderr);
 }
 
 export const defaultSpawn: GitSpawn = (args, cwd, options) => {

@@ -68,6 +68,26 @@ describe('createGitGateway — mocked', () => {
     expect(failure.projectToplevel()).toEqual({ kind: 'error', detail: 'fatal: dubious ownership' });
   });
 
+  test('Git discovery reads the fatal diagnostic after trace text and fails closed on an invalid Git directory', () => {
+    const traced = createGitGateway({
+      cwd: '/tmp',
+      spawn: () => ({
+        ok: false, stdout: '',
+        stderr: 'trace: startup diagnostic\nfatal: not a git repository (or any parent up to mount point /tmp)\n',
+      }),
+    });
+    expect(traced.projectToplevel()).toEqual({ kind: 'not-a-repo' });
+    expect(traced.historyWorkItemIds()).toEqual({ kind: 'not-a-repo' });
+
+    const detail = 'fatal: not a git repository: /tmp/project-gitdir';
+    const broken = createGitGateway({
+      cwd: '/tmp/project',
+      spawn: () => ({ ok: false, stdout: '', stderr: detail + '\n' }),
+    });
+    expect(broken.projectToplevel()).toEqual({ kind: 'error', detail });
+    expect(broken.historyWorkItemIds()).toEqual({ kind: 'error', detail });
+  });
+
   test('tags: splits and strips trailing newline', () => {
     const git = createGitGateway({
       cwd: '/tmp',
