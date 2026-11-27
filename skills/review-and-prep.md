@@ -402,53 +402,63 @@ A closed or merged PR requires a new work decision, not reopening automatically.
 
 For every `refresh` invocation, validate exactly one `Cause: base_moved` line, the live PR and checkout, prepared receipt and moved base before creating evidence or starting run state. A failed check prints `Refresh refused: review-and-prep-refresh/v1; reason: <cause|state|receipt|current>` and stops without changes. On reviewed code changes, unverifiable delta facts or failed delta review or gates, leave the PR draft, keep the candidate local and emit `Refresh escalated:` with `next: review-and-prep; status: stopped`. On the fast path, use Step 6 with the reference's substitutions. Run no `/review` cycle, delegated part, coverage or documentation audit, or Greptile run.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-base-move-refresh --expect 28ff5a804192aa59` before PR validation on `refresh` or exact first line `Run /review-and-prep refresh`, or on H-F resume with a `refresh--` locator or `refresh-1.md` checkpoint.
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-base-move-refresh-completion --expect f1d05c8e9352a740` before H-F refresh recovery, fast path or inline exit.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-base-move-refresh --expect b7f1ea26bcbede89` before PR validation on `refresh` or exact first line `Run /review-and-prep refresh`, or on H-F resume with a `refresh--` locator or `refresh-1.md` checkpoint.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-base-move-refresh-completion --expect 4f77f5770efb3771` before H-F refresh recovery, fast path or inline exit.
 
 Under `full-suite=external`, check **Resume entry** before review even without a PR. A resume or repeat first runs the calls document's **Resume** procedure to check the newest run state or receipt for this repository, branch and candidate. Corroborate the record by author and edit history. Existing manual, configuration, Greptile or cycle-cap holds stand until resolved. Recency alone never clears them. Reconcile a recorded cap hold even when no stop comment was confirmed. Do not start a new review after a cycle-cap stop without continuation authorization. Hold a ready PR with pending changes or unverifiable preparation. A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref resume-review-records --expect b0729b577bdd884a` before resuming or reusing an earlier preparation run when Step 1 finds a matching PR, prior run state, or external-gate checkpoint.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref resume-review-records --expect ca3cd9c590d23313` before resuming or reusing an earlier preparation run when Step 1 finds a matching PR, prior run state, or external-gate checkpoint.
 
 Read the actual CI triggers before the first push, including any relevant
-default-branch workflows for comments, reviews, and label events. Also name
-workflows that the paused comment (`review-and-prep:paused:`) or the reservation
-comment (`review-and-prep:greptile-reservation:`) would trigger. Follow the repo's existing draft
-gating. If a specific workflow would run during draft pushes or, when Greptile
-applies, its comments, name that workflow and the conflicting trigger before
-proceeding. Prepare a concrete proposed fix for the user to decide on. Do not change CI
-settings or cancel runs as a side effect. Do not promise CI suppression from
-the draft flag alone, or invent a CI prerequisite when no CI is configured.
+default-branch comment, review and label workflows and the pause
+(`review-and-prep:paused:`) and reservation (`review-and-prep:greptile-reservation:`)
+markers. Follow existing draft gating. Before proceeding, name any workflow
+triggered by draft pushes or applicable Greptile comments and propose a concrete
+fix for the user's decision. Name pause and reservation workflows too.
+Change no CI settings or runs as a side effect.
+The draft flag alone gives no suppression guarantee. A repo without CI has no CI prerequisite.
 
-Locate `/review` through the host's skill catalog and read it. Without a Skill
-tool, read and execute the installed `SKILL.md` directly. Locate its referenced
-checklist and, only when Greptile applies, its Greptile triage instructions.
-If the review skill, its required checklist, or (when Greptile applies) its
-triage instructions are unavailable, report the blocker rather than recreating
-the review from memory.
-
-Read the applicable review sections too, including specialist and adversarial
-dispatch instructions. A generated host copy may omit sections retained in its
-source installation: follow its source/reference paths and resolve those
-sections from the same installation. Do not mistake a missing section or a
-dangling step reference for a scope-based skip. If required instructions cannot
-be recovered, preparation is blocked; do not label a core-checklist-only pass
-as a complete `/review`.
-
-Locate `/ship` from the same installation the same way, but read it only for
-the gates Step 2 runs: its tests section's `gstack-pregate` command, its Test
-Coverage Audit section and its Documentation audit section. Read each when its
-gate starts. A gate whose section or command this installation lacks is
-recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.
+Find `/review` and `/ship` in the host's catalog or read their installed
+`SKILL.md` directly. Resolve `/review`'s checklist, selected specialist and
+adversarial instructions, and Greptile triage when applicable, following any
+generated copy's source references in the same install. Hold if a required
+section is unavailable. Checklist-only review earns no complete-review credit.
+Read `/ship`'s tests section for `gstack-pregate`, plus Test Coverage Audit and
+Documentation audit as their Step 2 gates start. If a section or
+command is missing, record `unavailable — <reason>`; `/ship-and-land` runs that gate.
 
 ### Evidence directory
 
 `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. The evidence root is an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise `~/scratch/review-and-prep/`, outside the work tree.
 
-Create this invocation's evidence directory — a unique branch-and-invocation subdirectory directly under the evidence root (`refresh--` reserved for H-G) — with `mkdir -p` and mode `0700` here in Step 1 (whatever the review policy and whether or not the run state is recorded), before Step 1 ends (`start` while the run state is recorded) and before Step 2's first review, probe, baseline or gate file is written; never overwrite another invocation's directory. An evidence locator is `<evidence directory name>/<file>` inside this directory (for example `inv-1/full-receipt-1.md`), resolved under the evidence root (`docs/workflow-handoffs.md#receipt-locators`). Pull request text (the body section and the receipt, paused and stopped comments) names a file in this directory only by its evidence locator, while chat output and local files keep the absolute or `~/` path. On a resume, reuse the paused or interrupted invocation's existing evidence directory from the corroborated `Full receipt:` locator (its first segment, resolved under the evidence root by the reader rule in `docs/workflow-handoffs.md#receipt-locators`; a legacy `~/` or absolute path names the directory directly), the external-gate pause's `Evidence directory:` line or the newest matching invocation directory under the evidence root (`docs/review-run-state-calls.md`, `## Resume`).
+In Step 1 create a unique branch-and-invocation directory directly under the evidence root
+with `mkdir -p` and mode `0700`, even without run state. Reserve `refresh--`
+for H-G. Create it before `start` or any review, probe, baseline or gate file.
+Preserve other invocations' directories. The evidence locator is
+`<evidence directory name>/<file>` (e.g. `inv-1/full-receipt-1.md`) under the
+evidence root (`docs/workflow-handoffs.md#receipt-locators`). PR body and
+comments use only the locator. Chat and local files use absolute or `~/` paths.
+On resume, reuse the invocation directory from the corroborated locator
+(a legacy `~/` or absolute path names the directory directly) or Step 1's resume procedure.
 
-The delegate calls directory is `<evidence root>/<branch>-delegate-calls/` (`/` in `<branch>` replaced by `-`), branch-scoped under the evidence root and outside any single invocation's `--dir`, created with `mkdir -p` and mode `0700` when missing and kept across invocations and resumes of the branch.
+Keep delegate calls in `<evidence root>/<branch>-delegate-calls/` outside each
+invocation's `--dir`. Replace branch slashes with hyphens and create the directory
+with `mkdir -p` and mode `0700`. Reuse it across invocations and resumes.
 
-While the run state is recorded, this invocation's evidence directory is `--dir`, and every `--evidence`, `--pregate-record`, `--section` and `--delegate-file` path is relative to it and resolves inside it.
+While recording, the invocation evidence directory is `--dir`. Each `--evidence`,
+`--pregate-record`, `--section` and `--delegate-file` path must resolve inside it
+and be relative to it.
+
+### Check finding identity capability before start
+
+While recording, probe `"<extend-root>/bin/review-state" build --help`
+once per invocation before `build start`, including for a continuation. Use the
+flags only when help lists `--finding-identity-file`, `--anchor-commit`,
+`--prior-state-file` and `--prior-state-sha256`. Otherwise omit all four flags
+and write `Finding identity: unavailable (helper-lacks-flag; helper <output of bin/review-state --version>; fix: run /gstack-extend-upgrade, then rerun /review-and-prep)`
+in the full receipt.
+
+For continuations with these flags, apply Step 1's resume procedure to import prior findings before start.
 
 ### Establish the approved implementation scope
 
@@ -634,8 +644,9 @@ Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-policy-valu
   run `begin` and `end`, pass and correction metrics records in **Workflow
   metrics (optional, local)**, and every run-state record goes through
   `bin/review-state build` as the calls document lists, never a hand-written
-  request file. It changes no finding, gate, readiness or handoff line (the full
-  receipt gains only the run-state lines that document names). Capability check:
+  request file. It changes no finding disposition, gate, readiness or handoff
+  line. The full receipt carries the run-state lines from the calls document and
+  the advisory finding identity diagnostics described below. Capability check:
   `grep -F 'run-state=record' "<installed skill dir>/SKILL.md"`.
 - A policy never waives a gate or changes its bound, with one exception —
   `doc-audit-gap=auto`'s single extra documentation audit attempt per review
@@ -687,6 +698,20 @@ Under the light default:
   `Review default: standard (<reason>)` in the receipt, with each cycle's scope.
 
 ## 2. Review and verify locally
+
+### Record advisory finding identities
+
+With finding identity enabled, freeze each local candidate before dispatch per
+**Scope a re-review to its delta**, and use the reviewed head for Greptile.
+Create an empty `identity-<pass_id>.txt` in `--dir` if missing and pass it as
+`--finding-identity-file` with each attempt.
+Identity and prior-state input problems are warnings, so the calls document's
+stop-recording refusal rule does not apply to them. `Unresolved:` guides repairs.
+
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-finding-identity --expect a119fdd0ef0e2a63` before recording the first attempt with findings in each pass when finding identity is available.
+
+If the reference is unavailable, omit identity flags and add
+`Finding identity: unavailable (reference-unavailable)` to the full receipt.
 
 ### Merge the latest base before review
 
@@ -1156,7 +1181,7 @@ shapes the prompt below, so the continuation starts in a fresh session.
    Request no Greptile review and do not mark ready.
 Before fetching, save the cap hold at that HEAD using `checkpoint stop` while recording. On fetch failure, retain the compact `<!-- review-and-prep:stopped:<full-sha> -->` from **Inline outputs** with `Full-review evidence: unavailable` and no continuation prompt. Look up the marker before posting or retrying. Reuse one corroborated match; post only if absent. If posting fails or history is ambiguous, keep `STOPPED — review cycle cap` in the draft body and receipt, then take the reference failure exit. Step 1 reconciles the hold first. An ordinary stop uses H-E only with authorization and allowance, finishing `--outcome blocked` with no `STATUS:` line.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-cap --expect 76384b9e98e8e6bd` before saving a cycle-cap receipt when `/review` stops at its three-cycle cap.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-cycle-cap --expect 1fd86b25fc5dff93` before saving a cycle-cap receipt when `/review` stops at its three-cycle cap.
 
 On `/review-and-prep continue`, refresh Step 1's live state. A later pause or
 receipt supersedes the old continuation prompt: hold it and use the current

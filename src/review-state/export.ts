@@ -401,6 +401,7 @@ export type LoadedStoredState =
       ok: true;
       state: ReviewRunState;
       statePath: string;
+      stateBytes: Buffer;
       realDir: string;
       realTop: string;
       actualBranch: string;
@@ -437,9 +438,9 @@ export function loadStoredState(
   const actualRepo = realpathSync(resolve(cwd, commonDirRes.stdout));
   const actualBranch = revRefRes.ok ? revRefRes.stdout : '';
 
-  let rawBytes: string;
+  let stateBytes: Buffer;
   try {
-    rawBytes = readFileSync(statePath, 'utf8');
+    stateBytes = readFileSync(statePath);
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === 'ENOENT') {
@@ -450,7 +451,7 @@ export function loadStoredState(
 
   let parsedState: unknown;
   try {
-    parsedState = JSON.parse(rawBytes);
+    parsedState = JSON.parse(stateBytes.toString('utf8'));
   } catch (err) {
     return fail('corrupt', { path: truncate80(statePath), message: truncate80((err as Error).message) }, statePath);
   }
@@ -489,7 +490,7 @@ export function loadStoredState(
     );
   }
 
-  return { ok: true, state: storedState, statePath, realDir, realTop, actualBranch, gitEnv, helperVersion };
+  return { ok: true, state: storedState, statePath, stateBytes, realDir, realTop, actualBranch, gitEnv, helperVersion };
 }
 
 export type ExportCommandResult =

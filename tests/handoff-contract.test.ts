@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
 import { composeGreptileValue, evalGrammar, FIELD_FMT, getActiveBinding, makeCtx, renderBlock, renderComment, renderDelegationPolicyLine, renderDisclosures, renderFinal, renderStageHandoffLine } from '../src/review-state/render.ts';
-import { validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
+import { ENUMS, validateStoredState, type ReviewRunState } from '../src/review-state/state.ts';
 import { referenceText } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -102,6 +102,7 @@ function grammar(kind: string): Spec[] {
 
 interface CaseDef {
   text: string;
+  stopReceipt?: string;
   edits?: Array<[string, string]>;
   wrap?: 'crlf' | 'fence' | 'quote';
   prefix?: string;
@@ -835,6 +836,9 @@ function run(code: string, override?: Partial<CaseDef>): Verdict {
   const def = { ...FIX.cases[code], ...override } as CaseDef;
   const family = code[0];
   const live = withVars({ ...FIX.defaults.live[family], ...(def.live ?? {}) });
+  if (def.stopReceipt && !Object.hasOwn(def.live ?? {}, 'reviewedDeltaBaseEvidence')) {
+    live.reviewedDeltaBaseEvidence = parseEvidenceRow(fixtureText({ text: def.stopReceipt }));
+  }
   for (const k of def.unset ?? []) delete live[k];
   const prov = def.provenance === undefined ? FIX.defaults.provenance : def.provenance;
   return classify(fixtureText(def), prov, live);
@@ -1366,6 +1370,33 @@ function parseEvidenceRow(receipt: string): Record<string, unknown> | null {
 function guardFromReceipt(receipt: string): Verdict {
   return run('E-CONTINUE', { live: { reviewedDeltaBaseEvidence: parseEvidenceRow(receipt) } });
 }
+
+describe('advisory finding observations in stopped receipts', () => {
+  test('defines the helper classes in precedence order', () => {
+    const docClasses = [...section('### Finding identity and cycle counts').matchAll(/^\| `([a-z-]+)` \|/gm)]
+      .map((match) => match[1]);
+    expect(docClasses).toEqual([...ENUMS.findingClass]);
+  });
+
+  test('cycle rows and legacy absence leave H-E and a deduplicated stop unchanged', () => {
+    const current = fixtureText({ text: 'e-stopped-receipt.txt' });
+    const legacy = current.replace(/^Finding cycle: .*\n/gm, '');
+    const samples = fixtureText({ text: 'e-finding-cycle-observations.txt' });
+    const rows = samples.trimEnd().split('\n').map((line) =>
+      Object.fromEntries(line.slice('Finding cycle: '.length).split('; ').map((pair) => pair.split('='))),
+    );
+    expect(rows.map((row) => [row.new, row.repeated_premise, row.repeated_premise_pairs, row.prior])).toEqual([
+      ['0', '0', '0', 'none'],
+      ['4', '4', '1', 'partial'],
+      ['4', '4', '4', 'partial'],
+      ['0', '0', '0', 'unavailable:not-supplied'],
+    ]);
+    expect(guardFromReceipt(legacy).outcome).toBe(FULL);
+    expect(guardFromReceipt(current)).toEqual(guardFromReceipt(legacy));
+    expect(guardFromReceipt(legacy + samples)).toEqual(guardFromReceipt(legacy));
+    expect(run('E-DEDUP-STOP').outcome).toBe(FULL);
+  });
+});
 
 interface Cycle1 {
   continuation: boolean;
@@ -3468,8 +3499,10 @@ describe('(Q) review-state render byte compatibility', () => {
     expect(renderedCompact.split('\n').map((l) => (l.startsWith('Delegated part: ') ? l.replace('cache_read_input_tokens=0', 'cache_read_input_tokens=unknown') : l))).toEqual(fixtureCompactLines);
 
     const renderedStopped = renderComment(stoppedState, { fullReceipt: FULL_REF }, DIR, HOME);
-    expect(renderedStopped.split('\n').slice(2, 8)).toEqual(readFileSync(join(FIXTURES, 'e-stopped-receipt.txt'), 'utf8').trimEnd().split('\n').slice(4));
-    expect(guardFromReceipt(renderedStopped)).toEqual(guardFromReceipt(readFileSync(join(FIXTURES, 'e-stopped-receipt.txt'), 'utf8')));
+    const stoppedFixture = fixtureText({ text: 'e-stopped-receipt.txt' });
+    const stoppedFields = stoppedFixture.trimEnd().split('\n').slice(4);
+    expect(renderedStopped.split('\n').slice(2, 2 + stoppedFields.length)).toEqual(stoppedFields);
+    expect(guardFromReceipt(renderedStopped)).toEqual(guardFromReceipt(stoppedFixture));
 
     for (const [label, rendered, live, wantHandoff, wantOutcome] of [
       ['H-B', renderFinal(preparedState, { commentUrl: COMMENT_URL }, DIR), withVars(FIX.defaults.live.B), 'H-B', TRUSTED],

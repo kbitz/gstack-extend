@@ -7,17 +7,20 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { spawnSync as spawnWithFileOutput } from './helpers/child-stdio.ts';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
+import { reviewStateFixtureCliPath } from './helpers/review-state-fixture-cli.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, coreText, referenceText, skillSection } from './helpers/skill-protocols.ts';
 import { FALLBACK_REASONS, PART_KEYS, RECEIPT_KEYS, SETTLED_RULE } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, BUILT_KEYS, GATE_FLAGS } from '../src/review-state/build.ts';
 import { fullReviewRecordHelp } from '../src/review-state/fence.ts';
-import { PART_RE } from '../src/review-state/state.ts';
+import { ENUMS, PART_RE } from '../src/review-state/state.ts';
 import { EXEMPTIONS } from '../src/upstream-check/cli.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -39,6 +42,7 @@ const REF_BEHAVIOR_REPAIRS = referenceText('review-and-prep', 'conditional-behav
 const REF_REPAIR_GAPS = referenceText('review-and-prep', 'conditional-repair-and-gaps');
 const REF_CYCLE_BASELINE = referenceText('review-and-prep', 'conditional-cycle-baseline');
 const REF_CYCLE_CAP = referenceText('review-and-prep', 'conditional-cycle-cap');
+const REF_FINDING_IDENTITY = referenceText('review-and-prep', 'conditional-finding-identity');
 const REF_POST_AUDIT_CLASS = referenceText('review-and-prep', 'conditional-post-audit-classification');
 const REF_POST_AUDIT_REUSE = referenceText('review-and-prep', 'conditional-post-audit-reuse');
 const REF_POST_AUDIT_REAUDIT = referenceText('review-and-prep', 'conditional-post-audit-reaudit');
@@ -49,6 +53,72 @@ const REF_BASE_MOVE_REFRESH = [
   referenceText('review-and-prep', 'conditional-base-move-refresh'),
   referenceText('review-and-prep', 'conditional-base-move-refresh-completion'),
 ].join('\n');
+
+describe('finding identity producer', () => {
+  test('probes before start and uses the pinned reference as a per-pass advisory read', () => {
+    const prep = coreText('review-and-prep');
+    const capability = skillSection(prep, '### Check finding identity capability before start');
+    const recording = skillSection(prep, '### Record advisory finding identities');
+    const resume = referenceText('review-and-prep', 'resume-review-records');
+    const digest = createHash('sha256').update(REF_FINDING_IDENTITY, 'utf8').digest('hex').slice(0, 16);
+    expect(capability).toContain('once per invocation before `build start`, including for a continuation');
+    for (const flag of ['--finding-identity-file', '--anchor-commit', '--prior-state-file', '--prior-state-sha256']) {
+      expect(capability).toContain(`\`${flag}\``);
+    }
+    expect(capability).toContain('Finding identity: unavailable (helper-lacks-flag; helper <output of bin/review-state --version>; fix: run /gstack-extend-upgrade, then rerun /review-and-prep)');
+    expect(capability).toContain('resume procedure to import prior findings before start');
+    expect(resume).toContain('( set -C; cat -- "$STOPPED_STATE" > "$PRIOR_STATE_COPY" )');
+    expect(recording).toContain('Create an empty `identity-<pass_id>.txt`');
+    expect(recording).toContain(`--ref conditional-finding-identity --expect ${digest}\` before recording the first attempt with findings in each pass`);
+    const exception = "Identity and prior-state input problems are warnings, so the calls document's stop-recording refusal rule does not apply to them.";
+    for (const source of [recording, REF_FINDING_IDENTITY]) {
+      expect(source.replace(/\s+/g, ' ')).toContain(exception);
+    }
+    expect(REF_FINDING_IDENTITY).toContain('`Finding identity: unavailable (<reason>)`');
+    expect(REF_BASE_MOVE_REFRESH).toContain('run **Check finding identity capability before start**, then use');
+    expect(REF_BASE_MOVE_REFRESH).toContain('Use **Record advisory finding identities** with `S` as the frozen anchor commit.');
+    const classes = [...REF_FINDING_IDENTITY.matchAll(/^\| `([a-z-]+)` \|/gm)].map((match) => match[1]);
+    expect(classes).toEqual([...ENUMS.findingClass]);
+  });
+
+  test('runs the reference example and observes a carried finding in the second cycle', () => {
+    const example = extractFences(skillSection(REF_FINDING_IDENTITY, '## Two cycles with one carried finding'))[0];
+    expect(example?.lang).toBe('bash');
+    const temp = makeBaseTmp('finding-identity-example-');
+    try {
+      const cwd = makeEmptyRepo(temp);
+      writeFileSync(join(cwd, 'example.txt'), 'validate each request\n');
+      const launcher = join(temp, 'review-state');
+      const versionPath = join(temp, 'fixture-version');
+      writeFileSync(versionPath, '1.0.0\n');
+      writeFileSync(launcher, [
+        '#!/bin/sh',
+        'exec "$REVIEW_STATE_FIXTURE_BUN" --no-env-file --no-install --config=/dev/null "$REVIEW_STATE_FIXTURE_CLI" "$REVIEW_STATE_FIXTURE_VERSION" "$@"',
+        '',
+      ].join('\n'), { mode: 0o700 });
+      const env = {
+        ...GIT_ENV,
+        TMPDIR: temp,
+        REVIEW_STATE: launcher,
+        REVIEW_STATE_FIXTURE_BUN: process.execPath,
+        REVIEW_STATE_FIXTURE_CLI: reviewStateFixtureCliPath,
+        REVIEW_STATE_FIXTURE_VERSION: versionPath,
+      };
+      for (const args of [['add', '--', 'example.txt'], ['commit', '--quiet', '-m', 'example']]) {
+        const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+        expect(result.status, result.stderr).toBe(0);
+      }
+      const result = spawnWithFileOutput('bash', ['-c', example!.body], { cwd, env, encoding: 'utf8', timeout: 15_000 });
+      expect(result.status, result.stderr).toBe(0);
+      const show = JSON.parse(result.stdout);
+      expect(show.finding_cycles).toHaveLength(2);
+      expect(show.finding_cycles[0]).toMatchObject({ cycle: 1, new: 1, carried: 0, observed: 'complete' });
+      expect(show.finding_cycles[1]).toMatchObject({ cycle: 2, new: 0, carried: 1, observed: 'complete' });
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+});
 
 const REF_BY_HEADING: Record<string, string[]> = {
   '### Workflow metrics (optional, local)': [REF_WORKFLOW_METRICS],

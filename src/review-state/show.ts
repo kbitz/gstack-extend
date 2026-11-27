@@ -1,3 +1,4 @@
+import { findingCycles, findingPrior, summarizePrior, type FindingCycle } from './finding-cycles.ts';
 import { readdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { loadStoredState } from './export.ts';
@@ -51,7 +52,12 @@ export type ReviewStateShow = {
   };
   plan: ReviewRunState['plan'];
   policy: ReviewRunState['policy'];
-  continuation: ReviewRunState['continuation'];
+  continuation: Pick<ReviewRunState['continuation'], 'prior_stops' | 'max' | 'continues'> & {
+    prior_findings: ReturnType<typeof summarizePrior>;
+  };
+  finding_cycles: FindingCycle[];
+  finding_prior: 'none' | 'imported' | 'partial' | 'unavailable';
+  finding_prior_reason: string | null;
   segments: {
     segment: number;
     started_at: string;
@@ -272,6 +278,8 @@ export function executeShow(
     return 0;
   });
 
+  const { prior_stops, max, continues, prior_findings } = state.continuation;
+  const [priorStatus, priorReason] = findingPrior(state).split(':') as [ReviewStateShow['finding_prior'], string?];
   const showDoc: ReviewStateShow = {
     schema: SHOW_SCHEMA,
     state_path: statePath,
@@ -290,7 +298,10 @@ export function executeShow(
     },
     plan: state.plan,
     policy: state.policy,
-    continuation: state.continuation,
+    continuation: { prior_stops, max, continues, prior_findings: summarizePrior(prior_findings) },
+    finding_cycles: findingCycles(state),
+    finding_prior: priorStatus,
+    finding_prior_reason: priorReason ?? null,
     segments,
     checkpoints,
     last_checkpoint: lastCheckpoint,

@@ -42,6 +42,11 @@ Recency alone never clears them. Corroborate the record by author and edit histo
 `/pair-review` are expected on top. Its restrictions (pending user tests,
 postponed Greptile) hold even when unconfirmed.
 
+On resume, reuse the paused or interrupted invocation's directory from
+the corroborated `Full receipt:` locator, the external-gate pause's
+`Evidence directory:` line or the newest matching invocation directory under the
+evidence root (the calls document's **Resume** procedure).
+
 Handle a refresh's H-F checkpoint under that reference before choosing an
 ordinary review. For an ordinary invocation on a draft, reuse a prepared
 receipt only if its head, tree and base match the checkout and verified base tip. If that
@@ -58,5 +63,25 @@ HEAD/base alone do not qualify. If required evidence cannot be validated, report
 incomplete preparation and withhold the success handoff while leaving it ready.
 Otherwise stop under the draft-once rule and explain that further preparation
 requires a draft PR.
+
+### Import prior finding observations before continuation start
+
+For a continuation with the flags available, use the newest corroborated
+stopped comment whose `Stopped at:` equals `--continues`. Resolve its
+`Full receipt:` locator under the evidence root and check the full receipt's
+SHA-256 against the comment before using its `Run state digest:` line. From that
+same stopped evidence directory, copy `review-run-state.json` into this run's
+directory as `prior-run-state.json`. Use validated paths as data, require a
+readable regular non-symlink source, and copy with exclusive creation:
+`( set -C; cat -- "$STOPPED_STATE" > "$PRIOR_STATE_COPY" )`. If the target exists,
+reuse it only if it is a regular non-symlink file with identical bytes.
+Pass `--prior-state-file prior-run-state.json` and `--prior-state-sha256` with
+the 64-hex SHA-256 from `Run state digest: run=<run_id>; sha256=<sha256>`.
+If the verified full receipt has no such line (a legacy stop), pass only
+`--prior-state-file`. Omit the flags if the locator, verification or copy is
+unavailable or the digest line is ambiguous or malformed. A copy of a stopped
+state is advisory evidence. The helper checks its binding, digest and state
+shape and records the reason if it cannot import it. The stop and claim checks
+still apply before any review starts.
 
 <!-- end of skills/references/review-and-prep/resume-review-records.md -->

@@ -1872,6 +1872,7 @@ Release note: This fenced copy is not a disclosure.
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
 | `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`. Each recorded gap has one `Test gap recorded:` line with its upstream severity unchanged and its intake record in `todos=`. For readiness, a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
 | `blocking:` status and `Finding blocking:` and `Finding not blocking:` lines | receipt-present | published in the full receipt under `blocking=shown`, one line per decided finding with its attribution; a non-blocking finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
+| `Finding cycle:`, `Finding identity: unavailable` and `Run state digest:` lines | receipt-present | advisory counts in the stopped comment and full receipt; the downgrade or compatibility diagnostic, when applicable, and the stopped state digest live in the full receipt. See [Finding identity and cycle counts](#finding-identity-and-cycle-counts). |
 | `settled:` status and `Finding settled:` lines | receipt-present | published in the full receipt when settled context is built or checked, one `Finding settled:` line per finding that only contests a settled plan decision or a never-flag rule in `.gstack/review-rules.md`; a safety-class finding is never recorded as settled, a settled finding is not listed under `Unresolved:`, and the lines never authorize a stage or merge |
 | `delegation:` status and `Delegated part:` lines | receipt-present | published in the receipt under `delegate=<part>`, one `Delegated part:` line per delegated part for each review cycle that ran it, in cycle order, with its provider label, model, outcome, fallback reason, wall time, token counts, finding count and call ID (a part's calls are its distinct `call=` values, its findings are the sum of `findings=` over those distinct calls, and a reader that keeps only a part's last line reads its latest cycle); the configuration's path never appears, and the lines never authorize a stage or merge (`B-DELEGATED-HEAD`) |
 | `Review arm:` and `Folded checklist:` lines | receipt-present | published in the receipt under `specialists=fold`: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per checklist the main pass read with its name, file path under the gstack root, SHA-256 and finding count; no local path outside the gstack root appears, and the lines never authorize a stage or merge (`B-FOLDED-HEAD`) |
@@ -1888,6 +1889,100 @@ Release note: This fenced copy is not a disclosure.
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.
+
+### Finding identity and cycle counts
+
+On a recorded stop with recorded passes, the stopped comment and full receipt
+include `Finding cycle:` lines after `Continuation:`. See the
+[stopped-receipt fixture](../tests/fixtures/handoffs/e-stopped-receipt.txt).
+
+```text
+Finding cycle: run=<n>; cycle=<c|greptile>; coverage=<full|delta|mixed>; observed=<complete|partial>; new=<n>; carried=<n>; repeated_premise=<n>; repeated_premise_pairs=<n>; unkeyed=<n>; prior=<none|imported|partial|unavailable:<reason>>
+```
+
+The `run` ordinal is the number of earlier distinct stops plus one. The
+`run_id` identifies the invocation. Each line covers one local cycle or one
+Greptile pass, ordered by first pass start. `coverage` is the common scope of
+the passes or `mixed` when full and delta passes share the line. `observed`
+is `partial` when a pass is still open or a required voice has neither a
+selected attempt nor a `not_applicable` result. Only selected attempts
+contribute, and the counts describe findings as raised before adjudication.
+An absent line means an older producer, inline output without run state or
+a run with no recorded passes. A line with zero counts is an observation.
+
+Within a line, reports of the same `finding_id` count once using its first
+keyed report in that line. Identical keys across selected reports also count
+once. The earlier set is the IDs and keys from earlier lines of this run, plus
+keys imported from previous runs. A keyed observation
+is `carried` when its key or its run-local ID occurs in the earlier set. A
+re-raised defect with an edited anchor can therefore still be carried. Other
+keyed observations are `new`. A finding with no keyed report is `unkeyed`.
+`new + carried + unkeyed` gives the distinct findings raised. `repeated_premise`
+is the subset of `new` whose path and `finding_class` match an earlier key's
+pair. `repeated_premise_pairs` counts the distinct earlier pairs they hit.
+
+Read the trend in `new` alongside `repeated_premise / repeated_premise_pairs`.
+Four new findings on one earlier pair give `4 / 1`, while four new findings on
+four earlier pairs give `4 / 4`. The ratio is undefined at zero pairs. When
+`prior` is `partial` or `unavailable`, or an earlier line has `observed=partial`
+or `unkeyed>0`, `carried` is a lower bound and `new` an upper bound for keyed
+observations. The repeated-premise counts and ratio then have no directional
+guarantee. These counts are advisory. `Unresolved:` remains the repair basis.
+
+`bin/review-state show` reports the same fields in `finding_cycles` and
+exposes `finding_prior` and `finding_prior_reason`. `prior=none` denotes an
+initial run. `imported` indicates complete prior finding evidence and
+`partial` indicates a partial history, a legacy stop without a digest or a
+bounded import. `unavailable:<reason>` uses this closed set: `not-supplied`,
+`corrupt`, `newer-schema`, `not-stopped`, `head-mismatch`, `binding-mismatch`,
+`digest-mismatch`, `unusable-file` and `not-recorded`. A copy is not supplied
+when no matching stopped comment or usable locator exists, the evidence is on
+another host, verification fails, or the source cannot safely be copied.
+Legacy continuations without an import field report `not-recorded`.
+
+`Finding identity: unavailable (<reason>)` is written by the skill in the
+full-receipt sections if the helper reports downgraded identity inputs or the
+capability or reference is unavailable. A recorded stopped full receipt has
+`Run state digest: run=<run_id>; sha256=<sha256>` for the final state bytes. A
+continuation can import those findings by copying the state from the stopped
+evidence directory and checking the digest in the verified full receipt.
+Missing provenance leaves a legacy import partial. The digest and import
+affect advisory counts only. Consumers can read the counts from the comment.
+
+| Identifier | Where it is used |
+|---|---|
+| `finding_id` | Run-local identity assigned by the parent, shown in `Unresolved:`. |
+| `path:line:category` | Receipt fingerprint used by `Finding blocking:` and `Test gap recorded:`. |
+| `fk1:` key | Run state only. SHA-256 of `fk1`, canonical path, normalized anchor and `finding_class`, separated by NUL, truncated to the first 16 lowercase hex digits after `fk1:`. A changed derivation uses a new prefix. |
+| `finding_class` and upstream `category` | The class is the closed tag below. The category is the reviewer's source classification and stays in the receipt fingerprint. |
+
+The helper reads the cited whole line from the frozen candidate's Git blob as
+strict UTF-8. It splits on LF, removes one trailing CR, collapses ASCII space
+and tab runs and trims ASCII space. Other Unicode spaces, including NBSP,
+stay literal. Only unique, nonempty normalized lines can be keyed. The cited
+line number and content are absent from the stored identity. Moving the line
+keeps the key, while editing the normalized line or reclassifying the finding
+can change it. Different classes on one line give different keys. In one
+attempt, a second same-class finding on the same line is class-only. A later
+replacement defect of the same class on an unchanged unique line can inherit
+the key and count as `carried`.
+
+The first applicable `finding_class` in this list wins. A compatible addition
+can extend the set. Removing or renaming a class is a breaking change.
+
+| Finding class | Meaning |
+|---|---|
+| `safety` | Data loss, trust-boundary bypass, uncapped spend or credential exposure under the [safety-class rule](../skills/references/review-and-prep/conditional-repair-and-gaps.md#from-block-readiness-only-on-shown-findings). |
+| `concurrency` | Race, locking, ordering, retry or replay. |
+| `contract` | Disagreement with a documented interface, schema or handoff. |
+| `validation` | Missing or wrong input check, refusal or error path. |
+| `scope` | Unmet approved scope or behavior added beyond it. |
+| `test-gap` | Missing or weak tests for existing behavior. |
+| `docs` | Documentation or prose accuracy, drift or clarity. |
+| `performance` | Cost, latency or resource use. |
+| `maintainability` | Duplication, structure, naming or dead code. |
+| `correctness` | Wrong behavior that no earlier class explains. |
+| `other` | No other class applies. |
 
 ### Receipt layout and kept marker set
 
@@ -1943,7 +2038,7 @@ SHA-256; an unreadable file or a hash mismatch makes those lines unavailable.
 |---|---|---|
 | `<!-- review-and-prep:receipt:<full-sha> -->` | compact receipt comment | H-B callers, `/ship-and-land`, `/pair-review` |
 | `<!-- review-and-prep:paused:<full-sha> -->`, `Status:`, `Prepared HEAD:`, `Review policy:`, `Greptile:`, every `Delegated part:` line, `Unresolved:`, `reviewRestrictionResolved: true` when applicable, `Resume with /review-and-prep resume; do not run /ship on this draft.`, and `Full receipt:` | paused comment | H-C callers, `/pair-review`, `/ship-and-land`, `/review-and-prep resume` |
-| `<!-- review-and-prep:stopped:<full-sha> -->`, `Status:`, the five stopped labels (`Stopped at:`, `Delta base:`, `Review policy:`, `Review policy source:`, `Full-review evidence:`), `Unresolved:`, `Continuation:`, every `Delegated part:` line, its one `Skipped pregate lanes:` or `Ship gates:` line, `reviewRestrictionResolved: true` when applicable, and `Full receipt:` | stopped comment | H-E callers, `/review-and-prep continue`, `/ship-and-land`, `/pair-review`, release script capped path |
+| `<!-- review-and-prep:stopped:<full-sha> -->`, `Status:`, the five stopped labels (`Stopped at:`, `Delta base:`, `Review policy:`, `Review policy source:`, `Full-review evidence:`), `Unresolved:`, `Continuation:`, every `Delegated part:` line, its one `Skipped pregate lanes:` or `Ship gates:` line, `reviewRestrictionResolved: true` when applicable, and `Full receipt:`. Recorded stops may also carry advisory `Finding cycle:` lines. | stopped comment | H-E callers, `/review-and-prep continue`, `/ship-and-land`, `/pair-review`, release script capped path |
 | `<!-- review-and-prep:continuation:<stop-sha> -->`, `<!-- review-and-prep:greptile:<full-sha> -->`, and `<!-- review-and-prep:greptile-reservation:<full-sha> -->` | unchanged dedicated comments | H-E continuation guard, `/review-and-prep` Greptile steps |
 | Dedicated full-review evidence comment (no marker; H-E repair-only `source=`) | unchanged dedicated comment | H-E repair-only continuation guard |
 | `## Review and prep` heading and status line (`prepared`, `PAUSED — manual testing required`, `STOPPED — review cycle cap`, `BLOCKED — provider failures`) | PR body | `/pair-review`'s detection fence, `B-BODY-PAUSED` |

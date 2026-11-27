@@ -96,8 +96,9 @@ export const SKILL_BUDGETS: Record<ExpectedSetupSkill, SkillBudgetEntry> = {
   },
   'review-and-prep': {
     coreBytes: 184_320,
-    // Successful first cycle in a repo without Greptile, metrics capture active,
-    // with the selected Claude Code outside review on Codex.
+    // Clean first cycle in a repo without Greptile, with metrics capture and
+    // the selected Claude Code outside review on Codex. No findings to record,
+    // so the finding identity reference is not read.
     defaultByHandRefs: [
       'conditional-workflow-metrics',
       'conditional-outside-review',
