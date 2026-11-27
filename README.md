@@ -133,7 +133,7 @@ The [stage-handoff contract](docs/workflow-handoffs.md) specifies each handoff a
 Both wrappers support [reviewed secret-scanner dispositions](docs/secret-dispositions.md):
 user-approved, committed exact-line exceptions for MEDIUM false positives, with
 the raw pregate failure retained. HIGH findings remain blocking.
-Preparation also runs `/ship`'s pregate, coverage audit and documentation audit
+Ordinary preparation also runs `/ship`'s pregate, coverage audit and documentation audit
 on the head it hands off. For a code PR (not the prose-only profile) whose
 prepared head is still the PR head, with an unmoved base and reusable full
 pregate and test evidence, `/ship-and-land` takes a release-only path: it reuses
@@ -154,6 +154,14 @@ and Red Team run in parallel when needed. Use `/ship-and-land --reviewed` to
 explicitly accept prior code review and coverage audit outside a marked
 preparation handoff. Test runs, QA probes, CI, required manual testing and merge
 approval retain their own gates.
+
+If the target base moves after your prepared PR is marked ready, open a fresh
+session in the same checkout and send `Run /review-and-prep refresh` followed by
+`Cause: base_moved` on its own line. With a verified receipt and an eligible
+delta, refresh reruns the final gate and hands the remaining coverage and
+documentation audits to `/ship-and-land`. If refresh escalates, run ordinary
+`/review-and-prep` on the same draft PR. See the
+[base-move refresh contract](docs/workflow-handoffs.md#grammar-h-g-base-move-refresh).
 
 Use `/project-spec` once at inception or to organize an existing project, and
 again when deliberately changing its goals. It produces `docs/SPEC.md` and

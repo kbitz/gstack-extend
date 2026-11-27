@@ -1550,8 +1550,8 @@ A fresh refresh requires confirmed live readiness and a verifiable full receipt.
 A draft can resume an already validated refresh through H-F.
 The `Refresh:` line is receipt-present. Escalation and refusal lines are exit
 output. H-G lines grant no stage or merge authorization.
-A refusal uses the existing `/review-and-prep` BLOCKED or NEEDS_CONTEXT stage-line
-row (`next: none; status: needs-context`).
+A refusal uses the NEEDS_CONTEXT stage line (`next: none; status: needs-context`).
+A blocked refresh uses the BLOCKED stage line (`next: none; status: blocked`).
 
 #### Invocation
 
@@ -1605,6 +1605,7 @@ row (`next: none; status: needs-context`).
 4. On an escalation (`Refresh escalated:`), run an ordinary full `/review-and-prep` on the same draft PR in the same workspace. The latest candidate stays local. A previous draft push may already exist if the base moved again.
 5. On a refusal (`Refresh refused:`), show the message to the user, because nothing changed.
 6. At an external-gate pause, follow H-F; resuming with `/review-and-prep resume` continues the refresh from its evidence directory.
+7. On BLOCKED, stop and show the reported PR and checkout state to the user.
 
 The escalation and the cycle-cap stop share a stage line. Use the preceding
 `Refresh escalated:` line or H-E fence to choose the next invocation.
