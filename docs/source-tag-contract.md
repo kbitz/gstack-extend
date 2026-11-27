@@ -350,10 +350,12 @@ When any `MISSING_ID` finding is present, the section also includes the hint:
 
 **History scope:** `mint` and `migrate` scan original file contents and paths of commits reachable from any local ref in the current clone. This includes the enclosing repository when a project is nested and IDs recorded only in retired intake filenames. Git replacement objects cannot hide original history. Commit messages, other clones' unpushed refs, and submodule histories are excluded. The CLI exits `1` with shallow history or missing Git objects. Fetch the missing history or objects before retrying. A directory outside any Git repository uses current files only.
 
-Run the launcher from the gstack-extend installation. For a consumer project,
-pass its path to `<gstack-extend checkout>/bin/roadmap-id migrate`. Migration
+From the gstack-extend checkout, preview with
+`bin/roadmap-id migrate <project-path> --dry-run`, then run
+`bin/roadmap-id migrate <project-path>` to apply the assignments. Migration
 targets the four planning documents above. For a missing intake ID, add the
-filename stem as the entry's `- **ID:**` field.
+filename stem as the entry's `- **ID:**` field. The audit continues to report
+malformed and duplicate IDs for manual correction.
 Legacy and compact TODO bullets and examples inside code or HTML blocks are
 outside the migration's record set.
 
