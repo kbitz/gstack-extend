@@ -8832,6 +8832,27 @@ describe('cross-cycle finding identity', () => {
     expect(malformedReceipt.err).toContain(`--prior-state-file ${priorFile}: digest-mismatch`);
   });
 
+  // Value: protects=selected keyless legacy stops import as partial; fails_when=import calls their history complete;
+  // why_new=the empty legacy continuation exercises a different partial-history rule; seam=none; no_claim=receipt discovery.
+  test('imports a legacy initial stop with a selected keyless finding as partial', () => {
+    const source = newDir();
+    expect(start(source, 1412).json.reason).toBe('recorded');
+    report(source, 1413, [finding('legacy-finding')]);
+    stop(source);
+    const legacy = readState(source);
+    Reflect.deleteProperty(legacy.continuation, 'prior_state');
+    Reflect.deleteProperty(legacy.continuation, 'prior_findings');
+    const selected = legacy.passes[0]!.voices[0]!.attempts[0]!.findings![0]!;
+    Reflect.deleteProperty(selected, 'finding_class');
+    Reflect.deleteProperty(selected, 'identity');
+
+    const continuation = newDir();
+    const result = imports(continuation, 1415, Buffer.from(JSON.stringify(legacy)));
+    expect(result.json.detail.prior_findings).toMatchObject({ status: 'imported', complete: false, entry_count: 0 });
+    report(continuation, 1416, []);
+    expect(show(continuation).finding_cycles[0]).toMatchObject({ prior: 'partial', unkeyed: 0 });
+  });
+
   // Value: protects=4 MiB input and bounded prior summaries; fails_when=large inputs are refused below the byte limit or either entry cap drops all history, marks it complete, or retains oldest entries instead of newest; why_new=102A E4; seam=store import and show
   test('prior import caps keep newest entries and a near-limit state still loads', () => {
     const seed = newDir();
