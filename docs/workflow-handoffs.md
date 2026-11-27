@@ -1482,9 +1482,11 @@ The caller flow, in order:
    the evidence directory printed at the pause, the same policy line and exactly
    one result line. Preparation restores its verified local checkpoint, including
    earlier attestations and any pending repair chain; no PR or H-C marker is
-   required when no existing manual-testing or cycle-cap hold applies. A fresh
-   invocation without a checkpoint rebuilds
-   missing preparation evidence before evaluating the result; it never resets a
+   required when no existing manual-testing or cycle-cap hold applies. For a
+   [base-move refresh](#grammar-h-g-base-move-refresh), keep the original
+   `refresh--` locator and follow H-G's recovery rules when the checkpoint is
+   missing. Ordinary preparation without a checkpoint rebuilds missing
+   preparation evidence before evaluating the result and never resets a
    consumed repair allowance or claims a missing repair chain. A head that moved
    since the pause, a dirty checkout or a base merge makes the line unusable and the
    preparation prints a new pause line; run the command again on that one.
@@ -1570,7 +1572,7 @@ A blocked refresh uses the BLOCKED stage line (`next: none; status: blocked`).
 | `review-and-prep-refresh/v1` | yes | the version token, right after `Refresh: ` |
 | `cause` | yes | `base_moved` |
 | `reviewed` | yes | the earlier reviewed head, 40 lowercase hex |
-| `head` | yes | the new merged head, 40 lowercase hex |
+| `head` | yes | the final refresh candidate after merging the base and applying any allowed resolution fix, 40 lowercase hex |
 | `base` | yes | the fetched base tip merged in, 40 lowercase hex |
 | `delta` | yes | `base-only=<n>, resolution=<n>` with non-negative decimal integer counts |
 | `gate` | yes | `pregate-pass` or `external-pass` |
@@ -1584,7 +1586,7 @@ A blocked refresh uses the BLOCKED stage line (`next: none; status: blocked`).
 | `review-and-prep-refresh/v1` | yes | the version token, right after `Refresh escalated: ` |
 | `reason` | yes | closed set: `reviewed-code-conflict`, `reviewed-behavior-change`, `delta-finding`, `delta-unverified`, `final-gate-failed` |
 | `reviewed` | yes | the earlier reviewed head, 40 lowercase hex |
-| `head` | yes | the local merged head, 40 lowercase hex |
+| `head` | yes | the local refresh candidate, 40 lowercase hex |
 | `base` | yes | the fetched base tip merged in, 40 lowercase hex |
 | `files` | yes | last field; JSON array of repository-relative paths, empty when no affected path can be identified. Split the earlier fields on `; `, then parse the rest after the first `; files: ` as JSON |
 
