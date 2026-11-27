@@ -134,11 +134,15 @@ export type CliResult = {
   exitCode: number;
 };
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function runIdCli(argv: string[]): CliResult {
   try {
     return execute(argv);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     if (argv[0] === 'migrate') {
       const summary = error instanceof MigrationRecoveryError ? '' : formatRefusals([]);
       return { stdout: '', stderr: `roadmap-id migrate: ${message}\n${summary}`, exitCode: 1 };
@@ -179,7 +183,8 @@ function assertMigrationSnapshot(doc: LoadedMigrationDoc, expected: Stats, bytes
 function writeMigration(loaded: LoadedMigrationDoc[], files: MigrateFileOutput[]): string[] {
   const byRel = new Map(loaded.map(doc => [doc.relPath, doc]));
   const staged: StagedMigrationDoc[] = [];
-  const recovery: string[] = [];
+  const rollbackFailures = new Map<string, string>();
+  const cleanupFailures: string[] = [];
   let failure: unknown;
   try {
     // Reserve each changed path and stage all writes before replacing any file.
@@ -214,24 +219,28 @@ function writeMigration(loaded: LoadedMigrationDoc[], files: MigrateFileOutput[]
       try {
         assertMigrationSnapshot(doc, published, updated);
         renameSync(backup, doc.absPath);
-      } catch {
-        recovery.push(staging);
+      } catch (error) {
+        rollbackFailures.set(staging, errorMessage(error));
       }
     }
   }
   for (const { staging } of staged) {
-    if (recovery.includes(staging)) continue;
+    if (rollbackFailures.has(staging)) continue;
     try {
       rmSync(staging, { recursive: true });
-    } catch {
-      recovery.push(staging);
+    } catch (error) {
+      cleanupFailures.push(`${staging}: ${errorMessage(error)}`);
     }
   }
-  if (failure !== undefined && recovery.length > 0) {
-    throw new MigrationRecoveryError(`could not finish migration recovery; inspect staged files at ${recovery.join(', ')}`);
+  if (failure !== undefined) {
+    const unresolved = [
+      ...[...rollbackFailures].map(([path, message]) => `rollback failed at ${path}: ${message}`),
+      ...cleanupFailures.map(detail => `staging cleanup failed at ${detail}`),
+    ];
+    if (unresolved.length === 0) throw failure;
+    throw new MigrationRecoveryError([errorMessage(failure), ...unresolved].join('\n'));
   }
-  if (failure !== undefined) throw failure;
-  return recovery;
+  return cleanupFailures;
 }
 
 function executeMigrate(args: string[]): CliResult {

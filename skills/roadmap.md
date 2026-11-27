@@ -388,7 +388,9 @@ Each separate call must paste both printed root assignments; a missing root stop
 
 Surface `TODO_FORMAT` and `WORK_ITEM_IDS` failures before reading any intake
 records. Stop on malformed intake and resume after its owner corrects it. A
-missing ID fails `WORK_ITEM_IDS`; the owner runs the one-time `"$_EXTEND_ROOT/bin/roadmap-id" migrate` (preview with `--dry-run`) before Apply. Read only regular canonical
+missing ID fails `WORK_ITEM_IDS`. Before Apply, the owner runs
+`"$_EXTEND_ROOT/bin/roadmap-id" migrate "$_ROADMAP_ROOT"` (preview with `--dry-run`).
+Read only regular canonical
 intake files under real `docs/` and `docs/todos/` directories.
 If an interrupted, approved placement left the same ID in a valid intake file
 and its exact approved destination, revalidate the remaining drain against that

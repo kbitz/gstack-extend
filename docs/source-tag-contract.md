@@ -354,6 +354,8 @@ Run the launcher from the gstack-extend installation. For a consumer project,
 pass its path to `<gstack-extend checkout>/bin/roadmap-id migrate`. Migration
 targets the four planning documents above. For a missing intake ID, add the
 filename stem as the entry's `- **ID:**` field.
+Legacy and compact TODO bullets and examples inside code or HTML blocks are
+outside the migration's record set.
 
 Apply stages all replacements before publishing them. If an interrupted write
 leaves a staging directory, check its `original` backup against the current
@@ -376,7 +378,10 @@ the assignments and warns about the retained paths.
 
 **Refused migration shapes (no files written):**
 
-- A Future bullet with no title dash separator before `**Revisit when:**`, including a bold title followed by a colon.
+- A Future bullet with no title dash separator before `**Revisit when:**`,
+  including a colon at the end of the bold title or immediately after it.
+  When a Future title uses ASCII hyphens as the separator, include whitespace
+  on both sides so the dash stays distinct from a word or flag.
 - A `ROADMAP.md` Track heading without a metadata line.
 - A shipped-archive Track heading at a level other than `###`.
 - A legacy shipped Track bullet under a Group heading at a level other than `####`.
@@ -385,6 +390,9 @@ the assignments and warns about the retained paths.
 - A symlinked or non-regular planning document, or a symlinked/non-directory `docs/`.
 - A document that is not valid UTF-8.
 - Any insertion that fails read-back verification.
+
+Correct the reported records and rerun the preview. If a record needs a manual
+assignment, mint an ID and use the field shape for that document above.
 
 See [Compatibility](compatibility.md#stable-surfaces).
 

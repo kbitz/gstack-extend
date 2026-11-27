@@ -27,7 +27,7 @@ const TRAILING_INLINE_ID_RE = /[ \t]+[—–-]+[ \t]+\*\*ID:\*\*[ \t]*([^\s—�
 // Field labels can occur inside a title. A third closing star can end italic emphasis.
 const BOLD_TITLE = '- \\*\\*((?:\\*\\*(?:ID:|Revisit when:)\\*\\*|(?!\\*\\*(?!\\*)).)+)\\*\\*';
 const BOLD_BULLET_RE = new RegExp('^(' + BOLD_TITLE + '[ \\t]*[—–-]+[ \\t]*)(.*)$');
-const BOLD_COLON_TITLE_RE = new RegExp('^' + BOLD_TITLE + '[ \\t]*:');
+const BOLD_TITLE_RE = new RegExp('^' + BOLD_TITLE);
 const PLAIN_BULLET_RE = /^((?:- )?(.*?)\s+[—–-]+\s+)(.*)$/;
 const REVISIT_MARKER = '**Revisit when:**';
 const LEGACY_SHIPPED_TRACK_BULLET_RE = /^(- Track ([0-9]+[A-Z](?:\.[0-9]+)?)[ \t]*[—–-]+[ \t]*)(.*)$/;
@@ -215,12 +215,17 @@ export function futureBulletInsertEdit(line: string, id: string): InlineInsertEd
 
   const bold = BOLD_BULLET_RE.exec(fullVisible);
   if (bold !== null) {
+    const titleEnd = '- **'.length + bold[2]!.length + '**'.length;
+    const separator = bold[1]!.slice(titleEnd);
+    // An ASCII hyphen joined to a word or flag is not a title separator.
+    if (separator.includes('-') && !/^[ \t]+-+[ \t]+$/.test(separator)) return null;
     if (marker !== -1 && marker < bold[1]!.length) return null;
     return { offset: leadingWs + bold[1]!.length, text: `**ID:** ${id} — ` };
   }
 
   // A dash in the body of a colon-titled record is not a title separator.
-  if (BOLD_COLON_TITLE_RE.test(fullVisible)) return null;
+  const title = BOLD_TITLE_RE.exec(fullVisible);
+  if (title !== null && (title[1]!.endsWith(':') || /^[ \t]*:/.test(fullVisible.slice(title[0].length)))) return null;
   const plain = PLAIN_BULLET_RE.exec(fullVisible);
   if (plain !== null) {
     if (marker !== -1 && marker < plain[1]!.length) return null;

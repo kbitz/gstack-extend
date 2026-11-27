@@ -312,6 +312,29 @@ describe('Git history ID reservation', () => {
     expect([...collectTakenIds(nested)]).toEqual(['wi-00abcd', 'wi-00abce']);
   });
 
+  test('ignores an inherited Git discovery ceiling when scanning history and finding the project root', () => {
+    const dir = initGitRepo('hist-ceiling');
+    const nested = join(dir, 'nested');
+    mkdirSync(nested);
+    commitFile(dir, 'gone.txt', 'retired wi-00abcdef\n', 'add historical content');
+    writeFileSync(join(dir, 'TODOS.md'), '## Unprocessed\n\n### [manual] Existing entry\n- **What:** Work.\n');
+    const saved = process.env.GIT_CEILING_DIRECTORIES;
+    process.env.GIT_CEILING_DIRECTORIES = dir;
+    try {
+      expect([...collectTakenIds(nested)]).toEqual(['wi-00abcdef']);
+      const preview = spawnSync(BIN, ['migrate', '--dry-run'], {
+        cwd: nested,
+        env: { ...GIT_ENV, GIT_CEILING_DIRECTORIES: dir },
+        encoding: 'utf8',
+      });
+      expect(preview.status).toBe(0);
+      expect(preview.stdout).toEndWith('DRY_RUN 1\n');
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+      else process.env.GIT_CEILING_DIRECTORIES = saved;
+    }
+  });
+
   test('reserves history when an explicit path names a bare Git repository', () => {
     const repo = initGitRepo('hist-bare-origin');
     commitFile(repo, 'gone.txt', 'retired wi-00abcf\n', 'add historical content');
@@ -763,6 +786,27 @@ describe('work-item migration (accepted shapes)', () => {
 });
 
 describe('bin/roadmap-id migrate CLI', () => {
+  test('refuses ambiguous Future punctuation without splitting a token or changing the file', () => {
+    const dir = freshDir('mig-future-punctuation');
+    const path = join(dir, 'roadmap-future.md');
+    const original = [
+      '## Future',
+      '',
+      '- **read**-only mode — body.',
+      '- **Flag** --dry-run — body.',
+      '- **Legacy title:** revisit later — more detail.',
+      '',
+    ].join('\n');
+    writeFileSync(path, original);
+    const result = runIdCli(['migrate', dir]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('REFUSED roadmap-future.md:3 future');
+    expect(result.stderr).toContain('REFUSED roadmap-future.md:4 future');
+    expect(result.stderr).toContain('REFUSED roadmap-future.md:5 future');
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
   test('refuses a bold colon title even when its prose contains a dash', () => {
     const dir = freshDir('mig-colon-dash');
     const future = join(dir, 'roadmap-future.md');
