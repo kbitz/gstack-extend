@@ -42,6 +42,11 @@ Recency alone never clears them. Corroborate the record by author and edit histo
 `/pair-review` are expected on top. Its restrictions (pending user tests,
 postponed Greptile) hold even when unconfirmed.
 
+For an ordinary invocation on a draft, reuse a prepared receipt only if its
+head, tree and base still match the checkout and verified base tip. If that
+receipt is stale, start a full review after reconciling holds and checking for a
+current resumable run. This also covers an inline base-refresh escalation.
+
 For an existing **ready** PR: verify its state and any preparation receipt. If
 the same HEAD/base is already fully prepared and no local work remains, report
 it as already complete and regenerate the Step 7 handoff from verified evidence.

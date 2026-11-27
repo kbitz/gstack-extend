@@ -3741,6 +3741,27 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(ref).toContain('omit both audit records so the compact receipt renders `- coverage: not-run` and `- documentation: not-run`');
   });
 
+  test('T7: refresh corroborates readiness before draft conversion and binds carried evidence across pauses', () => {
+    const ref = REF_BASE_MOVE_REFRESH;
+    const draftStart = ref.indexOf('### B. Return to draft');
+    const evidenceStart = ref.indexOf('### C. Evidence and run state');
+    const mergeStart = ref.indexOf('### D. Merge');
+    const classificationStart = ref.indexOf('### E. Delta facts and classification');
+    expect(ref.slice(0, draftStart)).toContain('Require the exact open PR with `isDraft: false`');
+    expect(ref.slice(0, draftStart)).toContain("resolve `Full receipt:` by Step 6's locator rules and verify its SHA-256 before converting to draft");
+    expect(ref.slice(0, draftStart)).toContain('if the prior recorded run is readable, require a prepared finish that matches the receipt');
+    expect(ref.slice(draftStart, evidenceStart)).toContain('Recheck the validated head, base, holds and `isDraft: false`');
+    const evidence = ref.slice(evidenceStart, mergeStart);
+    expect(evidence).toContain('Include any corroborated `reviewRestrictionResolved: true` and the disclosure evidence below in that same file before hashing it');
+    expect(evidence).toContain('Save the disclosure values verbatim in `refresh-1.md`');
+    expect(evidence).toContain("G's `Disclosure evidence: unavailable` line, record that marker instead");
+    expect(ref).toContain('Restore the restriction and disclosure evidence from that file');
+    expect(ref).toContain('Preserve `Disclosure evidence: unavailable` in the full receipt');
+    expect(ref.slice(mergeStart, classificationStart)).toContain(
+      "`build finish --outcome blocked --base <last-merged-base>` (use A's earlier receipt base before the first committed merge)",
+    );
+  });
+
   test('T7: executable delta-facts fence classifies fixture repository cases', () => {
     const tmp = makeBaseTmp('gstack-refresh-delta-');
     try {
@@ -3865,6 +3886,30 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         const kept = runFence(cwd, revR, revB);
         expect(kept.status, kept.stderr).toBe(0);
         expect(parseDelta(kept.stdout).rows).toEqual([{ path: 'src/app.ts', side: 'both', merged: 'other' }]);
+      }
+
+      // An identical code edit still belongs to both sides even if the merge adds no content.
+      {
+        const cwd = initRepo();
+        git(cwd, ['checkout', '--quiet', '-b', 'feature']);
+        const identicalEdit = 'export const a = 2;\n';
+        writeFileSync(join(cwd, 'src', 'app.ts'), identicalEdit);
+        git(cwd, ['commit', '--quiet', '-am', 'feat: edit app']);
+        const revR = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'main']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), identicalEdit);
+        git(cwd, ['commit', '--quiet', '-am', 'chore: same app edit']);
+        const revB = git(cwd, ['rev-parse', 'HEAD']);
+
+        git(cwd, ['checkout', '--quiet', 'feature']);
+        git(cwd, ['merge', '--quiet', '--no-edit', revB]);
+        const res = runFence(cwd, revR, revB);
+        expect(res.status, res.stderr).toBe(0);
+        expect(parseDelta(res.stdout)).toEqual({
+          rows: [{ path: 'src/app.ts', side: 'both', merged: 'base' }],
+          done: 'REFRESH_DELTA_DONE: 1',
+        });
       }
 
       // Case 4: follow-up commit to a non-resolution file gives refresh-only
