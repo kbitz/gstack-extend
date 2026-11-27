@@ -303,7 +303,7 @@ function readAdvisoryFile(realDir: string, path: unknown, maxBytes: number): { t
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = fstatSync(fd);
-      if (!stat.isFile() || !sameFile(before, stat) || stat.size > maxBytes) return null;
+      if (!stat.isFile() || stat.nlink !== 1 || !sameFile(before, stat) || stat.size > maxBytes || realpathSync(file) !== file) return null;
       const bytes = Buffer.allocUnsafe(stat.size + 1);
       let size = 0;
       while (size < bytes.length) {
@@ -311,7 +311,8 @@ function readAdvisoryFile(realDir: string, path: unknown, maxBytes: number): { t
         if (count === 0) break;
         size += count;
       }
-      if (size !== stat.size || fstatSync(fd).mtimeMs !== stat.mtimeMs) return null;
+      const after = fstatSync(fd);
+      if (size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) return null;
       const data = bytes.subarray(0, size);
       const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data);
       return { text, sha256: createHash('sha256').update(data).digest('hex') };
@@ -526,7 +527,7 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
 
   const envChecker: EnvChecker = {
     readAdvisoryFile: (path, maxBytes) => readAdvisoryFile(realDir, path, maxBytes),
-    readAnchorBlob: (commit, path) => readAnchorBlob(cwd, gitEnv, commit, path),
+    readAnchorBlob: (commit, path, maxBytes, timeoutMs) => readAnchorBlob(cwd, gitEnv, commit, path, maxBytes, timeoutMs),
     commitExists: (sha) => runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`], gitEnv).ok,
     commitTree: (sha) => runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`], gitEnv).ok ? (runGit(cwd, ['rev-parse', `${sha}^{tree}`], gitEnv).stdout || null) : null,
     isAncestor: (anc, desc) => runGit(cwd, ['merge-base', '--is-ancestor', anc, desc], gitEnv).ok,

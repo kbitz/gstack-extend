@@ -7,16 +7,18 @@ export type IdentityDowngrade = { line: number | null; finding_id: string | null
 
 const MAX_IDENTITY_FILE_BYTES = 256 * 1024;
 const MAX_ANCHOR_BLOB_BYTES = 16 * 1024 * 1024;
+const MAX_ANCHOR_ATTEMPT_BYTES = 2 * MAX_ANCHOR_BLOB_BYTES;
+const MAX_ANCHOR_ATTEMPT_MS = 5000;
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
-export function readAnchorBlob(cwd: string, env: NodeJS.ProcessEnv, commit: string, path: string): Uint8Array | null {
+export function readAnchorBlob(cwd: string, env: NodeJS.ProcessEnv, commit: string, path: string, maxBytes: number, timeoutMs: number): Uint8Array | null {
   const result = spawnSync('git', ['-C', cwd, 'cat-file', 'blob', `${commit}:${path}`], {
     env: { ...env, GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
     stdio: ['ignore', 'pipe', 'ignore'],
-    timeout: 5000,
-    maxBuffer: MAX_ANCHOR_BLOB_BYTES,
+    timeout: timeoutMs,
+    maxBuffer: maxBytes,
   });
-  return result.status === 0 ? result.stdout : null;
+  return !result.error && !result.signal && result.status === 0 && result.stdout.length <= maxBytes ? result.stdout : null;
 }
 
 const withoutCR = (s: string): string => s.endsWith('\r') ? s.slice(0, -1) : s;
@@ -56,7 +58,7 @@ function parseIdentityFile(text: string, requested: ReadonlySet<string>, downgra
     if (prior) {
       downgraded.push({ line: fileLine, finding_id: id, rule: 'duplicate-line' });
       prior.location = null;
-      if (findingClass && !ENUMS.findingClass.some((value) => value === findingClass)) prior.findingClass = findingClass;
+      if (findingClass !== prior.findingClass) prior.findingClass = null;
       return;
     }
     if ((tokens.length !== 2 && tokens.length !== 4) || tokens.some((token) => token === '')) {
@@ -107,6 +109,8 @@ export function decorateFindings(
 
   const blobs = new Map<string, ReturnType<typeof loadBlob>>();
   const attemptKeys = new Set<string>();
+  const deadline = performance.now() + MAX_ANCHOR_ATTEMPT_MS;
+  let remainingBytes = MAX_ANCHOR_ATTEMPT_BYTES;
   let commitProblem: string | null | undefined;
   findings.forEach((finding, index) => {
     const input = fileEntries ? fileEntries.get(finding.finding_id) : directIdentityInput(inputs[index]);
@@ -128,7 +132,14 @@ export function decorateFindings(
     if (commitProblem === undefined) commitProblem = anchorCommitProblem(anchorCommit, env);
     if (commitProblem !== null) return downgrade(commitProblem);
 
-    if (!blobs.has(path)) blobs.set(path, loadBlob(env.readAnchorBlob?.(anchorCommit as string, path)));
+    if (!blobs.has(path)) {
+      const timeoutMs = Math.floor(deadline - performance.now());
+      if (timeoutMs <= 0 || remainingBytes === 0) return downgrade('anchor-budget-exhausted');
+      const maxBytes = Math.min(MAX_ANCHOR_BLOB_BYTES, remainingBytes);
+      const bytes = env.readAnchorBlob?.(anchorCommit as string, path, maxBytes, timeoutMs);
+      if (bytes) remainingBytes -= bytes.byteLength;
+      blobs.set(path, loadBlob(bytes));
+    }
     const blob = blobs.get(path);
     const anchor = blob?.lines[location.line - 1];
     if (anchor === undefined) return downgrade('anchor-unavailable');

@@ -8512,6 +8512,54 @@ describe('cross-cycle finding identity', () => {
     }
   });
 
+  test('replays the mandatory attempt payload without rereading identity evidence', () => {
+    const dir = newDir();
+    const frozen = snapshot('unique replay anchor');
+    expect(start(dir, 1101).json.reason).toBe('recorded');
+    begin(dir, 1102);
+    writeFileSync(join(dir, identityFile), 'F-retry contract file.txt 1\n');
+    const args = [
+      'build', 'record', 'pass', '--dir', dir, '--pass-id', uid(1102), '--state', 'attempt',
+      '--voice-id', 'core', '--part', 'core', '--attempt-id', uid(1103), '--outcome', 'completed',
+      '--finding-identity-file', identityFile, '--anchor-commit', frozen, '--finding', 'F-retry,P1,core',
+    ];
+    expect(runCli(args).json.reason).toBe('recorded');
+    const original = readFileSync(join(dir, stateFile));
+    expect(readState(dir).passes[0]?.voices[0]?.attempts[0]?.findings?.[0]?.identity?.key).toMatch(/^fk1:/);
+    unlinkSync(join(dir, identityFile));
+    const replay = runCli(args);
+    expect(replay.code, replay.err).toBe(0);
+    expect(replay.json.reason).toBe('replayed');
+    expect(readFileSync(join(dir, stateFile))).toEqual(original);
+    expect(runCli([...args.slice(0, -1), 'F-retry,P2,core']).json.reason).toBe('conflict');
+  });
+
+  test('accepts null file flags and keys a selected replacement of an unselected attempt', () => {
+    const dir = newDir();
+    const frozen = snapshot('provisional citation\ncorrected citation');
+    expect(start(dir, 1104).json.reason).toBe('recorded');
+    begin(dir, 1105);
+    const attemptPayload = {
+      pass_id: uid(1105), state: 'attempt', voice_id: 'core', part: 'core', outcome: 'completed',
+      anchor_commit: frozen,
+    };
+    const first = record(dir, {
+      ...attemptPayload, attempt_id: uid(1106), finding_identity_file: null, findings: [finding('F-retry', 1)],
+    });
+    expect(first.err).toBe('');
+    const replacement = record(dir, {
+      ...attemptPayload, attempt_id: uid(1107), predecessor_attempt_id: uid(1106), findings: [finding('F-retry', 2)],
+    });
+    expect(replacement.err).toBe('');
+    select(dir, 1105, 1107);
+    complete(dir, 1105);
+    const [unselected, selected] = readState(dir).passes[0]!.voices[0]!.attempts;
+    expect(unselected?.findings?.[0]?.identity?.key).toMatch(/^fk1:/);
+    expect(selected?.findings?.[0]?.identity?.key).toMatch(/^fk1:/);
+    expect(selected?.findings?.[0]?.identity).not.toEqual(unselected?.findings?.[0]?.identity);
+    expect(show(dir).finding_cycles).toMatchObject([{ new: 1, unkeyed: 0 }]);
+  });
+
   // Value: protects=build file errors remain advisory and preserve valid keys; fails_when=the optional file refuses an attempt, an extra line for a different attempt downgrades a finding or a malformed row drops neighboring keys; why_new=102A E3/E9; seam=build CLI
   test('identity file errors identify affected lines and preserve 19 valid keys', () => {
     const dir = newDir();
@@ -8531,7 +8579,7 @@ describe('cross-cycle finding identity', () => {
       'malformed correctness file.txt',
       'badClass invalid file.txt 20',
       'duplicate correctness file.txt 20',
-      'duplicate correctness file.txt 21',
+      'duplicate contract file.txt 21',
       'badPath correctness ../file.txt 20',
       'badLine correctness file.txt -1',
       'different-voice correctness file.txt 21',
@@ -8555,6 +8603,7 @@ describe('cross-cycle finding identity', () => {
     const [first] = readState(dir).passes[0]!.voices[0]!.attempts;
     expect(first!.findings!.filter((item) => item.identity).map((item) => item.finding_id)).toEqual(goodIds);
     expect(first!.findings!.find((item) => item.finding_id === 'badClass')?.finding_class).toBeNull();
+    expect(first!.findings!.find((item) => item.finding_id === 'duplicate')?.finding_class).toBeNull();
     expect(first!.findings!.find((item) => item.finding_id === 'malformed')?.finding_class).toBe('correctness');
     expect(runCli(args(1142, 'second', ['different-voice'])).err).toBe('');
     expect(readState(dir).passes[0]!.voices[1]!.attempts[0]!.findings?.[0]?.identity).not.toBeNull();
@@ -8574,6 +8623,10 @@ describe('cross-cycle finding identity', () => {
     symlinkSync(identityFile, join(dir, 'symlink.txt'));
     const linked = runCli(args(1154, 'core', ['good-1'], 'symlink.txt'));
     expect(linked.json.detail.identity_downgraded[0]).toMatchObject({ finding_id: 'good-1', rule: 'identity-file-unusable' });
+    linkSync(join(dir, identityFile), join(dir, 'alias.txt'));
+    const alias = runCli(args(1156, 'core', ['good-1'], 'alias.txt'));
+    expect(alias.json.detail.identity_downgraded[0]).toMatchObject({ finding_id: 'good-1', rule: 'identity-file-unusable' });
+    unlinkSync(join(dir, 'alias.txt'));
     const missingAnchor = runCli(args(1155, 'core', ['good-1'], identityFile, ''));
     expect(missingAnchor.json.reason).toBe('recorded');
     expect(missingAnchor.json.detail.identity_downgraded[0]).toMatchObject({ finding_id: 'good-1', rule: 'anchor-commit-missing' });
@@ -8761,12 +8814,22 @@ describe('cross-cycle finding identity', () => {
     expect(show(legacyDest).finding_cycles[0]).toMatchObject({ prior: 'partial', new: 0, carried: 0, unkeyed: 0 });
 
     const initial = newDir();
-    expect(start(initial, 1390).json.reason).toBe('recorded');
+    const initialResult = start(initial, 1390, { prior_state: copyPrior(initial, stopped) });
+    expect(initialResult.json.reason).toBe('recorded');
+    expect(initialResult.err).toBe('');
+    expect(show(initial).finding_prior).toBe('none');
     report(initial, 1400, [finding('keyed', 1)], headSha);
     const noDigest = newDir();
     copyPrior(noDigest, stop(initial));
     const legacyReceipt = start(noDigest, 1410, { continuation: continued(), prior_state: { path: priorFile, sha256: null } });
     expect(legacyReceipt.json.detail.prior_findings).toMatchObject({ status: 'imported', complete: false, entry_count: 1 });
+    const malformedDigest = newDir();
+    copyPrior(malformedDigest, stopped);
+    const malformedReceipt = start(malformedDigest, 1411, {
+      continuation: continued(), prior_state: { path: priorFile, sha256: 'incomplete-digest' },
+    });
+    expect(malformedReceipt.json.detail.prior_findings?.reason).toBe('digest-mismatch');
+    expect(malformedReceipt.err).toContain(`--prior-state-file ${priorFile}: digest-mismatch`);
   });
 
   // Value: protects=4 MiB input and bounded prior summaries; fails_when=large inputs are refused below the byte limit or either entry cap drops all history, marks it complete, or retains oldest entries instead of newest; why_new=102A E4; seam=store import and show

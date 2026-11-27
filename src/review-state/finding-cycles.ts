@@ -131,9 +131,9 @@ export function canonicalPriorRequest(raw: unknown): PriorStateRequest | null {
   if (raw === undefined || raw === null) return null;
   const path = isObj(raw) && isRelPath(raw.path) ? raw.path : null;
   // Distinguish a supplied bad digest from a legacy request without one.
-  const sha256 = isObj(raw) && typeof raw.sha256 === 'string' && HEX64_RE.test(raw.sha256) ? raw.sha256 : null;
-  const legacy = isObj(raw) && (raw.sha256 === null || raw.sha256 === undefined);
-  return { path: sha256 !== null || legacy ? path : null, sha256 };
+  const digest = isObj(raw) ? raw.sha256 : null;
+  const sha256 = typeof digest === 'string' && HEX64_RE.test(digest) ? digest : digest == null ? null : 'invalid';
+  return { path, sha256 };
 }
 
 export function importPriorFindings(

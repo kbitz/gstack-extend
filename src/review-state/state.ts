@@ -191,7 +191,7 @@ export type EnvChecker = {
   isAncestor(anc: string, desc: string): boolean;
   checkEvidence(path: string, sha256: string): string | null;
   readAdvisoryFile?(path: unknown, maxBytes: number): { text: string; sha256: string } | null;
-  readAnchorBlob?(commit: string, path: string): Uint8Array | null;
+  readAnchorBlob?(commit: string, path: string, maxBytes: number, timeoutMs: number): Uint8Array | null;
 };
 export type ApplyOutcome =
   | { reason: 'recorded'; state: ReviewRunState; detail: Record<string, unknown> }
@@ -466,7 +466,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     }
     if (v.length > 0) return invalid(rev, v, true);
 
-    const priorState = canonicalPriorRequest(rawInput.prior_state);
+    const priorState = continuation.prior_stops > 0 ? canonicalPriorRequest(rawInput.prior_state) : null;
     const canon = { run_id: top.run_id as string, base: top.base as string, wtree: top.wtree as string | null, pr, gh_login: top.gh_login as string | null, plan, policy, continuation, prior_state: priorState, session_id: top.session_id as string | null };
     if (state !== null) {
       if (state.run.run_id !== canon.run_id) return { reason: 'exists', rev: state.rev, detail: { existing_run_id: state.run.run_id, sent_run_id: canon.run_id } };
@@ -623,23 +623,12 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       const pass = state?.passes.find((p) => p.pass_id === canon.pass_id);
       const voice = pass?.voices.find((vo) => vo.voice_id === canon.voice_id);
       const existingAtt = voice?.attempts.find((a) => a.attempt_id === canon.attempt_id);
-      const earlierFindings = pass && state && findings
-        ? state.passes.filter((p) => p === pass || (pass.scope === 'local' && p.scope === 'local' && p.cycle === pass.cycle))
-          .flatMap((p) => p.voices.flatMap((vo) => vo.attempts))
-          .filter((a) => a !== existingAtt)
-          .flatMap((a) => a.findings ?? [])
-        : [];
-      const identityDowngraded = findings
-        ? decorateFindings(findings, rawInput.findings as unknown[], rawInput.anchor_commit,
-          rawInput.finding_identity_file === undefined ? undefined : typeof rawInput.finding_identity_file === 'string' ? rawInput.finding_identity_file : null,
-          env, earlierFindings)
-        : [];
-      const advisory = identityDowngraded.length ? { identity_downgraded: identityDowngraded } : {};
       if (existingAtt && pass && voice && state) {
-        const stored = { pass_id: pass.pass_id, state: 'attempt' as const, voice_id: voice.voice_id, part: existingAtt.part, attempt_id: existingAtt.attempt_id, outcome: existingAtt.outcome, predecessor_attempt_id: existingAtt.predecessor_attempt_id, dispatched_at: existingAtt.dispatched_at, returned_at: existingAtt.returned_at, delegate: existingAtt.delegate, findings: existingAtt.findings };
-        const replay = replayOrConflict(state.rev, canon.attempt_id, stored, canon, pass.candidate.commit, pass.candidate.tree, existingAtt.recorded_at);
-        if (replay.reason === 'replayed') Object.assign(replay.detail, advisory);
-        return replay;
+        // A retry keeps the first observation even if its advisory evidence has since changed.
+        const payload = (items: FindingRecord[] | null) => items?.map(({ finding_class, identity, ...fields }) => fields) ?? null;
+        const stored = { pass_id: pass.pass_id, state: 'attempt' as const, voice_id: voice.voice_id, part: existingAtt.part, attempt_id: existingAtt.attempt_id, outcome: existingAtt.outcome, predecessor_attempt_id: existingAtt.predecessor_attempt_id, dispatched_at: existingAtt.dispatched_at, returned_at: existingAtt.returned_at, delegate: existingAtt.delegate, findings: payload(existingAtt.findings) };
+        return replayOrConflict(state.rev, canon.attempt_id, stored, { ...canon, findings: payload(canon.findings) },
+          pass.candidate.commit, pass.candidate.tree, existingAtt.recorded_at);
       }
       const life = checkLifecycle();
       if (life) return life;
@@ -649,6 +638,21 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       if (canon.predecessor_attempt_id !== null && !voice?.attempts.some((a) => a.attempt_id === canon.predecessor_attempt_id)) return invalid(state!.rev, [{ path: 'predecessor_attempt_id', rule: 'invalid-reference', expected: 'prior-attempt-on-voice' }]);
       if (state!.passes.some((p) => p.voices.some((vo) => vo.attempts.some((a) => a.attempt_id === canon.attempt_id)))) return invalid(state!.rev, [{ path: 'attempt_id', rule: 'duplicate-value', expected: 'unique-attempt-id' }]);
 
+      const earlierFindings = findings?.length
+        ? state!.passes.filter((p) => p === pass || (pass.scope === 'local' && p.scope === 'local' && p.cycle === pass.cycle))
+          .flatMap((p) => p.voices.flatMap((vo) => {
+            if (vo === voice || vo.not_applicable !== null) return [];
+            if (vo.selected_attempt_id !== null) return vo.attempts.filter((a) => a.attempt_id === vo.selected_attempt_id);
+            return p.state === 'open' ? vo.attempts : [];
+          }))
+          .flatMap((a) => a.findings ?? [])
+        : [];
+      const identityFile = rawInput.finding_identity_file;
+      const identityDowngraded = findings?.length
+        ? decorateFindings(findings, rawInput.findings as unknown[], rawInput.anchor_commit,
+          identityFile == null ? undefined : typeof identityFile === 'string' ? identityFile : null, env, earlierFindings)
+        : [];
+      const advisory = identityDowngraded.length ? { identity_downgraded: identityDowngraded } : {};
       const attRecord: AttemptRecord = { attempt_id: canon.attempt_id, part: canon.part, outcome: canon.outcome, predecessor_attempt_id: canon.predecessor_attempt_id, dispatched_at: canon.dispatched_at, returned_at: canon.returned_at, delegate: canon.delegate, findings: canon.findings, recorded_at: nowIso };
       const nextVoices = voice
         ? pass.voices.map((vo) => vo.voice_id === canon.voice_id ? { ...vo, part: canon.part ?? vo.part, attempts: [...vo.attempts, attRecord] } : vo)
@@ -1018,7 +1022,7 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
     if (continuation && continuation.prior_state !== null) {
       object(continuation.prior_state, ['path', 'sha256'], {
         path: { check: nullable(isRelPath), expected: 'relative-path|null' },
-        sha256: { check: nullable(reCheck(HEX64_RE)), expected: 'hex64|null' },
+        sha256: { check: (x) => x === 'invalid' || nullable(reCheck(HEX64_RE))(x), expected: 'hex64|invalid|null' },
       }, 'continuation.prior_state');
     }
     const prior = continuation?.prior_findings;
@@ -1026,9 +1030,10 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
       const base = 'continuation.prior_findings';
       object(prior, ['status', 'source', 'complete', 'entries'], { complete: R.bool }, base);
       object(prior.source, ['path', 'sha256', 'run_id'], { path: R.relPath, sha256: R.hex64, run_id: R.uuid }, `${base}.source`);
-      if (Array.isArray(prior.entries) && (prior.entries.length > MAX_PRIOR_ENTRIES || Buffer.byteLength(JSON.stringify(prior.entries)) > MAX_PRIOR_ENTRY_BYTES)) {
+      if (Array.isArray(prior.entries) && prior.entries.length > MAX_PRIOR_ENTRIES) {
         v.push({ path: `${base}.entries`, rule: 'invalid-value', expected: 'bounded-prior-findings' });
       } else {
+        const before = v.length;
         const keys = new Set<string>();
         array(prior.entries, `${base}.entries`, (entry, path) => {
           const e = object(entry, ['key', 'path', 'finding_class', 'run', 'cycle'], {
@@ -1037,6 +1042,9 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
           }, path);
           if (e) unique(keys, e.key, `${path}.key`);
         });
+        if (v.length === before && Buffer.byteLength(JSON.stringify(prior.entries)) > MAX_PRIOR_ENTRY_BYTES) {
+          v.push({ path: `${base}.entries`, rule: 'invalid-value', expected: 'bounded-prior-findings' });
+        }
       }
     } else if (continuation && prior !== null) {
       object(prior, ['status', 'reason'], { status: R.enum(['unavailable']), reason: R.enum(PRIOR_FINDING_REASONS) }, 'continuation.prior_findings');
