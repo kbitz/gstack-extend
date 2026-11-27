@@ -311,6 +311,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/update-check',
     'bin/update-run',
     'bin/config',
+    'bin/lib/update-channel.sh',
     'bin/lib/run-migrations.sh',
     'bin/lib/semver.sh',
     'migrations/**',

@@ -28,6 +28,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   statSync,
   readlinkSync,
@@ -62,6 +63,7 @@ const UPDATE_RUN = join(ROOT, 'bin', 'update-run');
 const UPDATE_CHECK = join(ROOT, 'bin', 'update-check');
 const SETUP = join(ROOT, 'setup');
 const SEMVER_LIB = join(ROOT, 'bin', 'lib', 'semver.sh');
+const UPDATE_CHANNEL_LIB = join(ROOT, 'bin', 'lib', 'update-channel.sh');
 const RUN_MIGRATIONS = join(ROOT, 'bin', 'lib', 'run-migrations.sh');
 const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
 const PREAMBLE_LIB = join(ROOT, 'bin', 'lib', 'preamble.sh');
@@ -1211,12 +1213,52 @@ exit 1
       expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
       expect(existsSync(join(stateDir, 'migrations-hop-from'))).toBe(false);
     });
+
+    test('Bun refusal after pull: supported Bun resumes the original migration window once', () => {
+      const name = 'mig-bun-retry';
+      const repo = createFixtureRepoWithRealSetup(name);
+      pushNewVersion(join(baseTmp, `${name}-remote`), '1.1.0', {
+        ...migrationPayload({ 'v1.1.0.sh': okScript }),
+        setup: readFileSync(SETUP, 'utf8'),
+        'bin/lib/bun-prereq.sh': readFileSync(join(ROOT, 'bin', 'lib', 'bun-prereq.sh'), 'utf8'),
+      });
+      const home = join(baseTmp, `${name}-home`);
+      const state = join(home, '.gstack-extend');
+      mkdirSync(home);
+      const oldBin = join(baseTmp, `${name}-old-bin`);
+      mkdirSync(oldBin);
+      writeFileSync(join(oldBin, 'bun'), '#!/bin/sh\n[ "$1" = --version ] || exit 99\nprintf "1.3.2\\n"\n', { mode: 0o755 });
+      const opts = { home, gstackExtendDir: repo, gstackExtendStateDir: state };
+      const retryOpts = { ...opts, extraEnv: offlineFloorBun(ROOT, join(baseTmp, `${name}-supported`), CLAUDE_PATH) };
+      const hopFrom = join(state, 'migrations-hop-from');
+      const ran = join(state, 'ran-ok');
+
+      const first = runBin(UPDATE_RUN, [repo], { ...opts, extraEnv: { PATH: `${oldBin}:${CLAUDE_PATH}` } });
+      expect(first.exitCode).toBe(1);
+      expect(first.stdout).toContain('UPGRADE_FAILED stage=setup');
+      expect(first.stderr).toContain('PREREQ_BUN_TOO_OLD');
+      expect(readFileSync(join(repo, 'VERSION'), 'utf8')).toBe('1.1.0\n');
+      expect(readFileSync(hopFrom, 'utf8')).toBe('1.0.0\n');
+      expect(existsSync(ran)).toBe(false);
+
+      const second = runBin(UPDATE_RUN, [repo], retryOpts);
+      expect(second.exitCode).toBe(0);
+      expect(second.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(readFileSync(ran, 'utf8')).toBe('ok\n');
+      expect(existsSync(hopFrom)).toBe(false);
+
+      const third = runBin(UPDATE_RUN, [repo], retryOpts);
+      expect(third.exitCode).toBe(0);
+      expect(readFileSync(ran, 'utf8')).toBe('ok\n');
+    });
   });
 });
 
 // ─── setup ───────────────────────────────────────────────────────────
 
-function runSetup(args: string[], home: string): { stdout: string; stderr: string; exitCode: number | null } {
+function runSetup(
+  args: string[], home: string, extraEnv: Record<string, string> = {},
+): { stdout: string; stderr: string; exitCode: number | null } {
   // Scope env to PATH + HOME — same isolation discipline as runBin().
   // Prevents the developer's shell GSTACK_EXTEND_*/TMPDIR vars from leaking
   // into setup tests and shifting symlink targets to unexpected paths.
@@ -1225,7 +1267,7 @@ function runSetup(args: string[], home: string): { stdout: string; stderr: strin
     HOME: home,
   };
   if (process.env.TMPDIR !== undefined) env.TMPDIR = process.env.TMPDIR;
-  const r = spawnSync(SETUP, args, { encoding: 'utf8', env });
+  const r = spawnSync(SETUP, args, { encoding: 'utf8', env: { ...env, ...extraEnv } });
   return {
     stdout: typeof r.stdout === 'string' ? r.stdout : '',
     stderr: typeof r.stderr === 'string' ? r.stderr : '',
@@ -1240,9 +1282,64 @@ function seedUpdateCheckBinaries(repo: string): void {
   chmodSync(join(repo, 'bin', 'update-check'), 0o755);
   mkdirSync(join(repo, 'bin', 'lib'), { recursive: true });
   writeFileSync(join(repo, 'bin', 'lib', 'semver.sh'), readFileSync(SEMVER_LIB));
+  writeFileSync(join(repo, 'bin', 'lib', 'update-channel.sh'), readFileSync(UPDATE_CHANNEL_LIB));
   writeFileSync(join(repo, 'bin', 'config'), readFileSync(join(ROOT, 'bin', 'config')));
   chmodSync(join(repo, 'bin', 'config'), 0o755);
 }
+
+describe('setup upstream gstack prerequisite notice', () => {
+  function setupWithoutUpstream(name: string) {
+    const home = join(baseTmp, `gstack-notice-${name}-home`);
+    mkdirSync(home);
+    const path = isolatedTools(`gstack-notice-${name}`).split(':').map((dir, index) => {
+      if (!existsSync(join(dir, 'gstack-config'))) return dir;
+      const filtered = join(baseTmp, `gstack-notice-${name}-system-${index}`);
+      mkdirSync(filtered);
+      for (const tool of readdirSync(dir)) {
+        if (tool !== 'gstack-config') symlinkSync(join(dir, tool), join(filtered, tool));
+      }
+      return filtered;
+    }).join(':');
+    return { home, env: { PATH: path } };
+  }
+
+  test('missing gstack warns once under --quiet and still installs skills', () => {
+    const { home, env } = setupWithoutUpstream('missing');
+    const result = runSetup(['--host', 'claude', '--quiet'], home, env);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.match(/GSTACK_MISSING/g)).toHaveLength(1);
+    expect(result.stderr).toMatch(/GSTACK_MISSING.*https:\/\/github\.com\/garrytan\/gstack/);
+    for (const skill of REAL_SETUP_SKILLS) {
+      expect(lstatSync(join(home, '.claude', 'skills', skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
+    }
+  });
+
+  for (const location of ['claude', 'GSTACK_DIR'] as const) {
+    test(`gstack-config in ${location} suppresses the warning`, () => {
+      const { home, env } = setupWithoutUpstream(location);
+      const root = location === 'claude' ? join(home, '.claude', 'skills', 'gstack') : join(home, 'upstream');
+      const dir = join(root, 'bin');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'gstack-config'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+      const result = runSetup(['--host', 'claude', '--quiet'], home, {
+        ...env,
+        ...(location === 'GSTACK_DIR' ? { GSTACK_DIR: root } : {}),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain('GSTACK_MISSING');
+    });
+  }
+
+  for (const legacy of [false, true]) {
+    test(`${legacy ? 'legacy custom-dir ' : ''}uninstall does not warn about missing gstack`, () => {
+      const { home, env } = setupWithoutUpstream(legacy ? 'legacy-uninstall' : 'uninstall');
+      const args = legacy ? ['--skills-dir', join(home, 'old-skills')] : ['--host', 'claude'];
+      const result = runSetup([...args, '--uninstall', '--quiet'], home, env);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain('GSTACK_MISSING');
+    });
+  }
+});
 
 describe('setup default install', () => {
   let mockHome: string;
@@ -1865,6 +1962,12 @@ describe('update-check version regex', () => {
     expect(UPDATE_CHECK_ERES).toHaveLength(1);
   });
 
+  test('release tag selection uses the same version ERE as update-check', () => {
+    const helper = readFileSync(UPDATE_CHANNEL_LIB, 'utf8');
+    const releasePattern = helper.match(/^UPDATE_RELEASE_VERSION_RE='([^']+)'$/m)?.[1];
+    expect(releasePattern).toBe(UPDATE_CHECK_ERES[0]![1]);
+  });
+
   for (const ver of ['0.8.9', '0.8.9.0', '1.0.0', '0.8.10', '10.20.30.40']) {
     test(`accepts valid version: ${ver}`, () => {
       expect(VERSION_RE.test(ver)).toBe(true);
@@ -1932,6 +2035,368 @@ describe('update-check with 4-digit versions', () => {
       },
     });
     expect(r.stdout.trim()).toBe('');
+  });
+});
+
+function fixtureGit(repo: string, ...args: string[]): string {
+  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  expect(result.status, `git ${args.join(' ')}: ${result.stderr}`).toBe(0);
+  return result.stdout.trim();
+}
+
+function releaseChannelFixture(name: string) {
+  const repo = createFixtureRepo(name);
+  const remote = join(baseTmp, `${name}-remote`);
+  seedUpdateCheckBinaries(repo);
+  fixtureGit(repo, 'add', 'bin');
+  fixtureGit(repo, 'commit', '-qm', 'seed update checker');
+  fixtureGit(repo, 'push', '-q', 'origin', 'main');
+
+  const home = join(baseTmp, `${name}-home`);
+  const state = join(home, '.gstack-extend');
+  mkdirSync(state, { recursive: true });
+  const remoteVersion = join(baseTmp, `${name}-remote-version`);
+  writeFileSync(remoteVersion, '1.0.0\n');
+  const newMain = (version: string) => {
+    pushNewVersion(remote, version);
+    writeFileSync(remoteVersion, `${version}\n`);
+    return fixtureGit(remote, 'rev-parse', 'main');
+  };
+  const tag = (name: string, commit: string) => fixtureGit(remote, 'tag', '-fa', name, '-m', name, commit);
+  const release = (version: string) => {
+    const commit = newMain(version);
+    tag(`v${version}`, commit);
+    return commit;
+  };
+  const opts = {
+    home,
+    gstackExtendDir: repo,
+    gstackExtendStateDir: state,
+    extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remoteVersion}` },
+  };
+  const check = (...args: string[]) => runBin(join(repo, 'bin', 'update-check'), args, opts);
+  const config = (...args: string[]) => runBin(join(repo, 'bin', 'config'), args, opts);
+  const upgrade = () => runBin(UPDATE_RUN, [repo], opts);
+  const cache = join(state, 'last-update-check');
+  const marker = join(state, 'just-upgraded-from');
+  return { repo, remote, state, remoteVersion, newMain, tag, release, opts, check, config, upgrade, cache, marker };
+}
+
+function gitListingShim(name: string, listingBody: string): Record<string, string> {
+  const bin = join(baseTmp, `${name}-bin`);
+  mkdirSync(bin);
+  const git = spawnSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(join(bin, 'git'), `#!/bin/sh
+for arg; do
+  if [ "$arg" = ls-remote ]; then
+${listingBody}
+  fi
+done
+exec "$TEST_REAL_GIT" "$@"
+`, { mode: 0o755 });
+  return { PATH: `${bin}:${process.env.PATH ?? '/bin:/usr/bin'}`, TEST_REAL_GIT: git };
+}
+
+describe('stable release channel', () => {
+  test('default check offers the newest annotated tag and stores its peeled commit', () => {
+    const fx = releaseChannelFixture('stable-offer');
+    fx.release('1.2.0');
+    const release = fx.release('1.10.0');
+    expect(fx.newMain('1.11.0')).not.toBe(release);
+    expect(fixtureGit(fx.remote, 'rev-parse', 'v1.10.0')).not.toBe(release);
+
+    expect(fx.check('--force')).toEqual({ exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.10.0\n', stderr: '' });
+    expect(readFileSync(fx.cache, 'utf8')).toBe(
+      `UPGRADE_AVAILABLE 1.0.0 1.10.0\nIDENTITY channel=stable tag=v1.10.0 commit=${release}\n`,
+    );
+  });
+
+  test.each(['v0.99.0', 'v1.0.0.0'])('does not offer an older or padded-equal release %s', (tag) => {
+    const fx = releaseChannelFixture(`stable-no-upgrade-${tag}`);
+    const commit = fixtureGit(fx.remote, 'rev-parse', 'main');
+    fx.tag(tag, commit);
+    fx.newMain('1.2.0');
+    expect(fx.check('--force')).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  test('ignores malformed release tags even when one looks newer', () => {
+    const fx = releaseChannelFixture('stable-malformed');
+    const commit = fixtureGit(fx.remote, 'rev-parse', 'main');
+    for (const tag of ['v0.47', 'v0.47.0-rc1', 'v0.08.0', 'v2.9', 'v2.9.0-rc1', 'v2.09.0', 'v1.0.0']) {
+      fx.tag(tag, commit);
+    }
+    fx.newMain('2.0.0');
+    expect(fx.check('--force')).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  test('an untagged origin falls back to the configured remote VERSION and updates via main', () => {
+    const fx = releaseChannelFixture('stable-no-tags');
+    const main = fx.newMain('1.2.0');
+    expect(fx.check('--force')).toEqual({ exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.2.0\n', stderr: '' });
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(0);
+    expect(upgrade.stdout).toContain('UPGRADE_OK 1.0.0 1.2.0');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(main);
+  });
+
+  test('a failed tag listing stays quiet at check and fails closed at upgrade', () => {
+    const fx = releaseChannelFixture('stable-list-failure');
+    const before = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+    fx.newMain('1.2.0');
+    const shim = gitListingShim('stable-list-failure', `
+    echo 'fixture tag listing refused' >&2
+    exit 1`);
+    const opts = {
+      ...fx.opts,
+      extraEnv: { ...fx.opts.extraEnv, ...shim },
+    };
+    expect(runBin(UPDATE_CHECK, ['--force'], opts)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(readFileSync(fx.cache, 'utf8').split('\n')[0]).toBe('UP_TO_DATE 1.0.0');
+    const result = runBin(UPDATE_RUN, [fx.repo], opts);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.match(/^UPGRADE_FAILED .+$/gm)).toEqual([expect.stringContaining('stage=resolve-release')]);
+    expect(result.stdout).not.toContain('UPGRADE_OK');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(before);
+    expect(existsSync(fx.marker)).toBe(false);
+  });
+
+  test('stable check bounds an unresponsive tag transport and passes non-interactive settings', () => {
+    const fx = releaseChannelFixture('stable-list-timeout');
+    fx.newMain('1.2.0');
+    const attempted = join(baseTmp, 'stable-list-timeout-attempted');
+    const shim = gitListingShim('stable-list-timeout', `
+    [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 97
+    case "$GIT_SSH_COMMAND" in
+      *BatchMode=yes*) ;;
+      *) exit 97 ;;
+    esac
+    if read -r input; then exit 97; fi
+    : > "$TEST_ATTEMPTED"
+    sleep 25 &
+    wait
+    exit 0`);
+    const result = runBin(UPDATE_CHECK, ['--force'], {
+      ...fx.opts,
+      extraEnv: { ...fx.opts.extraEnv, ...shim, TEST_ATTEMPTED: attempted },
+      timeout: 20_000,
+    });
+    expect(existsSync(attempted)).toBe(true);
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(readFileSync(fx.cache, 'utf8').split('\n')[0]).toBe('UP_TO_DATE 1.0.0');
+  }, 30_000);
+
+  test('cache replay prints only the status and respects both channel changes and legacy main caches', () => {
+    const fx = releaseChannelFixture('stable-cache');
+    const release = fx.release('1.1.0');
+    fx.newMain('1.2.0');
+    expect(fx.config('set', 'update_channel', 'main').exitCode).toBe(0);
+    writeFileSync(fx.cache, 'UPGRADE_AVAILABLE 1.0.0 1.9.0\n');
+    expect(fx.check().stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.9.0\n');
+
+    expect(fx.config('set', 'update_channel', 'stable').exitCode).toBe(0);
+    expect(fx.check().stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+    expect(readFileSync(fx.cache, 'utf8')).toContain(`IDENTITY channel=stable tag=v1.1.0 commit=${release}\n`);
+    fx.release('1.3.0');
+    expect(fx.check().stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+
+    expect(fx.config('set', 'update_channel', 'main').exitCode).toBe(0);
+    expect(fx.check().stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.3.0\n');
+    writeFileSync(fx.remoteVersion, '1.4.0\n');
+    expect(fx.check().stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.3.0\n');
+  });
+
+  test('config rejects unknown update channels without touching the config', () => {
+    const fx = releaseChannelFixture('stable-config');
+    expect(fx.config('set', 'auto_upgrade', 'true').exitCode).toBe(0);
+    expect(fx.config('set', 'update_channel', 'stable').exitCode).toBe(0);
+    const file = join(fx.state, 'config');
+    const before = readFileSync(file, 'utf8');
+    const invalid = fx.config('set', 'update_channel', 'bogus');
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stdout).toBe('');
+    expect(invalid.stderr.trim().split('\n')).toHaveLength(1);
+    expect(invalid.stderr).toContain('stable');
+    expect(invalid.stderr).toContain('main');
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(fx.config('set', 'update_channel', 'main').exitCode).toBe(0);
+    expect(fx.config('get', 'update_channel').stdout).toBe('main\n');
+  });
+
+  test('the frozen v0.46.0.0 checker does not replay the identity line', () => {
+    const fx = releaseChannelFixture('stable-legacy-cache');
+    fx.release('1.1.0');
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+    expect(readFileSync(fx.cache, 'utf8')).toContain('IDENTITY channel=stable');
+    const frozen = fixtureGit(ROOT, 'show', 'v0.46.0.0:bin/update-check');
+    const checker = join(fx.repo, 'bin', 'frozen-update-check');
+    writeFileSync(checker, frozen + '\n', { mode: 0o755 });
+    expect(runBin(checker, [], fx.opts)).toEqual({ exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.1.0\n', stderr: '' });
+  });
+
+  test('installs the stable tag while main remains checked out and announces the upgrade once', () => {
+    const fx = releaseChannelFixture('stable-install');
+    const release = fx.release('1.1.0');
+    fx.newMain('1.2.0');
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(0);
+    expect(upgrade.stdout.match(/^UPGRADE_(OK|FAILED).*$/gm)).toEqual(['UPGRADE_OK 1.0.0 1.1.0']);
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
+    expect(fixtureGit(fx.repo, 'branch', '--show-current')).toBe('main');
+    expect(fx.check().stdout).toBe('JUST_UPGRADED 1.0.0 1.1.0\n');
+    expect(fx.check().stdout).toBe('');
+  });
+
+  test('a later tag does not displace the recorded stable offer', () => {
+    const fx = releaseChannelFixture('stable-bound-offer');
+    const release = fx.release('1.1.0');
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+    fx.release('1.2.0');
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(0);
+    expect(upgrade.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
+    expect(fx.check('--force').stdout).toBe('JUST_UPGRADED 1.0.0 1.1.0\nUPGRADE_AVAILABLE 1.1.0 1.2.0\n');
+  });
+
+  test('rejects a moved tag and preserves the branch, dirty work, existing stash and offer', () => {
+    const fx = releaseChannelFixture('stable-moved-tag');
+    const head = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+    fixtureGit(fx.repo, 'switch', '-qc', 'feature');
+    const setup = join(fx.repo, 'setup');
+    const originalSetup = readFileSync(setup, 'utf8');
+    writeFileSync(setup, originalSetup + '# prior stash\n');
+    fixtureGit(fx.repo, 'stash', 'push', '-m', 'keep this stash');
+    const stash = fixtureGit(fx.repo, 'stash', 'list', '--format=%H');
+    expect(stash).not.toBe('');
+    const dirtySetup = originalSetup + '# current edit\n';
+    writeFileSync(setup, dirtySetup);
+    const release = fx.release('1.1.0');
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
+    const offer = readFileSync(fx.cache, 'utf8');
+    fx.tag('v1.1.0', fx.newMain('1.2.0'));
+
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(1);
+    const failures = upgrade.stdout.match(/^UPGRADE_FAILED.*$/gm) ?? [];
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('UPGRADE_FAILED release mismatch');
+    expect(failures[0]).toContain('v1.1.0');
+    expect(failures[0]).toContain(release.slice(0, 7));
+    expect(failures[0]).toContain('bin/update-check --force');
+    expect(upgrade.stdout).not.toContain('UPGRADE_OK');
+    expect(upgrade.stdout).not.toContain('setup ran');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(head);
+    expect(fixtureGit(fx.repo, 'branch', '--show-current')).toBe('feature');
+    expect(fixtureGit(fx.repo, 'stash', 'list', '--format=%H')).toBe(stash);
+    expect(readFileSync(setup, 'utf8')).toBe(dirtySetup);
+    expect(readFileSync(join(fx.repo, 'VERSION'), 'utf8')).toBe('1.0.0\n');
+    expect(readFileSync(fx.cache, 'utf8')).toBe(offer);
+    expect(existsSync(fx.marker)).toBe(false);
+  });
+
+  test('rejects the newest tag on a side branch outside origin/main', () => {
+    const fx = releaseChannelFixture('stable-side-tag');
+    const head = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+    const side = join(baseTmp, 'stable-side-tag-work');
+    fixtureGit(baseTmp, 'clone', '-q', fx.remote, side);
+    fixtureGit(side, 'switch', '-qc', 'side');
+    writeFileSync(join(side, 'VERSION'), '1.2.0\n');
+    fixtureGit(side, 'commit', '-qam', 'unmerged release');
+    fixtureGit(side, 'push', '-q', 'origin', 'side');
+    fx.tag('v1.2.0', fixtureGit(side, 'rev-parse', 'HEAD'));
+    fx.release('1.1.0');
+
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(1);
+    expect(upgrade.stdout).toMatch(/UPGRADE_FAILED release mismatch.*v1\.2\.0.*origin\/main/);
+    expect(upgrade.stdout).not.toContain('setup ran');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(head);
+    expect(existsSync(fx.marker)).toBe(false);
+  });
+
+  test('a direct stable run installs the newest tag when it has no recorded offer', () => {
+    const fx = releaseChannelFixture('stable-direct');
+    fx.release('1.1.0');
+    const release = fx.release('1.2.0');
+    fx.newMain('1.3.0');
+    expect(existsSync(fx.cache)).toBe(false);
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(0);
+    expect(upgrade.stdout).toContain('UPGRADE_OK 1.0.0 1.2.0');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
+  });
+
+  test('refuses a stable upgrade when local main is already beyond the release', () => {
+    const fx = releaseChannelFixture('stable-local-ahead');
+    fx.release('1.1.0');
+    fixtureGit(fx.repo, 'pull', '--ff-only', 'origin', 'main');
+    writeFileSync(join(fx.repo, 'local-work'), 'local commit\n');
+    fixtureGit(fx.repo, 'add', 'local-work');
+    fixtureGit(fx.repo, 'commit', '-qm', 'keep local work');
+    const head = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(1);
+    expect(upgrade.stdout.match(/^UPGRADE_(OK|FAILED).*$/gm)).toEqual([
+      'UPGRADE_FAILED local main cannot fast-forward to release v1.1.0 (ff-only failed)',
+    ]);
+    expect(upgrade.stdout).not.toContain('setup ran');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(head);
+    expect(existsSync(fx.marker)).toBe(false);
+  });
+
+  test.each([false, true])('main ignores tags and reports only a changed offer (moved=%s)', (moved) => {
+    const fx = releaseChannelFixture(`stable-main-${moved}`);
+    fx.release('1.1.0');
+    const offeredCommit = fx.newMain('1.2.0');
+    expect(fx.config('set', 'update_channel', 'main').exitCode).toBe(0);
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.2.0\n');
+    // The moved case also verifies old one-line main offers are still recognized.
+    if (moved) writeFileSync(fx.cache, 'UPGRADE_AVAILABLE 1.0.0 1.2.0\n');
+    const main = moved ? fx.newMain('1.3.0') : offeredCommit;
+    const upgrade = fx.upgrade();
+    expect(upgrade.exitCode).toBe(0);
+    const protocols = upgrade.stdout.trimEnd().split('\n').filter((line) => line.startsWith('UPGRADE_'));
+    expect(protocols).toEqual(moved
+      ? ['UPGRADE_MISMATCH offered=1.2.0 installed=1.3.0 channel=main', 'UPGRADE_OK 1.0.0 1.3.0']
+      : ['UPGRADE_OK 1.0.0 1.2.0']);
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(main);
+  });
+
+  test('stable upgrade restores a dirty feature branch and pops its stash', () => {
+    const fx = releaseChannelFixture('stable-feature');
+    fixtureGit(fx.repo, 'switch', '-qc', 'feature');
+    const head = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
+    const setup = join(fx.repo, 'setup');
+    const dirtySetup = readFileSync(setup, 'utf8') + '# feature edit\n';
+    writeFileSync(setup, dirtySetup);
+    const release = fx.release('1.1.0');
+
+    expect(fx.upgrade().exitCode).toBe(0);
+    expect(fixtureGit(fx.repo, 'branch', '--show-current')).toBe('feature');
+    expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(head);
+    expect(fixtureGit(fx.repo, 'rev-parse', 'main')).toBe(release);
+    expect(fixtureGit(fx.repo, 'stash', 'list')).toBe('');
+    expect(readFileSync(setup, 'utf8')).toBe(dirtySetup);
+  });
+
+  test('the documented non-interactive command enables stable auto-upgrade', () => {
+    const fx = releaseChannelFixture('stable-bootstrap');
+    fx.release('1.1.0');
+    fx.newMain('1.2.0');
+    expect(fx.config('set', 'update_channel', 'main').exitCode).toBe(0);
+    const doc = readFileSync(join(ROOT, 'docs/installation.md'), 'utf8');
+    const example = doc.match(/<!-- update-example:enable-auto-upgrade -->\s*```bash\n([\s\S]*?)\n```\s*<!-- \/update-example:enable-auto-upgrade -->/)?.[1];
+    expect(example).toBeDefined();
+    const result = runBin('bash', ['-c', example!], {
+      ...fx.opts,
+      extraEnv: { ...fx.opts.extraEnv, EXTEND_CHECKOUT: fx.repo },
+    });
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(fx.config('get', 'update_channel').stdout).toBe('stable\n');
+    expect(fx.config('get', 'auto_upgrade').stdout).toBe('true\n');
+    expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
   });
 });
 
@@ -2292,14 +2757,14 @@ exec /bin/mv "$@"
 
   test('R2 a warm cache still prints local warnings', () => {
     const current = warnedFixture('r2-current');
-    writeFileSync(join(current.state, 'last-update-check'), 'UP_TO_DATE 1.0.0\n');
+    writeFileSync(join(current.state, 'last-update-check'), 'UP_TO_DATE 1.0.0\nIDENTITY channel=stable tag=- commit=-\n');
     const upToDate = checkInstall(current.repo, current.home, current.state, [], current.remote);
     expect(upToDate.exitCode).toBe(0);
     expect(upToDate.stdout).not.toContain('UPGRADE_AVAILABLE');
     expect(upToDate.stdout).toContain('reason=preserved_regular');
 
     const newer = warnedFixture('r2-newer', '2.0.0\n');
-    writeFileSync(join(newer.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(newer.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\nIDENTITY channel=stable tag=- commit=-\n');
     const available = checkInstall(newer.repo, newer.home, newer.state, [], newer.remote);
     const lines = available.stdout.trim().split('\n');
     expect(lines[0]).toBe('UPGRADE_AVAILABLE 1.0.0 2.0.0');
@@ -2309,28 +2774,28 @@ exec /bin/mv "$@"
   test('R3 snooze hides the version line and keeps the warning', () => {
     const now = Math.floor(Date.now() / 1000);
     const active = warnedFixture('r3-active', '2.0.0\n');
-    writeFileSync(join(active.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(active.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\nIDENTITY channel=stable tag=- commit=-\n');
     writeFileSync(join(active.state, 'update-snoozed'), `2.0.0 1 ${now}\n`);
     const snoozed = checkInstall(active.repo, active.home, active.state, [], active.remote);
     expect(snoozed.stdout).not.toContain('UPGRADE_AVAILABLE');
     expect(snoozed.stdout).toContain('reason=preserved_regular');
 
     const expired = warnedFixture('r3-expired', '2.0.0\n');
-    writeFileSync(join(expired.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(expired.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\nIDENTITY channel=stable tag=- commit=-\n');
     writeFileSync(join(expired.state, 'update-snoozed'), '2.0.0 1 1\n');
     const elapsed = checkInstall(expired.repo, expired.home, expired.state, [], expired.remote);
     expect(elapsed.stdout).toContain('UPGRADE_AVAILABLE 1.0.0 2.0.0');
     expect(elapsed.stdout).toContain('reason=preserved_regular');
 
     const moved = warnedFixture('r3-moved', '2.0.0\n');
-    writeFileSync(join(moved.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(moved.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\nIDENTITY channel=stable tag=- commit=-\n');
     writeFileSync(join(moved.state, 'update-snoozed'), `9.9.9 1 ${now}\n`);
     const changed = checkInstall(moved.repo, moved.home, moved.state, [], moved.remote);
     expect(changed.stdout).toContain('UPGRADE_AVAILABLE 1.0.0 2.0.0');
     expect(changed.stdout).toContain('reason=preserved_regular');
 
     const forced = warnedFixture('r3-force', '2.0.0\n');
-    writeFileSync(join(forced.state, 'last-update-check'), 'UP_TO_DATE 1.0.0\n');
+    writeFileSync(join(forced.state, 'last-update-check'), 'UP_TO_DATE 1.0.0\nIDENTITY channel=stable tag=- commit=-\n');
     writeFileSync(join(forced.state, 'update-snoozed'), `2.0.0 1 ${now}\n`);
     const busted = checkInstall(forced.repo, forced.home, forced.state, ['--force'], forced.remote);
     expect(busted.stdout).toContain('UPGRADE_AVAILABLE 1.0.0 2.0.0');
@@ -2763,6 +3228,7 @@ describe('legacy four-part install to three-part candidate', () => {
     expect(section).toContain('v0.47.0.0');
     expect(section).toContain("git tag --list 'v*.*.*.*'");
     expect(section).toContain('Every skill added after that tag');
+    expect(section).toContain('update_channel');
     const inventory = section.indexOf('git diff --name-status --diff-filter=A');
     expect(inventory).toBeGreaterThanOrEqual(0);
     expect(inventory).toBeLessThan(section.indexOf('git checkout --detach'));
@@ -2800,6 +3266,14 @@ describe('legacy four-part install to three-part candidate', () => {
 });
 
 describe('retired hosts in bin/update-check (Track 92A)', () => {
+  function mainChannelState(home: string): string {
+    // Tests resolve the real checkout but serve its remote VERSION from a fixture.
+    const state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, 'config'), 'update_channel=main\n');
+    return state;
+  }
+
   function writeInstallStatusFrame(stateDir: string, facts: string[][]) {
     mkdirSync(stateDir, { recursive: true });
     const parts: string[] = ['gstack-extend-install-status', '1'];
@@ -2815,8 +3289,7 @@ describe('retired hosts in bin/update-check (Track 92A)', () => {
 
   test('legacy cursor and opencode facts stay valid (never malformed) and are suppressed beside a codex fact', () => {
     const home = join(baseTmp, 'uc-legacy-facts-home');
-    const state = join(home, '.gstack-extend');
-    mkdirSync(state, { recursive: true });
+    const state = mainChannelState(home);
     const hid = homeIdOf(home);
     writeInstallStatusFrame(state, [
       ['fact', hid, ROOT, 'this_checkout', 'cursor', `${home}/.cursor/skills`, '', '', '', 'cursor_unserved', 'owner_not_selected', 'not_applicable', 'not_applicable', '0.107.0', '', 'cursor_home'],
@@ -2840,8 +3313,7 @@ describe('retired hosts in bin/update-check (Track 92A)', () => {
 
   test('live retired_host scan reports one, two, and >4 distinct owners (capped at 4 + overflow), skips aliases, and honors update_check=false', () => {
     const home = join(baseTmp, 'uc-retired-scan-home');
-    const state = join(home, '.gstack-extend');
-    mkdirSync(state, { recursive: true });
+    const state = mainChannelState(home);
 
     // One owning checkout in cursor
     const c1 = join(home, '.cursor', 'skills', 'implement');
@@ -2916,8 +3388,7 @@ describe('retired hosts in bin/update-check (Track 92A)', () => {
   test('live retired_host scan prints nothing when a retired directory aliases Claude or Codex', () => {
     for (const targetHost of ['claude', 'codex'] as const) {
       const home = join(baseTmp, `uc-retired-alias-${targetHost}`);
-      const state = join(home, '.gstack-extend');
-      mkdirSync(state, { recursive: true });
+      const state = mainChannelState(home);
       const targetDir = hostDir(home, targetHost, '');
       const skillDir = join(targetDir, 'implement');
       mkdirSync(skillDir, { recursive: true });
@@ -2940,8 +3411,7 @@ describe('retired hosts in bin/update-check (Track 92A)', () => {
 
   test('retired_host warnings quote paths, use distinct first lines, and follow the version line', () => {
     const home = join(baseTmp, 'retired home');
-    const state = join(home, '.gstack-extend');
-    mkdirSync(state, { recursive: true });
+    const state = mainChannelState(home);
     writeFileSync(join(state, 'just-upgraded-from'), '0.107.0\n');
     const root = join(home, '.cursor', 'skills');
     const longPointer = '/' + 'a'.repeat(4095);
@@ -2971,8 +3441,7 @@ describe('retired hosts in bin/update-check (Track 92A)', () => {
 
   test('CEO-9: frozen inline block with a leftover Cursor pointer resolves the new checkout and prints retired_host', () => {
     const home = join(baseTmp, 'uc-ceo9-leftover');
-    const state = join(home, '.gstack-extend');
-    mkdirSync(state, { recursive: true });
+    const state = mainChannelState(home);
     const cursorSkill = join(home, '.cursor', 'skills', 'roadmap');
     mkdirSync(cursorSkill, { recursive: true });
     writeFileSync(join(cursorSkill, 'SKILL.md'), 'old inline copy\n');
