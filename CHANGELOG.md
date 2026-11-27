@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.122.0] - 2026-11-26
+
+### Added
+
+- `bin/roadmap-id` gains a one-time `migrate` subcommand that adds work-item IDs to existing planning records without changing their other text, and minting now also skips every ID found in the project's local Git history.
+- `bin/roadmap-id migrate` assigns IDs to legacy planning records and supports `--dry-run` to preview the assignments.
+
+### Changed
+
+- `bin/roadmap-id mint` skips IDs found in local Git history, and both ID commands refuse shallow or unreadable history.
+- A missing planning ID makes `WORK_ITEM_IDS` fail, and the audit points users to `bin/roadmap-id migrate`.
+
+### Upgrade notes
+
+- A planning record without a work-item ID now fails the roadmap audit instead of warning, so run the `migrate` subcommand of `bin/roadmap-id` once in each project after upgrading, and expect minting and migration to refuse a shallow clone until its full history is fetched.
+
 ## [0.121.0] - 2026-11-26
 
 ### Changed

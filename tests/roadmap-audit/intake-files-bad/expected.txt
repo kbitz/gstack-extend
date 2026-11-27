@@ -168,6 +168,7 @@ FINDINGS:
 - DUPLICATE_ID: docs/todos/bad-name.md — duplicate work-item ID "wi-aaaaaa" (first seen at TODOS.md:3 (Hand-written follow-up))
 - MISSING_ID: docs/todos/wi-bbbbbb.md — missing - **ID:** wi-<hex> bullet (required in intake files)
 - ID_MISMATCH: docs/todos/wi-cccccc.md — filename ID "wi-cccccc" does not match body ID "wi-dddddd"
+- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.
 
 
 ## MODE

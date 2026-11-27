@@ -40,7 +40,7 @@ describe('runCheckWorkItemIds', () => {
     expect(result.body.join('\n')).not.toContain('MISSING_ID');
   });
 
-  test('warns about a missing ID under a descriptive Future heading', () => {
+  test('fails on a missing ID under a descriptive Future heading with a migration hint', () => {
     const bullet = '- **Follow-up**: More work. **Revisit when:** - use **Phase 2** — after GA';
     const roadmap = parseRoadmap([
       '## Future (deferred) — next release', bullet,
@@ -48,10 +48,13 @@ describe('runCheckWorkItemIds', () => {
     ].join('\n'));
     expect(roadmap.value.futureBullets).toEqual([bullet]);
     const result = runCheckWorkItemIds(makeCtx({ parsedRoadmap: roadmap.value }));
-    expect(result.status).toBe('warn');
+    expect(result.status).toBe('fail');
     expect(result.body.filter(line => line.includes('MISSING_ID'))).toEqual([
       '- MISSING_ID: ROADMAP.md ## Future (Follow-up) — missing **ID:** wi-<hex>',
     ]);
+    expect(result.body).toContain(
+      '- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.',
+    );
   });
 
   test('checks shipped receipts with a recycled display label as separate records', () => {
@@ -189,12 +192,19 @@ describe('per-record intake IDs', () => {
     }
   });
 
-  test('missing intake IDs fail while missing legacy IDs warn', () => {
+  test('missing IDs fail on both legacy records and intake files with a migration hint', () => {
     const parsedTodos = parseTodos('## Unprocessed\n### [manual] Existing\n').value;
-    expect(runCheckWorkItemIds(makeCtx({ parsedTodos })).status).toBe('warn');
+    const legacyOnly = runCheckWorkItemIds(makeCtx({ parsedTodos }));
+    expect(legacyOnly.status).toBe('fail');
+    expect(legacyOnly.body).toContain(
+      '- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.',
+    );
     const result = runCheckWorkItemIds(makeCtx({ parsedTodos, intakeFiles: [record('wi-a1b2c3')] }));
     expect(result.status).toBe('fail');
     expect(result.body.join('\n')).toContain('MISSING_ID: docs/todos/wi-a1b2c3.md');
+    expect(result.body).toContain(
+      '- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.',
+    );
   });
 
   test('checks and reserves both IDs when the filename and body disagree', () => {

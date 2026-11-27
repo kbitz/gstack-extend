@@ -157,10 +157,11 @@ FINDINGS:
 - MALFORMED_HEADING: legacy bullet entry '- [manual] Another legacy bullet' — rewrite as '### [tag] Title' per docs/source-tag-contract.md
 
 ## WORK_ITEM_IDS
-STATUS: warn
+STATUS: fail
 FINDINGS:
 - MISSING_ID: TODOS.md:5 (Well-formed entry) — missing - **ID:** wi-<hex> bullet
 - MISSING_ID: TODOS.md:8 (Unknown source tag) — missing - **ID:** wi-<hex> bullet
+- Hint: run `bin/roadmap-id migrate` to assign work-item IDs to existing records.
 
 
 ## MODE

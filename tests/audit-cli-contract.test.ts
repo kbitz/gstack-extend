@@ -194,7 +194,7 @@ describe('audit CLI contract: graceful handling of bad input', () => {
 
     const audit = run([repo]);
     expect(audit.exitCode).toBe(0);
-    expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: warn\nFINDINGS:\n- MISSING_ID:');
+    expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: fail\nFINDINGS:\n- MISSING_ID:');
   });
 
   // Value: protects=the observed undercount cannot pass SIZE again: a card whose task title merely contains a

@@ -51,6 +51,43 @@ describe('createGitGateway — mocked', () => {
     expect(git.toplevel()).toBeNull();
   });
 
+  test('projectToplevel distinguishes Git discovery errors and preserves path whitespace', () => {
+    const git = createGitGateway({
+      cwd: '/tmp/repo ',
+      spawn: mockSpawn({
+        'rev-parse --show-toplevel': { ok: true, stdout: '/tmp/repo \n', stderr: '' },
+      }),
+    });
+    expect(git.projectToplevel()).toEqual({ kind: 'root', path: '/tmp/repo ' });
+    const failure = createGitGateway({
+      cwd: '/tmp/repo',
+      spawn: mockSpawn({
+        'rev-parse --show-toplevel': { ok: false, stdout: '', stderr: 'fatal: dubious ownership\n' },
+      }),
+    });
+    expect(failure.projectToplevel()).toEqual({ kind: 'error', detail: 'fatal: dubious ownership' });
+  });
+
+  test('Git discovery reads the fatal diagnostic after trace text and fails closed on an invalid Git directory', () => {
+    const traced = createGitGateway({
+      cwd: '/tmp',
+      spawn: () => ({
+        ok: false, stdout: '',
+        stderr: 'trace: startup diagnostic\nfatal: not a git repository (or any parent up to mount point /tmp)\n',
+      }),
+    });
+    expect(traced.projectToplevel()).toEqual({ kind: 'not-a-repo' });
+    expect(traced.historyWorkItemIds()).toEqual({ kind: 'not-a-repo' });
+
+    const detail = 'fatal: not a git repository: /tmp/project-gitdir';
+    const broken = createGitGateway({
+      cwd: '/tmp/project',
+      spawn: () => ({ ok: false, stdout: '', stderr: detail + '\n' }),
+    });
+    expect(broken.projectToplevel()).toEqual({ kind: 'error', detail });
+    expect(broken.historyWorkItemIds()).toEqual({ kind: 'error', detail });
+  });
+
   test('tags: splits and strips trailing newline', () => {
     const git = createGitGateway({
       cwd: '/tmp',
@@ -236,6 +273,98 @@ describe('createGitGateway — mocked', () => {
       '--',
       'a.md',
     ]);
+  });
+
+  test('historyWorkItemIds: maps not-a-repo, shallow, failed log, buffer overflow and unexpected rev-parse error', () => {
+    const notRepo = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'rev-parse --is-inside-work-tree': {
+          ok: false,
+          stdout: '',
+          stderr: 'fatal: not a git repository (or any of the parent directories): .git\n',
+        },
+      }),
+    });
+    expect(notRepo.historyWorkItemIds()).toEqual({ kind: 'not-a-repo' });
+
+    const unexpectedRevParse = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'rev-parse --is-inside-work-tree': {
+          ok: false,
+          stdout: '',
+          stderr: 'fatal: dubious ownership in repository\n',
+        },
+      }),
+    });
+    expect(unexpectedRevParse.historyWorkItemIds()).toEqual({
+      kind: 'error',
+      detail: 'fatal: dubious ownership in repository',
+    });
+
+    const shallow = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'rev-parse --is-inside-work-tree': { ok: true, stdout: 'true\n', stderr: '' },
+        'rev-parse --is-shallow-repository': { ok: true, stdout: 'true\n', stderr: '' },
+      }),
+    });
+    expect(shallow.historyWorkItemIds()).toEqual({ kind: 'shallow' });
+
+    const logArgs = '-c core.quotepath=off --no-replace-objects log --all --no-relative --no-renames -m --root --no-color --no-ext-diff --no-textconv --no-show-signature --format= --text -G wi-[0-9a-f]{4,8} -p -U0';
+    const failedLog = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'rev-parse --is-inside-work-tree': { ok: true, stdout: 'true\n', stderr: '' },
+        'rev-parse --is-shallow-repository': { ok: true, stdout: 'false\n', stderr: '' },
+        [logArgs]: { ok: false, stdout: '', stderr: 'fatal: bad object HEAD\n' },
+      }),
+    });
+    expect(failedLog.historyWorkItemIds()).toEqual({
+      kind: 'error',
+      detail: 'fatal: bad object HEAD',
+    });
+
+    const bufferOverflow = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'rev-parse --is-inside-work-tree': { ok: true, stdout: 'true\n', stderr: '' },
+        'rev-parse --is-shallow-repository': { ok: true, stdout: 'false\n', stderr: '' },
+        [logArgs]: { ok: false, stdout: '', stderr: 'spawnSync git ENOBUFS' },
+      }),
+    });
+    expect(bufferOverflow.historyWorkItemIds()).toEqual({
+      kind: 'error',
+      detail: 'spawnSync git ENOBUFS',
+    });
+  });
+
+  test('isolateEnv strips inherited git repository and pathspec variables', () => {
+    const prev = process.env.GIT_DIR;
+    const prevGlob = process.env.GIT_GLOB_PATHSPECS;
+    process.env.GIT_DIR = '/other/.git';
+    process.env.GIT_GLOB_PATHSPECS = '1';
+    try {
+      let seenEnv: NodeJS.ProcessEnv | undefined;
+      const git = createGitGateway({
+        cwd: '/tmp',
+        isolateEnv: true,
+        spawn: (_args, _cwd, opts) => {
+          seenEnv = opts?.env;
+          return { ok: true, stdout: '/tmp\n', stderr: '' };
+        },
+      });
+      expect(git.toplevel()).toBe('/tmp');
+      expect(seenEnv).toBeDefined();
+      expect(seenEnv?.GIT_DIR).toBeUndefined();
+      expect(seenEnv?.GIT_GLOB_PATHSPECS).toBeUndefined();
+      expect(seenEnv?.GIT_NO_LAZY_FETCH).toBe('1');
+      expect(seenEnv?.GIT_ALLOW_PROTOCOL).toBe('');
+    } finally {
+      if (prev === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prev;
+      if (prevGlob === undefined) delete process.env.GIT_GLOB_PATHSPECS; else process.env.GIT_GLOB_PATHSPECS = prevGlob;
+    }
   });
 });
 

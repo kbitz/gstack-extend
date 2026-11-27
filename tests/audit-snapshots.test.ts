@@ -68,7 +68,7 @@ describe('audit snapshot suite', () => {
     expect(audit.exitCode).toBe(0);
     expect(audit.stderr).toBe('');
     expect(audit.stdout).toContain('## PACKING\nSTATUS: pass');
-    expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: warn');
+    expect(audit.stdout).toContain('## WORK_ITEM_IDS\nSTATUS: fail');
   });
 
   test.each([
