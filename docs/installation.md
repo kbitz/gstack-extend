@@ -8,6 +8,11 @@
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex, [Git](https://git-scm.com/), and [Bun](https://bun.sh/) **1.3.3 or newer** (verified runtime and development floor). Every Bun-backed launcher passes `--no-env-file --no-install --config=/dev/null`; `--no-env-file` was introduced in Bun 1.3.3, and earlier builds (such as 1.2.0 and 1.3.2) silently ignore it and still load `.env`.
 
+The workflow skills require upstream [gstack](https://github.com/garrytan/gstack).
+On install runs, `setup` warns on stderr with `GSTACK_MISSING` if it cannot find
+an executable `gstack-config` in the [helper lookup paths](telemetry.md#gstack-helper-lookup),
+even with `--quiet`. Setup continues. Install upstream gstack and rerun setup.
+
 `setup`, `gstack-extend init`, and all 15 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. `gstack-extend init` also checks Bun from the project directory (its parent for a new project), where its post-render audit runs, so a version manager that pins an older Bun there is refused before anything is written. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
 
 ```text
@@ -308,6 +313,29 @@ On a fresh start, the start command runs `bin/update-check` after it finds a
 verified checkout. A skill follows its upgrade flow when the check prints
 `UPGRADE_AVAILABLE <old> <new>`.
 
+`bin/config set update_channel` accepts `stable` or `main`. The updater defaults
+to `stable` when the key is missing or has an unrecognized value. Stable follows the
+`v<VERSION>` release tags on the checkout's `origin`, which the
+[auto-tag workflow](../.github/workflows/auto-tag.yml) creates when `VERSION`
+changes on `main`. The updater installs the exact tag commit the check
+offered. If that release no longer matches the offer, the updater reports
+`UPGRADE_FAILED release mismatch`. Run `bin/update-check --force` from the
+checkout to refresh the offer, then rerun the updater. If the refreshed
+offer still names a tag with an invalid commit or `VERSION`, the release
+owner needs to correct the tag on `origin`. If the updater could not reach
+`origin` to confirm the recorded tag, retry with the same offer once the
+connection is available.
+
+Set `update_channel` to `main` to keep using the published `VERSION` from
+`main` and fast-forwarding to the tip of `origin/main`. If the `VERSION` that
+lands differs from the offer, the updater prints
+`UPGRADE_MISMATCH offered=<version> installed=<version> channel=main`
+before its normal result. On `stable`, a direct run with no recorded offer
+uses the newest release tag. The stable updater refuses to move local `main`
+backward if it is already past that tag. An origin with no release tags falls
+back to main tracking when there is no recorded tag offer. A failed tag
+lookup leaves the checker quiet and makes the updater fail.
+
 In an interactive session (`GSTACK_SESSION_KIND` unset or any value other than
 `spawned` or `unattended`), the flow checks `auto_upgrade`. With `auto_upgrade=true`
 it runs `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` without asking; otherwise it
@@ -338,9 +366,33 @@ caller that must never upgrade should deny `bin/update-run` in its own permissio
 layer.
 
 To upgrade when a spawned run reports a newer version, run `/gstack-extend-upgrade`
-in an interactive session, or run `<checkout>/bin/update-run <checkout>` directly.
+in an interactive session, or have the bootstrap run
+`<checkout>/bin/update-run <checkout>` between stages.
 
 See the dated qualification runs in the [install and upgrade record](acceptance/install-upgrade.md).
+
+#### Existing main-tracking installs
+
+The first upgrade into a release that supports channels still uses the
+previous updater and lands on the tip of `main`. After that, an install with
+`update_channel` unset follows release tags. To keep following `main`, run
+`bin/config set update_channel main` from the checkout.
+
+#### Enable stable auto-upgrades
+
+Set `EXTEND_CHECKOUT` to the absolute path of the gstack-extend checkout and
+run this command. It asks nothing and takes effect at the next interactive
+skill start.
+
+<!-- update-example:enable-auto-upgrade -->
+```bash
+"$EXTEND_CHECKOUT/bin/config" set update_channel stable && "$EXTEND_CHECKOUT/bin/config" set auto_upgrade true
+```
+<!-- /update-example:enable-auto-upgrade -->
+
+Run `bin/config set update_channel main` from the checkout to go back to main
+tracking, or `bin/config set auto_upgrade false` to restore the interactive
+upgrade prompt.
 
 ### Version numbers
 
@@ -384,9 +436,12 @@ else
 fi
 ```
 
-Pause update checks first: the restored checker still offers the newer release,
-and accepting it (or `auto_upgrade=true`) makes `bin/update-run` fast-forward the
-detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
+Pause update checks first. The restored checker can offer an upgrade, and
+accepting it or setting `auto_upgrade=true` can undo the rollback. The
+channel-aware updater uses the recorded release offer or, without one, the
+newest release tag on `stable`. On `main` and with older updaters it uses the tip
+of `main`. The pause also hides
+`INSTALL_WARN` lines.
 This leaves detached HEAD. The diff before checkout lists skills that the older
 setup cannot refresh. Every skill added after that tag (for example, `plan-track`
 after `v0.47.0.0`) stays installed as a dangling link or stale copy and may fail
@@ -398,8 +453,12 @@ An older writer resumes appending to the legacy path; retain the per-host files
 and their capable readers. Inspect warnings and preserve user-owned
 files. To resume upgrades, return to the install's main branch, re-enable checks
 and rerun its updater: `git checkout main`, `./bin/config set update_check true`,
-then `./bin/update-run "$PWD"`. If setup failed, follow the reported setup
-recovery before relying on refreshed skills.
+then `./bin/update-run "$PWD"`. It reinstalls according to `update_channel`.
+If `main` is already past the selected stable tag, run `./setup --host auto`
+to refresh skills from that checkout. Leave update checks enabled for the
+next stable offer.
+If setup failed, follow the reported setup recovery before relying on refreshed
+skills.
 
 ### Preserved installs
 

@@ -4,6 +4,7 @@
 # Usage:
 #   bin/config get <key>       # Print value (empty if missing)
 #   bin/config set <key> <value>
+#   bin/config set update_channel {stable|main}
 #
 # Config file: ~/.gstack-extend/config
 set -euo pipefail
@@ -29,6 +30,10 @@ case "$cmd" in
     ;;
   set)
     [ -z "$key" ] && exit 1
+    if [ "$key" = update_channel ] && [ "$value" != stable ] && [ "$value" != main ]; then
+      echo "Usage: config set update_channel {stable|main}" >&2
+      exit 1
+    fi
     mkdir -p "$STATE_DIR"
     if [ -f "$CONFIG_FILE" ]; then
       { awk -F= -v k="$key" '$1 != k' "$CONFIG_FILE" || true; } > "$CONFIG_FILE.tmp"

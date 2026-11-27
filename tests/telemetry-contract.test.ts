@@ -2425,16 +2425,12 @@ describe('Track 67A usage capture and workflow-metrics v2 schema contract', () =
 });
 
 describe('stage-runs v4: run_mode, usability signals, per-host files, migration, and report', () => {
-  test('run_mode branches follow the amended rule and validate against stage-runs.schema.json', () => {
-    const fix = makeTelemetryFixture('off');
-    const repo = initCheckout(fix.home, fix.env, 'checkout-v4-mode', 'git@github.com:acme/widget.git');
-    const customGstackHome = join(fix.home, 'custom-gstack-home');
-    mkdirSync(customGstackHome, { recursive: true });
-
+  describe('run_mode branches follow the amended rule and validate against stage-runs.schema.json', () => {
     const cases: Array<{
       name: string;
       env: Record<string, string>;
       finishArgs?: string[];
+      useCustomGstackHome?: boolean;
       expectedMode: string;
       expectedSource: string;
     }> = [
@@ -2477,7 +2473,8 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       },
       {
         name: 'non-default GSTACK_HOME blocks user-directed',
-        env: { GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        env: { CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        useCustomGstackHome: true,
         expectedMode: 'unknown',
         expectedSource: 'launcher-state-root',
       },
@@ -2548,86 +2545,6 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
         expectedSource: 'no-harness',
       },
     ];
-
-    const writeLines = (path: string, records: object[]) => {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, records.map(r => JSON.stringify(r)).join('\n') + '\n');
-    };
-    const codexRollout = (tid: string) =>
-      join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
-    const writeCodexMeta = (tid: string, originator: string, source: unknown, padBytes = 0) => {
-      const records: object[] = [];
-      if (padBytes > 0) records.push({ type: 'padding', pad: 'x'.repeat(padBytes) });
-      records.push({ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: tid, originator, source } });
-      writeLines(codexRollout(tid), records);
-    };
-    const museSessionFile = (sid: string) =>
-      join(fix.home, '.local/share/muse/sessions/2026/11/19', sid, 'session.jsonl');
-    const writeMuseOpen = (sid: string, clientName: string | null, padBytes = 0) => {
-      const records: object[] = [];
-      if (padBytes > 0) records.push({ payload_type: 'runtime.padding', payload: { pad: 'x'.repeat(padBytes) } });
-      records.push({
-        payload_type: 'session.opened.observed',
-        payload: { kind: 'session_opened', record: clientName !== null ? { client_info_name: clientName } : {} },
-      });
-      writeLines(museSessionFile(sid), records);
-    };
-
-    const grokPlace = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(repo)));
-    const writeGrokSession = (sid: string, context: object | null, summary?: object, padBytes = 0) => {
-      const dir = join(grokPlace, sid);
-      mkdirSync(dir, { recursive: true });
-      if (context !== null) {
-        const body = padBytes > 0 ? { ...context, pad: 'x'.repeat(padBytes) } : context;
-        writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(body, null, 2) + '\n');
-      }
-      if (summary !== undefined) {
-        writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
-      }
-    };
-
-    writeCodexMeta('codex-contract-term', 'codex_cli_rs', 'vscode');
-    writeCodexMeta('codex-contract-exec', 'codex_exec', 'exec');
-    writeCodexMeta('codex-contract-sub', 'codex_cli_rs', { subagent: 'review' });
-    // The link's target names the linked thread, so only the leaf no-follow open can refuse it.
-    const codexSymTarget = join(fix.home, 'codex-contract-sym-target.jsonl');
-    writeLines(codexSymTarget, [{ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: 'codex-contract-sym', originator: 'codex_cli_rs', source: 'vscode' } }]);
-    symlinkSync(codexSymTarget, codexRollout('codex-contract-sym'));
-    writeCodexMeta('codex-contract-over', 'codex_cli_rs', 'vscode', 70_000);
-
-    writeGrokSession('grok-contract-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-term' }, current_model_id: 'grok-4.7-build-fast', reasoning_effort: 'high' });
-    writeGrokSession('grok-contract-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-contract-headless' }, session_kind: 'headless' });
-    writeGrokSession('grok-contract-subagent', { audience: 'subagent', is_non_interactive: false }, { info: { id: 'grok-contract-subagent' }, session_kind: 'subagent' });
-    writeGrokSession('grok-contract-kind-override', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-kind-override' }, session_kind: 'headless' });
-    const grokSymDir = join(grokPlace, 'grok-contract-sym');
-    mkdirSync(grokSymDir, { recursive: true });
-    symlinkSync(join(grokPlace, 'grok-contract-term', 'prompt_context.json'), join(grokSymDir, 'prompt_context.json'));
-    writeGrokSession('grok-contract-over', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-over' } }, 70_000);
-
-    writeMuseOpen('muse-contract-host', 'paseo');
-    writeMuseOpen('muse-contract-case', 'Paseo');
-    writeMuseOpen('muse-contract-other', 'other_client');
-    mkdirSync(dirname(museSessionFile('muse-contract-sym')), { recursive: true });
-    symlinkSync(museSessionFile('muse-contract-host'), museSessionFile('muse-contract-sym'));
-    writeMuseOpen('muse-contract-over', 'paseo', 70_000);
-
-    const agyTranscriptFile = (cid: string) =>
-      join(fix.home, '.gemini/antigravity-cli/brain', cid, '.system_generated/logs/transcript.jsonl');
-    writeLines(agyTranscriptFile('agy-contract-term'), [
-      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: '2026-11-24T00:00:00Z' },
-      { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: '2026-11-24T00:00:01Z' },
-    ]);
-    writeLines(agyTranscriptFile('agy-contract-subagent'), [
-      { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: '2026-11-24T00:00:00Z' },
-    ]);
-    writeLines(agyTranscriptFile('agy-contract-implicit'), [
-      { step_index: 0, type: 'USER_INPUT', source: 'USER_IMPLICIT', created_at: '2026-11-24T00:00:00Z' },
-    ]);
-    mkdirSync(dirname(agyTranscriptFile('agy-contract-sym')), { recursive: true });
-    symlinkSync(agyTranscriptFile('agy-contract-term'), agyTranscriptFile('agy-contract-sym'));
-    writeLines(agyTranscriptFile('agy-contract-over'), [
-      { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', pad: 'x'.repeat(70_000) },
-    ]);
 
     // Value: protects=contract run-mode matrix mirrors shared per-harness launch-surface classification and schema validity; fails_when=a qualified harness diverges on terminal/host-app/orchestrated/workspace-owner/other/unavailable/override cases; why_new=Track 90B T3 shared contract matrix; seam=none
     const qualifiedHarnesses: Array<{
@@ -2789,16 +2706,107 @@ describe('stage-runs v4: run_mode, usability signals, per-host files, migration,
       env: { GSTACK_HOME: 'relative-root', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
       expectedMode: 'unknown', expectedSource: 'malformed-signal' });
 
-    for (const tc of cases) {
-      const env = { ...fix.env, ...tc.env };
-      expect(runTelemetry(env, repo, ['start', '--skill', 'extend:roadmap']).status, tc.name).toBe(0);
-      expect(runTelemetry(env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', ...(tc.finishArgs ?? [])]).status, tc.name).toBe(0);
-      const row = fix.readLedger().at(-1)!;
-      expect(row.run_mode, tc.name).toBe(tc.expectedMode);
-      expect(row.run_mode_source, tc.name).toBe(tc.expectedSource);
-      expect(verdict(row), tc.name).toEqual({ ok: true, errors: [] });
+    function makeRunModeFixture() {
+      const fix = makeTelemetryFixture('off');
+      const repo = initCheckout(fix.home, fix.env, 'checkout-v4-mode', 'git@github.com:acme/widget.git');
+      const customGstackHome = join(fix.home, 'custom-gstack-home');
+      mkdirSync(customGstackHome, { recursive: true });
+
+      const writeLines = (path: string, records: object[]) => {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, records.map(r => JSON.stringify(r)).join('\n') + '\n');
+      };
+      const codexRollout = (tid: string) =>
+        join(fix.home, '.codex/sessions/2026/11/19', `rollout-2026-11-19T00-00-00-${tid}.jsonl`);
+      const writeCodexMeta = (tid: string, originator: string, source: unknown, padBytes = 0) => {
+        const records: object[] = [];
+        if (padBytes > 0) records.push({ type: 'padding', pad: 'x'.repeat(padBytes) });
+        records.push({ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: tid, originator, source } });
+        writeLines(codexRollout(tid), records);
+      };
+      const museSessionFile = (sid: string) =>
+        join(fix.home, '.local/share/muse/sessions/2026/11/19', sid, 'session.jsonl');
+      const writeMuseOpen = (sid: string, clientName: string | null, padBytes = 0) => {
+        const records: object[] = [];
+        if (padBytes > 0) records.push({ payload_type: 'runtime.padding', payload: { pad: 'x'.repeat(padBytes) } });
+        records.push({
+          payload_type: 'session.opened.observed',
+          payload: { kind: 'session_opened', record: clientName !== null ? { client_info_name: clientName } : {} },
+        });
+        writeLines(museSessionFile(sid), records);
+      };
+
+      const grokPlace = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(repo)));
+      const writeGrokSession = (sid: string, context: object | null, summary?: object, padBytes = 0) => {
+        const dir = join(grokPlace, sid);
+        mkdirSync(dir, { recursive: true });
+        if (context !== null) {
+          const body = padBytes > 0 ? { ...context, pad: 'x'.repeat(padBytes) } : context;
+          writeFileSync(join(dir, 'prompt_context.json'), JSON.stringify(body, null, 2) + '\n');
+        }
+        if (summary !== undefined) {
+          writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+        }
+      };
+
+      writeCodexMeta('codex-contract-term', 'codex_cli_rs', 'vscode');
+      writeCodexMeta('codex-contract-exec', 'codex_exec', 'exec');
+      writeCodexMeta('codex-contract-sub', 'codex_cli_rs', { subagent: 'review' });
+      // The link's target names the linked thread, so only the leaf no-follow open can refuse it.
+      const codexSymTarget = join(fix.home, 'codex-contract-sym-target.jsonl');
+      writeLines(codexSymTarget, [{ timestamp: '2026-11-19T00:00:00Z', type: 'session_meta', payload: { id: 'codex-contract-sym', originator: 'codex_cli_rs', source: 'vscode' } }]);
+      symlinkSync(codexSymTarget, codexRollout('codex-contract-sym'));
+      writeCodexMeta('codex-contract-over', 'codex_cli_rs', 'vscode', 70_000);
+
+      writeGrokSession('grok-contract-term', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-term' }, current_model_id: 'grok-4.7-build-fast', reasoning_effort: 'high' });
+      writeGrokSession('grok-contract-headless', { audience: 'primary', is_non_interactive: true }, { info: { id: 'grok-contract-headless' }, session_kind: 'headless' });
+      writeGrokSession('grok-contract-subagent', { audience: 'subagent', is_non_interactive: false }, { info: { id: 'grok-contract-subagent' }, session_kind: 'subagent' });
+      writeGrokSession('grok-contract-kind-override', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-kind-override' }, session_kind: 'headless' });
+      const grokSymDir = join(grokPlace, 'grok-contract-sym');
+      mkdirSync(grokSymDir, { recursive: true });
+      symlinkSync(join(grokPlace, 'grok-contract-term', 'prompt_context.json'), join(grokSymDir, 'prompt_context.json'));
+      writeGrokSession('grok-contract-over', { audience: 'primary', is_non_interactive: false }, { info: { id: 'grok-contract-over' } }, 70_000);
+
+      writeMuseOpen('muse-contract-host', 'paseo');
+      writeMuseOpen('muse-contract-case', 'Paseo');
+      writeMuseOpen('muse-contract-other', 'other_client');
+      mkdirSync(dirname(museSessionFile('muse-contract-sym')), { recursive: true });
+      symlinkSync(museSessionFile('muse-contract-host'), museSessionFile('muse-contract-sym'));
+      writeMuseOpen('muse-contract-over', 'paseo', 70_000);
+
+      const agyTranscriptFile = (cid: string) =>
+        join(fix.home, '.gemini/antigravity-cli/brain', cid, '.system_generated/logs/transcript.jsonl');
+      writeLines(agyTranscriptFile('agy-contract-term'), [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: '2026-11-24T00:00:00Z' },
+        { step_index: 1, type: 'PLANNER_RESPONSE', model: 'gemini-4-neon-xhigh', created_at: '2026-11-24T00:00:01Z' },
+      ]);
+      writeLines(agyTranscriptFile('agy-contract-subagent'), [
+        { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', created_at: '2026-11-24T00:00:00Z' },
+      ]);
+      writeLines(agyTranscriptFile('agy-contract-implicit'), [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_IMPLICIT', created_at: '2026-11-24T00:00:00Z' },
+      ]);
+      mkdirSync(dirname(agyTranscriptFile('agy-contract-sym')), { recursive: true });
+      symlinkSync(agyTranscriptFile('agy-contract-term'), agyTranscriptFile('agy-contract-sym'));
+      writeLines(agyTranscriptFile('agy-contract-over'), [
+        { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', pad: 'x'.repeat(70_000) },
+      ]);
+      return { fix, repo, customGstackHome };
     }
-  }, 60_000);
+
+    for (const tc of cases) {
+      test(tc.name, () => {
+        const { fix, repo, customGstackHome } = makeRunModeFixture();
+        const env = { ...fix.env, ...tc.env, ...(tc.useCustomGstackHome ? { GSTACK_HOME: customGstackHome } : {}) };
+        expect(runTelemetry(env, repo, ['start', '--skill', 'extend:roadmap']).status, tc.name).toBe(0);
+        expect(runTelemetry(env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', ...(tc.finishArgs ?? [])]).status, tc.name).toBe(0);
+        const row = fix.readLedger().at(-1)!;
+        expect(row.run_mode, tc.name).toBe(tc.expectedMode);
+        expect(row.run_mode_source, tc.name).toBe(tc.expectedSource);
+        expect(verdict(row), tc.name).toEqual({ ok: true, errors: [] });
+      }, 60_000);
+    }
+  });
 
   test('documented per-host migration command moves legacy stage-runs.jsonl without clobbering, preserves the row multiset, and leaves report totals unchanged', () => {
     const fix = makeTelemetryFixture('off');

@@ -5,7 +5,7 @@ Status: **Open — partial qualification; open failures and owner confirmation p
 - **Date:** 2026-11-23 (`2026-11-23 04:40–04:44 UTC` `v0.111.0` scratch run; `2026-11-23 20:34 UTC` `v0.112.2` prerequisite re-check)
 - **Track:** Track 94D — Qualify install, upgrade and recovery on the owner's machines
 - **Supports:** [SPEC O1 (all three criteria)](../SPEC.md#o1-install-update-and-recover-a-working-skill-set) and [SPEC O5.2](../SPEC.md#o5-make-a-stable-release-promise-that-the-tooling-can-keep), plus the preserved Track 28A published three-part upgrade obligation (`2026-10-23`, trigger met by `v0.48.0`, `3cd166c`).
-- **Downstream consumer:** Track 96C appends stable-channel upgrade evidence to this record ([ROADMAP](../ROADMAP.md)).
+- **Downstream consumer:** Track 102B (`wi-b9f147`) records the [stable-channel upgrade](#stable-channel-upgrade-on-the-public-remote-2026-11-27).
 - **Qualification boundary:** Synthetic and scratch `HOME` fixtures alone do not establish O1.3. Open failures stay open, and no [PROGRESS acceptance](../PROGRESS.md#acceptance) entry is claimed until the owner completes the pending items and confirms acceptance.
 
 ## Environment and installed-commit disclosure
@@ -22,7 +22,7 @@ Host identification uses the generic label `host B`, matching [hand-use-telemetr
 | Scratch run installed commit (`v0.111.0`) | `54fd6df2f5a9c387f3ef226667b46d83498dd12c` (exact tag `v0.111.0`, `VERSION` `0.111.0`; cloned from `https://github.com/kbitz/gstack-extend.git`) |
 | Prerequisite re-check commit (`v0.112.2`) | `39c2b0c1d7d8e02e5e2f6a4860fe75e13e84e2d1` (exact tag `v0.112.2`, `VERSION` `0.112.2`, PR #300) |
 
-**Main-tracking upgrade disclosure:** Upgrade offers follow `main`, not a release identity. `bin/update-check` fetches raw `main/VERSION` from GitHub with no commit SHA or tag identity, and `bin/update-run` runs `git pull --ff-only origin main`. In the `v0.111.0` scratch upgrade (`54fd6df`), `main` happened to coincide with tag `v0.111.0`, so the offered `VERSION` string and installed tag agreed only incidentally. In the live `host B` historical pull on `2026-11-06` (see Task 2 below), `pull --ff-only origin main` landed on untagged commit `f4f79ab` (carrying `VERSION 0.68.0`, one docs commit ahead of tag `v0.68.0` at `8c514a9`).
+**Main-tracking upgrade disclosure (before Track 102B):** The checker offered upgrades using raw `main/VERSION` from GitHub, and the updater ran `git pull --ff-only origin main`. In the `v0.111.0` scratch upgrade (`54fd6df`), `main` happened to coincide with tag `v0.111.0`, so the offered `VERSION` string and installed tag agreed only incidentally. In the live `host B` historical pull on `2026-11-06` (see Task 2 below), `pull --ff-only origin main` landed on untagged commit `f4f79ab` (carrying `VERSION 0.68.0`, one docs commit ahead of tag `v0.68.0` at `8c514a9`).
 
 ## Fresh install and project onboarding (`v0.111.0`, `54fd6df`)
 
@@ -188,7 +188,7 @@ The live `host B` checkout's git reflog and stage-runs ledgers supply partial hi
 | Working recovery path | **Covered in the `v0.111.0` scratch run** | Per-file `pair-review` recovery (`RECOVERY_MIGRATED`, cleared `INSTALL_WARN`); rollback with the tag substitution above and resume to `main` (`54fd6df`) with retired `autoplan-lean` cleanup. | Confirm recovery evidence. The same-version `JUST_UPGRADED` report remains open (defect 7). |
 | Installed version matches the skills loaded by each exercised harness (O1.2) | **Unverified** | Scratch checks observed installed files and start-command resolution. | Invoke a skill in each exercised harness after upgrade and verify it resolves and loads the skill from the recorded installed revision. |
 | Real legacy four-part install upgraded through default remote (offered/installed identity, reader compatibility, unchanged user state) | **Open failure** | Non-passing `host B` `2026-10-24` → `2026-11-06` reflog (`42eacc7` → untagged `f4f79ab`) and v2/v3+v4 reader check (`1,305` rows, `0` bad). | Run the Task 2 owner procedure above or supply the missing historical evidence. Record any explicit owner waiver as a waiver. |
-| Actual installed commit recorded; main-tracking offer behavior disclosed | **Covered** | `54fd6df` (`v0.111.0`), `39c2b0c` (`v0.112.2`), and historical `f4f79ab` (untagged ahead of `v0.68.0` `8c514a9`) recorded; `main/VERSION` vs `pull --ff-only origin main` disclosed. | Track 96C will later append stable-channel upgrade evidence. |
+| Actual installed commit recorded; main-tracking offer behavior disclosed | **Covered** | `54fd6df` (`v0.111.0`), `39c2b0c` (`v0.112.2`), and historical `f4f79ab` (untagged ahead of `v0.68.0` `8c514a9`) recorded; `main/VERSION` vs `pull --ff-only origin main` disclosed. | Track 102B (`wi-b9f147`) records the [stable-channel result](#stable-channel-upgrade-on-the-public-remote-2026-11-27). |
 | Failures stay open; owner confirms before O1 counts | **Pending** | Task 2 and defects 7 & 9 remain open; [PROGRESS acceptance](../PROGRESS.md#acceptance) untouched. | Owner closes or explicitly waives open items and records O1 confirmation in `docs/PROGRESS.md`. |
 
 ## Qualification limits
@@ -199,3 +199,30 @@ The live `host B` checkout's git reflog and stage-runs ledgers supply partial hi
 - **Upgrade span:** Controlled scratch upgrade covered a one-release hop (`v0.110.1` → `v0.111.0`); Codex refresh was verified by mtime and `install-status` rather than a full 11-skill content diff.
 - **Published legacy four-part upgrade (Task 2):** Still open; historical `host B` reflog observations do not replace a controlled end-to-end capture.
 - **Compatibility catalog reference:** See [compatibility.md](../compatibility.md) for the stable-surface inventory and [release-compatibility.md](release-compatibility.md) for local candidate-only three-part release checks.
+
+## Stable-channel upgrade on the public remote (2026-11-27)
+
+Track 102B (`wi-b9f147`) ran the candidate `bin/update-check` and
+`bin/update-run` against a fresh clone of
+`https://github.com/kbitz/gstack-extend.git`. The clone's local `main` started
+at `v0.121.0` (`6cd4603b73b8e35381bfa5d30520016b4ffe5167`). The run used
+`env -i`, a scratch `HOME` and `TMPDIR`, and `update_channel=stable`.
+The candidate scripts drove a released checkout. Track 106A (`wi-4732d3`)
+qualifies an upgrade using a released install's own stable updater once a
+release containing the channel change and a later tag are both available.
+
+| Item | Observed value |
+|---|---|
+| Host and tools | `host B`, Omarchy 4.5.0, Linux `7.2.15-4-omarchy x86_64`, Bun `1.4.3`, Git `2.56.0`, Bash `5.3.20` |
+| Harnesses on host | Codex CLI `0.172.0` (drove the probe) and Claude Code `2.1.332`. No harness ran from the scratch HOME. |
+| Forced offer | `UPGRADE_AVAILABLE 0.121.0 0.123.0` |
+| Cache identity | `IDENTITY channel=stable tag=v0.123.0 commit=ac3c4ae1ceb9d6784bd577764784374936b0a41c` |
+| Origin main at offer time | `git ls-remote origin refs/heads/main` returned `ac3c4ae1ceb9d6784bd577764784374936b0a41c` for `refs/heads/main`. |
+| Upgrade result | `UPGRADE_OK 0.121.0 0.123.0` |
+| Landed checkout | `main` at `ac3c4ae1ceb9d6784bd577764784374936b0a41c`. Exact tag `v0.123.0`, VERSION `0.123.0`. |
+| Next check | `JUST_UPGRADED 0.121.0 0.123.0` |
+| Live install before and after | HEAD stayed at `ac3c4ae1ceb9d6784bd577764784374936b0a41c`. State directory, config, install-status, last-update-check and projects.json had identical inode, size, mtime and ctime. The upgrade marker, snooze and migration hop-from files were absent both times. |
+
+At offer time the release tag and the remote main tip coincided. The fixture
+in `tests/update.test.ts` exercises the case where an untagged main commit is
+ahead of the offered tag.

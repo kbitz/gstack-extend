@@ -1,8 +1,8 @@
 ---
 name: gstack-extend-upgrade
 description: |
-  Upgrade gstack-extend to the latest version. Detects the install, runs the
-  upgrade via a git fast-forward pull, and reports the result. Use when asked
+  Check for and install a gstack-extend update on the configured channel,
+  and report the result. Use when asked
   to "upgrade gstack-extend", "update gstack-extend", or "check for
   gstack-extend updates".
 allowed-tools:
@@ -31,7 +31,7 @@ with its Fix link; see **After upgrading**.
 
 If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.
 
-If an `EXTEND_ROOT:` line was printed but no `UPGRADE_AVAILABLE` or `JUST_UPGRADED` line followed, do not assume "up to date": a silent update check also covers disabled checks, a missing `VERSION` file, and network failure. Disambiguate first:
+If an `EXTEND_ROOT:` line was printed without `UPGRADE_AVAILABLE` or `JUST_UPGRADED`, use this block to report the result. Only an offer from the checker can start the upgrade flow.
 
 ```bash
 _UC=$("$_EXTEND_ROOT/bin/config" get update_check 2>/dev/null || true)
@@ -41,22 +41,13 @@ elif [ ! -f "$_EXTEND_ROOT/VERSION" ]; then
   echo "STATE: no-version-file"
 else
   _LOCAL=$(tr -d '[:space:]' < "$_EXTEND_ROOT/VERSION")
-  _REMOTE=$(curl -sf --max-time 5 https://raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION 2>/dev/null | tr -d '[:space:]')
-  if ! printf '%s\n' "$_REMOTE" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-    echo "STATE: offline (local v$_LOCAL)"
-  elif [ "$_LOCAL" = "$_REMOTE" ]; then
-    echo "STATE: up-to-date (v$_LOCAL)"
-  else
-    echo "STATE: remote v$_REMOTE differs from local v$_LOCAL"
-  fi
+  echo "STATE: no-offer (local v$_LOCAL)"
 fi
 ```
 
 - `checks-disabled`: tell user "Update checks are disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
 - `no-version-file`: tell user "Can't determine the installed version — `$_EXTEND_ROOT/VERSION` is missing. Re-clone gstack-extend or check the install."
-- `offline`: tell user "Couldn't reach GitHub to check for updates (offline?). You're on v{local}."
-- `up-to-date`: tell user "You're on the latest version (v{local})."
-- `remote ... differs`: compare the two versions. If the remote is newer (rare; the periodic check should have caught it), follow the **Inline upgrade flow** below, treating the remote version as `{new}`. If the local version is newer, this is a development checkout ahead of the published release: tell the user "You're on v{local}, ahead of the published v{remote}." and do not upgrade.
+- `no-offer`: tell the user "The check offered no upgrade for your channel. You're on v{local}. An unavailable remote can also produce this result."
 
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow

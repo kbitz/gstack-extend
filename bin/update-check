@@ -19,7 +19,8 @@
 # Protocol identity: skill preambles grep this line before executing anything under the root. Compatible bin changes never touch it. It changes only for an incompatible preamble↔bin contract change (update-check output, config/update-run CLI): v2 replaces v1 in the same release, and copies that were not regenerated print EXTEND_ROOT_UNVERIFIED with the setup --host auto fix.
 set -euo pipefail
 
-EXTEND_DIR="${GSTACK_EXTEND_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+EXTEND_DIR="${GSTACK_EXTEND_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STATE_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
 CACHE_FILE="$STATE_DIR/last-update-check"
 MARKER_FILE="$STATE_DIR/just-upgraded-from"
@@ -375,6 +376,11 @@ trap _uc_on_exit EXIT
 
 # ─── Semver comparison ──────────────────────────────────────
 source "$EXTEND_DIR/bin/lib/semver.sh"
+CHANNEL=main
+if [ -f "$SCRIPT_DIR/lib/update-channel.sh" ]; then
+  source "$SCRIPT_DIR/lib/update-channel.sh"
+  CHANNEL=$(update_channel "$EXTEND_DIR")
+fi
 
 # ─── Snooze helper ──────────────────────────────────────────
 # check_snooze <remote_version>
@@ -450,12 +456,21 @@ fi
 # UP_TO_DATE: 60 min TTL (detect new releases quickly)
 # UPGRADE_AVAILABLE: 720 min TTL (keep nagging)
 if [ -f "$CACHE_FILE" ]; then
-  CACHED="$(cat "$CACHE_FILE" 2>/dev/null || true)"
+  CACHED="" CACHED_IDENTITY="" CACHED_CHANNEL=main
+  {
+    read -r CACHED || true
+    read -r CACHED_IDENTITY || true
+  } 2>/dev/null < "$CACHE_FILE" || true
+  case "$CACHED_IDENTITY" in
+    "IDENTITY channel=stable "*) CACHED_CHANNEL=stable ;;
+    ""|"IDENTITY channel=main "*) ;;
+    *) CACHED_CHANNEL="" ;;
+  esac
 
-  # Invalidate cache if local VERSION changed since cache was written.
+  # Invalidate the cache if local VERSION or the channel changed.
   # Cache format includes the local version: "STATUS LOCAL [REMOTE]"
   CACHED_LOCAL="$(echo "$CACHED" | awk '{print $2}')"
-  if [ "$CACHED_LOCAL" != "$LOCAL" ]; then
+  if [ "$CACHED_LOCAL" != "$LOCAL" ] || [ "$CACHED_CHANNEL" != "$CHANNEL" ]; then
     rm -f "$CACHE_FILE"
   else
     case "$CACHED" in
@@ -487,30 +502,56 @@ fi
 mkdir -p "$STATE_DIR"
 
 REMOTE=""
-REMOTE="$(curl -sf --max-time 5 "$REMOTE_URL" 2>/dev/null || true)"
-REMOTE="$(echo "$REMOTE" | tr -d '[:space:]')"
+RELEASE_TAG=- RELEASE_COMMIT=- FETCH_MAIN=1
+if [ "$CHANNEL" = stable ] && [ -e "$EXTEND_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+  # Only an absent origin or an empty release listing permits the main fallback.
+  FETCH_MAIN=0
+  if git -C "$EXTEND_DIR" remote get-url origin >/dev/null 2>&1; then
+    if RELEASE=$(update_latest_release "$EXTEND_DIR" 2>/dev/null); then
+      read -r REMOTE RELEASE_TAG RELEASE_COMMIT <<< "$RELEASE"
+    elif [ "$?" -eq 2 ]; then
+      FETCH_MAIN=1
+    fi
+  elif [ "$?" -eq 2 ]; then
+    FETCH_MAIN=1
+  fi
+fi
+if [ "$FETCH_MAIN" -eq 1 ]; then
+  REMOTE="$(curl -sf --max-time 5 "$REMOTE_URL" 2>/dev/null || true)"
+  REMOTE="$(echo "$REMOTE" | tr -d '[:space:]')"
+fi
+
+write_cache() {
+  local tmp
+  if [ -d "$CACHE_FILE" ]; then
+    printf 'update-check: cache path is a directory: %s\n' "$CACHE_FILE" >&2
+    return 1
+  fi
+  tmp=$(mktemp "$CACHE_FILE.XXXXXX")
+  if ! printf '%s\nIDENTITY channel=%s tag=%s commit=%s\n' \
+       "$1" "$CHANNEL" "$RELEASE_TAG" "$RELEASE_COMMIT" > "$tmp" ||
+     ! mv -f "$tmp" "$CACHE_FILE"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
 
 # Validate: must look like a version number (reject HTML error pages)
 if ! echo "$REMOTE" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'; then
   # Invalid or empty response — assume up to date
-  echo "UP_TO_DATE $LOCAL" > "$CACHE_FILE"
-  exit 0
-fi
-
-if [ "$LOCAL" = "$REMOTE" ]; then
-  echo "UP_TO_DATE $LOCAL" > "$CACHE_FILE"
+  write_cache "UP_TO_DATE $LOCAL"
   exit 0
 fi
 
 # Only prompt when remote is strictly newer (semver)
 if ! version_gt "$REMOTE" "$LOCAL"; then
   # Local is ahead of remote (development) — treat as up to date
-  echo "UP_TO_DATE $LOCAL" > "$CACHE_FILE"
+  write_cache "UP_TO_DATE $LOCAL"
   exit 0
 fi
 
 # Remote is newer — upgrade available
-echo "UPGRADE_AVAILABLE $LOCAL $REMOTE" > "$CACHE_FILE"
+write_cache "UPGRADE_AVAILABLE $LOCAL $REMOTE"
 if check_snooze "$REMOTE"; then
   exit 0  # snoozed — stay quiet
 fi

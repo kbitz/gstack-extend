@@ -200,6 +200,9 @@
     "bin/lib/telemetry_usage.py": [
       "tests/workflow-metrics.test.ts"
     ],
+    "bin/lib/update-channel.sh": [
+      "tests/update.test.ts"
+    ],
     "bin/lib/workflow-span.sh": [
       "tests/telemetry-contract.test.ts"
     ],

@@ -1450,6 +1450,24 @@ describe('Track 16D root hand-off', () => {
     }
   });
 
+  test('a quiet forced stable check does not offer the untagged main version', () => {
+    const home = join(extendRootTmp, 'quiet-stable-home');
+    const root = join(extendRootTmp, 'quiet-stable-root');
+    writeUpdateCheck(root);
+    writeFileSync(join(root, 'bin', 'config'), '#!/bin/sh\n[ "$2" != update_channel ] || echo stable\n', { mode: 0o755 });
+    writeFileSync(join(root, 'VERSION'), '1.1.0\n');
+    plantSkillLink(home, 'gstack-extend-upgrade', root);
+    const preamble = runPreamble('gstack-extend-upgrade', home, root)[0]!;
+    expect(preamble.stdout).not.toMatch(/^(UPGRADE_AVAILABLE|JUST_UPGRADED) /m);
+    const line = preamble.stdout.split('\n').find((l) => l.startsWith('_EXTEND_ROOT='));
+    expect(line).toBeTruthy();
+    const diagnostic = extractFences(resolverSkillText('gstack-extend-upgrade'))
+      .find((f) => f.body.includes('STATE: checks-disabled'))!;
+    const result = runShell('bash', ['-c'], `${line}\ncurl() { printf '1.2.0\\n'; }\n${diagnostic.body}`, scopedEnv(home), root);
+    expect(result.status).toBe(0);
+    expect(result.stdout?.trim()).toBe('STATE: no-offer (local v1.1.0)');
+  });
+
   test('upgrade-flow block prints AUTO_UPGRADE=true only with the emitted line', () => {
     const home = join(extendRootTmp, 'flow-home');
     const root = join(extendRootTmp, 'flow-root');
