@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.123.0] - 2026-11-27
+
+### Added
+
+- `/review-and-prep refresh` with a `Cause: base_moved` line brings an already prepared or ready pull request current after its base branch moved, reviewing only what the merge changed instead of running a new full review.
+- Run `/review-and-prep refresh` with `Cause: base_moved` to refresh a prepared pull request after its base moves.
+
+### Changed
+
+- A refresh may temporarily return a ready pull request to draft and sends changes to reviewed behavior back to full review.
+
+### Upgrade notes
+
+- A refresh may return a ready pull request to draft while it merges the base, and leaves it draft when the merge touches reviewed code so that a full review can run next.
+
 ## [0.122.0] - 2026-11-26
 
 ### Added
