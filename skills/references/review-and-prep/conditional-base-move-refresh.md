@@ -4,12 +4,10 @@
 
 ### A. Invocation and refusal
 
-Enter on the `refresh` argument or exact first line `Run /review-and-prep refresh`. Read the cause only from the invocation prompt.
+Enter on the `refresh` argument or exact first line `Run /review-and-prep refresh`. Validate in order before mutation. H-F continuations use G.
 
-For a new refresh, validate in this exact order before mutating anything. An H-F continuation uses **External resume** in Section G.
-
-1. **Cause (`cause`).** Require `refresh` and exactly one `Cause: base_moved` line in the invocation prompt. Any other cause, missing cause, or duplicate `Cause:` line refuses with `reason: cause`.
-2. **Live PR and checkout state (`state`).** Require Step 1's verified feature branch and exact open PR with `isDraft: false` and `HEAD` equal to `headRefOid`. Use E's status and hidden-index checks. A failed check refuses with `reason: state`.
+1. **Cause (`cause`).** Require `refresh` and exactly one `Cause: base_moved` line, from the invocation prompt only. Otherwise refuse with `reason: cause`.
+2. **Live PR and checkout state (`state`).** Require Step 1's verified feature branch and exact open PR with `isDraft: false` and `HEAD` equal to `headRefOid`. Apply E's checkout checks. A failure refuses with `reason: state`.
 3. **Receipt corroboration (`receipt`).** Corroborate the PR's latest preparation receipt under Boundaries' rule:
    - the running account authored the receipt comment, and every editor in its complete GraphQL `userContentEdits` history is the running account (an unreadable edit history counts as unverified);
    - it reads `Status: prepared`, both its `<!-- review-and-prep:receipt:<sha> -->` marker and `Prepared HEAD:` name the PR's `headRefOid`, and its tree matches `git rev-parse HEAD^{tree}`;
@@ -21,7 +19,7 @@ For a new refresh, validate in this exact order before mutating anything. An H-F
    Missing, uncorroborated, mismatched, or superseded receipts, or a pending Greptile run, refuse with `reason: receipt`.
 4. **Base tip currency (`current`).** Fetch and pin the verified target base. Require that it descends from the receipt's earlier base, or refuse with `reason: receipt`. Run `git merge-base --is-ancestor <fetched-base> HEAD`. Exit 0 means `reason: current`. Continue only on exit 1. Refuse with `reason: state` if the fetch or ancestry check cannot be verified.
 
-A refusal creates no evidence directory, run state, commit, push, draft toggle, or PR write. Print the refusal, reason and NEEDS_CONTEXT stage line inline:
+On refusal, create no evidence directory, run state, commit, push, draft toggle or PR write. Print inline:
 
 ```text
 Refresh refused: review-and-prep-refresh/v1; reason: <cause|state|receipt|current>
@@ -51,7 +49,7 @@ Use the verified full receipt's run-state locator and corroborate the prior prep
 
 While recording, `build start` uses A's plan binding and the invocation policy. Attach `--evidence refresh-1.md` to checkpoints except G's invalid-evidence exit. Record the `greptile` gate with the prior `--greptile-value` and run link.
 
-If the evidence cannot be saved after the draft conversion, stop BLOCKED and describe the draft state. The ordinary preparation path can recover.
+If evidence cannot be saved after drafting, stop BLOCKED and report the draft for ordinary preparation.
 
 ### D. Merge
 
@@ -65,21 +63,29 @@ For D's BLOCKED exits, use `build finish --outcome blocked --base <last-merged-b
 
 ### E. Delta facts and classification
 
-Run this fence with `<workspace>`, `R` and fetched base `B`. Both commits must be ancestors of the clean candidate. Include discarded base changes and identical edits made on both sides.
+Run this fence on the clean merge with `<workspace>`, `R` and fetched `B`. It includes discarded base changes and identical edits on both sides.
 
 ```bash
 bun --no-env-file --config=/dev/null --no-install -e '
 const { execFileSync } = require("node:child_process");
+const { existsSync } = require("node:fs");
+const { resolve } = require("node:path");
 const [ws, revR, revB] = process.argv.slice(1);
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-const git = (args) => utf8.decode(execFileSync("git", ["-C", ws, ...args], {
+const gitAt = (cwd, args) => utf8.decode(execFileSync("git", ["-C", cwd, ...args], {
   stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024,
 }));
 const fail = (reason) => { console.log(`REFRESH_DELTA_UNVERIFIED: ${reason}`); process.exit(1); };
-const diffPaths = (left, right) => new Set(git([
-  "diff", "--no-relative", "--no-renames", "--ignore-submodules=none", "--name-only", "-z", left, right, "--",
-]).split("\0").filter(Boolean));
 try {
+  const root = gitAt(ws, ["rev-parse", "--show-toplevel"]).trimEnd();
+  const git = (args) => gitAt(root, args);
+  const diffPaths = (left, right) => new Set(git([
+    "diff", "--no-relative", "--no-renames", "--ignore-submodules=none", "--name-only", "-z", left, right, "--",
+  ]).split("\0").filter(Boolean));
+  const operations = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-apply", "rebase-merge", "sequencer"];
+  if (operations.some(name => existsSync(resolve(root, git(["rev-parse", "--git-path", name]).trimEnd())))) {
+    fail("git-operation-in-progress");
+  }
   const bases = git(["merge-base", "--all", revR, revB]).trim().split("\n").filter(Boolean);
   if (bases.length !== 1) fail(bases.length === 0 ? "no-merge-base" : "multiple-merge-bases");
   const mb = bases[0];
@@ -135,10 +141,10 @@ Use the reason for the failed step. Within classification, `reviewed-code-confli
 
 On escalation:
 
-1. Leave the PR draft and the current candidate local. Retain any earlier draft push and report the actual local and published heads. Make no push on escalation.
+1. Keep the PR draft and candidate local without pushing. Report local and published heads, including any earlier draft push.
 2. While recording, run `build finish --outcome escalated --base <last-merged-base> --stop-reason <reason>`, then `derive` and render `final`.
 3. End the turn with:
-   - short prose naming the affected files, reason and local work state. Direct an ordinary full `/review-and-prep` on the same PR in this workspace;
+   - affected files, reason and local state. Direct ordinary full `/review-and-prep` on the same PR in this workspace;
    - the escalation line:
      `Refresh escalated: review-and-prep-refresh/v1; reason: <token>; reviewed: <40-hex>; head: <40-hex>; base: <40-hex>; files: <JSON array of repository-relative paths>`
      Use an empty array when no affected path can be identified.
@@ -152,18 +158,18 @@ When every changed file is `base-only` or `resolution` and no `base-only` change
 - **Delta review.** The host session reviews the delta alone — no nested `/review` cycle, no subagent, no delegated part, no outside voice, no coverage audit, no documentation audit, and no Greptile run. Check each `resolution` hunk (both sides' intent preserved, no dropped entries, no duplicate IDs) and each `base-only` change against the behavior rule above. Record the completed delta pass on the accepted candidate HEAD (`--coverage delta --scope local --cycle 1 --delta-from <R> --voice core`).
 - **Fixes.** Allow at most one fix round per refresh, limited to `resolution` files and committed on top of the merge. Retain the findings and rerun delta facts, classification and affected checks on the fix commit before recording the accepted pass. A remaining defect or one outside this class escalates with `delta-finding`.
 - **Final gate.** Use Step 2's pin rule, pregate and secret checks. Under `full-suite=external`, use H-F and route Freeze's new-base merge through D–G. A failed preflight, final gate or external `fail` escalates `final-gate-failed`.
-- **External resume.** Every H-F checkpoint binds `R`, the `refresh-1.md` path and SHA-256, the expected published head and fix allowance, even inline. The published head starts at `R` and advances only after verified draft-push readback. Verify before review selection or result handling. Restore refresh mode only when the file matches the bound SHA-256. Restore the restriction and disclosure evidence from that file. Recheck E's index and status, A's chain and the plan hash. Invalid evidence with matching checkout escalates `delta-unverified`; omit invalid evidence on recorded resume. Unverified checkout drift stops BLOCKED. A verified continuation skips A and B. Require the live draft head to match the checkpoint's published head and apply H-F freshness and result rules.
+- **External resume.** Bind `R`, the `refresh-1.md` path and SHA-256, the expected published head and fix allowance in every H-F checkpoint, even inline. The published head starts at `R` and advances only after verified draft-push readback. Verify before review selection or result handling. Restore refresh mode only when the file matches the bound SHA-256. Restore its restriction and disclosures. Recheck E's checkout checks, A's chain and the plan hash. Invalid evidence with matching checkout escalates `delta-unverified`; omit the invalid evidence on recorded resume. Hold BLOCKED on unverified checkout drift. A verified continuation skips A and B. Require the live draft head to match the checkpoint's published head and apply H-F freshness and result rules.
 - **Base moves again.** If the target base moves again before readiness, repeat Sections D through G from the same reviewed head `R`.
-- **Push.** Before each push, verify A's chain and current plan SHA-256 and repeat E's index and status checks. Escalate `delta-unverified` if any proof fails. Reverify the open draft's branch, base and expected published head under Step 3. Hold if carried Greptile evidence fails its live gate. Never request Greptile. Step 3's CI check and E1 still apply.
+- **Push.** Before each push, verify A's chain and current plan SHA-256 and repeat E's checkout checks. If a proof fails, escalate `delta-unverified`. Reverify the open draft's branch, base and published head under Step 3. Hold on stale Greptile evidence. Never request Greptile. Step 3's CI check and E1 apply.
 - **Readiness.** Step 6 applies with these substitutions:
   - verify A's receipt chain and the current plan SHA-256, escalating `delta-unverified` if verification fails;
   - link the original full review, each verified refresh and this delta pass. Carry the original matrix, scope and user tests by reference;
-  - omit both audit records so the compact receipt renders `- coverage: not-run` and `- documentation: not-run`. Explain `not-run (refresh; /ship-and-land runs them)` in the full receipt and body summary. These skips allow refresh readiness;
+  - omit both audit records so the compact receipt renders `- coverage: not-run` and `- documentation: not-run`. Record `not-run (refresh; /ship-and-land runs them)` in full receipt and body. These skips permit readiness;
   - the pregate (or the accepted external attestation and its narrowing rules) must be current for the final head, tree, and base.
 - **Receipts.** Put the Refresh line, file classes and immediate predecessor's comment URL in the full receipt and body summary. Preserve `Disclosure evidence: unavailable` in the full receipt when present in `refresh-1.md`. Follow Step 6 through readiness. Carry `reviewRestrictionResolved: true` to the receipt and finish when corroborated. Pass the saved disclosures to `finish prepared` with `--user-facing-change`. Then derive and render `final`.
 - **Final message.** Print the Refresh line:
   `Refresh: review-and-prep-refresh/v1; cause: base_moved; reviewed: <40-hex>; head: <40-hex>; base: <40-hex>; delta: base-only=<n>, resolution=<n>; gate: <pregate-pass|external-pass>`
-  Report unavailable disclosures before emitting the rendered final bytes. Run Telemetry finish with `--outcome success`.
+  Report unavailable disclosures, emit the rendered final bytes and finish Telemetry with `--outcome success`.
 
 ### H. Inline fallback
 

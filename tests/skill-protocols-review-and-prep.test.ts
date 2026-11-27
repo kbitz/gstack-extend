@@ -3756,8 +3756,8 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(evidence).toContain('Include any corroborated `reviewRestrictionResolved: true` and the disclosure evidence below in that same file before hashing it');
     expect(evidence).toContain('Save the disclosure values verbatim in `refresh-1.md`');
     expect(evidence).toContain("G's `Disclosure evidence: unavailable` line, record that marker instead");
-    expect(ref).toContain('Restore the restriction and disclosure evidence from that file');
-    expect(ref).toContain("Before each push, verify A's chain and current plan SHA-256 and repeat E's index and status checks");
+    expect(ref).toContain('Restore its restriction and disclosures');
+    expect(ref).toContain("Before each push, verify A's chain and current plan SHA-256 and repeat E's checkout checks");
     expect(ref).toContain('Preserve `Disclosure evidence: unavailable` in the full receipt');
     expect(ref.slice(mergeStart, classificationStart)).toContain(
       "`build finish --outcome blocked --base <last-merged-base> --stop-reason merge-blocked` (use A's earlier receipt base before the first committed merge)",
@@ -3922,9 +3922,21 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         git(cwd, ['update-index', '--assume-unchanged', 'src/app.ts']);
         writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 3;\n');
         expect(git(cwd, ['status', '--porcelain=v1'])).toBe('');
-        const hiddenEdit = runFence(cwd, revR, revB);
+        const hiddenEdit = runFence(join(cwd, 'docs'), revR, revB);
         expect(hiddenEdit.status).toBe(1);
         expect(hiddenEdit.stdout).toBe('REFRESH_DELTA_UNVERIFIED: hidden-index-entry\n');
+
+        git(cwd, ['update-index', '--no-assume-unchanged', 'src/app.ts']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), identicalEdit);
+        const merged = git(cwd, ['rev-parse', 'HEAD']);
+        const tree = git(cwd, ['rev-parse', 'HEAD^{tree}']);
+        const pending = git(cwd, ['commit-tree', tree, '-p', merged, '-m', 'pending merge']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '--no-commit', pending]);
+        expect(git(cwd, ['rev-parse', 'MERGE_HEAD'])).toBe(pending);
+        expect(git(cwd, ['status', '--porcelain=v1'])).toBe('');
+        const unfinishedMerge = runFence(cwd, revR, revB);
+        expect(unfinishedMerge.status).toBe(1);
+        expect(unfinishedMerge.stdout).toBe('REFRESH_DELTA_UNVERIFIED: git-operation-in-progress\n');
       }
 
       // Case 4: follow-up commit to a non-resolution file gives refresh-only
