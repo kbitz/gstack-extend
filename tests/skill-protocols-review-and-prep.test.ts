@@ -45,7 +45,10 @@ const REF_POST_AUDIT_REAUDIT = referenceText('review-and-prep', 'conditional-pos
 const REF_DOC_AUDIT_GATES = referenceText('review-and-prep', 'conditional-doc-audit-and-gates');
 const REF_PREGATE_REPAIR = referenceText('review-and-prep', 'conditional-pregate-and-final-repair');
 const REF_RESUME_MANUAL = referenceText('review-and-prep', 'resume-manual-testing');
-const REF_BASE_MOVE_REFRESH = referenceText('review-and-prep', 'conditional-base-move-refresh');
+const REF_BASE_MOVE_REFRESH = [
+  referenceText('review-and-prep', 'conditional-base-move-refresh'),
+  referenceText('review-and-prep', 'conditional-base-move-refresh-completion'),
+].join('\n');
 
 const REF_BY_HEADING: Record<string, string[]> = {
   '### Workflow metrics (optional, local)': [REF_WORKFLOW_METRICS],
@@ -3697,8 +3700,9 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(prep).toMatch(/the only exception\s+is one return to draft in a validated refresh and its pushes while draft/);
     const entry = skillSection(prep, '### Refresh a prepared PR after a base move');
     expect(entry).toMatch(
-      /Run `~\/\.gstack-extend\/bin\/preamble review-and-prep --ref conditional-base-move-refresh --expect [0-9a-f]{16}` before Step 1's PR validation for the `refresh` argument or first line `Run \/review-and-prep refresh`, or when H-F resume finds a checkpoint naming `refresh-1\.md`\./,
+      /Run `~\/\.gstack-extend\/bin\/preamble review-and-prep --ref conditional-base-move-refresh --expect [0-9a-f]{16}` before PR validation on `refresh` or exact first line `Run \/review-and-prep refresh`, or on H-F resume with a `refresh--` locator or `refresh-1\.md` checkpoint\./,
     );
+    expect(entry).toMatch(/--ref conditional-base-move-refresh-completion --expect [0-9a-f]{16}` before H-F refresh recovery, fast path or inline exit\./);
     expect(entry).toContain('For every `refresh` invocation, validate exactly one `Cause: base_moved` line');
     expect(entry).toContain('before creating evidence or starting run state');
   });
@@ -3733,6 +3737,10 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(ref).toContain('Never toggle a PR to draft more than once per refresh');
     expect(ref).toContain('no nested `/review` cycle, no subagent, no delegated part, no outside voice, no coverage audit, no documentation audit, and no Greptile run');
     expect(ref).toContain('Restore refresh mode only when the file matches the bound SHA-256.');
+    expect(ref).toContain('The basename selects the route only.');
+    expect(ref).toContain('Hold BLOCKED if a binding cannot be verified, and end the refresh in either case.');
+    expect(ref).toContain('Require HEAD and its tree to match `S` before recording the pass, freezing the final gate, pushing or marking ready.');
+    expect(ref).toContain('use the verified `S` as the source of the normal feature-branch push');
     expect(ref).toContain('A verified continuation skips A and B.');
     expect(ref).toContain('The published head starts at `R` and advances only after verified draft-push readback.');
     expect(ref).toContain('Require the live draft head to match the checkpoint\'s published head');
@@ -3752,6 +3760,7 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(ref.slice(0, draftStart)).toContain('if the prior recorded run is readable, require a prepared finish that matches the receipt');
     expect(ref.slice(draftStart, evidenceStart)).toContain("Recheck A's checkout, receipt, holds, base and `isDraft: false` before converting the PR");
     const evidence = ref.slice(evidenceStart, mergeStart);
+    expect(evidence).toContain('prefixing its basename with `refresh--` for H-F routing');
     expect(evidence).toContain('Include any corroborated `reviewRestrictionResolved: true` and the disclosure evidence below in that same file before hashing it');
     expect(evidence).toContain('Save the disclosure values verbatim in `refresh-1.md`');
     expect(evidence).toContain("G's `Disclosure evidence: unavailable` line, record that marker instead");
@@ -3775,11 +3784,12 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
         return r.stdout.trim();
       };
-      const runFence = (cwd: string, revR: string, revB: string) => {
+      const runFence = (cwd: string, revR: string, revB: string, candidate = git(cwd, ['rev-parse', 'HEAD'])) => {
         const cmd = scriptTemplate
           .replace('"<workspace>"', JSON.stringify(cwd))
           .replace('"<reviewed-head>"', JSON.stringify(revR))
-          .replace('"<base-tip>"', JSON.stringify(revB));
+          .replace('"<base-tip>"', JSON.stringify(revB))
+          .replace('"<candidate-head>"', JSON.stringify(candidate));
         return spawnSync('bash', ['-c', cmd], { cwd, env: GIT_ENV, encoding: 'utf8' });
       };
       const parseDelta = (stdout: string) => {
@@ -3821,11 +3831,19 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         expect(unmerged.status).toBe(1);
         expect(unmerged.stdout).toBe('REFRESH_DELTA_UNVERIFIED: head-missing-reviewed-or-base\n');
         git(cwd, ['merge', '--quiet', '--no-edit', 'main']);
-        const res = runFence(cwd, revR, revB);
+        const candidate = git(cwd, ['rev-parse', 'HEAD']);
+        const res = runFence(cwd, revR, revB, candidate);
         expect(res.status, res.stderr).toBe(0);
         const { rows, done } = parseDelta(res.stdout);
         expect(rows).toEqual([{ path: 'src/base-only.ts', side: 'base-only', merged: 'base' }]);
-        expect(done).toBe('REFRESH_DELTA_DONE: 1');
+        expect(done).toBe(`REFRESH_DELTA_DONE: ${JSON.stringify({ count: 1, head: candidate })}`);
+
+        writeFileSync(join(cwd, 'src', 'after.ts'), 'export const after = true;\n');
+        git(cwd, ['add', 'src/after.ts']);
+        git(cwd, ['commit', '--quiet', '-m', 'chore: subsequent clean commit']);
+        const moved = runFence(cwd, revR, revB, candidate);
+        expect(moved.status).toBe(1);
+        expect(moved.stdout).toBe('REFRESH_DELTA_UNVERIFIED: candidate-moved\n');
       }
 
       // Case 2: prose file edited on both sides and resolved gives both and other
@@ -3905,9 +3923,10 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
 
         git(cwd, ['checkout', '--quiet', 'feature']);
         git(cwd, ['merge', '--quiet', '--no-edit', revB]);
+        const candidate = git(cwd, ['rev-parse', 'HEAD']);
         const expected = {
           rows: [{ path: 'src/app.ts', side: 'both', merged: 'base' }],
-          done: 'REFRESH_DELTA_DONE: 1',
+          done: `REFRESH_DELTA_DONE: ${JSON.stringify({ count: 1, head: candidate })}`,
         };
         const res = runFence(cwd, revR, revB);
         expect(res.status, res.stderr).toBe(0);

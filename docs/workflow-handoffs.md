@@ -1604,7 +1604,7 @@ A blocked refresh uses the BLOCKED stage line (`next: none; status: blocked`).
 3. On a refresh (`Refresh:`), classify the accompanying H-B handoff as usual; the `Refresh:` line never changes an H-B outcome.
 4. On an escalation (`Refresh escalated:`), run an ordinary full `/review-and-prep` on the same draft PR in the same workspace. The latest candidate stays local. A previous draft push may already exist if the base moved again.
 5. On a refusal (`Refresh refused:`), show the message to the user, because nothing changed.
-6. At an external-gate pause, follow H-F; resuming with `/review-and-prep resume` continues the refresh from its evidence directory.
+6. At an external-gate pause, follow H-F and pass the original `refresh--` evidence-directory locator. The locator routes `/review-and-prep resume` to the refresh even if its evidence is unavailable. An unverifiable refresh cannot resume preparation inline.
 7. On BLOCKED, stop and show the reported PR and checkout state to the user.
 
 The escalation and the cycle-cap stop share a stage line. Use the preceding

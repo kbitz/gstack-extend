@@ -3800,7 +3800,10 @@ describe('(R) doc-audit-gap=auto', () => {
 
 describe('(M) merge-only refresh (H-G)', () => {
   const HG_DOC = DOC.slice(DOC.indexOf('### Grammar H-G base-move refresh'), DOC.indexOf('### Grammar stage line'));
-  const REF_REFRESH = referenceText('review-and-prep', 'conditional-base-move-refresh');
+  const REF_REFRESH = [
+    referenceText('review-and-prep', 'conditional-base-move-refresh'),
+    referenceText('review-and-prep', 'conditional-base-move-refresh-completion'),
+  ].join('\n');
   const ESCALATION_REASONS = new Set([
     'reviewed-code-conflict',
     'reviewed-behavior-change',
@@ -3918,6 +3921,7 @@ describe('(M) merge-only refresh (H-G)', () => {
 
     expect(SKILLS['review-and-prep']).toContain('`Cause: base_moved`');
     expect(HG_DOC).toContain("grep -F 'Cause: base_moved' \"<installed skill dir>/SKILL.md\"");
+    expect(HG_DOC).toContain('follow H-F and pass the original `refresh--` evidence-directory locator');
 
     const bindings = section('## Validated and receipt-present bindings');
     expect(bindings).toContain('| `Refresh:` line | receipt-present |');
