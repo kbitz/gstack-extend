@@ -1,0 +1,4 @@
+Finding cycle: run=1; cycle=1; coverage=full; observed=complete; new=0; carried=0; repeated_premise=0; repeated_premise_pairs=0; unkeyed=0; prior=none
+Finding cycle: run=2; cycle=1; coverage=delta; observed=complete; new=4; carried=0; repeated_premise=4; repeated_premise_pairs=1; unkeyed=0; prior=partial
+Finding cycle: run=2; cycle=2; coverage=delta; observed=complete; new=4; carried=0; repeated_premise=4; repeated_premise_pairs=4; unkeyed=0; prior=partial
+Finding cycle: run=3; cycle=greptile; coverage=full; observed=partial; new=0; carried=0; repeated_premise=0; repeated_premise_pairs=0; unkeyed=0; prior=unavailable:not-supplied

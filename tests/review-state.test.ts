@@ -12,6 +12,7 @@ import { allocateExclusiveFile, FIELD_FMT, isFreshForBinding, makeCtx, RENDER_EX
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, writerOrderKnown, WTREE_RE, type CommandName, type DelegationPolicy, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
 import { classifyLockHolder, readHelperVersion, readLocalBootId, readLocalPidNs } from '../src/review-state/store.ts';
+import { openChildStdio, spawnSync as spawnWithFileOutput } from './helpers/child-stdio.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -672,16 +673,25 @@ describe('bin/review-state', () => {
     const p2 = writeJson(d, 'p2.json', mkPassStarted(11, { cycle: 2 }));
     const p1Conflict = writeJson(d, 'p1-conflict.json', mkPassStarted(10, { cycle: 9 }));
 
-    const spawnHelper = (inputFile: string) =>
-      new Promise<{ code: number; json: Record<string, unknown> }>((resolvePromise) => {
-        let out = '';
+    const spawnHelper = async (inputFile: string) => {
+      const io = openChildStdio();
+      try {
         const child = spawn(BIN_PATH, ['record', 'pass', '--dir', d, '--input', inputFile], {
           cwd: repo,
           env: { ...process.env, GSTACK_EXTEND_REVIEW_STATE_LOCK_WAIT_MS: '10000' },
+          stdio: ['ignore', io.stdoutFd, io.stderrFd],
         });
-        child.stdout.on('data', (chunk) => { out += String(chunk); });
-        child.on('close', (code) => resolvePromise({ code: code ?? 1, json: JSON.parse(out.trim()) }));
-      });
+        const code = await new Promise<number | null>((resolvePromise, reject) => {
+          child.once('error', reject);
+          child.once('close', resolvePromise);
+        });
+        const { stdout, stderr } = io.read();
+        expect(stdout, stderr).not.toBe('');
+        return { code: code ?? 1, json: JSON.parse(stdout) as Record<string, unknown> };
+      } finally {
+        io.dispose();
+      }
+    };
 
     // 1. Two concurrent writers recording different passes both land and advance rev by 2
     const [r1, r2] = await Promise.all([spawnHelper(p1), spawnHelper(p2)]);
@@ -1882,9 +1892,9 @@ describe('bin/review-state', () => {
                   ...coreAttempt,
                   findings: [
                     ...(coreAttempt.findings ?? []),
-                    { finding_id: 'F-DUP-OPEN', severity_source: 'P2', severity_rubric: 'core', adjudication: 'duplicate', resolution: 'open', duplicate_of: 'F-CHAIN', found_by: ['core'], attribution_reason: null, receipt_class: null },
-                    { finding_id: 'F-REJ-OPEN', severity_source: 'P3', severity_rubric: 'core', adjudication: 'rejected', resolution: 'open', duplicate_of: null, found_by: ['core'], attribution_reason: null, receipt_class: null },
-                    { finding_id: 'F-NB-OPEN', severity_source: 'P3', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', duplicate_of: null, found_by: ['core'], attribution_reason: null, receipt_class: 'non-blocking' },
+                    { finding_id: 'F-DUP-OPEN', severity_source: 'P2', severity_rubric: 'core', adjudication: 'duplicate', resolution: 'open', duplicate_of: 'F-CHAIN', found_by: ['core'], attribution_reason: null, receipt_class: null, finding_class: null, identity: null },
+                    { finding_id: 'F-REJ-OPEN', severity_source: 'P3', severity_rubric: 'core', adjudication: 'rejected', resolution: 'open', duplicate_of: null, found_by: ['core'], attribution_reason: null, receipt_class: null, finding_class: null, identity: null },
+                    { finding_id: 'F-NB-OPEN', severity_source: 'P3', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', duplicate_of: null, found_by: ['core'], attribution_reason: null, receipt_class: 'non-blocking', finding_class: null, identity: null },
                   ],
                 },
               ],
@@ -5663,6 +5673,8 @@ describe('bin/review-state', () => {
         found_by: ['red-team'],
         attribution_reason: null,
         receipt_class: null,
+        finding_class: null,
+        identity: null,
       },
       {
         finding_id: 'red-team-1-2',
@@ -5674,6 +5686,8 @@ describe('bin/review-state', () => {
         found_by: ['red-team'],
         attribution_reason: null,
         receipt_class: null,
+        finding_class: null,
+        identity: null,
       },
     ]);
 
@@ -5816,7 +5830,7 @@ describe('bin/review-state', () => {
       const code = main(JSON.parse(process.argv[2]), { cwd: process.argv[3], stdout: s => process.stdout.write(s), stderr: s => process.stderr.write(s) });
       process.exit(code);
     `;
-    const child = spawnSync('bun', ['--no-env-file', '--config=/dev/null', '-e', script, join(REPO_ROOT, 'src/review-state/cli.ts'), JSON.stringify(args), repo], { env: GIT_ENV, encoding: 'utf8', timeout: 10000 });
+    const child = spawnWithFileOutput('bun', ['--no-env-file', '--config=/dev/null', '-e', script, join(REPO_ROOT, 'src/review-state/cli.ts'), JSON.stringify(args), repo], { env: GIT_ENV, encoding: 'utf8', timeout: 10000 });
     expect(child.status).toBe(3);
     expect(JSON.parse(child.stdout).reason).toBe('unwritable');
     expect(existsSync(req)).toBe(true);
@@ -6095,7 +6109,7 @@ describe('bin/review-state', () => {
       else if (kind === 'directory') mkdirSync(log);
       else if (kind === 'symlink') symlinkSync(sentinel, log);
       else linkSync(sentinel, log);
-      const r = spawnSync(BIN_PATH, ['build', 'record', 'correction', '--dir', d, '--correction-id', uid(1004), '--pass-id', uid(10), '--voice-id', 'core', '--attempt-id', uid(20), '--finding-id', 'F-1', '--adjudication', 'rejected', '--resolution', 'open'], { cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 2000 });
+      const r = spawnWithFileOutput(BIN_PATH, ['build', 'record', 'correction', '--dir', d, '--correction-id', uid(1004), '--pass-id', uid(10), '--voice-id', 'core', '--attempt-id', uid(20), '--finding-id', 'F-1', '--adjudication', 'rejected', '--resolution', 'open'], { cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 2000 });
       expect(r.status, kind).toBe(0);
       const result = JSON.parse(r.stdout);
       expect(result.reason).toBe('recorded');
@@ -7905,7 +7919,14 @@ describe('full-review-record', () => {
       voice_id: 'core',
       attempt_id: '019315e0-0000-7000-8000-000000000113',
       outcome: 'completed',
-      findings: [],
+      findings: [{
+        finding_id: 'legacy-fence-finding',
+        severity_source: 'P1',
+        severity_rubric: 'core',
+        adjudication: 'accepted',
+        resolution: 'open',
+        found_by: ['core'],
+      }],
     }).code).toBe(0);
     expect(callCmd(orderOkDir, 'record pass', {
       pass_id: '019315e0-0000-7000-8000-000000000112',
@@ -7930,6 +7951,15 @@ describe('full-review-record', () => {
       result: 'passed',
       candidate: { commit: headSha, base: headSha },
     }).code).toBe(0);
+    // Use the pre-identity persisted shape for the successful fence and the reversed-order refusal.
+    const legacyPath = join(orderOkDir, 'review-run-state.json');
+    const legacyState = JSON.parse(readFileSync(legacyPath, 'utf8')) as ReviewRunState;
+    Reflect.deleteProperty(legacyState.continuation, 'prior_state');
+    Reflect.deleteProperty(legacyState.continuation, 'prior_findings');
+    const legacyFinding = legacyState.passes[0]!.voices[0]!.attempts[0]!.findings![0]!;
+    Reflect.deleteProperty(legacyFinding, 'finding_class');
+    Reflect.deleteProperty(legacyFinding, 'identity');
+    writeFileSync(legacyPath, JSON.stringify(legacyState));
     const wOrderOk = runRecord('write', 'cycle-1-baseline', writeInput(baseRecord()), orderOkDir, { REVIEW_STATE_DIR: orderOkDir });
     expect(wOrderOk.code, wOrderOk.err).toBe(0);
     expect(existsSync(join(orderOkDir, 'cycle-1-baseline.json'))).toBe(true);
@@ -8132,7 +8162,7 @@ describe('full-review-record', () => {
     const evDir = newDir();
     const inFile = writeInput(baseRecord());
     const spawnRec = (args: string[]) =>
-      spawnSync(BIN_PATH, ['full-review-record', repo, evDir, ...args], { encoding: 'utf8', env: GIT_ENV });
+      spawnWithFileOutput(BIN_PATH, ['full-review-record', repo, evDir, ...args], { encoding: 'utf8', env: GIT_ENV });
 
     const rMissing = spawnRec(['check', 'cycle-1-baseline', 'before-fix']);
     expect(rMissing.status).toBe(1);
@@ -8365,5 +8395,497 @@ describe('finish outcome escalated (H-G refresh escalation)', () => {
       reason: 'corrupt',
       detail: { path: 'review-run-state.json', message: 'invalid-enum at finish.stop_reason' },
     });
+  });
+});
+
+describe('cross-cycle finding identity', () => {
+  const stateFile = 'review-run-state.json';
+  const priorFile = 'prior-run-state.json';
+  const identityFile = 'identity-example.txt';
+  const readState = (dir: string): ReviewRunState => JSON.parse(readFileSync(join(dir, stateFile), 'utf8'));
+  const show = (dir: string) => {
+    const result = runCli(['show', '--dir', dir]);
+    expect(result.code, result.out).toBe(0);
+    return result.json;
+  };
+  const start = (dir: string, id: number, extra: Record<string, unknown> = {}) =>
+    callCmd(dir, 'start', mkStart(id, extra));
+  const continued = (stops = 1) => ({ prior_stops: stops, max: 3, continues: headSha });
+  const record = (dir: string, payload: Record<string, unknown>) => {
+    const result = callCmd(dir, 'record pass', payload);
+    expect(result.json.reason, result.out).toBe('recorded');
+    return result;
+  };
+  const begin = (dir: string, pass: number, extra: Record<string, unknown> = {}) =>
+    record(dir, mkPassStarted(pass, { required_voices: ['core'], ...extra }));
+  const finding = (finding_id: string, line?: number, finding_class = 'correctness', path = 'file.txt') => ({
+    finding_id, severity_source: 'P1', severity_rubric: 'core', adjudication: 'accepted', resolution: 'open', found_by: ['core'],
+    finding_class, ...(line === undefined ? {} : { identity: { path, line } }),
+  });
+  const attempt = (dir: string, pass: number, id: number, findings: ReturnType<typeof finding>[], anchor_commit?: string, voice_id = 'core') =>
+    record(dir, {
+      pass_id: uid(pass), state: 'attempt', voice_id, part: 'core', attempt_id: uid(id), outcome: 'completed',
+      findings, ...(anchor_commit === undefined ? {} : { anchor_commit }),
+    });
+  const select = (dir: string, pass: number, id: number, voice_id = 'core') =>
+    record(dir, { pass_id: uid(pass), state: 'voice-complete', voice_id, selected_attempt_id: uid(id) });
+  const complete = (dir: string, pass: number) =>
+    record(dir, { pass_id: uid(pass), state: 'completed' });
+  const stop = (dir: string, stop_count = 1) => {
+    const result = callCmd(dir, 'finish', { outcome: 'stopped', base: baseSha, stop_reason: 'cycle cap', delta_base: headSha, stop_count });
+    expect(result.json.reason, result.out).toBe('recorded');
+    return readFileSync(join(dir, stateFile));
+  };
+  const report = (dir: string, pass: number, findings: ReturnType<typeof finding>[], anchor?: string, extra: Record<string, unknown> = {}) => {
+    begin(dir, pass, extra);
+    attempt(dir, pass, pass + 1, findings, anchor);
+    select(dir, pass, pass + 1);
+    complete(dir, pass);
+  };
+  const snapshot = (content: string | Buffer) => {
+    const fixturePath = join(newDir(), 'file.txt');
+    writeFileSync(fixturePath, content);
+    const blob = git(repo, ['hash-object', '-w', fixturePath]);
+    const tree = spawnSync('git', ['-C', repo, 'mktree'], {
+      encoding: 'utf8', env: GIT_ENV, input: `100644 blob ${blob}\tfile.txt\n`,
+    });
+    expect(tree.status, tree.stderr).toBe(0);
+    return git(repo, ['commit-tree', tree.stdout.trim(), '-p', headSha, '-m', 'frozen review candidate']);
+  };
+  const copyPrior = (dir: string, bytes: Buffer, path = priorFile) => {
+    writeFileSync(join(dir, path), bytes);
+    return { path, sha256: sha256(bytes) };
+  };
+  const imports = (dir: string, id: number, bytes: Buffer, stops = 1) =>
+    start(dir, id, { continuation: continued(stops), prior_state: copyPrior(dir, bytes) });
+  const render = (dir: string, input: unknown) => {
+    const result = callCmd(dir, 'render', input);
+    expect(result.code, result.out).toBe(0);
+    return { file: result.json.files[0], text: readFileSync(result.json.files[0].path, 'utf8') };
+  };
+
+  // Value: protects=frozen-blob key normalization and safe downgrade; fails_when=the live file or line number enters the key, Unicode whitespace collapses, duplicate normalized lines alias or same-line same-class reports share a key; why_new=102A E1-E3; seam=direct JSON and Git objects
+  test('golden fk1 vectors survive re-anchoring and distinguish classes on one line', () => {
+    const dir = newDir();
+    const source = '\talpha  \t beta \r\ncafé\u00a0détail\r\n  duplicate\r\n\tduplicate\r\nfinal';
+    const frozen = snapshot(source);
+    const moved = snapshot(`unrelated line\r\n${source}`);
+    expect(start(dir, 1100).json.reason).toBe('recorded');
+    begin(dir, 1110);
+    const findings = [
+      finding('A', 1, 'correctness', './file.txt'),
+      finding('B', 1, 'contract'),
+      finding('C', 1),
+      finding('D', 2),
+      finding('E', 3),
+      finding('F', 5),
+      finding('G', 6),
+      finding('H', 1, 'correctness', 'deleted.txt'),
+    ];
+    const result = attempt(dir, 1110, 1111, findings, frozen);
+    expect(result.err).toContain('WARNING IDENTITY_DOWNGRADED');
+    expect(result.json.detail.identity_downgraded.map((entry: { finding_id: string }) => entry.finding_id).sort())
+      .toEqual(['C', 'E', 'G', 'H']);
+    select(dir, 1110, 1111);
+    complete(dir, 1110);
+    report(dir, 1120, [finding('A-again', 2)], moved, { cycle: 2 });
+    const [original, reanchored] = readState(dir).passes.map((pass) => pass.voices[0]!.attempts[0]!.findings!);
+    expect(original!.map(({ finding_class, identity }) => [finding_class, identity?.key ?? null])).toEqual([
+      ['correctness', 'fk1:d4783c16027feaec'],
+      ['contract', 'fk1:56b779da16a17cc9'],
+      ['correctness', null],
+      ['correctness', 'fk1:e59f379ffc515b0b'],
+      ['correctness', null],
+      ['correctness', 'fk1:748d98f4ff9322f7'],
+      ['correctness', null],
+      ['correctness', null],
+    ]);
+    expect(original![0]!.identity?.path).toBe('file.txt');
+    expect(reanchored![0]!.identity).toEqual(original![0]!.identity!);
+    expect(show(dir).finding_cycles).toMatchObject([
+      { cycle: 1, new: 4, carried: 0, unkeyed: 4 },
+      { cycle: 2, new: 0, carried: 1, unkeyed: 0 },
+    ]);
+    for (const output of [result.out, result.err, JSON.stringify(readState(dir)), JSON.stringify(show(dir))]) {
+      expect(output).not.toContain('café');
+      expect(output).not.toContain('alpha beta');
+    }
+  });
+
+  test('replays the mandatory attempt payload without rereading identity evidence', () => {
+    const dir = newDir();
+    const frozen = snapshot('unique replay anchor');
+    expect(start(dir, 1101).json.reason).toBe('recorded');
+    begin(dir, 1102);
+    writeFileSync(join(dir, identityFile), 'F-retry contract file.txt 1\n');
+    const args = [
+      'build', 'record', 'pass', '--dir', dir, '--pass-id', uid(1102), '--state', 'attempt',
+      '--voice-id', 'core', '--part', 'core', '--attempt-id', uid(1103), '--outcome', 'completed',
+      '--finding-identity-file', identityFile, '--anchor-commit', frozen, '--finding', 'F-retry,P1,core',
+    ];
+    expect(runCli(args).json.reason).toBe('recorded');
+    const original = readFileSync(join(dir, stateFile));
+    expect(readState(dir).passes[0]?.voices[0]?.attempts[0]?.findings?.[0]?.identity?.key).toMatch(/^fk1:/);
+    unlinkSync(join(dir, identityFile));
+    const replay = runCli(args);
+    expect(replay.code, replay.err).toBe(0);
+    expect(replay.json.reason).toBe('replayed');
+    expect(readFileSync(join(dir, stateFile))).toEqual(original);
+    expect(runCli([...args.slice(0, -1), 'F-retry,P2,core']).json.reason).toBe('conflict');
+  });
+
+  test('accepts null file flags and keys a selected replacement of an unselected attempt', () => {
+    const dir = newDir();
+    const frozen = snapshot('provisional citation\ncorrected citation');
+    expect(start(dir, 1104).json.reason).toBe('recorded');
+    begin(dir, 1105);
+    const attemptPayload = {
+      pass_id: uid(1105), state: 'attempt', voice_id: 'core', part: 'core', outcome: 'completed',
+      anchor_commit: frozen,
+    };
+    const first = record(dir, {
+      ...attemptPayload, attempt_id: uid(1106), finding_identity_file: null, findings: [finding('F-retry', 1)],
+    });
+    expect(first.err).toBe('');
+    const replacement = record(dir, {
+      ...attemptPayload, attempt_id: uid(1107), predecessor_attempt_id: uid(1106), findings: [finding('F-retry', 2)],
+    });
+    expect(replacement.err).toBe('');
+    select(dir, 1105, 1107);
+    complete(dir, 1105);
+    const [unselected, selected] = readState(dir).passes[0]!.voices[0]!.attempts;
+    expect(unselected?.findings?.[0]?.identity?.key).toMatch(/^fk1:/);
+    expect(selected?.findings?.[0]?.identity?.key).toMatch(/^fk1:/);
+    expect(selected?.findings?.[0]?.identity).not.toEqual(unselected?.findings?.[0]?.identity);
+    expect(show(dir).finding_cycles).toMatchObject([{ new: 1, unkeyed: 0 }]);
+  });
+
+  // Value: protects=build file errors remain advisory and preserve valid keys; fails_when=the optional file refuses an attempt, an extra line for a different attempt downgrades a finding or a malformed row drops neighboring keys; why_new=102A E3/E9; seam=build CLI
+  test('identity file errors identify affected lines and preserve 19 valid keys', () => {
+    const dir = newDir();
+    const frozen = snapshot(Array.from({ length: 22 }, (_, index) => `unique anchor ${index + 1}`).join('\n'));
+    expect(start(dir, 1130).json.reason).toBe('recorded');
+    begin(dir, 1140, { required_voices: ['core', 'second'] });
+    const goodIds = Array.from({ length: 19 }, (_, index) => `good-${index + 1}`);
+    const args = (id: number, voice: string, ids: string[], file = identityFile, anchor = frozen) => [
+      'build', 'record', 'pass', '--dir', dir, '--pass-id', uid(1140), '--state', 'attempt',
+      '--voice-id', voice, '--part', 'core', '--attempt-id', uid(id), '--outcome', 'completed',
+      '--finding-identity-file', file, ...(anchor ? ['--anchor-commit', anchor] : []),
+      ...ids.flatMap((findingId) => ['--finding', `${findingId},P1,core`]),
+    ];
+    writeFileSync(join(dir, identityFile), [
+      ...goodIds.map((id, index) => `${id} correctness file.txt ${index + 1}`),
+      'collision correctness file.txt 1',
+      'malformed correctness file.txt',
+      'badClass invalid file.txt 20',
+      'duplicate correctness file.txt 20',
+      'duplicate contract file.txt 21',
+      'badPath correctness ../file.txt 20',
+      'badLine correctness file.txt -1',
+      'different-voice correctness file.txt 21',
+      '',
+    ].join('\n'));
+    const badIds = ['collision', 'malformed', 'badClass', 'duplicate', 'badPath', 'badLine', 'absent'];
+    const result = runCli(args(1141, 'core', [...goodIds, ...badIds]));
+    expect(result.json.reason, result.out).toBe('recorded');
+    expect(result.err).toBe('WARNING IDENTITY_DOWNGRADED: 7 finding(s); see detail.identity_downgraded\n');
+    expect(result.json.detail.identity_downgraded).toEqual(
+      expect.arrayContaining([
+        { line: 20, finding_id: 'collision', rule: expect.any(String) },
+        { line: 21, finding_id: 'malformed', rule: expect.any(String) },
+        { line: 22, finding_id: 'badClass', rule: expect.any(String) },
+        { line: 24, finding_id: 'duplicate', rule: expect.any(String) },
+        { line: 25, finding_id: 'badPath', rule: expect.any(String) },
+        { line: 26, finding_id: 'badLine', rule: expect.any(String) },
+        expect.objectContaining({ finding_id: 'absent' }),
+      ]),
+    );
+    const [first] = readState(dir).passes[0]!.voices[0]!.attempts;
+    expect(first!.findings!.filter((item) => item.identity).map((item) => item.finding_id)).toEqual(goodIds);
+    expect(first!.findings!.find((item) => item.finding_id === 'badClass')?.finding_class).toBeNull();
+    expect(first!.findings!.find((item) => item.finding_id === 'duplicate')?.finding_class).toBeNull();
+    expect(first!.findings!.find((item) => item.finding_id === 'malformed')?.finding_class).toBe('correctness');
+    expect(runCli(args(1142, 'second', ['different-voice'])).err).toBe('');
+    expect(readState(dir).passes[0]!.voices[1]!.attempts[0]!.findings?.[0]?.identity).not.toBeNull();
+
+    const unusable = [
+      ['missing.txt', null],
+      ['oversized.txt', Buffer.alloc(256 * 1024 + 1, 0x20)],
+      ['invalid-utf8.txt', Buffer.from([0xff])],
+    ] as const;
+    for (const [offset, [file, bytes]] of unusable.entries()) {
+      if (bytes) writeFileSync(join(dir, file), bytes);
+      const res = runCli(args(1150 + offset, 'core', ['one', 'two'], file));
+      expect(res.json.reason).toBe('recorded');
+      expect(res.json.detail.identity_downgraded.map((e: { rule: string }) => e.rule)).toEqual(['identity-file-unusable', 'identity-file-unusable']);
+      expect(readState(dir).passes[0]!.voices[0]!.attempts.at(-1)?.findings?.map((f) => f.finding_class)).toEqual([null, null]);
+    }
+    symlinkSync(identityFile, join(dir, 'symlink.txt'));
+    const linked = runCli(args(1154, 'core', ['good-1'], 'symlink.txt'));
+    expect(linked.json.detail.identity_downgraded[0]).toMatchObject({ finding_id: 'good-1', rule: 'identity-file-unusable' });
+    linkSync(join(dir, identityFile), join(dir, 'alias.txt'));
+    const alias = runCli(args(1156, 'core', ['good-1'], 'alias.txt'));
+    expect(alias.json.detail.identity_downgraded[0]).toMatchObject({ finding_id: 'good-1', rule: 'identity-file-unusable' });
+    unlinkSync(join(dir, 'alias.txt'));
+    const missingAnchor = runCli(args(1155, 'core', ['good-1'], identityFile, ''));
+    expect(missingAnchor.json.reason).toBe('recorded');
+    expect(missingAnchor.json.detail.identity_downgraded[0]).toMatchObject({ finding_id: 'good-1', rule: 'anchor-commit-missing' });
+    expect(readState(dir).passes[0]!.voices[0]!.attempts.at(-1)?.findings?.[0]).toMatchObject({ finding_class: 'correctness', identity: null });
+  });
+
+  // Value: protects=selected-attempt grouping, class-only conflict handling and same-ID carry on a changed anchor; fails_when=unselected findings enter a count, corrections rewrite counts, Greptile folds into local evidence, or partial observations appear complete; why_new=102A A3/E5; seam=show and stopped render
+  test('cycle reports preserve observation order and remain independent of adjudication', () => {
+    const dir = newDir();
+    const frozen = snapshot('original anchor\nmodified anchor\na new premise\n');
+    expect(start(dir, 1160).json.reason).toBe('recorded');
+    begin(dir, 1170, { required_voices: ['core', 'second', 'third'] });
+    attempt(dir, 1170, 1171, [finding('unselected', 3)], frozen);
+    attempt(dir, 1170, 1172, [finding('same', 1)], frozen);
+    attempt(dir, 1170, 1173, [finding('same'), finding('same-anchor-other-id', 1)], frozen, 'second');
+    const conflicting = attempt(dir, 1170, 1174, [finding('same', 2)], frozen, 'third');
+    expect(conflicting.json.detail.identity_downgraded).toMatchObject([{ finding_id: 'same', rule: expect.any(String) }]);
+    expect(readState(dir).passes[0]!.voices[2]!.attempts[0]!.findings?.[0]?.identity).toBeNull();
+    select(dir, 1170, 1172);
+    select(dir, 1170, 1173, 'second');
+    select(dir, 1170, 1174, 'third');
+    complete(dir, 1170);
+    report(dir, 1180, [], frozen, { coverage: 'delta', delta_from: baseSha });
+
+    report(dir, 1190, [], frozen, { cycle: 1, scope: 'greptile' });
+    report(dir, 1200, [finding('same', 2), finding('another', 3)], frozen, { cycle: 2, coverage: 'delta', delta_from: baseSha });
+    report(dir, 1210, [finding('rename', 1)], frozen, { cycle: 1, scope: 'greptile' });
+    begin(dir, 1220, { cycle: 3 });
+    attempt(dir, 1220, 1221, [finding('not-yet-selected', 3, 'docs')], frozen);
+    const beforeCorrection = show(dir).finding_cycles;
+    expect(beforeCorrection).toMatchObject([
+      { run: 1, cycle: 1, coverage: 'mixed', observed: 'complete', new: 1, carried: 0, repeated_premise: 0, repeated_premise_pairs: 0, unkeyed: 0, prior: 'none' },
+      { run: 1, cycle: 'greptile', coverage: 'full', observed: 'complete', new: 0, carried: 0, repeated_premise: 0, unkeyed: 0, prior: 'none' },
+      { run: 1, cycle: 2, coverage: 'delta', observed: 'complete', new: 1, carried: 1, repeated_premise: 1, repeated_premise_pairs: 1, unkeyed: 0, prior: 'none' },
+      { run: 1, cycle: 'greptile', coverage: 'full', observed: 'complete', new: 0, carried: 1, unkeyed: 0, prior: 'none' },
+      { run: 1, cycle: 3, coverage: 'full', observed: 'partial', new: 0, carried: 0, unkeyed: 0, prior: 'none' },
+    ]);
+    const correction = callCmd(dir, 'record correction', {
+      correction_id: uid(1225), target: { pass_id: uid(1200), voice_id: 'core', attempt_id: uid(1201), finding_id: 'another' },
+      adjudication: 'rejected', resolution: 'unknown',
+    });
+    expect(correction.json.reason).toBe('recorded');
+    expect(show(dir).unresolved).not.toContain('another P1');
+    expect(show(dir).finding_cycles).toEqual(beforeCorrection);
+    const stopped = stop(dir);
+    const full = render(dir, { output: 'full-receipt' });
+    const comment = render(dir, { output: 'comment', full_receipt: { path: basename(full.file.path), sha256: full.file.sha256 } });
+    const expectedLine = 'Finding cycle: run=1; cycle=2; coverage=delta; observed=complete; new=1; carried=1; repeated_premise=1; repeated_premise_pairs=1; unkeyed=0; prior=none';
+    const digestLine = `Run state digest: run=${uid(1160)}; sha256=${sha256(stopped)}`;
+    expect(full.text).toContain(expectedLine);
+    expect(comment.text).toContain(expectedLine);
+    expect(full.text).toContain(digestLine);
+    expect(comment.text).not.toContain(digestLine);
+    expect(comment.text.indexOf('Continuation:')).toBeLessThan(comment.text.indexOf('Finding cycle:'));
+    expect(render(dir, { output: 'final' }).text).not.toContain('Finding cycle:');
+  });
+
+  // Value: protects=repeat concentration and class-specific identities; fails_when=distinct earlier pairs collapse or a changed class carries by key; why_new=102A A1/A3/D7; seam=show
+  test('equal repeated-premise totals distinguish one previous pair from four', () => {
+    const path = 'file.txt';
+    const frozen = snapshot(Array.from({ length: 8 }, (_, i) => `distinct line ${i + 1}`).join('\n'));
+    const classes = ['safety', 'concurrency', 'contract', 'validation'];
+    for (const [index, mode] of ['concentrated', 'spread'].entries()) {
+      const dir = newDir();
+      expect(start(dir, 1451 + index).json.reason).toBe('recorded');
+      const selectedClasses = mode === 'concentrated' ? classes.map(() => 'safety') : classes;
+      report(dir, 1460, selectedClasses.map((tag, i) => finding(`before-${i}`, i + 1, tag, path)), frozen);
+      const findings = selectedClasses.map((tag, i) => finding(`later-${i}`, i + 5, tag, path));
+      findings.push(finding('class-reassigned', 1, 'correctness', path));
+      report(dir, 1470, findings, frozen, { cycle: 2 });
+      expect(show(dir).finding_cycles[1]).toMatchObject({
+        carried: 0, new: 5, repeated_premise: 4, repeated_premise_pairs: mode === 'concentrated' ? 1 : 4,
+      });
+    }
+  });
+
+  // Value: protects=continuation provenance, idempotent start and advisory import bounds; fails_when=wrong same-head evidence imports, missing copies erase completeness, or show discloses prior entries; why_new=102A E4/E5; seam=start, show, render and export
+  test('imports digest-bound evidence across two continuations and replays from the stored summary', () => {
+    const first = newDir();
+    const frozen = snapshot('old line\nnew line\n');
+    expect(start(first, 1230).json.reason).toBe('recorded');
+    report(first, 1240, [finding('first', 1)], frozen);
+    const firstBytes = stop(first);
+
+    const second = newDir();
+    const prior = copyPrior(second, firstBytes);
+    const startArgs = [
+      'build', 'start', '--dir', second, '--run-id', uid(1250), '--base', baseSha, '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', sha256('plan-bytes'), '--policy-source', 'none supplied', '--prior-stops', '1',
+      '--max-continuations', '3', '--continues', headSha, '--prior-state-file', prior.path, '--prior-state-sha256',
+    ];
+    const exact = [...startArgs, prior.sha256];
+    const summary = { status: 'imported', reason: null, complete: true, entry_count: 1, source: { ...prior, run_id: uid(1230) } };
+    expect(runCli(exact).json).toMatchObject({ reason: 'recorded', detail: { prior_findings: summary } });
+    unlinkSync(join(second, priorFile));
+    expect(runCli(exact).json).toMatchObject({ reason: 'replayed', detail: { prior_findings: summary } });
+    expect(runCli([...startArgs, sha256('different')]).json.reason).toBe('conflict');
+    expect(show(second).continuation.prior_findings).toEqual(summary);
+
+    report(second, 1260, [finding('second', 1), finding('third', 2)], frozen);
+    const known = show(second).finding_cycles[0];
+    expect(known).toMatchObject({ run: 2, cycle: 1, new: 1, carried: 1, repeated_premise: 1, prior: 'imported' });
+    const secondBytes = stop(second, 2);
+
+    const third = newDir();
+    expect(imports(third, 1270, secondBytes, 2).json).toMatchObject({ reason: 'recorded', detail: { prior_findings: { complete: true, entry_count: 2, source: { run_id: uid(1250) } } } });
+    report(third, 1280, [finding('fourth', 1)], frozen);
+    expect(show(third).finding_cycles[0]).toMatchObject({ run: 3, cycle: 1, new: 0, carried: 1 });
+    const priorEntries = readState(third).continuation.prior_findings;
+    expect(priorEntries).toMatchObject({ entries: expect.arrayContaining([{ run: 1, cycle: 1, key: expect.any(String), finding_class: 'correctness', path: 'file.txt' }, { run: 2, cycle: 1, key: expect.any(String), finding_class: 'correctness', path: 'file.txt' }]) });
+    const exportWithIdentity = runCli(['export', '--dir', third]);
+    const legacy = readState(third);
+    Reflect.deleteProperty(legacy.continuation, 'prior_findings');
+    Reflect.deleteProperty(legacy.continuation, 'prior_state');
+    for (const item of legacy.passes[0]!.voices[0]!.attempts[0]!.findings!) {
+      Reflect.deleteProperty(item, 'identity');
+      Reflect.deleteProperty(item, 'finding_class');
+    }
+    writeFileSync(join(third, stateFile), JSON.stringify(legacy));
+    const legacyShow = show(third);
+    expect(legacyShow).toMatchObject({ finding_prior: 'unavailable', finding_prior_reason: 'not-recorded' });
+    expect(legacyShow.finding_cycles[0]).toMatchObject({ unkeyed: 1, prior: 'unavailable:not-recorded' });
+    expect(validateStoredState(legacy).ok).toBe(true);
+    expect(runCli(['export', '--dir', third]).out).toBe(exportWithIdentity.out);
+
+    const missing = newDir();
+    expect(start(missing, 1290, { continuation: continued() }).json.reason).toBe('recorded');
+    report(missing, 1300, [finding('second', 1), finding('third', 2)], frozen);
+    const uncertain = show(missing).finding_cycles[0];
+    expect(uncertain).toMatchObject({ run: 2, cycle: 1, prior: 'unavailable:not-supplied' });
+    expect(uncertain.carried).toBeLessThan(known.carried);
+    expect(uncertain.new).toBeGreaterThan(known.new);
+    const missingBytes = stop(missing, 2);
+    const afterMissing = newDir();
+    expect(imports(afterMissing, 1310, missingBytes, 2).json).toMatchObject({ detail: { prior_findings: { status: 'imported', complete: false } } });
+    report(afterMissing, 1320, [], frozen);
+    expect(show(afterMissing).finding_cycles[0]).toMatchObject({ prior: 'partial', observed: 'complete', new: 0, carried: 0, unkeyed: 0 });
+
+    const wrongSameHead = newDir();
+    const wrongPrior = copyPrior(wrongSameHead, secondBytes);
+    const wrong = start(wrongSameHead, 1330, { continuation: continued(), prior_state: { ...wrongPrior, sha256: prior.sha256 } });
+    expect(wrong.json).toMatchObject({ reason: 'recorded', detail: { prior_findings: { status: 'unavailable', reason: 'digest-mismatch' } } });
+    expect(wrong.err).toContain('WARNING PRIOR_IMPORT_UNAVAILABLE');
+  });
+
+  // Value: protects=precise advisory errors and legacy stop compatibility; fails_when=bad or unrelated copy blocks start, reserved names are read as input, or undigested/legacy evidence is called complete; why_new=102A E4/E6; seam=start
+  test('prior imports report unavailable reasons and preserve legacy uncertainty', () => {
+    const source = newDir();
+    expect(start(source, 1340, { continuation: continued() }).json.reason).toBe('recorded');
+    const open = readFileSync(join(source, stateFile));
+    const stopped = stop(source, 2);
+    const legacy = readState(source);
+    Reflect.deleteProperty(legacy.continuation, 'prior_findings');
+    Reflect.deleteProperty(legacy.continuation, 'prior_state');
+    const stoppedState = JSON.parse(stopped.toString('utf8'));
+    const badCases = [
+      ['corrupt', Buffer.from('invalid JSON')],
+      ['newer-schema', Buffer.from(JSON.stringify({ ...stoppedState, schema: 'review-run-state/v100' }))],
+      ['not-stopped', open],
+      ['head-mismatch', Buffer.from(JSON.stringify({ ...stoppedState, finish: { ...stoppedState.finish, head: baseSha } }))],
+      ['binding-mismatch', Buffer.from(JSON.stringify({ ...stoppedState, run: { ...stoppedState.run, branch: 'different' } }))],
+      ['unusable-file', Buffer.from([0xff])],
+    ] as const;
+    for (const [offset, [reason, bytes]] of badCases.entries()) {
+      const dest = newDir();
+      const result = imports(dest, 1350 + offset, bytes);
+      expect(result.json).toMatchObject({ reason: 'recorded', detail: { prior_findings: { status: 'unavailable', reason } } });
+      expect(result.err).toMatch(new RegExp(`WARNING PRIOR_IMPORT_UNAVAILABLE: .*: ${reason}; fix: .+`));
+      expect(show(dest)).toMatchObject({ finding_prior: 'unavailable', finding_prior_reason: reason });
+    }
+    for (const [offset, path] of [stateFile, 'review-run-state.json.lock', '../outside.json', 'missing.json', 'link.json'].entries()) {
+      const dest = newDir();
+      if (path === 'link.json') {
+        copyPrior(dest, stopped);
+        symlinkSync(priorFile, join(dest, path));
+      }
+      const result = start(dest, 1360 + offset, { continuation: continued(), prior_state: { path, sha256: sha256(stopped) } });
+      expect(result.json).toMatchObject({ reason: 'recorded', detail: { prior_findings: { status: 'unavailable', reason: 'unusable-file' } } });
+      expect(result.err).toContain('WARNING PRIOR_IMPORT_UNAVAILABLE');
+    }
+    const legacyDest = newDir();
+    expect(imports(legacyDest, 1370, Buffer.from(JSON.stringify(legacy)), 2).json.detail.prior_findings)
+      .toMatchObject({ status: 'imported', complete: false, entry_count: 0 });
+    report(legacyDest, 1380, []);
+    expect(show(legacyDest).finding_cycles[0]).toMatchObject({ prior: 'partial', new: 0, carried: 0, unkeyed: 0 });
+
+    const initial = newDir();
+    const initialResult = start(initial, 1390, { prior_state: copyPrior(initial, stopped) });
+    expect(initialResult.json.reason).toBe('recorded');
+    expect(initialResult.err).toBe('');
+    expect(show(initial).finding_prior).toBe('none');
+    report(initial, 1400, [finding('keyed', 1)], headSha);
+    const noDigest = newDir();
+    copyPrior(noDigest, stop(initial));
+    const legacyReceipt = start(noDigest, 1410, { continuation: continued(), prior_state: { path: priorFile, sha256: null } });
+    expect(legacyReceipt.json.detail.prior_findings).toMatchObject({ status: 'imported', complete: false, entry_count: 1 });
+    const malformedDigest = newDir();
+    copyPrior(malformedDigest, stopped);
+    const malformedReceipt = start(malformedDigest, 1411, {
+      continuation: continued(), prior_state: { path: priorFile, sha256: 'incomplete-digest' },
+    });
+    expect(malformedReceipt.json.detail.prior_findings?.reason).toBe('digest-mismatch');
+    expect(malformedReceipt.err).toContain(`--prior-state-file ${priorFile}: digest-mismatch`);
+  });
+
+  // Value: protects=selected keyless legacy stops import as partial; fails_when=import calls their history complete;
+  // why_new=the empty legacy continuation exercises a different partial-history rule; seam=none; no_claim=receipt discovery.
+  test('imports a legacy initial stop with a selected keyless finding as partial', () => {
+    const source = newDir();
+    expect(start(source, 1412).json.reason).toBe('recorded');
+    report(source, 1413, [finding('legacy-finding')]);
+    stop(source);
+    const legacy = readState(source);
+    Reflect.deleteProperty(legacy.continuation, 'prior_state');
+    Reflect.deleteProperty(legacy.continuation, 'prior_findings');
+    const selected = legacy.passes[0]!.voices[0]!.attempts[0]!.findings![0]!;
+    Reflect.deleteProperty(selected, 'finding_class');
+    Reflect.deleteProperty(selected, 'identity');
+
+    const continuation = newDir();
+    const result = imports(continuation, 1415, Buffer.from(JSON.stringify(legacy)));
+    expect(result.json.detail.prior_findings).toMatchObject({ status: 'imported', complete: false, entry_count: 0 });
+    report(continuation, 1416, []);
+    expect(show(continuation).finding_cycles[0]).toMatchObject({ prior: 'partial', unkeyed: 0 });
+  });
+
+  // Value: protects=4 MiB input and bounded prior summaries; fails_when=large inputs are refused below the byte limit or either entry cap drops all history, marks it complete, or retains oldest entries instead of newest; why_new=102A E4; seam=store import and show
+  test('prior import caps keep newest entries and a near-limit state still loads', () => {
+    const seed = newDir();
+    expect(start(seed, 1420).json.reason).toBe('recorded');
+    report(seed, 1430, [finding('first', 1)], headSha);
+    stop(seed);
+    const source = readState(seed);
+    const selected = source.passes[0]!.voices[0]!.attempts[0]!;
+    const template = selected.findings![0]!;
+    const key = (index: number) => `fk1:${index.toString(16).padStart(16, '0')}`;
+    const fileLimit = 4 * 1024 * 1024;
+    for (const [offset, [path, count]] of ([['file.txt', 2001], ['f'.repeat(490), 1250]] as const).entries()) {
+      selected.findings = Array.from({ length: count }, (_, i) => ({
+        ...template, finding_id: `finding-${i}`, identity: { key: key(i), path },
+      }));
+      const serialized = Buffer.from(JSON.stringify(source));
+      const padded = Buffer.concat([serialized, Buffer.alloc(fileLimit - serialized.length, 0x20)]);
+      const dest = newDir();
+      const result = imports(dest, 1440 + offset, padded);
+      expect(result.json).toMatchObject({ reason: 'recorded', detail: { prior_findings: { status: 'imported', complete: false } } });
+      const imported = readState(dest).continuation.prior_findings;
+      if (imported?.status !== 'imported') throw new Error('prior import unavailable');
+      const { entries } = imported;
+      expect(entries).toHaveLength(result.json.detail.prior_findings.entry_count);
+      if (offset === 0) expect(entries).toHaveLength(2000);
+      expect(entries.length).toBeLessThan(count);
+      expect(entries.some((entry) => entry.key === key(count - 1))).toBe(true);
+      expect(entries.find((entry) => entry.key === key(0))).toBeUndefined();
+      expect(Buffer.byteLength(JSON.stringify(entries))).toBeLessThanOrEqual(512 * 1024);
+      expect(show(dest).continuation.prior_findings).not.toHaveProperty('entries');
+    }
+    const oversized = newDir();
+    expect(imports(oversized, 1450, Buffer.alloc(fileLimit + 1, 0x20)).json)
+      .toMatchObject({ reason: 'recorded', detail: { prior_findings: { status: 'unavailable', reason: 'unusable-file' } } });
   });
 });

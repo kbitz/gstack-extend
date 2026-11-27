@@ -1,0 +1,11 @@
+### [review:files=src/review-state/build.ts] Test gap: Digest flag without its copy
+- **ID:** wi-7f98bd
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The required copy flag is checked by the builder. No fixture independently asserts the usage response and absence of a state write.
+- **Hypothesis (untested):** Pass a digest without the copy flag to a synthetic start request and verify the diagnostic and empty state directory.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/build.ts:543`
+- **Evidence:** Track 102A coverage and reviewer audit on `f0206ed`. No failure was reproduced on this coverage path.
+- **Context:** Filed by /review-and-prep on feature branch `mmm/aa5cff6a` before PR creation (2026-11-27).
+- **Revisit when:** The next Track changes this file or its test fixtures.
+- **Effort:** ?

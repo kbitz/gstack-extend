@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeSync, type Stats } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync, readFileSync, readSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeSync, type Stats } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { applyCommand, collectEvidenceItems, CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, isVersion, REASONS, serializeState, storedWriterOrderKnown, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
+import { applyCommand, collectEvidenceItems, CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, isRelPath, isVersion, REASONS, serializeState, storedWriterOrderKnown, truncate80, validateStoredState, type CommandName, type EnvChecker, type GitInfo, type ReasonCode, type RetryHint, type ReviewRunState, type SideEffects, type StatusCode } from './state.ts';
+
+import { readAnchorBlob } from './finding-identity.ts';
 
 export const DEFAULT_VERSION_PATH = resolve(import.meta.dir, '..', '..', 'VERSION');
 
@@ -290,6 +292,38 @@ export function checkDirFile(
   }
 }
 
+function readAdvisoryFile(realDir: string, path: unknown, maxBytes: number): { text: string; sha256: string } | null {
+  if (!isRelPath(path)) return null;
+  const file = resolve(realDir, path);
+  try {
+    // Advisory input never aliases the helper's own state or follows symlinks.
+    if (realpathSync(file) !== file || /^review-run-state\.json(?:[.-]|$)/i.test(basename(file))) return null;
+    const before = lstatSync(file);
+    if (!before.isFile() || before.size > maxBytes) return null;
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.nlink !== 1 || !sameFile(before, stat) || stat.size > maxBytes || realpathSync(file) !== file) return null;
+      const bytes = Buffer.allocUnsafe(stat.size + 1);
+      let size = 0;
+      while (size < bytes.length) {
+        const count = readSync(fd, bytes, size, bytes.length - size, null);
+        if (count === 0) break;
+        size += count;
+      }
+      const after = fstatSync(fd);
+      if (size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) return null;
+      const data = bytes.subarray(0, size);
+      const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data);
+      return { text, sha256: createHash('sha256').update(data).digest('hex') };
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 export type StaleLockReason = 'process-exited' | 'boot-changed' | 'unparseable-aged';
 export type LockClassification =
   | { status: 'stale'; reason: StaleLockReason }
@@ -492,6 +526,8 @@ export function executeCommand(command: CommandName, dirArg: string, inputArg: s
   }
 
   const envChecker: EnvChecker = {
+    readAdvisoryFile: (path, maxBytes) => readAdvisoryFile(realDir, path, maxBytes),
+    readAnchorBlob: (commit, path, maxBytes, timeoutMs) => readAnchorBlob(cwd, gitEnv, commit, path, maxBytes, timeoutMs),
     commitExists: (sha) => runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`], gitEnv).ok,
     commitTree: (sha) => runGit(cwd, ['cat-file', '-e', `${sha}^{commit}`], gitEnv).ok ? (runGit(cwd, ['rev-parse', `${sha}^{tree}`], gitEnv).stdout || null) : null,
     isAncestor: (anc, desc) => runGit(cwd, ['merge-base', '--is-ancestor', anc, desc], gitEnv).ok,

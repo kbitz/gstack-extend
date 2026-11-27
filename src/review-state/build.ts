@@ -7,7 +7,7 @@ import { checkDirFile, executeCommand, makeEnvelope, readHelperVersion, unlinkQu
 export const BUILD_COMMANDS = ['start', 'record pass', 'record correction', 'record gate', 'record audit', 'checkpoint', 'finish'] as const satisfies readonly CommandName[];
 export const PASS_STATES = ['started', 'attempt', 'voice-complete', 'completed'] as const;
 export type PassState = (typeof PASS_STATES)[number];
-export type FlagKind = 'string' | 'int' | 'number-or-string' | 'list' | 'presence' | 'file';
+export type FlagKind = 'string' | 'int' | 'number-or-string' | 'list' | 'presence' | 'file' | 'advisory';
 // nullOmits: the validator accepts null for this key and refuses the text "null", so a literal "null" reads as the omitted flag.
 export type FlagRow = { flag: string; key: string; kind: FlagKind; required: boolean; repeatable?: boolean; nullOmits?: true };
 
@@ -30,6 +30,8 @@ export const START_FLAGS: readonly FlagRow[] = [
   { flag: '--prior-stops', key: 'continuation.prior_stops', kind: 'int', required: false },
   { flag: '--max-continuations', key: 'continuation.max', kind: 'int', required: true },
   { flag: '--continues', key: 'continuation.continues', kind: 'string', required: false, nullOmits: true },
+  { flag: '--prior-state-file', key: 'prior_state.path', kind: 'advisory', required: false },
+  { flag: '--prior-state-sha256', key: 'prior_state.sha256', kind: 'advisory', required: false },
   { flag: '--session-id', key: 'session_id', kind: 'string', required: false, nullOmits: true },
 ];
 
@@ -58,6 +60,8 @@ export const PASS_STATE_FLAGS: Record<PassState, readonly FlagRow[]> = {
     { flag: '--returned-at', key: 'returned_at', kind: 'string', required: false, nullOmits: true },
     { flag: '--delegate-file', key: 'delegate', kind: 'file', required: false },
     { flag: '--finding', key: 'findings', kind: 'list', required: false, repeatable: true },
+    { flag: '--finding-identity-file', key: 'finding_identity_file', kind: 'advisory', required: false },
+    { flag: '--anchor-commit', key: 'anchor_commit', kind: 'advisory', required: false },
   ],
   'voice-complete': [
     { flag: '--pass-id', key: 'pass_id', kind: 'string', required: true },
@@ -218,7 +222,7 @@ export function buildHelp(): string {
     fmtTable('checkpoint', CHECKPOINT_FLAGS),
     fmtTable('finish', FINISH_FLAGS),
   ].join('\n\n');
-  return `review-state build — request builder for /review-and-prep run state (${SCHEMA_VERSION})\nBuilds the canonical JSON request in --dir and records it in one call.\n\nUsage:\n  bin/review-state build <command> --dir DIR [flags]\n\n${sections}\n\nDocs: docs/designs/review-run-state.md\n`;
+  return `review-state build — request builder for /review-and-prep run state (${SCHEMA_VERSION})\nBuilds the canonical JSON request in --dir and records it in one call.\n\nUsage:\n  bin/review-state build <command> --dir DIR [flags]\n\n${sections}\n\nExamples (append to the required flags):\n  start: --prior-state-file prior-run-state.json --prior-state-sha256 <run-state-sha256-from-verified-receipt>\n  record pass --state attempt: --finding-identity-file identity-pass.txt --anchor-commit <snapshot-sha>\n\nDocs: docs/designs/review-run-state.md\n`;
 }
 
 export type BuildOverride = { flag: string; sent: string | string[]; used: string | null; rule: string };
@@ -452,6 +456,8 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       if (returnedAt !== undefined) req.returned_at = returnedAt;
       if (delegateEntry !== undefined) req.delegate = delegateEntry;
       if (findings !== undefined) req.findings = findings;
+      if (scalars.has('--finding-identity-file')) req.finding_identity_file = scalars.get('--finding-identity-file')!;
+      if (scalars.has('--anchor-commit')) req.anchor_commit = scalars.get('--anchor-commit')!;
       return { ok: true, request: req, overrides };
     }
 
@@ -529,6 +535,14 @@ export function buildRequest(command: CommandName, args: readonly string[], real
       max: toIntOrString(scalars.get('--max-continuations')!),
       continues: keep(scalars, '--continues', priorStops === 0, 'null-when-prior_stops===0') ? scalars.get('--continues')! : null,
     };
+    if (scalars.has('--prior-state-file')) {
+      req.prior_state = {
+        path: scalars.get('--prior-state-file')!,
+        sha256: scalars.get('--prior-state-sha256') ?? null,
+      };
+    } else if (scalars.has('--prior-state-sha256')) {
+      return { ok: false, reason: 'usage', detail: { message: '--prior-state-sha256 requires --prior-state-file' } };
+    }
     if (scalars.has('--session-id')) req.session_id = scalars.get('--session-id')!;
     return { ok: true, request: req, overrides };
   }

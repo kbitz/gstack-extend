@@ -1,3 +1,4 @@
+import { findingCycles, formatFindingCycle } from './finding-cycles.ts';
 import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
@@ -145,6 +146,7 @@ const reqPr = (s: ReviewRunState, pr?: PrInfo | null): PrInfo => {
 // ─── Shared field formatters & declarative line grammars ─────────────────────
 
 export type RenderCtx = RenderFinalInput & {
+  stateSha256?: string;
   state: ReviewRunState; exit: Exclude<RenderExitState, 'not-renderable'>; b: ActiveBinding;
   dir: string; home: string; fullReceipt?: EvidenceRef; summaryText?: string; resolved?: boolean; localEvidencePaths?: boolean;
 };
@@ -302,6 +304,9 @@ export const FIELD_FMT = {
     `Receipt: ${c.commentUrl ?? 'none yet'}`,
     `Evidence: ${evidenceLocator(c.dir, c.fullReceipt!.path)}; sha256: ${c.fullReceipt!.sha256}`,
   ],
+  findingCycles: (c: RenderCtx) => findingCycles(c.state).map(formatFindingCycle),
+  runStateDigest: (c: RenderCtx) => c.stateSha256
+    ? [`Run state digest: run=${c.state.run.run_id}; sha256=${c.stateSha256}`] : [],
   stageLine: (c: RenderCtx) => {
     const st = EXIT_MATRIX[c.exit].stage;
     return st ? [`Stage handoff: stage-handoff/v1; stage: review; next: ${st[0]}; status: ${st[1]}; head: ${c.b.head}; plan-sha256: ${c.state.plan.sha256 || 'none'}`] : [];
@@ -313,10 +318,10 @@ type FmtKey = keyof typeof FIELD_FMT;
 export const LINE_GRAMMARS: Record<string, readonly FmtKey[]> = {
   compact: ['markerReceipt', 'statusPrepared', 'preparedHead', 'policy', 'plan', 'greptile', 'checksNotRun', 'shipGates', 'delegatedParts', 'unresolved', 'restrictionResolved', 'fullReceiptLine'],
   'comment:paused': ['markerPaused', 'statusPaused', 'preparedHead', 'policy', 'greptile', 'delegatedParts', 'unresolved', 'restrictionResolved', 'pauseResumeHint', 'fullReceiptLine'],
-  'comment:stopped': ['markerStopped', 'statusStopped', 'stoppedAt', 'deltaBase', 'policy', 'policySource', 'fullReviewEvidence', 'unresolved', 'continuation', 'stoppedGateOrLanes', 'delegatedParts', 'restrictionResolved', 'fullReceiptLine'],
+  'comment:stopped': ['markerStopped', 'statusStopped', 'stoppedAt', 'deltaBase', 'policy', 'policySource', 'fullReviewEvidence', 'unresolved', 'continuation', 'findingCycles', 'stoppedGateOrLanes', 'delegatedParts', 'restrictionResolved', 'fullReceiptLine'],
   'full:ready': ['statusPrepared', 'preparedHead', 'policy', 'policySource', 'delegation', 'plan', 'greptile', 'checksNotRun', 'shipGates', 'delegatedParts', 'unresolved', 'restrictionResolved', 'runStateLine'],
   'full:paused': ['statusPaused', 'preparedHead', 'policy', 'policySource', 'delegation', 'greptile', 'delegatedParts', 'unresolved', 'restrictionResolved', 'pauseResumeHint', 'runStateLine'],
-  'full:stopped': ['statusStopped', 'stoppedAt', 'deltaBase', 'policy', 'policySource', 'delegation', 'fullReviewEvidence', 'unresolved', 'continuation', 'stoppedGateOrLanes', 'delegatedParts', 'restrictionResolved', 'runStateLine'],
+  'full:stopped': ['statusStopped', 'stoppedAt', 'deltaBase', 'policy', 'policySource', 'delegation', 'fullReviewEvidence', 'unresolved', 'continuation', 'findingCycles', 'runStateDigest', 'stoppedGateOrLanes', 'delegatedParts', 'restrictionResolved', 'runStateLine'],
   'full:blocked': ['statusBlocked', 'preparedHead', 'policy', 'policySource', 'delegation', 'plan', 'delegatedParts', 'unresolved', 'restrictionResolved', 'runStateLine'],
   stoppedLabels: ['stoppedAt', 'deltaBase', 'policy', 'policySource', 'fullReviewEvidence'],
   'H-B': ['hbHeader', 'hbConfirm', 'hbHandoff', 'plan', 'hbReceiptRef', 'hbGreptile', 'hbSaveBefore'],
@@ -354,11 +359,11 @@ export const renderDisclosures = (state: ReviewRunState): string => {
   return ch.length > 0 ? `${ch.map((c) => `User-facing change: ${c}`).join('\n')}\n` : '';
 };
 
-export function renderFullReceipt(state: ReviewRunState, input: { sectionsText?: string[]; reviewRestrictionResolved?: boolean }, dir: string, home = homedir()): string {
+export function renderFullReceipt(state: ReviewRunState, input: { sectionsText?: string[]; reviewRestrictionResolved?: boolean; stateSha256?: string }, dir: string, home = homedir()): string {
   const exit = exitState(state), key = `full:${exit}`;
   if (!(key in LINE_GRAMMARS) || (exit === 'blocked' && state.finish?.stop_reason !== 'provider-failures')) throw new Error(`not-renderable: full-receipt on ${exit}`);
   const resolved = exit === 'ready' || exit === 'paused' ? Boolean(input.reviewRestrictionResolved) : state.finish?.review_restriction_resolved === true;
-  const lines = evalGrammar(key, state, { dir, home, resolved, localEvidencePaths: true });
+  const lines = evalGrammar(key, state, { dir, home, resolved, localEvidencePaths: true, stateSha256: input.stateSha256 });
   const secs = (input.sectionsText ?? []).map((s) => s.replace(/\r\n?/g, '\n').replace(/\n+$/, ''));
   return secs.length > 0 ? `${lines.join('\n')}\n\n${secs.join('\n\n')}\n` : `${lines.join('\n')}\n`;
 }
@@ -461,7 +466,7 @@ export function allocateExclusiveFile(
 export function executeRender(dirArg: string, inputArg: string, cwd: string, env: NodeJS.ProcessEnv = process.env, versionPath?: string): RenderCommandResult {
   const loaded = loadStoredState('render', dirArg, cwd, env, versionPath);
   if (!loaded.ok) return loaded;
-  const { state, statePath, realDir, gitEnv, helperVersion } = loaded, home = env.HOME || homedir();
+  const { state, statePath, stateBytes, realDir, gitEnv, helperVersion } = loaded, home = env.HOME || homedir();
   const fail = (reason: 'invalid-input' | 'unwritable', detail: Record<string, unknown>): RenderCommandResult => {
     const envelope = makeEnvelope('render', reason, detail, statePath, state.rev, undefined, helperVersion, null);
     return { ok: false, exitCode: envelope.exitCode as 1 | 2 | 3 | 4, envelope };
@@ -524,7 +529,8 @@ export function executeRender(dirArg: string, inputArg: string, cwd: string, env
     let prefix = 'final', content = '';
     if (output === 'full-receipt') {
       prefix = 'full-receipt';
-      content = renderFullReceipt(state, { sectionsText: sectionsRefs.map((_, i) => checkedBytes.get(`sections[${i}]`)!.toString('utf8')), reviewRestrictionResolved: canon.review_restriction_resolved === true }, dirArg, home);
+      content = renderFullReceipt(state, { sectionsText: sectionsRefs.map((_, i) => checkedBytes.get(`sections[${i}]`)!.toString('utf8')), reviewRestrictionResolved: canon.review_restriction_resolved === true,
+        stateSha256: exit === 'stopped' ? createHash('sha256').update(stateBytes).digest('hex') : undefined }, dirArg, home);
     } else if (output === 'comment') {
       prefix = `comment-${exit === 'ready' ? 'receipt' : exit === 'paused' ? 'paused' : 'stopped'}`;
       content = renderComment(state, { fullReceipt: fullRef!, reviewRestrictionResolved: canon.review_restriction_resolved === true }, realDir, home);

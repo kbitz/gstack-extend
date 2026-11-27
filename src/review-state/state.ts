@@ -1,3 +1,8 @@
+import { decorateFindings } from './finding-identity.ts';
+import {
+  canonicalPriorRequest, importPriorFindings, MAX_PRIOR_ENTRIES, MAX_PRIOR_ENTRY_BYTES, summarizePrior,
+} from './finding-cycles.ts';
+
 export const SCHEMA_VERSION = 'review-run-state/v1' as const;
 
 export type ReasonCode =
@@ -34,10 +39,10 @@ export const REASON_TABLE: readonly ReasonEntry[] = [
 export const REASONS = Object.fromEntries(REASON_TABLE.map((e) => [e.reason, e])) as Record<ReasonCode, ReasonEntry>;
 
 export const REQUEST_SHAPES = {
-  start: { required: ['run_id', 'base', 'plan', 'policy', 'continuation'], optional: { wtree: null, pr: null, gh_login: null, session_id: null } },
+  start: { required: ['run_id', 'base', 'plan', 'policy', 'continuation'], optional: { wtree: null, pr: null, gh_login: null, session_id: null, prior_state: null } },
   'record pass (started)': { required: ['pass_id', 'state', 'scope', 'cycle', 'coverage', 'candidate', 'required_voices'], optional: { delta_from: null, started_at: null } },
-  'record pass (attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null } },
-  'record pass (delegated attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null } },
+  'record pass (attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null, anchor_commit: null, finding_identity_file: null } },
+  'record pass (delegated attempt)': { required: ['pass_id', 'state', 'voice_id', 'attempt_id', 'outcome'], optional: { part: null, predecessor_attempt_id: null, dispatched_at: null, returned_at: null, delegate: null, findings: null, anchor_commit: null, finding_identity_file: null } },
   'record pass (voice-complete)': { required: ['pass_id', 'state', 'voice_id'], optional: { selected_attempt_id: null, not_applicable: null } },
   'record pass (completed)': { required: ['pass_id', 'state'], optional: { completed_at: null } },
   'record correction': { required: ['correction_id', 'target'], optional: { adjudication: null, resolution: null, receipt_class: null, fixed_in: null, supersedes: null } },
@@ -72,14 +77,14 @@ export const STATE_KEYS = {
   binding: ['head', 'tree', 'base', 'wtree'],
   plan: ['ref', 'sha256'],
   policy: ['value', 'source', 'delegation'],
-  continuation: ['prior_stops', 'max', 'continues'],
+  continuation: ['prior_stops', 'max', 'continues', 'prior_state', 'prior_findings'],
   segment: ['segment', 'started_at', 'ended_at', 'end', 'session_id', 'toplevel'],
   pass: ['pass_id', 'segment', 'scope', 'cycle', 'coverage', 'delta_from', 'candidate', 'required_voices', 'started_at', 'completed_at', 'state', 'voices', 'recorded_at', 'completed_recorded_at'],
   candidate: ['commit', 'tree', 'base', 'wtree'],
   voice: ['voice_id', 'part', 'required', 'not_applicable', 'selected_attempt_id', 'attempts', 'recorded_at'],
   attempt: ['attempt_id', 'part', 'outcome', 'predecessor_attempt_id', 'dispatched_at', 'returned_at', 'delegate', 'findings', 'recorded_at'],
   delegate: ['provider', 'model', 'outcome', 'fallback_reason', 'replay', 'wall_ms', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'call_id'],
-  finding: ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'duplicate_of', 'found_by', 'attribution_reason', 'receipt_class'],
+  finding: ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'duplicate_of', 'found_by', 'attribution_reason', 'receipt_class', 'finding_class', 'identity'],
   correction: ['correction_id', 'segment', 'target', 'adjudication', 'resolution', 'receipt_class', 'fixed_in', 'supersedes', 'head', 'tree', 'recorded_at'],
   target: ['pass_id', 'voice_id', 'attempt_id', 'finding_id'],
   gate: ['gate_id', 'segment', 'name', 'result', 'reason', 'candidate', 'details', 'evidence', 'recorded_at'],
@@ -100,6 +105,9 @@ export const ADDITIVE_V1_DEFAULTS = {
   checkpoints: { segment: null },
 } as const;
 
+const CONTINUATION_DEFAULTS = { prior_state: null, prior_findings: null } as const;
+const FINDING_DEFAULTS = { finding_class: null, identity: null } as const;
+
 export const VERSION_RE = /^[0-9]+(?:\.[0-9]+){2,3}$/;
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -114,7 +122,7 @@ export const DELEGATE_LABEL_RE = /^[a-z][a-z0-9-]{0,31}$/;
 export const ISO_Z_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const CTRL_RE = /[\u0000-\u001f\u007f]/;
 
-const ENUMS = {
+export const ENUMS = {
   policySource: ['caller prompt', 'user decision', 'none supplied'],
   passState: ['started', 'attempt', 'voice-complete', 'completed'],
   passScope: ['local', 'greptile'],
@@ -127,6 +135,7 @@ const ENUMS = {
   adjudication: ['accepted', 'rejected', 'deferred', 'duplicate', 'unclassified'],
   correctionAdjudication: ['accepted', 'rejected', 'deferred', 'unclassified'],
   resolution: ['open', 'fixed', 'unknown'],
+  findingClass: ['safety', 'concurrency', 'contract', 'validation', 'scope', 'test-gap', 'docs', 'performance', 'maintainability', 'correctness', 'other'],
   receiptClass: ['non-blocking', 'test-gap-recorded'],
   attrReason: ['not-reported', 'unlisted-part', 'unsupported'],
   naReason: ['not-applicable', 'user-deferred'],
@@ -142,7 +151,16 @@ export type EvidenceRef = { path: string; sha256: string };
 export type CandidateBinding = { commit: string; tree: string; base: string | null; wtree: string | null };
 export type PrInfo = { url: string; repo: string; number: number; head_repo: string; head_branch: string; base_ref: string };
 export type DelegationPolicy = { status: 'active'; parts: string[]; config: string; tools: string[] } | { status: 'inactive'; reason: string };
-export type FindingRecord = { finding_id: string; severity_source: string; severity_rubric: string; adjudication: string; resolution: string; duplicate_of: string | null; found_by: string[]; attribution_reason: string | null; receipt_class: string | null };
+export type FindingClass = typeof ENUMS.findingClass[number];
+export const FINDING_KEY_RE = /^fk1:[0-9a-f]{16}$/;
+export const PRIOR_FINDING_REASONS = ['not-supplied', 'corrupt', 'newer-schema', 'not-stopped', 'head-mismatch', 'binding-mismatch', 'digest-mismatch', 'unusable-file', 'not-recorded'] as const;
+export type FindingIdentity = { key: string; path: string };
+export type PriorFindingEntry = FindingIdentity & { finding_class: FindingClass; run: number; cycle: number | 'greptile' };
+export type PriorFindings =
+  | { status: 'imported'; complete: boolean; source: { path: string; sha256: string; run_id: string }; entries: PriorFindingEntry[] }
+  | { status: 'unavailable'; reason: typeof PRIOR_FINDING_REASONS[number] };
+export type PriorStateRequest = { path: string | null; sha256: string | null };
+export type FindingRecord = { finding_id: string; severity_source: string; severity_rubric: string; adjudication: string; resolution: string; duplicate_of: string | null; found_by: string[]; attribution_reason: string | null; receipt_class: string | null; finding_class: FindingClass | null; identity: FindingIdentity | null };
 export type DelegateRecord = { provider: string; model: string; outcome: string; fallback_reason: string | null; replay: boolean; wall_ms: number | null; input_tokens: number | null; output_tokens: number | null; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null; call_id: string };
 export type AttemptRecord = { attempt_id: string; part: string | null; outcome: string; predecessor_attempt_id: string | null; dispatched_at: string | null; returned_at: string | null; delegate: DelegateRecord | null; findings: FindingRecord[] | null; recorded_at: string };
 export type VoiceRecord = { voice_id: string; part: string | null; required: boolean; not_applicable: string | null; selected_attempt_id: string | null; attempts: AttemptRecord[]; recorded_at: string | null };
@@ -160,14 +178,21 @@ export type ReviewRunState = {
   binding: { head: string; tree: string; base: string; wtree: string | null };
   plan: { ref: string; sha256: string };
   policy: { value: string | null; source: string; delegation: DelegationPolicy | null };
-  continuation: { prior_stops: number; max: number; continues: string | null };
+  continuation: { prior_stops: number; max: number; continues: string | null; prior_state: PriorStateRequest | null; prior_findings: PriorFindings | null };
   segments: SegmentRecord[]; passes: PassRecord[]; corrections: CorrectionRecord[];
   gates: GateRecord[]; audits: AuditRecord[]; checkpoints: CheckpointRecord[]; finish: FinishRecord | null;
 };
 
 export type Violation = { path: string; rule: string; expected: string };
 export type GitInfo = { toplevel: string; repo: string; branch: string; head: string; tree: string };
-export type EnvChecker = { commitExists(sha: string): boolean; commitTree(sha: string): string | null; isAncestor(anc: string, desc: string): boolean; checkEvidence(path: string, sha256: string): string | null };
+export type EnvChecker = {
+  commitExists(sha: string): boolean;
+  commitTree(sha: string): string | null;
+  isAncestor(anc: string, desc: string): boolean;
+  checkEvidence(path: string, sha256: string): string | null;
+  readAdvisoryFile?(path: unknown, maxBytes: number): { text: string; sha256: string } | null;
+  readAnchorBlob?(commit: string, path: string, maxBytes: number, timeoutMs: number): Uint8Array | null;
+};
 export type ApplyOutcome =
   | { reason: 'recorded'; state: ReviewRunState; detail: Record<string, unknown> }
   | { reason: 'replayed'; rev: number; detail: Record<string, unknown> }
@@ -441,25 +466,36 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
     }
     if (v.length > 0) return invalid(rev, v, true);
 
-    const canon = { run_id: top.run_id as string, base: top.base as string, wtree: top.wtree as string | null, pr, gh_login: top.gh_login as string | null, plan, policy, continuation, session_id: top.session_id as string | null };
+    const priorState = continuation.prior_stops > 0 ? canonicalPriorRequest(rawInput.prior_state) : null;
+    const canon = { run_id: top.run_id as string, base: top.base as string, wtree: top.wtree as string | null, pr, gh_login: top.gh_login as string | null, plan, policy, continuation, prior_state: priorState, session_id: top.session_id as string | null };
     if (state !== null) {
       if (state.run.run_id !== canon.run_id) return { reason: 'exists', rev: state.rev, detail: { existing_run_id: state.run.run_id, sent_run_id: canon.run_id } };
-      const stored = { run_id: state.run.run_id, base: state.binding.base, wtree: state.binding.wtree, pr: state.run.pr, gh_login: state.run.gh_login, plan: state.plan, policy: state.policy, continuation: state.continuation, session_id: state.segments[0]?.session_id ?? null };
-      return replayOrConflict(state.rev, canon.run_id, stored, canon, state.binding.head, state.binding.tree, state.run.started_at);
+      const { prior_state, prior_findings, ...storedContinuation } = state.continuation;
+      const stored = { run_id: state.run.run_id, base: state.binding.base, wtree: state.binding.wtree, pr: state.run.pr, gh_login: state.run.gh_login, plan: state.plan, policy: state.policy, continuation: storedContinuation, prior_state, session_id: state.segments[0]?.session_id ?? null };
+      const replay = replayOrConflict(state.rev, canon.run_id, stored, canon, state.binding.head, state.binding.tree, state.run.started_at);
+      if (replay.reason === 'replayed' && prior_findings) {
+        replay.detail.prior_findings = summarizePrior(prior_findings);
+        if (prior_state) replay.detail.prior_state_file = prior_state.path;
+      }
+      return replay;
     }
     if (!env.commitExists(canon.base)) v.push({ path: 'base', rule: 'commit-not-found', expected: 'existing-git-commit' });
     if (canon.continuation.continues !== null && !env.commitExists(canon.continuation.continues)) v.push({ path: 'continuation.continues', rule: 'commit-not-found', expected: 'existing-git-commit' });
     if (v.length > 0) return invalid(rev, v);
 
+    const priorFindings = importPriorFindings(priorState, continuation.continues, git, env, helperVersion);
     const next: ReviewRunState = {
       schema: SCHEMA_VERSION, rev: 1, writer: helperVersion, host: isStr(host, 1, 255) ? host : null,
       run: { run_id: canon.run_id, skill: 'review-and-prep', repo: git.repo, branch: git.branch, pr: canon.pr, gh_login: canon.gh_login, started_at: nowIso },
       binding: { head: git.head, tree: git.tree, base: canon.base, wtree: canon.wtree },
-      plan: canon.plan, policy: canon.policy, continuation: canon.continuation,
+      plan: canon.plan, policy: canon.policy, continuation: { ...canon.continuation, prior_state: priorState, prior_findings: priorFindings },
       segments: [{ segment: 1, started_at: nowIso, ended_at: null, end: null, session_id: canon.session_id, toplevel: git.toplevel }],
       passes: [], corrections: [], gates: [], audits: [], checkpoints: [], finish: null,
     };
-    return recorded(next, { head: git.head, tree: git.tree, recorded_at: nowIso });
+    return recorded(next, { head: git.head, tree: git.tree, recorded_at: nowIso,
+      ...(priorFindings ? { prior_findings: summarizePrior(priorFindings) } : {}),
+      ...(priorState ? { prior_state_file: priorState.path } : {}),
+    });
   }
 
   const checkLifecycle = (): ApplyOutcome | null => {
@@ -559,7 +595,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
             if (!isObj(f)) { v.push({ path: fp, rule: 'invalid-type', expected: 'object' }); return; }
             const mappedSev = typeof f.severity_source === 'string' ? UPSTREAM_SEVERITY_LABELS.get(f.severity_source) : undefined;
             const fInput = mappedSev !== undefined ? { ...f, severity_source: mappedSev } : f;
-            const fc = validateFields(fInput, ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'found_by'], { duplicate_of: null, attribution_reason: null, receipt_class: null }, {
+            const fc = validateFields(fInput, ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'found_by'], { duplicate_of: null, attribution_reason: null, receipt_class: null, ...FINDING_DEFAULTS }, {
               finding_id: R.safeId, severity_source: R.enum(ENUMS.severity), severity_rubric: R.enum(ENUMS.rubric),
               adjudication: R.enum(ENUMS.adjudication), resolution: R.enum(ENUMS.resolution), duplicate_of: R.safeIdN,
               attribution_reason: R.enumN(ENUMS.attrReason), receipt_class: R.enumN(ENUMS.receiptClass),
@@ -575,7 +611,7 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
             if (!Array.isArray(fb) || fb.length > 8 || new Set(fb).size !== fb.length || !fb.every(isPart)) v.push({ path: `${fp}.found_by`, rule: 'invalid-value', expected: 'unique-part-array-0..8' });
             else if (fb.length > 0 && fc.attribution_reason !== null) v.push({ path: `${fp}.attribution_reason`, rule: 'invalid-value', expected: 'null-when-found_by-nonempty' });
             else if (fb.length === 0 && !inEnum(ENUMS.attrReason)(fc.attribution_reason)) v.push({ path: `${fp}.attribution_reason`, rule: 'invalid-enum', expected: ENUMS.attrReason.join('|') });
-            findings!.push(fc as unknown as FindingRecord);
+            findings!.push({ ...fc, ...FINDING_DEFAULTS } as unknown as FindingRecord);
           });
         }
       } else if (c.outcome !== 'completed' && rawInput.findings !== undefined && rawInput.findings !== null) {
@@ -588,8 +624,11 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       const voice = pass?.voices.find((vo) => vo.voice_id === canon.voice_id);
       const existingAtt = voice?.attempts.find((a) => a.attempt_id === canon.attempt_id);
       if (existingAtt && pass && voice && state) {
-        const stored = { pass_id: pass.pass_id, state: 'attempt' as const, voice_id: voice.voice_id, part: existingAtt.part, attempt_id: existingAtt.attempt_id, outcome: existingAtt.outcome, predecessor_attempt_id: existingAtt.predecessor_attempt_id, dispatched_at: existingAtt.dispatched_at, returned_at: existingAtt.returned_at, delegate: existingAtt.delegate, findings: existingAtt.findings };
-        return replayOrConflict(state.rev, canon.attempt_id, stored, canon, pass.candidate.commit, pass.candidate.tree, existingAtt.recorded_at);
+        // A retry keeps the first observation even if its advisory evidence has since changed.
+        const payload = (items: FindingRecord[] | null) => items?.map(({ finding_class, identity, ...fields }) => fields) ?? null;
+        const stored = { pass_id: pass.pass_id, state: 'attempt' as const, voice_id: voice.voice_id, part: existingAtt.part, attempt_id: existingAtt.attempt_id, outcome: existingAtt.outcome, predecessor_attempt_id: existingAtt.predecessor_attempt_id, dispatched_at: existingAtt.dispatched_at, returned_at: existingAtt.returned_at, delegate: existingAtt.delegate, findings: payload(existingAtt.findings) };
+        return replayOrConflict(state.rev, canon.attempt_id, stored, { ...canon, findings: payload(canon.findings) },
+          pass.candidate.commit, pass.candidate.tree, existingAtt.recorded_at);
       }
       const life = checkLifecycle();
       if (life) return life;
@@ -599,11 +638,26 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
       if (canon.predecessor_attempt_id !== null && !voice?.attempts.some((a) => a.attempt_id === canon.predecessor_attempt_id)) return invalid(state!.rev, [{ path: 'predecessor_attempt_id', rule: 'invalid-reference', expected: 'prior-attempt-on-voice' }]);
       if (state!.passes.some((p) => p.voices.some((vo) => vo.attempts.some((a) => a.attempt_id === canon.attempt_id)))) return invalid(state!.rev, [{ path: 'attempt_id', rule: 'duplicate-value', expected: 'unique-attempt-id' }]);
 
+      const earlierFindings = findings?.length
+        ? state!.passes.filter((p) => p === pass || (pass.scope === 'local' && p.scope === 'local' && p.cycle === pass.cycle))
+          .flatMap((p) => p.voices.flatMap((vo) => {
+            if (vo === voice || vo.not_applicable !== null) return [];
+            if (vo.selected_attempt_id !== null) return vo.attempts.filter((a) => a.attempt_id === vo.selected_attempt_id);
+            return p.state === 'open' ? vo.attempts : [];
+          }))
+          .flatMap((a) => a.findings ?? [])
+        : [];
+      const identityFile = rawInput.finding_identity_file;
+      const identityDowngraded = findings?.length
+        ? decorateFindings(findings, rawInput.findings as unknown[], rawInput.anchor_commit,
+          identityFile == null ? undefined : typeof identityFile === 'string' ? identityFile : null, env, earlierFindings)
+        : [];
+      const advisory = identityDowngraded.length ? { identity_downgraded: identityDowngraded } : {};
       const attRecord: AttemptRecord = { attempt_id: canon.attempt_id, part: canon.part, outcome: canon.outcome, predecessor_attempt_id: canon.predecessor_attempt_id, dispatched_at: canon.dispatched_at, returned_at: canon.returned_at, delegate: canon.delegate, findings: canon.findings, recorded_at: nowIso };
       const nextVoices = voice
         ? pass.voices.map((vo) => vo.voice_id === canon.voice_id ? { ...vo, part: canon.part ?? vo.part, attempts: [...vo.attempts, attRecord] } : vo)
         : [...pass.voices, { voice_id: canon.voice_id, part: canon.part, required: false, not_applicable: null, selected_attempt_id: null, attempts: [attRecord], recorded_at: null }];
-      return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso });
+      return recorded({ ...state!, rev: state!.rev + 1, passes: state!.passes.map((p) => p.pass_id === pass.pass_id ? { ...p, voices: nextVoices } : p) }, { head: pass.candidate.commit, tree: pass.candidate.tree, recorded_at: nowIso, ...advisory });
     }
 
     if (pState === 'voice-complete') {
@@ -877,16 +931,21 @@ function latestHelperTimestamp(state: ReviewRunState, fallback: string): string 
 }
 
 function applyAdditiveV1Defaults(raw: Record<string, unknown>): void {
-  for (const [k, def] of Object.entries(ADDITIVE_V1_DEFAULTS.root)) {
-    if (!(k in raw)) raw[k] = def;
-  }
+  const defaults = (obj: unknown, fields: Record<string, null>) => {
+    if (isObj(obj)) for (const [key, value] of Object.entries(fields)) {
+      if (!(key in obj)) obj[key] = value;
+    }
+  };
+  const objects = (arr: unknown) => Array.isArray(arr) ? arr.filter(isObj) : [];
+  defaults(raw, ADDITIVE_V1_DEFAULTS.root);
+  defaults(raw.continuation, CONTINUATION_DEFAULTS);
   for (const coll of ['passes', 'corrections', 'gates', 'audits', 'checkpoints'] as const) {
-    const arr = raw[coll];
-    if (!Array.isArray(arr)) continue;
-    for (const item of arr) {
-      if (!isObj(item)) continue;
-      for (const [k, def] of Object.entries(ADDITIVE_V1_DEFAULTS[coll])) {
-        if (!(k in item)) item[k] = def;
+    for (const item of objects(raw[coll])) defaults(item, ADDITIVE_V1_DEFAULTS[coll]);
+  }
+  for (const pass of objects(raw.passes)) {
+    for (const voice of objects(pass.voices)) {
+      for (const attempt of objects(voice.attempts)) {
+        for (const finding of objects(attempt.findings)) defaults(finding, FINDING_DEFAULTS);
       }
     }
   }
@@ -941,6 +1000,10 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
   const reference = (ok: boolean, path: string) => { if (!ok) v.push({ path, rule: 'invalid-reference', expected: 'existing-record' }); };
   const candidate = (x: unknown, path: string) => object(x, STATE_KEYS.candidate, { commit: R.hex40, tree: R.hex40, base: R.hex40N, wtree: R.wtreeN }, path);
   const evidence = (x: unknown, path: string) => array(x, path, (e, p) => { object(e, STATE_KEYS.evidence, { path: R.relPath, sha256: R.hex64 }, p); });
+  const identityRules = {
+    key: { check: reCheck(FINDING_KEY_RE), expected: 'fk1: followed by 16 lowercase hex digits' },
+    path: { check: (x: unknown) => isRelPath(x) && !/\s/u.test(x), expected: 'whitespace-free-relative-path' },
+  };
   const root = object(raw, STATE_KEYS.root, { schema: R.enum([SCHEMA_VERSION]), rev: R.posInt, writer: R.versionN, host: R.strN(1, 255) }, '');
   if (root) {
     const run = object(root.run, STATE_KEYS.run, { run_id: R.uuid, skill: R.enum(['review-and-prep']), repo: R.str(1, 500), branch: R.str(1, 200), gh_login: R.strN(1, 128, true), started_at: R.isoZ }, 'run');
@@ -955,7 +1018,37 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
         if (Array.isArray(d.parts) && Array.isArray(d.tools)) reference(d.tools.every((x) => d.parts.includes(x)), 'policy.delegation.tools');
       } else object(d, ['status', 'reason'], { status: R.enum(['inactive']), reason: R.str(1, 200) }, 'policy.delegation');
     }
-    object(root.continuation, STATE_KEYS.continuation, { prior_stops: R.nonNegInt, max: R.nonNegInt, continues: R.hex40N }, 'continuation');
+    const continuation = object(root.continuation, STATE_KEYS.continuation, { prior_stops: R.nonNegInt, max: R.nonNegInt, continues: R.hex40N }, 'continuation');
+    if (continuation && continuation.prior_state !== null) {
+      object(continuation.prior_state, ['path', 'sha256'], {
+        path: { check: nullable(isRelPath), expected: 'relative-path|null' },
+        sha256: { check: (x) => x === 'invalid' || nullable(reCheck(HEX64_RE))(x), expected: 'hex64|invalid|null' },
+      }, 'continuation.prior_state');
+    }
+    const prior = continuation?.prior_findings;
+    if (isObj(prior) && prior.status === 'imported') {
+      const base = 'continuation.prior_findings';
+      object(prior, ['status', 'source', 'complete', 'entries'], { complete: R.bool }, base);
+      object(prior.source, ['path', 'sha256', 'run_id'], { path: R.relPath, sha256: R.hex64, run_id: R.uuid }, `${base}.source`);
+      if (Array.isArray(prior.entries) && prior.entries.length > MAX_PRIOR_ENTRIES) {
+        v.push({ path: `${base}.entries`, rule: 'invalid-value', expected: 'bounded-prior-findings' });
+      } else {
+        const before = v.length;
+        const keys = new Set<string>();
+        array(prior.entries, `${base}.entries`, (entry, path) => {
+          const e = object(entry, ['key', 'path', 'finding_class', 'run', 'cycle'], {
+            ...identityRules, finding_class: R.enum(ENUMS.findingClass), run: R.posInt,
+            cycle: { check: (x) => x === 'greptile' || R.posInt.check(x), expected: 'positive-int|greptile' },
+          }, path);
+          if (e) unique(keys, e.key, `${path}.key`);
+        });
+        if (v.length === before && Buffer.byteLength(JSON.stringify(prior.entries)) > MAX_PRIOR_ENTRY_BYTES) {
+          v.push({ path: `${base}.entries`, rule: 'invalid-value', expected: 'bounded-prior-findings' });
+        }
+      }
+    } else if (continuation && prior !== null) {
+      object(prior, ['status', 'reason'], { status: R.enum(['unavailable']), reason: R.enum(PRIOR_FINDING_REASONS) }, 'continuation.prior_findings');
+    }
     array(root.segments, 'segments', (x, path) => {
       object(x, STATE_KEYS.segment, { segment: R.posInt, started_at: R.isoZ, ended_at: R.isoZN, end: R.enumN(['paused', 'finished', 'interrupted']), session_id: R.sessionN, toplevel: R.str(1, 500) }, path);
     });
@@ -990,8 +1083,12 @@ export function validateStoredState(raw: unknown, statePath: string = 'review-ru
           if (a.findings === null) {
             if (a.outcome === 'completed') v.push({ path: `${ap}.findings`, rule: 'invalid-type', expected: 'array' });
           } else array(a.findings, `${ap}.findings`, (x, fp) => {
-            const f = object(x, STATE_KEYS.finding, { finding_id: R.safeId, severity_source: R.enum(ENUMS.severity), severity_rubric: R.enum(ENUMS.rubric), adjudication: R.enum(ENUMS.adjudication), resolution: R.enum(ENUMS.resolution), duplicate_of: R.safeIdN, found_by: strings(isPart), attribution_reason: R.enumN(ENUMS.attrReason), receipt_class: R.enumN(ENUMS.receiptClass) }, fp);
+            const f = object(x, STATE_KEYS.finding, { finding_id: R.safeId, severity_source: R.enum(ENUMS.severity), severity_rubric: R.enum(ENUMS.rubric), adjudication: R.enum(ENUMS.adjudication), resolution: R.enum(ENUMS.resolution), duplicate_of: R.safeIdN, found_by: strings(isPart), attribution_reason: R.enumN(ENUMS.attrReason), receipt_class: R.enumN(ENUMS.receiptClass), finding_class: R.enumN(ENUMS.findingClass) }, fp);
             if (!f) return;
+            if (f.identity !== null) {
+              object(f.identity, ['key', 'path'], identityRules, `${fp}.identity`);
+              if (f.finding_class === null) v.push({ path: `${fp}.finding_class`, rule: 'invalid-value', expected: 'class-for-keyed-finding' });
+            }
             unique(findingIds, f.finding_id, `${fp}.finding_id`);
             findingTargets.add(JSON.stringify([p.pass_id, vo.voice_id, a.attempt_id, f.finding_id]));
           });

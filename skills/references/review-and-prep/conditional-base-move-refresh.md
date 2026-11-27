@@ -47,7 +47,7 @@ Create the evidence directory as in Step 1, prefixing its basename with `refresh
 
 Use the verified full receipt's run-state locator and corroborate the prior prepared finish by head, tree, base and plan SHA-256. Save the disclosure values verbatim in `refresh-1.md`. If the finish cannot be corroborated or the verified full receipt has G's `Disclosure evidence: unavailable` line, record that marker instead.
 
-While recording, `build start` uses A's plan binding and the invocation policy. Attach `--evidence refresh-1.md` to checkpoints except G's invalid-evidence exit. Record the `greptile` gate with the prior `--greptile-value` and run link.
+While recording, run **Check finding identity capability before start**, then use A's plan binding and the invocation policy for `build start`. Attach `--evidence refresh-1.md` to checkpoints except G's invalid-evidence exit. Record the `greptile` gate with the prior `--greptile-value` and run link.
 
 If evidence cannot be saved after drafting, stop BLOCKED and report the draft for ordinary preparation.
 

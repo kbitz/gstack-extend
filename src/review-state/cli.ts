@@ -4,7 +4,7 @@ import { executeExport, EXPORT_SCHEMA } from './export.ts';
 import { FULL_REVIEW_RECORD_PREFIX, fullReviewRecordHelp, runFullReviewRecord } from './fence.ts';
 import { executeRender, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES } from './render.ts';
 import { executeShow, SHOW_SCHEMA } from './show.ts';
-import { REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
+import { isObj, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, SCHEMA_VERSION, truncate80, type CommandName } from './state.ts';
 import { executeCommand, getLastValidatedCommand, internalErrorResult, makeEnvelope, readHelperVersion, resetValidatedStateDir, type StoreResult } from './store.ts';
 
 export type CliIo = { stdout(text: string): void; stderr(text: string): void; cwd: string; env?: NodeJS.ProcessEnv; versionPath?: string };
@@ -75,9 +75,32 @@ export function renderCommandHelp(cmd: string): string | null {
   return `review-state ${cmd} — experimental request shape (${SCHEMA_VERSION})\n\nUsage:\n  bin/review-state ${cmd} --dir DIR --input FILE\n\n${sections}\n\nDocs: docs/designs/review-run-state.md\n`;
 }
 
+const priorImportFixes = new Map([
+  ['corrupt', "copy the stopped run's state again"],
+  ['newer-schema', 'upgrade gstack-extend'],
+  ['not-stopped', 'copy from the stop whose Stopped at: equals --continues'],
+  ['head-mismatch', 'copy from the stop whose Stopped at: equals --continues'],
+  ['binding-mismatch', 'use this repository and branch'],
+  ['digest-mismatch', 'copy the stopped run state again and use the digest from its full receipt'],
+  ['unusable-file', 'copy a regular state file into --dir as prior-run-state.json'],
+]);
+
 function emitResult(res: StoreResult, io: CliIo, err?: unknown): number {
   const { exitCode, ...envelope } = res;
   io.stdout(`${JSON.stringify(envelope)}\n`);
+  const downgrades = res.detail.identity_downgraded;
+  if (Array.isArray(downgrades) && downgrades.length > 0) {
+    io.stderr(`WARNING IDENTITY_DOWNGRADED: ${downgrades.length} finding(s); see detail.identity_downgraded\n`);
+  }
+  const prior = res.detail.prior_findings;
+  if (isObj(prior) && prior.status === 'unavailable' && typeof prior.reason === 'string') {
+    const fix = priorImportFixes.get(prior.reason);
+    if (fix) {
+      const path = res.detail.prior_state_file;
+      const pathLabel = typeof path !== 'string' ? '<unusable file>' : /^[a-zA-Z0-9._/-]+$/.test(path) ? path : JSON.stringify(truncate80(path));
+      io.stderr(`WARNING PRIOR_IMPORT_UNAVAILABLE: start --prior-state-file ${pathLabel}: ${prior.reason}; fix: ${fix}\n`);
+    }
+  }
   if (res.status !== 'recorded' && res.status !== 'replayed') {
     const code = res.reason.toUpperCase().replace(/-/g, '_');
     const summary = typeof res.detail.message === 'string' ? res.detail.message : `${res.command} ${res.status} (${res.reason})`;

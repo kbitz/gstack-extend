@@ -8,3 +8,5 @@ Review policy: review-and-prep-policy/v1; in-cap=delta; continuation=repair-only
 Review policy source: caller prompt
 Full-review evidence: commit=c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3; tree=b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; scope=full; completed=true; source=https://github.com/example-org/example-repo/pull/42#issuecomment-1000007
 Unresolved: F2 high, F5 medium
+Continuation: 1 of 1
+Finding cycle: run=1; cycle=1; coverage=full; observed=complete; new=0; carried=0; repeated_premise=0; repeated_premise_pairs=0; unkeyed=2; prior=none

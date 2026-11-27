@@ -21,7 +21,10 @@
    for the full receipt, stopped comment, PR body and final handoff. When the
    stop changes the recorded policy value or source, write the affected
    outputs inline as **Fixed points** directs. Use the inline fallback when
-   recording is unavailable or a render is refused.
+   recording is unavailable or a render is refused. After `finish`, render
+   the full receipt with the final `Run state digest:`. The full receipt
+   and stopped comment carry any `Finding cycle:` rows after
+   `Continuation:`. Preserve the full receipt and its hash for the comment.
    Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
    credential/PII scan. Keep its one `Skipped pregate lanes:` or `Ship gates:`

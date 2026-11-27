@@ -1,0 +1,11 @@
+### [review:files=src/review-state/fence.ts] Test gap: Baseline fence on current keyed state
+- **ID:** wi-6b80df
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** A legacy fixture exercises the nested defaults before the fence. Include a complementary state with a selected keyed report to cover the new writer's shape.
+- **Hypothesis (untested):** Run the baseline pre-check on a native keyed fixture and verify it reaches the same write point.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/fence.ts:197`
+- **Evidence:** Track 102A coverage and reviewer audit on `f0206ed`. No failure was reproduced on this coverage path.
+- **Context:** Filed by /review-and-prep on feature branch `mmm/aa5cff6a` before PR creation (2026-11-27).
+- **Revisit when:** The next Track changes this file or its test fixtures.
+- **Effort:** ?
