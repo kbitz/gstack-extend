@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.124.0] - 2026-11-27
+
+### Changed
+
+- Upgrades now follow tagged releases by default, so the update check offers the newest release tag and the updater installs exactly that tagged commit; a new `update_channel` setting of `main` keeps following every commit on main, and `setup` now warns when upstream gstack is not installed.
+- Updates follow verified release tags by default, and `bin/config set update_channel main` keeps tracking `origin/main`.
+- `setup` warns when upstream gstack is missing.
+
+### Fixed
+
+- `/gstack-extend-upgrade` reports no offer when `bin/update-check` is quiet.
+
+### Upgrade notes
+
+- The upgrade into this release still lands on the newest main commit through the previous updater, and later upgrades follow release tags unless the `update_channel` setting is `main`, so set it to `main` first if this install should keep tracking main.
+
 ## [0.123.0] - 2026-11-27
 
 ### Added
