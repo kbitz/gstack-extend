@@ -1454,12 +1454,8 @@ describe('Track 16D root hand-off', () => {
     const home = join(extendRootTmp, 'quiet-stable-home');
     const root = join(extendRootTmp, 'quiet-stable-root');
     writeUpdateCheck(root);
-    copyFileSync(join(ROOT, 'bin', 'config'), join(root, 'bin', 'config'));
-    chmodSync(join(root, 'bin', 'config'), 0o755);
+    writeFileSync(join(root, 'bin', 'config'), '#!/bin/sh\n[ "$2" != update_channel ] || echo stable\n', { mode: 0o755 });
     writeFileSync(join(root, 'VERSION'), '1.1.0\n');
-    const state = join(home, '.gstack-extend');
-    mkdirSync(state, { recursive: true });
-    writeFileSync(join(state, 'config'), 'update_channel=stable\n');
     plantSkillLink(home, 'gstack-extend-upgrade', root);
     const preamble = runPreamble('gstack-extend-upgrade', home, root)[0]!;
     expect(preamble.stdout).not.toMatch(/^(UPGRADE_AVAILABLE|JUST_UPGRADED) /m);
