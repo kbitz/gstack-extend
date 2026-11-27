@@ -2,18 +2,20 @@
  * id-cli.ts — `bin/roadmap-id` entry point.
  */
 
-import { randomBytes } from 'node:crypto';
 import {
+  chmodSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
-  unlinkSync,
   writeFileSync,
+  type Stats,
 } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, parse, relative, sep } from 'node:path';
 
 import { createGitGateway } from './lib/git.ts';
 import { inspectIntakeDirectory } from './lib/intake-files.ts';
@@ -29,6 +31,7 @@ import {
   planWorkItemMigration,
   type MigrateDocInput,
   type MigrateDocKind,
+  type MigrateFileOutput,
   type MigrateRefusal,
 } from './lib/work-item-migrate.ts';
 
@@ -60,9 +63,29 @@ const MIGRATE_DOCS: ReadonlyArray<{ name: string; kind: MigrateDocKind }> = [
 const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_HEX - 1) + 16 ** WORK_ITEM_ID_MAX_HEX;
 
 function resolveRepoRoot(positional: string | undefined): string {
-  if (positional !== undefined) return resolve(positional);
   const cwd = process.cwd();
-  return resolve(createGitGateway({ cwd, isolateEnv: true }).toplevel() ?? cwd);
+  if (positional === undefined) {
+    const result = createGitGateway({ cwd, isolateEnv: true }).projectToplevel();
+    if (result.kind === 'error') throw new Error(`could not resolve project root: ${result.detail}`);
+    return result.kind === 'root' ? result.path : cwd;
+  }
+
+  // Resolve symlinks before applying each parent segment. Path normalization
+  // (including Bun's realpath) can otherwise select the lexical parent.
+  const { root } = parse(positional);
+  let directory = root || cwd;
+  const components: string[] = [];
+  for (const part of positional.slice(root.length).split(sep)) {
+    if (part === '..') {
+      const ancestor = realpathSync(join(directory, ...components));
+      if (!statSync(ancestor).isDirectory()) throw new Error('project path is not a directory');
+      directory = dirname(ancestor);
+      components.length = 0;
+    } else if (part !== '' && part !== '.') {
+      components.push(part);
+    }
+  }
+  return realpathSync(join(directory, ...components));
 }
 
 export function collectTakenIds(repoRoot: string): Set<string> {
@@ -116,6 +139,10 @@ export function runIdCli(argv: string[]): CliResult {
     return execute(argv);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (argv[0] === 'migrate') {
+      const summary = error instanceof MigrationRecoveryError ? '' : formatRefusals([]);
+      return { stdout: '', stderr: `roadmap-id migrate: ${message}\n${summary}`, exitCode: 1 };
+    }
     return { stdout: '', stderr: `roadmap-id: ${message}\n`, exitCode: 1 };
   }
 }
@@ -124,6 +151,86 @@ function formatRefusals(refusals: MigrateRefusal[]): string {
   const lines = refusals.map(r => `REFUSED ${r.relPath}:${r.line} ${r.kind} ${r.reason}`);
   lines.push(`roadmap-id migrate: ${refusals.length} records refused; no files were written`);
   return lines.join('\n') + '\n';
+}
+
+type LoadedMigrationDoc = MigrateDocInput & { absPath: string; rawBytes: Buffer; original: Stats };
+
+type StagedMigrationDoc = {
+  doc: LoadedMigrationDoc;
+  staging: string;
+  replacement: string;
+  backup: string;
+  updated: Buffer;
+  published: Stats | null;
+};
+
+class MigrationRecoveryError extends Error {}
+
+function assertMigrationSnapshot(doc: LoadedMigrationDoc, expected: Stats, bytes: Buffer): void {
+  const current = lstatSync(doc.absPath);
+  if (
+    !current.isFile() || current.dev !== expected.dev || current.ino !== expected.ino
+    || current.mode !== expected.mode || !readFileSync(doc.absPath).equals(bytes)
+  ) {
+    throw new Error(`file changed during migration: ${doc.relPath}`);
+  }
+}
+
+function writeMigration(loaded: LoadedMigrationDoc[], files: MigrateFileOutput[]): void {
+  const byRel = new Map(loaded.map(doc => [doc.relPath, doc]));
+  const staged: StagedMigrationDoc[] = [];
+  const recovery: string[] = [];
+  let failure: unknown;
+  try {
+    // Reserve each changed path and stage all writes before replacing any file.
+    for (const file of files) {
+      if (!file.changed) continue;
+      const doc = byRel.get(file.relPath)!;
+      assertMigrationSnapshot(doc, doc.original, doc.rawBytes);
+      const staging = join(dirname(doc.absPath), `.${basename(doc.absPath)}.roadmap-id`);
+      mkdirSync(staging, { mode: 0o700 });
+      const replacement = join(staging, 'replacement');
+      const backup = join(staging, 'original');
+      const updated = Buffer.from(file.content, 'utf8');
+      staged.push({ doc, staging, replacement, backup, updated, published: null });
+      const mode = doc.original.mode & 0o7777;
+      writeFileSync(replacement, updated, { flag: 'wx', mode: 0o600 });
+      writeFileSync(backup, doc.rawBytes, { flag: 'wx', mode: 0o600 });
+      chmodSync(replacement, mode);
+      chmodSync(backup, mode);
+    }
+    for (const item of staged) {
+      const { doc, replacement } = item;
+      const next = statSync(replacement);
+      assertMigrationSnapshot(doc, doc.original, doc.rawBytes);
+      renameSync(replacement, doc.absPath);
+      item.published = next;
+    }
+  } catch (error) {
+    failure = error;
+    for (const item of [...staged].reverse()) {
+      const { doc, backup, published, staging, updated } = item;
+      if (published === null) continue;
+      try {
+        assertMigrationSnapshot(doc, published, updated);
+        renameSync(backup, doc.absPath);
+      } catch {
+        recovery.push(staging);
+      }
+    }
+  }
+  for (const { staging } of staged) {
+    if (recovery.includes(staging)) continue;
+    try {
+      rmSync(staging, { recursive: true });
+    } catch {
+      recovery.push(staging);
+    }
+  }
+  if (recovery.length > 0) {
+    throw new MigrationRecoveryError(`could not finish migration recovery; inspect staged files at ${recovery.join(', ')}`);
+  }
+  if (failure !== undefined) throw failure;
 }
 
 function executeMigrate(args: string[]): CliResult {
@@ -147,8 +254,7 @@ function executeMigrate(args: string[]): CliResult {
     return { stdout: '', stderr: `roadmap-id migrate: too many arguments\n${USAGE}`, exitCode: 2 };
   }
 
-  const rawRoot = resolveRepoRoot(positionals[0]);
-  const repoRoot = realpathSync(rawRoot);
+  const repoRoot = resolveRepoRoot(positionals[0]);
   if (!statSync(repoRoot).isDirectory()) throw new Error('project path is not a directory');
 
   const refusals: MigrateRefusal[] = [];
@@ -163,7 +269,7 @@ function executeMigrate(args: string[]): CliResult {
     });
   }
 
-  const loaded: Array<MigrateDocInput & { absPath: string; rawBytes: Buffer; mode: number }> = [];
+  const loaded: LoadedMigrationDoc[] = [];
   const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
   for (const { name, kind } of MIGRATE_DOCS) {
@@ -205,6 +311,8 @@ function executeMigrate(args: string[]): CliResult {
     const absPath = findDoc(repoRoot, name);
     if (absPath === null) continue;
     const relPath = relative(repoRoot, absPath).replace(/\\/g, '/');
+    const original = lstatSync(absPath);
+    if (!original.isFile()) throw new Error(`file changed during migration: ${relPath}`);
     const rawBytes = readFileSync(absPath);
     let content: string;
     try {
@@ -218,8 +326,7 @@ function executeMigrate(args: string[]): CliResult {
       });
       continue;
     }
-    const mode = statSync(absPath).mode & 0o777;
-    loaded.push({ kind, relPath, content, absPath, rawBytes, mode });
+    loaded.push({ kind, relPath, content, absPath, rawBytes, original });
   }
 
   if (refusals.length > 0) {
@@ -233,30 +340,7 @@ function executeMigrate(args: string[]): CliResult {
     return { stdout: '', stderr: formatRefusals(plan.refusals), exitCode: 1 };
   }
 
-  if (!dryRun) {
-    const byRel = new Map(loaded.map(d => [d.relPath, d]));
-    const changedFiles = plan.files.filter(f => f.changed);
-    // Re-read every changed file before writing anything.
-    for (const file of changedFiles) {
-      const orig = byRel.get(file.relPath)!;
-      const currentBytes = readFileSync(orig.absPath);
-      if (!currentBytes.equals(orig.rawBytes)) {
-        throw new Error(`file changed during migration: ${file.relPath}; no files were written`);
-      }
-    }
-    // Atomically write each changed file via same-directory temp file + rename.
-    for (const file of changedFiles) {
-      const orig = byRel.get(file.relPath)!;
-      const tmpPath = join(dirname(orig.absPath), `.roadmap-id-${process.pid}-${randomBytes(6).toString('hex')}.tmp`);
-      try {
-        writeFileSync(tmpPath, file.content, { encoding: 'utf8', mode: orig.mode, flag: 'wx' });
-        renameSync(tmpPath, orig.absPath);
-      } catch (err) {
-        try { unlinkSync(tmpPath); } catch { /* ignore cleanup error */ }
-        throw err;
-      }
-    }
-  }
+  if (!dryRun) writeMigration(loaded, plan.files);
 
   const outLines = plan.assignments.map(
     a => `ASSIGNED ${a.relPath}:${a.line} ${a.id} ${a.kind} ${a.label}`,

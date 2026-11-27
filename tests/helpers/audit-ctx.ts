@@ -49,6 +49,7 @@ export type StubGitOpts = {
 export function stubGit(opts: StubGitOpts = {}): GitGateway {
   return {
     toplevel: () => opts.toplevel ?? null,
+    projectToplevel: () => opts.toplevel ? { kind: 'root', path: opts.toplevel } : { kind: 'not-a-repo' },
     tags: () => opts.tags ?? [],
     tagsLatest: () => opts.latest ?? null,
     mergeBase: () => opts.mergeBase ?? null,

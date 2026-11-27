@@ -51,6 +51,23 @@ describe('createGitGateway — mocked', () => {
     expect(git.toplevel()).toBeNull();
   });
 
+  test('projectToplevel distinguishes Git discovery errors and preserves path whitespace', () => {
+    const git = createGitGateway({
+      cwd: '/tmp/repo ',
+      spawn: mockSpawn({
+        'rev-parse --show-toplevel': { ok: true, stdout: '/tmp/repo \n', stderr: '' },
+      }),
+    });
+    expect(git.projectToplevel()).toEqual({ kind: 'root', path: '/tmp/repo ' });
+    const failure = createGitGateway({
+      cwd: '/tmp/repo',
+      spawn: mockSpawn({
+        'rev-parse --show-toplevel': { ok: false, stdout: '', stderr: 'fatal: dubious ownership\n' },
+      }),
+    });
+    expect(failure.projectToplevel()).toEqual({ kind: 'error', detail: 'fatal: dubious ownership' });
+  });
+
   test('tags: splits and strips trailing newline', () => {
     const git = createGitGateway({
       cwd: '/tmp',
@@ -275,7 +292,7 @@ describe('createGitGateway — mocked', () => {
     });
     expect(shallow.historyWorkItemIds()).toEqual({ kind: 'shallow' });
 
-    const logArgs = '-c core.quotepath=off log --all --no-renames -m --root --no-color --no-ext-diff --no-textconv --text -G wi-[0-9a-f]{4,8} --format= -p -U0';
+    const logArgs = '-c core.quotepath=off log --all --no-relative --no-renames -m --root --no-color --no-ext-diff --no-textconv --no-show-signature --format= --text -G wi-[0-9a-f]{4,8} -p -U0';
     const failedLog = createGitGateway({
       cwd: '/tmp',
       spawn: mockSpawn({
@@ -322,6 +339,8 @@ describe('createGitGateway — mocked', () => {
       expect(seenEnv).toBeDefined();
       expect(seenEnv?.GIT_DIR).toBeUndefined();
       expect(seenEnv?.GIT_GLOB_PATHSPECS).toBeUndefined();
+      expect(seenEnv?.GIT_NO_LAZY_FETCH).toBe('1');
+      expect(seenEnv?.GIT_ALLOW_PROTOCOL).toBe('');
     } finally {
       if (prev === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prev;
       if (prevGlob === undefined) delete process.env.GIT_GLOB_PATHSPECS; else process.env.GIT_GLOB_PATHSPECS = prevGlob;

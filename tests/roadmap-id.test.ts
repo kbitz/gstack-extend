@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from './helpers/child-stdio.ts';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -300,6 +300,26 @@ function commitFile(dir: string, relPath: string, content: string, message: stri
 }
 
 describe('Git history ID reservation', () => {
+  test('reserves enclosing content and filename IDs from a nested project with relative diffs enabled', () => {
+    const dir = initGitRepo('hist-relative');
+    const nested = join(dir, 'nested');
+    mkdirSync(nested);
+    commitFile(dir, 'gone.txt', 'retired wi-00abcd\n', 'add historical content');
+    commitFile(dir, 'docs/todos/wi-00abce.md', 'old intake without an ID field\n', 'add historical filename');
+    gitIn(dir, ['rm', 'gone.txt', 'docs/todos/wi-00abce.md']);
+    gitIn(dir, ['commit', '-qm', 'retire both files']);
+    gitIn(dir, ['config', 'diff.relative', 'true']);
+    expect([...collectTakenIds(nested)]).toEqual(['wi-00abcd', 'wi-00abce']);
+  });
+
+  test('reserves history when an explicit path names a bare Git repository', () => {
+    const repo = initGitRepo('hist-bare-origin');
+    commitFile(repo, 'gone.txt', 'retired wi-00abcf\n', 'add historical content');
+    const bare = join(freshDir('hist-bare-target'), 'bare.git');
+    gitIn(repo, ['clone', '-q', '--bare', repo, bare]);
+    expect([...collectTakenIds(bare)]).toEqual(['wi-00abcf']);
+  });
+
   test('reserves IDs after a record is deleted (killed) or shipped then removed', () => {
     const dir = initGitRepo('hist-lifecycle');
     commitFile(dir, 'docs/TODOS.md', '## Unprocessed\n### [manual] Killed\n- **ID:** wi-111111\n', 'add killed');
@@ -793,6 +813,86 @@ describe('bin/roadmap-id migrate CLI', () => {
     expect(utf8Res.status).toBe(1);
     expect(utf8Res.stdout).toBe('');
     expect(utf8Res.stderr).toContain('REFUSED docs/TODOS.md:1 document');
+  });
+
+  test('refuses a shipped archive heading outside the approved H3 shape', () => {
+    const dir = freshDir('mig-archive-depth');
+    const path = join(dir, 'roadmap-shipped.md');
+    const original = '## Shipped\n\n#### Group 1: History\n\n#### Track 1A: Heading depth four\n\nA shipped record.\n';
+    writeFileSync(path, original);
+    const result = runIdCli(['migrate', dir]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('REFUSED roadmap-shipped.md:5 shipped-track');
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  test('selects the physical project when a symlink is followed by a literal parent segment', () => {
+    const dir = freshDir('mig-physical');
+    const project = join(dir, 'project');
+    mkdirSync(join(project, 'sub'), { recursive: true });
+    symlinkSync(join(project, 'sub'), join(dir, 'alias'), 'dir');
+    const original = '## Unprocessed\n\n### [manual] Existing entry\n- **What:** Work.\n';
+    const sibling = join(dir, 'TODOS.md');
+    const target = join(project, 'TODOS.md');
+    writeFileSync(sibling, original);
+    writeFileSync(target, original);
+    const result = runIdCli(['migrate', `${join(dir, 'alias')}/..`]);
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(sibling, 'utf8')).toBe(original);
+    expect(readFileSync(target, 'utf8')).toContain('- **ID:** wi-');
+  });
+
+  test('preserves trailing spaces in the implicitly discovered Git project path', () => {
+    const dir = freshDir('mig-root-spaces');
+    const project = join(dir, 'project ');
+    const cwd = join(project, 'nested');
+    mkdirSync(cwd, { recursive: true });
+    gitIn(project, ['init', '-q']);
+    const neighbor = join(dir, 'project');
+    mkdirSync(neighbor);
+    const original = '## Unprocessed\n\n### [manual] Existing entry\n- **What:** Work.\n';
+    writeFileSync(join(project, 'TODOS.md'), original);
+    writeFileSync(join(neighbor, 'TODOS.md'), original);
+    const result = spawnSync(BIN, ['migrate'], { cwd, env: GIT_ENV, encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(neighbor, 'TODOS.md'), 'utf8')).toBe(original);
+    expect(readFileSync(join(project, 'TODOS.md'), 'utf8')).toContain('- **ID:** wi-');
+  });
+
+  test.skipIf(process.getuid?.() === 0)('a later staging error leaves earlier planning documents unchanged', () => {
+    const dir = freshDir('mig-no-partial-write');
+    const path = join(dir, 'TODOS.md');
+    const original = '## Unprocessed\n\n### [manual] Existing entry\n- **What:** Work.\n';
+    writeFileSync(path, original);
+    const docs = join(dir, 'docs');
+    mkdirSync(docs);
+    const future = join(docs, 'roadmap-future.md');
+    const originalFuture = '## Future\n\n- **Deferred** — reconsider when ready.\n';
+    writeFileSync(future, originalFuture);
+    chmodSync(docs, 0o555);
+    try {
+      const result = runIdCli(['migrate', dir]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(readFileSync(path, 'utf8')).toBe(original);
+      expect(readFileSync(future, 'utf8')).toBe(originalFuture);
+      expect(result.stderr).toContain('no files were written');
+    } finally {
+      chmodSync(docs, 0o755);
+    }
+  });
+
+  test('preserves an existing document mode regardless of the process umask', () => {
+    const dir = freshDir('mig-mode');
+    const path = join(dir, 'TODOS.md');
+    writeFileSync(path, '## Unprocessed\n\n### [manual] Existing entry\n- **What:** Work.\n');
+    chmodSync(path, 0o664);
+    const result = spawnSync('sh', ['-c', 'umask 077; exec "$@"', 'sh', BIN, 'migrate', dir], {
+      env: GIT_ENV, encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(statSync(path).mode & 0o777).toBe(0o664);
   });
 
   test('--dry-run writes nothing; migrate is idempotent and works through aliases and pathspec env vars', () => {

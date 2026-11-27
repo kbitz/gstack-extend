@@ -51,7 +51,6 @@ export type MigrateResult = {
 };
 
 type LineSlice = {
-  lineNo: number; // 1-indexed
   start: number;
   end: number; // before EOL
   eol: string; // '\r\n' | '\n' | ''
@@ -61,29 +60,25 @@ type LineSlice = {
 type SpanEdit = {
   pos: number;
   text: string;
-  line: number;
-  kind: string;
 };
 
 function indexLines(content: string): LineSlice[] {
   const out: LineSlice[] = [];
-  let lineNo = 1;
   let pos = 0;
   while (pos < content.length) {
     const nl = content.indexOf('\n', pos);
     if (nl === -1) {
       const hasCr = content.endsWith('\r');
       const end = hasCr ? content.length - 1 : content.length;
-      out.push({ lineNo, start: pos, end, eol: '', text: content.slice(pos, end) });
+      out.push({ start: pos, end, eol: '', text: content.slice(pos, end) });
       pos = content.length;
     } else {
       const hasCr = nl > pos && content[nl - 1] === '\r';
       const end = hasCr ? nl - 1 : nl;
       const eol = hasCr ? '\r\n' : '\n';
-      out.push({ lineNo, start: pos, end, eol, text: content.slice(pos, end) });
+      out.push({ start: pos, end, eol, text: content.slice(pos, end) });
       pos = nl + 1;
     }
-    lineNo++;
   }
   return out;
 }
@@ -95,33 +90,27 @@ function detectDocEol(lines: LineSlice[]): string {
   return '\n';
 }
 
-function insertLineAfter(lines: LineSlice[], lineNo: number, newLine: string, kind: string): SpanEdit {
+function insertLineAfter(lines: LineSlice[], lineNo: number, newLine: string): SpanEdit {
   const slice = lines[lineNo - 1]!;
   if (slice.eol !== '') {
     return {
       pos: slice.end + slice.eol.length,
       text: `${newLine}${slice.eol}`,
-      line: lineNo,
-      kind,
     };
   }
   const eol = detectDocEol(lines);
   return {
     pos: slice.end,
     text: `${eol}${newLine}`,
-    line: lineNo,
-    kind,
   };
 }
 
-function insertLinesBefore(lines: LineSlice[], lineNo: number, newLines: string[], kind: string): SpanEdit {
+function insertLinesBefore(lines: LineSlice[], lineNo: number, newLines: string[]): SpanEdit {
   const slice = lines[lineNo - 1]!;
   const eol = slice.eol !== '' ? slice.eol : detectDocEol(lines);
   return {
     pos: slice.start,
     text: newLines.map(l => `${l}${eol}`).join(''),
-    line: lineNo,
-    kind,
   };
 }
 
@@ -186,14 +175,14 @@ function planTodoEntryEdit(
     if (raw.trim() === '') continue;
     if (raw.startsWith('- ')) {
       // T-a: attribute, checklist or link bullet
-      return insertLinesBefore(lines, ln, [`- **ID:** ${id}`], 'todo');
+      return insertLinesBefore(lines, ln, [`- **ID:** ${id}`]);
     }
     // T-b: other text (e.g. **What:** paragraph)
-    return insertLinesBefore(lines, ln, [`- **ID:** ${id}`, ''], 'todo');
+    return insertLinesBefore(lines, ln, [`- **ID:** ${id}`, '']);
   }
 
   // T-c: nothing but blank lines before the boundary
-  return insertLineAfter(lines, headingLine, `- **ID:** ${id}`, 'todo');
+  return insertLineAfter(lines, headingLine, `- **ID:** ${id}`);
 }
 
 function findRoadmapTrackMetadataLine(
@@ -535,8 +524,6 @@ export function planWorkItemMigration(
         edits.push({
           pos: lines[lineNo - 1]!.start + edit.offset,
           text: edit.text,
-          line: lineNo,
-          kind: 'future',
         });
         assignments.push({
           relPath: doc.relPath,
@@ -600,9 +587,18 @@ export function planWorkItemMigration(
       }
 
       if (fromShippedArchive) {
+        if (!planLineMap.get(headingLine)?.startsWith('### Track ')) {
+          refusals.push({
+            relPath: doc.relPath,
+            line: headingLine,
+            kind: 'shipped-track',
+            reason: `Track ${track.id} must use a level-three shipped archive heading`,
+          });
+          continue;
+        }
         const id = nextId();
         trackTargets.set(i, id);
-        edits.push(insertLineAfter(lines, headingLine, `_id: ${id}_`, 'shipped-track'));
+        edits.push(insertLineAfter(lines, headingLine, `_id: ${id}_`));
         assignments.push({
           relPath: doc.relPath,
           line: headingLine,
@@ -623,7 +619,7 @@ export function planWorkItemMigration(
         }
         const id = nextId();
         trackTargets.set(i, id);
-        edits.push(insertLineAfter(lines, metaLine, `_id: ${id}_`, 'track'));
+        edits.push(insertLineAfter(lines, metaLine, `_id: ${id}_`));
         assignments.push({
           relPath: doc.relPath,
           line: headingLine,
@@ -665,8 +661,6 @@ export function planWorkItemMigration(
       edits.push({
         pos: lines[lineNo - 1]!.start + edit.offset,
         text: edit.text,
-        line: lineNo,
-        kind: 'legacy-track',
       });
       assignments.push({
         relPath: doc.relPath,
@@ -699,8 +693,6 @@ export function planWorkItemMigration(
         edits.push({
           pos: lines[lineNo - 1]!.start + edit.offset,
           text: edit.text,
-          line: lineNo,
-          kind: 'future',
         });
         assignments.push({
           relPath: doc.relPath,

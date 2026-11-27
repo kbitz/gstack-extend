@@ -32,13 +32,11 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   const findings: string[] = [];
   const seen = new Map<string, string>(); // id -> first location
   let inspectableCount = 0;
-  let hasBlockingFinding = false;
   let hasMissingId = false;
 
   const registerValidId = (id: string, location: string) => {
     const first = seen.get(id);
     if (first !== undefined) {
-      hasBlockingFinding = true;
       findings.push(
         `- DUPLICATE_ID: ${location} — duplicate work-item ID "${id}" (first seen at ${first})`,
       );
@@ -53,13 +51,10 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
     inspectableCount++;
     const { workItemId: id, workItemIdRaw: raw, workItemIdError: error } = record;
     if (error === 'duplicate') {
-      hasBlockingFinding = true;
       findings.push(`- DUPLICATE_ID: ${location} — multiple ID fields on one record`);
     } else if (error === 'malformed') {
-      hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${location} — malformed work-item ID "${raw ?? ''}" (expected wi-<4-8 lowercase hex>)`);
     } else if (!id) {
-      hasBlockingFinding = true;
       hasMissingId = true;
       findings.push(`- MISSING_ID: ${location} — missing ${field}`);
     }
@@ -84,20 +79,16 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
   for (const f of ctx.intakeFiles) {
     if (f.kind === 'non-file' || !f.basename.endsWith('.md')) {
       inspectableCount++;
-      hasBlockingFinding = true;
       const reason = f.unreadable ? 'unable to read intake path' : 'expected a regular intake Markdown file';
       findings.push(`- MALFORMED_ID: ${f.rel} — ${reason}`);
       continue;
     }
     if (f.filenameId === null) {
-      hasBlockingFinding = true;
       findings.push(`- MALFORMED_ID: ${f.rel} — filename must match wi-<4-8 lowercase hex>.md`);
     }
-    if (f.workItemId === null) hasBlockingFinding = true;
     inspect(f.rel, `${TODO_FIELD} (required in intake files)`, f);
     if (f.filenameId !== null && f.filenameId !== f.workItemId) {
       if (f.workItemId !== null) {
-        hasBlockingFinding = true;
         findings.push(`- ID_MISMATCH: ${f.rel} — filename ID "${f.filenameId}" does not match body ID "${f.workItemId}"`);
       }
       registerValidId(f.filenameId, f.rel);
@@ -155,7 +146,7 @@ export function runCheckWorkItemIds(ctx: AuditCtx): CheckResult {
 
   return {
     section: 'WORK_ITEM_IDS',
-    status: hasBlockingFinding ? 'fail' : 'warn',
+    status: 'fail',
     body: ['FINDINGS:', ...findings, ''],
   };
 }

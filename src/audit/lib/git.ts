@@ -47,9 +47,16 @@ export type HistoryWorkItemIdsResult =
   | { kind: 'shallow' }
   | { kind: 'error'; detail: string };
 
+type GitProjectRootResult =
+  | { kind: 'root'; path: string }
+  | { kind: 'not-a-repo' }
+  | { kind: 'error'; detail: string };
+
 export type GitGateway = {
   /** Resolve repository root, or null if not in a repo. */
   toplevel(): string | null;
+  /** Resolve a project root without collapsing Git errors into repository absence. */
+  projectToplevel(): GitProjectRootResult;
   /** Return all tags (lexicographic order — for callers that want bare list). */
   tags(): string[];
   /** Latest tag by `sort=-v:refname` semantics, or null. */
@@ -92,11 +99,20 @@ const ISOLATED_GIT_ENV_VARS = [
 ] as const;
 
 function buildIsolatedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_NO_LAZY_FETCH: '1',
+    // Also prevent transport on older Git builds when promisor objects are missing.
+    GIT_ALLOW_PROTOCOL: '',
+  };
   for (const key of ISOLATED_GIT_ENV_VARS) {
     delete env[key];
   }
   return env;
+}
+
+function isNotGitRepository(result: GitSpawnResult): boolean {
+  return /^fatal: not a git repository(?:[ (:]|$)/i.test(result.stderr);
 }
 
 export const defaultSpawn: GitSpawn = (args, cwd, options) => {
@@ -143,6 +159,17 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       if (!r.ok) return null;
       const out = r.stdout.trim();
       return out === '' ? null : out;
+    },
+
+    projectToplevel(): GitProjectRootResult {
+      const result = spawn(['rev-parse', '--show-toplevel']);
+      if (!result.ok && isNotGitRepository(result)) return { kind: 'not-a-repo' };
+      // Strip Git's output terminator while preserving valid path whitespace.
+      const path = result.stdout.replace(/\n$/, '');
+      if (!result.ok || path === '') {
+        return { kind: 'error', detail: result.stderr.trim() || 'git rev-parse --show-toplevel failed' };
+      }
+      return { kind: 'root', path };
     },
 
     tags(): string[] {
@@ -205,14 +232,10 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
     historyWorkItemIds(): HistoryWorkItemIdsResult {
       const inside = spawn(['rev-parse', '--is-inside-work-tree']);
       if (!inside.ok) {
-        if (/not a git repository/i.test(inside.stderr)) {
-          return { kind: 'not-a-repo' };
-        }
+        if (isNotGitRepository(inside)) return { kind: 'not-a-repo' };
         return { kind: 'error', detail: inside.stderr.trim() || 'git rev-parse --is-inside-work-tree failed' };
       }
-      if (inside.stdout.trim() !== 'true') {
-        return { kind: 'not-a-repo' };
-      }
+      // A successful discovery can print false, for example in a bare repository.
 
       const shallow = spawn(['rev-parse', '--is-shallow-repository']);
       if (!shallow.ok) {
@@ -222,20 +245,24 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
         return { kind: 'shallow' };
       }
 
-      const log = spawn(
-        [
-          '-c', 'core.quotepath=off',
-          'log', '--all', '--no-renames', '-m', '--root',
-          '--no-color', '--no-ext-diff', '--no-textconv', '--text',
-          '-G', 'wi-[0-9a-f]{4,8}',
-          '--format=', '-p', '-U0',
-        ],
-        { maxBuffer: HISTORY_MAX_BUFFER },
-      );
-      if (!log.ok) {
-        return { kind: 'error', detail: log.stderr.trim() || 'git log failed' };
+      const historyArgs = [
+        '-c', 'core.quotepath=off',
+        'log', '--all', '--no-relative', '--no-renames', '-m', '--root',
+        '--no-color', '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=',
+      ];
+      const buffer = { maxBuffer: HISTORY_MAX_BUFFER };
+      const patches = spawn([...historyArgs, '--text', '-G', 'wi-[0-9a-f]{4,8}', '-p', '-U0'], buffer);
+      if (!patches.ok) {
+        return { kind: 'error', detail: patches.stderr.trim() || 'git log patches failed' };
       }
-      return { kind: 'ids', ids: scanAllWorkItemIds(log.stdout) };
+      // Pickaxe matches contents. Scan names separately to include historical
+      // filename-only IDs, including intake files that had no ID field.
+      const paths = spawn([...historyArgs, '--name-only', '-z'], buffer);
+      if (!paths.ok) {
+        return { kind: 'error', detail: paths.stderr.trim() || 'git log paths failed' };
+      }
+      const ids = new Set([...scanAllWorkItemIds(patches.stdout), ...scanAllWorkItemIds(paths.stdout)]);
+      return { kind: 'ids', ids: [...ids] };
     },
   };
 }
