@@ -301,10 +301,10 @@ reuses completed stages. Missing coverage is never relabeled complete.
 
 ### Hosts with bounded subagent waits
 
-When subagent waits time out at a fixed bound and the host cannot stop them,
-keep waiting for the live subagent until it returns or the 15-minute failure
-budget expires. Never dispatch a speculative replacement. On these hosts Red
-Team runs only in cycle 1.
+If the host documents or shows fixed wait timeouts, no way to stop a subagent,
+and large starting contexts, wait until the subagent returns or the 15-minute
+failure budget expires. Never dispatch a speculative replacement. On these
+hosts Red Team runs only in cycle 1.
 
 Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-bounded-reviewer-waits --expect c99e8a95ea04715f` before dispatching or waiting on reviewers when the host has bounded waits and cannot stop them.
 
@@ -402,11 +402,11 @@ A closed or merged PR requires a new work decision, not reopening automatically.
 
 For every `refresh` invocation, validate exactly one `Cause: base_moved` line, the live PR and checkout, prepared receipt and moved base before creating evidence or starting run state. A failed check prints `Refresh refused: review-and-prep-refresh/v1; reason: <cause|state|receipt|current>` and stops without changes. On reviewed code changes, unverifiable delta facts or failed delta review or gates, leave the PR draft, keep the candidate local and emit `Refresh escalated:` with `next: review-and-prep; status: stopped`. On the fast path, use Step 6 with the reference's substitutions. Run no `/review` cycle, delegated part, coverage or documentation audit, or Greptile run.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-base-move-refresh --expect 48cf0b9424dae32b` before Step 1's PR validation for the `refresh` argument or first line `Run /review-and-prep refresh`, or when H-F resume finds a checkpoint naming `refresh-1.md`.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref conditional-base-move-refresh --expect af4c0a3ae38e4115` before Step 1's PR validation for the `refresh` argument or first line `Run /review-and-prep refresh`, or when H-F resume finds a checkpoint naming `refresh-1.md`.
 
 Under `full-suite=external`, check **Resume entry** before review even without a PR. A resume or repeat first runs the calls document's **Resume** procedure to check the newest run state or receipt for this repository, branch and candidate. Corroborate the record by author and edit history. Existing manual, configuration, Greptile or cycle-cap holds stand until resolved. Recency alone never clears them. Reconcile a recorded cap hold even when no stop comment was confirmed. Do not start a new review after a cycle-cap stop without continuation authorization. Hold a ready PR with pending changes or unverifiable preparation. A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`.
 
-Run `~/.gstack-extend/bin/preamble review-and-prep --ref resume-review-records --expect 70e652151154cd8b` before resuming or reusing an earlier preparation run when Step 1 finds a matching PR, prior run state, or external-gate checkpoint.
+Run `~/.gstack-extend/bin/preamble review-and-prep --ref resume-review-records --expect b0729b577bdd884a` before resuming or reusing an earlier preparation run when Step 1 finds a matching PR, prior run state, or external-gate checkpoint.
 
 Read the actual CI triggers before the first push, including any relevant
 default-branch workflows for comments, reviews, and label events. Also name

@@ -3747,7 +3747,7 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     const evidenceStart = ref.indexOf('### C. Evidence and run state');
     const mergeStart = ref.indexOf('### D. Merge');
     const classificationStart = ref.indexOf('### E. Delta facts and classification');
-    expect(ref.slice(0, draftStart)).toContain('Require the exact open PR with `isDraft: false`');
+    expect(ref.slice(0, draftStart)).toContain("Require Step 1's verified feature branch and exact open PR with `isDraft: false`");
     expect(ref.slice(0, draftStart)).toContain("resolve `Full receipt:` by Step 6's locator rules and verify its SHA-256 before converting to draft");
     expect(ref.slice(0, draftStart)).toContain('follow each predecessor comment back to the original full review');
     expect(ref.slice(0, draftStart)).toContain('if the prior recorded run is readable, require a prepared finish that matches the receipt');
@@ -3757,6 +3757,7 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
     expect(evidence).toContain('Save the disclosure values verbatim in `refresh-1.md`');
     expect(evidence).toContain("G's `Disclosure evidence: unavailable` line, record that marker instead");
     expect(ref).toContain('Restore the restriction and disclosure evidence from that file');
+    expect(ref).toContain("Before each push, verify A's chain and current plan SHA-256 and repeat E's index and status checks");
     expect(ref).toContain('Preserve `Disclosure evidence: unavailable` in the full receipt');
     expect(ref.slice(mergeStart, classificationStart)).toContain(
       "`build finish --outcome blocked --base <last-merged-base> --stop-reason merge-blocked` (use A's earlier receipt base before the first committed merge)",
@@ -3917,6 +3918,13 @@ describe('defensive context paragraph and base-move refresh (H-G)', () => {
         const relative = runFence(join(cwd, 'docs'), revR, revB);
         expect(relative.status, relative.stderr).toBe(0);
         expect(parseDelta(relative.stdout)).toEqual(expected);
+
+        git(cwd, ['update-index', '--assume-unchanged', 'src/app.ts']);
+        writeFileSync(join(cwd, 'src', 'app.ts'), 'export const a = 3;\n');
+        expect(git(cwd, ['status', '--porcelain=v1'])).toBe('');
+        const hiddenEdit = runFence(cwd, revR, revB);
+        expect(hiddenEdit.status).toBe(1);
+        expect(hiddenEdit.stdout).toBe('REFRESH_DELTA_UNVERIFIED: hidden-index-entry\n');
       }
 
       // Case 4: follow-up commit to a non-resolution file gives refresh-only
