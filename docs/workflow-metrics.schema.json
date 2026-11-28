@@ -1,12 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "workflow-metrics",
-  "title": "gstack-extend workflow-metrics record (Track 24A; v2 attributed pass findings, Track 57A; v3 delegated attempts, Track 64C; v2 usage record branch and read --usage, Track 67A)",
-  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics` or finish usage capture. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper is v1 for producer operations (`begin`, `end`, `decision`, `pass`, `correction`; a `pass` request may be v2 or v3) and v2 for `usage` (`record_v2`). See docs/telemetry.md#workflow-metrics.",
+  "title": "gstack-extend workflow-metrics record (v1 workflow events, v2 usage, v3 finding cycles, v1 through v4 pass requests)",
+  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by metrics capture or telemetry derive. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper is v1 for `begin`, `end`, `decision`, `pass` and `correction` (a `pass` request may be v1 through v4), v2 for `usage` (`record_v2`) and v3 for `finding-cycles` (`record_v3`). See docs/telemetry.md#workflow-metrics.",
   "$comment": "Records, requests, contexts and findings set additionalProperties false: an unknown key is invalid input, not a forward-compatible extension. A shape or meaning change adds a new v branch (such as record_v2 for usage and read --usage) and keeps v1 readable as partial/unknown, never reinterpreted.",
   "oneOf": [
     { "$ref": "#/definitions/record" },
-    { "$ref": "#/definitions/record_v2" }
+    { "$ref": "#/definitions/record_v2" },
+    { "$ref": "#/definitions/record_v3" }
   ],
   "definitions": {
     "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
@@ -76,7 +77,7 @@
         { "if": { "type": "object", "properties": { "outcome": { "const": "credited" } } }, "then": { "type": "object", "properties": { "fallback_reason": { "type": "null" } } } },
         { "if": { "type": "object", "properties": { "outcome": { "const": "fell-back" } } }, "then": { "type": "object", "properties": { "fallback_reason": { "type": "string" } } } }
       ],
-      "description": "v=3 delegated attempt: the provider label and model the runner reports, its outcome and fallback reason (credited exactly when the attempt completed and there is no reason; fell-back exactly when it failed with a reason), whether the result was a replay, wall time and token counts (null when unreported). Never prompt text or reply prose. Labels and models follow the configuration grammar in docs/delegated-review.md."
+      "description": "v=3 or v=4 delegated attempt: the provider label and model the runner reports, its outcome and fallback reason (credited exactly when the attempt completed and there is no reason; fell-back exactly when it failed with a reason), whether the result was a replay, wall time and token counts (null when unreported). Never prompt text or reply prose. Labels and models follow the configuration grammar in docs/delegated-review.md."
     },
     "finding": {
       "type": "object", "additionalProperties": false,
@@ -117,6 +118,35 @@
       ],
       "description": "The v2 finding: the v1 fields plus found_by (at most 8 unique parts, several when a merged finding was reported by several parts) and attribution_reason. The same rejected/duplicate/finding_id rules as v1 apply."
     },
+    "finding_class": {
+      "type": "string",
+      "enum": ["safety", "concurrency", "contract", "validation", "scope", "test-gap", "docs", "performance", "maintainability", "correctness", "other"]
+    },
+    "finding_key": { "type": "string", "pattern": "^fk1:[0-9a-f]{16}$" },
+    "finding_v4": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "finding_id": { "$ref": "#/definitions/safe_id" },
+        "severity_source": { "type": "string", "enum": ["P0", "P1", "P2", "P3", "critical", "high", "medium", "low", "info", "unknown"] },
+        "severity_rubric": { "type": "string", "enum": ["core", "specialist", "adversarial", "greptile", "gstack-review", "other", "unknown"] },
+        "adjudication": { "type": "string", "enum": ["accepted", "rejected", "deferred", "duplicate", "unclassified"] },
+        "resolution": { "type": "string", "enum": ["open", "fixed", "unknown"] },
+        "duplicate_of": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "found_by": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/definitions/part" } },
+        "attribution_reason": { "type": ["string", "null"], "enum": ["not-reported", "unlisted-part", "unsupported", null] },
+        "finding_key": { "anyOf": [{ "$ref": "#/definitions/finding_key" }, { "type": "null" }] },
+        "finding_class": { "anyOf": [{ "$ref": "#/definitions/finding_class" }, { "type": "null" }] }
+      },
+      "required": ["finding_id", "severity_source", "severity_rubric", "adjudication", "resolution", "duplicate_of", "found_by", "attribution_reason", "finding_key", "finding_class"],
+      "allOf": [
+        { "if": { "type": "object", "properties": { "found_by": { "type": "array", "minItems": 1 } }, "required": ["found_by"] },
+          "then": { "type": "object", "properties": { "attribution_reason": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "attribution_reason": { "type": "string" } } } },
+        { "if": { "type": "object", "properties": { "finding_key": { "type": "string" } }, "required": ["finding_key"] },
+          "then": { "type": "object", "properties": { "finding_class": { "type": "string" } } } }
+      ],
+      "description": "A v2 finding with two additional required fields: the opaque finding_key and finding_class. Unavailable values are null. A key requires a class. No repository file paths."
+    },
     "request_base": {
       "type": "object",
       "properties": {
@@ -130,13 +160,13 @@
     "pass_request_base": {
       "type": "object",
       "properties": {
-        "v": { "type": "integer", "enum": [1, 2, 3] },
+        "v": { "type": "integer", "enum": [1, 2, 3, 4] },
         "stage": { "$ref": "#/definitions/stage" },
         "session_id": { "$ref": "#/definitions/session_id" },
         "event_id": { "$ref": "#/definitions/uuid" }
       },
       "required": ["v", "stage", "session_id", "event_id"],
-      "description": "As request_base, except a pass request may be v=2 or v=3. The record wrapper stays v=1."
+      "description": "As request_base, except a pass request may be v=2, v=3 or v=4. The record wrapper stays v=1."
     },
     "begin_request": {
       "type": "object", "additionalProperties": false,
@@ -186,11 +216,14 @@
       "type": "object", "additionalProperties": false,
       "allOf": [
         { "$ref": "#/definitions/pass_request_base" },
+        { "if": { "type": "object", "properties": { "v": { "const": 1 } }, "required": ["v"] },
+          "then": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding" } } } } },
         { "if": { "type": "object", "properties": { "v": { "enum": [2, 3] } }, "required": ["v"] },
-          "then": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding_v2" } } } },
-          "else": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding" } } } } },
+          "then": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding_v2" } } } } },
+        { "if": { "type": "object", "properties": { "v": { "const": 4 } }, "required": ["v"] },
+          "then": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding_v4" } } } } },
         { "if": { "type": "object", "properties": { "delegate": true }, "required": ["delegate"] },
-          "then": { "type": "object", "properties": { "v": { "const": 3 }, "state": { "const": "attempt" } } } },
+          "then": { "type": "object", "properties": { "v": { "enum": [3, 4] }, "state": { "const": "attempt" } } } },
         { "if": { "type": "object", "properties": { "delegate": { "type": "object", "properties": { "outcome": { "const": "credited" } }, "required": ["outcome"] } }, "required": ["delegate"] },
           "then": { "type": "object", "properties": { "attempt_outcome": { "const": "completed" } } } },
         { "if": { "type": "object", "properties": { "delegate": { "type": "object", "properties": { "outcome": { "const": "fell-back" } }, "required": ["outcome"] } }, "required": ["delegate"] },
@@ -215,7 +248,7 @@
         "context": { "$ref": "#/definitions/context_override" }
       },
       "required": ["pass_id", "scope", "state"],
-      "description": "v=1 findings are the closed finding shape (found_by or attribution_reason on one is invalid); v=2 and v=3 findings are finding_v2. Only a v=3 attempt may carry delegate (the provider a delegated part ran through). Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
+      "description": "Each request version selects a closed finding shape: finding for v=1, finding_v2 for v=2 and v=3, and finding_v4 for v=4. A v=3 or v=4 attempt may carry delegate (the provider a delegated part ran through). Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
     },
     "correction_request": {
       "type": "object", "additionalProperties": false,
@@ -387,6 +420,47 @@
       "required": ["v", "op", "event_id", "request_digest", "captured_at_ms", "producer_version", "request"],
       "description": "The v=2 record wrapper branch, used exclusively for finish-captured usage records (op=usage)."
     },
+    "finding_cycle": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "run": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "cycle": { "anyOf": [{ "type": "integer", "minimum": 1, "maximum": 2147483647 }, { "type": "string", "const": "greptile" }] },
+        "coverage": { "type": "string", "enum": ["full", "delta", "mixed"] },
+        "observed": { "type": "string", "enum": ["complete", "partial"] },
+        "new": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "carried": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "repeated_premise": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "repeated_premise_pairs": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "unkeyed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "prior": { "type": "string", "enum": ["none", "imported", "partial", "unavailable:not-supplied", "unavailable:corrupt", "unavailable:newer-schema", "unavailable:not-stopped", "unavailable:head-mismatch", "unavailable:binding-mismatch", "unavailable:digest-mismatch", "unavailable:unusable-file", "unavailable:not-recorded"] }
+      },
+      "required": ["run", "cycle", "coverage", "observed", "new", "carried", "repeated_premise", "repeated_premise_pairs", "unkeyed", "prior"],
+      "description": "Advisory finding counts for one review cycle. The metrics helper also checks repeated_premise_pairs <= repeated_premise <= new, with the two repeated-premise counts zero together."
+    },
+    "finding_cycles_request": {
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/request_base" }],
+      "properties": {
+        "v": true, "stage": true, "session_id": true, "event_id": true,
+        "cycles": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/definitions/finding_cycle" } }
+      },
+      "required": ["cycles"],
+      "description": "One review-state snapshot of the finding cycles assigned to this segment."
+    },
+    "record_v3": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "v": { "type": "integer", "const": 3 },
+        "op": { "type": "string", "const": "finding-cycles" },
+        "event_id": { "$ref": "#/definitions/uuid" },
+        "request_digest": { "$ref": "#/definitions/sha256_hex" },
+        "captured_at_ms": { "type": "integer", "minimum": 0 },
+        "producer_version": { "type": ["string", "null"], "pattern": "^[0-9]+(\\.[0-9]+){2,3}$" },
+        "request": { "$ref": "#/definitions/finding_cycles_request" }
+      },
+      "required": ["v", "op", "event_id", "request_digest", "captured_at_ms", "producer_version", "request"],
+      "description": "The v=3 record wrapper branch, used exclusively for review-state finding cycle snapshots (op=finding-cycles)."
+    },
     "unknown_reason": {
       "type": "string",
       "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts", "too-many-providers"],
@@ -422,7 +496,7 @@
         "event_id": { "type": ["string", "null"], "description": "Null for read." },
         "data": { "type": ["object", "null"],
           "properties": { "unknown_reasons": { "type": "array", "items": { "$ref": "#/definitions/unknown_reason" } } },
-          "description": "Producer: captured_at_ms, request_digest, op. Read: the compact named-run projection including clock_basis=utc-wall, clock_quality=clock-sensitive, qualified_elapsed_ms=null and receipt_text (at most 2 KiB UTF-8), or with `read --usage` the token-usage and plan-window projection (record_v2). Whole envelope at most 16 KiB." },
+          "description": "Producer: captured_at_ms, request_digest, op. Read: the compact named-run projection including clock_basis=utc-wall, clock_quality=clock-sensitive, qualified_elapsed_ms=null, receipt_text (at most 2 KiB UTF-8) and finding_cycles (latest record_v3 snapshot, or null if absent or the read is partial). With `read --usage` returns the token-usage and plan-window projection (record_v2). Whole envelope at most 16 KiB." },
         "diagnostics": { "$ref": "#/definitions/diagnostics" }
       },
       "required": ["v", "status", "reason", "session_id", "event_id", "data", "diagnostics"],

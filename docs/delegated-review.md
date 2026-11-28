@@ -417,9 +417,9 @@ effect together. A `Review delegates:` line beside a policy that carries only
   part is recorded as dispatched in the review's `specialists` object, as is a
   credited `red-team` part in both layouts; a credited `adversarial` part adds
   no `specialists` entry.
-- The [workflow metrics](telemetry.md#workflow-metrics-delegated) record each
-  delegated part as a `pass` v3 attempt with a `delegate` object, so a reader can
-  count usage per provider label. Earlier receipts and rows stay readable.
+- Review-state derive records each delegated part as a `pass` v4 attempt
+  with a `delegate` object in the [workflow metrics](telemetry.md#workflow-metrics-delegated).
+  Readers count usage per provider label, including from older v3 attempts.
 - `voices.jsonl` carries an optional content-free `delegate` object per part
   ([reviewer join file](telemetry.md#reviewer-join-file)).
 

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.129.0] - 2026-11-28
+
+### Added
+
+- Review-state exports now write `pass` `v:4` findings with `finding_key` and `finding_class` and `v:3` `finding-cycles` records to the local workflow-metrics ledger, while `gstack-extend-telemetry metrics read` exposes `finding_cycles` and keeps pre-change ledgers readable.
+
+### Changed
+
+- Derived review attempts now use pass v4 with nullable, path-free `finding_key` and `finding_class` fields.
+- `gstack-extend-telemetry metrics read` returns the latest finding-cycle snapshot in `data.finding_cycles` and accepts older ledgers.
+
+### Fixed
+
+- Finding-cycle snapshots stay current when a review run resumes.
+
+### Upgrade notes
+
+- Older gstack-extend helpers reject `pass` `v:4` and `v:3` `finding-cycles` ledger lines as unsupported or malformed, so finish any in-progress review run before upgrading across versions.
+
 ## [0.128.0] - 2026-11-28
 
 ### Added

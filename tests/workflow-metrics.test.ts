@@ -10,6 +10,7 @@ import Ajv from 'ajv';
 import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, realStoreSpecs, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
 import { appendFileSync, realpathSync, truncateSync, utimesSync } from 'node:fs';
 import { NAMESPACE } from '../src/review-state/export.ts';
+import { ENUMS, FINDING_KEY_RE, PRIOR_FINDING_REASONS } from '../src/review-state/state.ts';
 
 afterAll(cleanupTelemetryFixtures, 60_000);
 const ROOT = join(import.meta.dir, '..');
@@ -76,13 +77,21 @@ function canonical(value: unknown): string {
   }
   return JSON.stringify(value);
 }
+function storedRecord(op: string, request: any, at: number, producerVersion: string | null = '0.36.13.0') {
+  const digest = createHash('sha256').update(canonical({ op, request })).digest('hex');
+  const v = op === 'finding-cycles' ? 3 : op === 'usage' ? 2 : 1;
+  return { v, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: producerVersion, request };
+}
+const sampleFindingCycle = {
+  run: 1, cycle: 1, coverage: 'full', observed: 'complete', new: 2,
+  carried: 1, repeated_premise: 1, repeated_premise_pairs: 1, unkeyed: 0, prior: 'none',
+};
 /** Write stored records directly (imported-fixture path): controlled timestamps, correct digests. */
 function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at: number; request: any }>, producerVersion: string | null = '0.36.13.0') {
   const file = ledgerFile(fix, sid);
   mkdirSync(join(file, '..'), { recursive: true });
   const lines = rows.map(({ op, at, request }) => {
-    const digest = createHash('sha256').update(canonical({ op, request })).digest('hex');
-    const record = { v: op === 'usage' ? 2 : 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: producerVersion, request };
+    const record = storedRecord(op, request, at, producerVersion);
     expect(validRecord(record), `${op} ${JSON.stringify(validRecord.errors)}`).toBe(true); // helper and schema agree
     return JSON.stringify(record);
   });
@@ -2008,7 +2017,7 @@ describe('Track 57A finding attribution', () => {
     for (const line of ledgerLines(fix, sid)) expect(JSON.parse(line).v).toBe(1);
   }, 120_000);
 
-  test('(c) only pass takes v2: a v2 begin, a v4 pass and a boolean version stay refused; a live v2 pass sequence reads back', () => {
+  test('(c) only pass takes v2: a v2 begin, a v5 pass and a boolean version stay refused; a live v2 pass sequence reads back', () => {
     const fix = makeTelemetryFixture('community');
     const repo = gitRepo(fix);
     const sid = start(fix, repo);
@@ -2021,7 +2030,7 @@ describe('Track 57A finding attribution', () => {
     expect(refused('correction', { ...base(sid), v: 2, correction_kind: 'fix-cycle', fix_step_id: u() }).reason).toBe('unsupported-version');
     const passId = u(), attemptId = u();
     const pass = (extra: Record<string, unknown>, v = 2) => ({ ...base(sid), v, pass_id: passId, scope: 'local', ...extra });
-    expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, 4))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2|3', actual: 4 } });
+    expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, 5))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2|3|4', actual: 5 } });
     expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, true as any)).reason).toBe('invalid-input');
     const steps: Array<Record<string, unknown>> = [
       { state: 'started', required_voice_ids: ['testing'] },
@@ -2227,7 +2236,7 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     }
   }, 180_000);
 
-  test('delegate is refused on v1, v2 and on every other state, and v4 is unsupported', () => {
+  test('delegate is refused on v1, v2 and on every other state, and v5 is unsupported', () => {
     const fix = makeTelemetryFixture('community');
     const repo = gitRepo(fix);
     const sid = start(fix, repo);
@@ -2250,7 +2259,7 @@ describe('Track 64C delegated attempts (pass v3)', () => {
       expect(validRecord(wrap(request)), `${extra.state}: schema`).toBe(false);
       expect(refused(request), String(extra.state)).toMatchObject({ status: 'unavailable', reason: 'invalid-input' });
     }
-    expect(refused(attempt(sid, { v: 4 }))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2|3', actual: 4 } });
+    expect(refused(attempt(sid, { v: 5 }))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2|3|4', actual: 5 } });
     expect(ledgerLines(fix, sid)).toHaveLength(lines);
     // v3 findings take the v2 shape: a v1-shaped finding on a v3 attempt is invalid.
     expect(refused(attempt(sid, { findings: [finding('F1')] })).reason).toBe('invalid-input');
@@ -2393,8 +2402,107 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     expect(validRecord(wrap(attempt(sid, { delegate: delegate({ outcome: 'fell-back', fallback_reason: 'timeout' }) })))).toBe(false);
     expect(validRecord(wrap(attempt(sid, { v: 2 })))).toBe(false);
     expect(validRecord(wrap({ ...base(sid), v: 3, pass_id: u(), scope: 'local', state: 'completed', delegate: delegate() }))).toBe(false);
-    expect(validRecord(wrap(attempt(sid, { v: 4 })))).toBe(false);
+    expect(validRecord(wrap(attempt(sid, { v: 4 })))).toBe(false); // v2-shaped findings omit the required v4 fields
+    expect(validRecord(wrap(attempt(sid, { v: 5 })))).toBe(false);
   });
+
+  test('pass v4 validates path-free finding identities in both the schema and live helper', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    beginRun(fix, repo, sid);
+    const id = { finding_key: 'fk1:0123456789abcdef', finding_class: 'correctness' };
+    const attributed = att('F1', ['core']);
+    const keyed = { ...attributed, ...id };
+    const { finding_class: _class, ...keyOnly } = keyed;
+    const cases = [
+      { name: 'key and class', finding: keyed, valid: true },
+      { name: 'class only', finding: { ...keyed, finding_key: null }, valid: true },
+      { name: 'both null', finding: { ...attributed, finding_key: null, finding_class: null }, valid: true },
+      { name: 'delegated', finding: keyed, delegated: true, valid: true },
+      { name: 'malformed key', finding: { ...keyed, finding_key: 'fk1:0123456789abcdeG' }, valid: false },
+      { name: 'unknown class', finding: { ...keyed, finding_class: 'unknown' }, valid: false },
+      { name: 'key with null class', finding: { ...keyed, finding_class: null }, valid: false },
+      { name: 'key with omitted class', finding: keyOnly, valid: false },
+      { name: 'missing both keys', finding: attributed, valid: false },
+      { name: 'extra path', finding: { ...keyed, path: 'src/example.ts' }, valid: false },
+      { name: 'v1 with identity fields', finding: finding('F1', id), v: 1, valid: false },
+      { name: 'v2 with identity fields', finding: keyed, v: 2, valid: false },
+      { name: 'v3 with identity fields', finding: keyed, v: 3, valid: false },
+      { name: 'unsupported v5', finding: keyed, v: 5, valid: false },
+    ];
+    let recorded = ledgerLines(fix, sid).length;
+    for (const { name, finding: item, v = 4, delegated, valid } of cases) {
+      const { delegate: provider, ...plain } = attempt(sid, { v, findings: [item] });
+      const request = delegated ? { ...plain, delegate: provider } : plain;
+      expect(validRecord(wrap(request)), `${name}: schema`).toBe(valid);
+      const { envelope } = metrics(fix.env, 'pass', request, repo);
+      if (valid) {
+        const lines = ledgerLines(fix, sid);
+        expect(envelope.status, name).toBe('recorded');
+        expect(JSON.parse(lines.at(-1)!)).toMatchObject({ v: 1, op: 'pass', request });
+        recorded++;
+      } else {
+        expect(envelope, name).toMatchObject({
+          status: 'unavailable',
+          reason: v === 5 ? 'unsupported-version' : 'invalid-input',
+        });
+      }
+      expect(ledgerLines(fix, sid), name).toHaveLength(recorded);
+    }
+  }, 60_000);
+
+  test('a pre-change ledger keeps its summaries when newly appended snapshots supersede earlier snapshots', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const run = runRows(sid);
+    const local = passRows(sid, { voices: [{ voice: 'core', findings: [finding('L1')] }] });
+    const grep = passRows(sid, { scope: 'greptile', at: 3000, voices: [{ voice: 'greptile', findings: [att('G1', ['greptile'])] }] });
+    const specialist = passV3(sid, [{ voice: 'testing', tries: [{ delegate: delegate(), findings: [att('S1', ['specialist:testing'])] }] }], 3500);
+    const file = craft(fix, sid, [
+      ...run.rows,
+      ...local.rows,
+      ...grep.rows.map(row => ({ ...row, request: { ...row.request, v: 2 } })),
+      ...specialist.rows,
+      { op: 'correction', at: 3600, request: { ...base(sid), correction_kind: 'finding', finding_id: 'L1', resolution: 'fixed', pass_id: local.passId } },
+      { op: 'end', at: 4000, request: { ...base(sid), step_id: run.step, outcome: 'completed' } },
+      { op: 'usage', at: 4100, request: { ...base(sid), status: 'ok', reasons: [], harness: 'claude',
+        window: { begin_ms: 1000, end_ms: 4000 }, observed_through_ms: 4000, sources: [], buckets: [], windows: [] } },
+    ]);
+    const before = read(fix, sid).envelope;
+    expect(before.status).toBe('ok');
+    expect(before.data).toMatchObject({
+      capture: 'ok', finding_cycles: null,
+      findings: { accepted: 2, fixed: 1, open: 1, unattributed: { 'v1-record': 1 } },
+      greptile_findings: { accepted: 1, fixed: 0, open: 1, by_part: { greptile: { reported: 1, accepted: 1, rejected: 0 } } },
+      delegated: { alpha: { attempts: 1, credited: 1, reported: 1, accepted: 1, input_tokens: 100 } },
+    });
+    expect(before.data.receipt_text).toContain('local_findings accepted=2 fixed=1 open=1');
+    expect(before.data.receipt_text).toContain('greptile_findings accepted=1 fixed=0 open=1');
+    const usage = () => metrics(fix.env, 'read', undefined, undefined, ['--session-id', sid, '--usage']).envelope;
+    const beforeUsage = usage();
+    expect(beforeUsage).toMatchObject({ status: 'ok', data: { capture: 'ok', harness: 'claude', totals: { direct: { input: 0 } } } });
+
+    const append = (at: number, cycles: unknown[]) => {
+      const record = storedRecord('finding-cycles', { ...base(sid), cycles }, at);
+      expect(validRecord(record)).toBe(true);
+      appendFileSync(file, JSON.stringify(record) + '\n');
+    };
+    const first = [{ ...sampleFindingCycle, observed: 'partial' }];
+    append(4200, first);
+    expect(read(fix, sid).envelope.data.finding_cycles).toEqual(first);
+    const latest = Array.from({ length: 32 }, (_, i) => ({
+      ...sampleFindingCycle, cycle: i + 1, prior: 'unavailable:binding-mismatch',
+    }));
+    append(4300, latest);
+    const updated = read(fix, sid); // metrics() verifies the 16 KiB read cap
+    expect(updated.envelope.status).toBe('ok');
+    expect(updated.envelope.data).toEqual({ ...before.data, records: before.data.records + 2, finding_cycles: latest });
+    expect(usage()).toEqual(beforeUsage);
+
+    appendFileSync(file, 'invalid-json\n');
+    expect(read(fix, sid).envelope).toMatchObject({ status: 'partial', data: { capture: 'partial', finding_cycles: null, malformed_records: 1 } });
+  }, 30_000);
 
   test('the helper, schema, runner, docs and skill share the fallback reasons and the label grammar', async () => {
     const dumped = spawnSync('python3', ['-B', '-I', '-c', [
@@ -2408,7 +2516,7 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     const { FALLBACK_REASONS, LABEL_RE, MODEL_RE } = await import('../src/review-delegate/delegate');
     expect(helper.reasons).toEqual([...FALLBACK_REASONS]);
     expect(helper.label).toBe(LABEL_RE.source.replace(/^\^|\$$/g, ''));
-    expect(helper.passes).toEqual([1, 2, 3]);
+    expect(helper.passes).toEqual([1, 2, 3, 4]);
     const def = schema.definitions.delegate;
     expect(def.properties.fallback_reason.enum.filter((r: string | null) => r !== null)).toEqual(helper.reasons);
     expect(def.properties.outcome.enum).toEqual(helper.outcomes);
@@ -2424,6 +2532,128 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     expect(docs).toContain(`more than ${helper.providers} distinct provider labels`);
     expect(docs).toContain('`too-many-providers`');
     expect(helper.label).toBe('[a-z][a-z0-9-]{0,31}');
+  });
+});
+
+describe('Track 105B finding-cycles ledger records', () => {
+  const coverages = [...ENUMS.passCoverage, 'mixed'];
+  const observed = ['complete', 'partial'];
+  const priors = ['none', 'imported', 'partial', ...PRIOR_FINDING_REASONS.map(reason => `unavailable:${reason}`)];
+  const pythonImport = [
+    'import importlib.util, json, sys',
+    `spec = importlib.util.spec_from_file_location("workflow_metrics", ${JSON.stringify(join(ROOT, 'bin/lib/workflow_metrics.py'))})`,
+    'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+  ];
+  function identityDocs() {
+    const doc = readFileSync(join(ROOT, 'docs/telemetry.md'), 'utf8');
+    const start = doc.indexOf('#### Finding identities and cycle counts');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = doc.indexOf('\n#### ', start + 1);
+    return doc.slice(start, end === -1 ? undefined : end);
+  }
+
+  test('schema and helper agree on record v3 structure and the helper enforces cycle arithmetic', () => {
+    const sid = 'extend-' + u();
+    const wrap = (cycles: unknown[], patch: Record<string, unknown> = {}) =>
+      storedRecord('finding-cycles', { ...base(sid), cycles, ...patch }, 2000);
+    const cycle = (patch: Record<string, unknown>) => wrap([{ ...sampleFindingCycle, ...patch }]);
+    const valid = [
+      wrap([sampleFindingCycle, { ...sampleFindingCycle, cycle: 'greptile' }]),
+      ...coverages.map(coverage => cycle({ coverage })),
+      ...observed.map(value => cycle({ observed: value })),
+      ...priors.map(prior => cycle({ prior })),
+      cycle({ run: 2 ** 31 - 1, cycle: 2 ** 31 - 1, new: 2 ** 31 - 1 }),
+      cycle({ new: 0, repeated_premise: 0, repeated_premise_pairs: 0 }),
+    ];
+    const invalid = [
+      { ...wrap([sampleFindingCycle]), v: 1 },
+      { ...wrap([sampleFindingCycle]), v: 2 },
+      { ...wrap([sampleFindingCycle]), path: 'src/example.ts' },
+      wrap([]),
+      wrap(Array.from({ length: 33 }, () => sampleFindingCycle)),
+      wrap([sampleFindingCycle], { v: 2 }),
+      wrap([sampleFindingCycle], { path: 'src/example.ts' }),
+      cycle({ new: true }),
+      cycle({ run: 0 }),
+      cycle({ run: true }),
+      cycle({ cycle: 0 }),
+      cycle({ cycle: 'local' }),
+      cycle({ carried: -1 }),
+      cycle({ unkeyed: 2 ** 31 }),
+      cycle({ coverage: 'unknown' }),
+      cycle({ observed: 'unknown' }),
+      cycle({ prior: 'unavailable:unknown' }),
+      cycle({ path: 'src/example.ts' }),
+    ];
+    const invalidArithmetic = [
+      cycle({ new: 0 }),
+      cycle({ repeated_premise_pairs: 2 }),
+      cycle({ repeated_premise_pairs: 0 }),
+    ];
+    for (const record of valid) expect(validRecord(record), JSON.stringify(record)).toBe(true);
+    for (const record of invalid) expect(validRecord(record), JSON.stringify(record)).toBe(false);
+
+    const cases = [...valid, ...invalid, ...invalidArithmetic];
+    const result = spawnSync('python3', ['-B', '-I', '-c', [...pythonImport,
+      'def accepted(record):',
+      '    try: m._validate_record(record)',
+      '    except (m.Fail, ValueError): return False',
+      '    return True',
+      'print(json.dumps([accepted(record) for record in json.load(sys.stdin)]))',
+    ].join('\n')], { input: JSON.stringify(cases), encoding: 'utf8', timeout: 15_000 });
+    expect(result.status, result.stderr).toBe(0);
+    const accepted = JSON.parse(result.stdout);
+    expect(accepted).toHaveLength(cases.length);
+    cases.forEach((record, i) => expect(accepted[i], JSON.stringify(record)).toBe(i < valid.length));
+  });
+
+  test('review state, helper, schema and telemetry docs share the finding vocabulary', () => {
+    const result = spawnSync('python3', ['-B', '-I', '-c', [...pythonImport,
+      'print(json.dumps({"key": m.FINDING_KEY_RE.pattern, "classes": m.FINDING_CLASSES, "coverage": m.FINDING_CYCLE_COVERAGES, "observed": m.FINDING_CYCLE_OBSERVED, "prior": m.FINDING_CYCLE_PRIORS}))',
+    ].join('\n')], { encoding: 'utf8', timeout: 15_000 });
+    expect(result.status, result.stderr).toBe(0);
+    const helper = JSON.parse(result.stdout);
+    const defs = schema.definitions;
+    expect(`^${helper.key}$`).toBe(FINDING_KEY_RE.source);
+    expect(defs.finding_key.pattern).toBe(FINDING_KEY_RE.source);
+    expect(helper.classes).toEqual([...ENUMS.findingClass]);
+    expect(defs.finding_class.enum).toEqual(helper.classes);
+    expect(helper.coverage).toEqual(coverages);
+    expect(helper.observed).toEqual(observed);
+    expect(helper.prior).toEqual(priors);
+    for (const field of ['coverage', 'observed', 'prior']) {
+      expect(defs.finding_cycle.properties[field].enum).toEqual(helper[field]);
+    }
+    const docs = identityDocs();
+    for (const value of [...ENUMS.findingClass, ...coverages, ...observed, ...priors]) {
+      expect(docs, value).toContain('`' + value + '`');
+    }
+  });
+
+  test('the published pass v4 and finding-cycles examples validate and load from the ledger', () => {
+    const fix = makeTelemetryFixture('community');
+    const lines = Array.from(identityDocs().matchAll(/^~~~json\n([\s\S]*?)\n~~~$/gm), match => match[1]!.trim()).flatMap(block => block.split('\n'));
+    expect(lines).toHaveLength(2);
+    const [pass, snapshot] = lines.map(line => JSON.parse(line));
+    expect(pass).toMatchObject({ v: 1, op: 'pass', request: { v: 4, state: 'attempt', attempt_outcome: 'completed' } });
+    expect(snapshot).toMatchObject({ v: 3, op: 'finding-cycles', request: { v: 1 } });
+    for (const record of [pass, snapshot]) expect(validRecord(record), JSON.stringify(validRecord.errors)).toBe(true);
+    const { session_id: sid, pass_id, scope, voice_id, attempt_id } = pass.request;
+    expect(snapshot.request.session_id).toBe(sid);
+    const at = pass.captured_at_ms;
+    const req = () => ({ ...base(sid), v: 2, pass_id, scope });
+    const file = craft(fix, sid, [
+      ...runRows(sid, at - 2).rows,
+      { op: 'pass', at: at - 1, request: { ...req(), state: 'started', required_voice_ids: [voice_id] } },
+    ]);
+    const selected = storedRecord('pass', { ...req(), state: 'voice-complete', voice_id, voice_status: 'completed', selected_attempt_id: attempt_id }, at + 1);
+    const completed = storedRecord('pass', { ...req(), state: 'completed' }, at + 2);
+    appendFileSync(file, [lines[0], JSON.stringify(selected), JSON.stringify(completed), lines[1]].join('\n') + '\n');
+    const { envelope } = read(fix, sid, pass.event_id);
+    expect(envelope).toMatchObject({ status: 'ok', data: {
+      capture: 'ok', malformed_records: 0, finding_cycles: snapshot.request.cycles,
+      event: { status: 'match', request_digest: pass.request_digest },
+    } });
   });
 });
 

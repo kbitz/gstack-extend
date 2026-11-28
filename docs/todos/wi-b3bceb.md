@@ -1,0 +1,11 @@
+### [review:files=src/review-state/export.ts|tests/review-state.test.ts] Test gap: Read the last snapshot after a segment loses all cycles
+- **ID:** wi-b3bceb
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The documented history case after moving the former segment’s final cycle has no ledger read test.
+- **Hypothesis (untested):** Exercise a one-cycle segment, derive before and after resuming that cycle, and verify the historical entry and the newest owner in both ledgers.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `src/review-state/export.ts:425`
+- **Evidence:** Track 105B coverage audit of the repaired diff and native tests. No failure was reproduced for this path.
+- **Context:** Filed by /review-and-prep on branch `mmm/478a561d` at `604c41d` (2026-11-28).
+- **Revisit when:** Cycle ownership or the segment snapshot record changes.
+- **Effort:** ? (user triages in /roadmap)

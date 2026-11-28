@@ -1976,8 +1976,18 @@ from the comment.
 |---|---|
 | `finding_id` | Run-local identity assigned by the parent, shown in `Unresolved:`. |
 | `path:line:category` | Receipt fingerprint used by `Finding blocking:` and `Test gap recorded:`. |
-| `fk1:` key | Run state only. SHA-256 of `fk1`, canonical path, normalized anchor and `finding_class`, separated by NUL, truncated to the first 16 lowercase hex digits after `fk1:`. A changed derivation uses a new prefix. |
+| `fk1:` key | Run state and local workflow-metrics ledger. SHA-256 of `fk1`, canonical path, normalized anchor and `finding_class`, separated by NUL, truncated to the first 16 lowercase hex digits after `fk1:`. A changed derivation uses a new prefix. |
 | `finding_class` and upstream `category` | The class is the closed tag below. The category is the reviewer's source classification and stays in the receipt fingerprint. |
+
+Review-state derive exports the `fk1:` key and class as `finding_key` and
+`finding_class` on `pass` attempts with request `v:4` and record wrapper
+`v:1`, without repository file paths. Per-cycle counts use the `v:3`
+wrapper (`record_v3`, `op: "finding-cycles"`, request `v:1`).
+`metrics read` exposes the latest snapshot in `data.finding_cycles` and
+returns `null` for that field on a pre-change ledger. Prior record versions
+remain readable. The published compatibility surface is the
+[telemetry contract](telemetry.md#workflow-metrics-finding-identities) and the
+[workflow-metrics schema](workflow-metrics.schema.json).
 
 The helper reads the cited whole line from the frozen candidate's Git blob as
 strict UTF-8. It splits on LF, removes one trailing CR, collapses ASCII space
