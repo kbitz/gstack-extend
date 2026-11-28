@@ -443,6 +443,8 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
     roadmap.indexOf('## Step 7: Hand off to /docs-ship'),
     roadmap.indexOf('Stage handoff:', roadmap.indexOf('## Step 7: Hand off to /docs-ship')),
   );
+  const recordedGapAuthorization =
+    'A recorded test gap keeps its own routing and discharge rules above; a marked entry still needs that authorization for a kill when its paths are gone.';
 
   const checkDeveloperDeferredGate = (text: string): boolean => {
     const flat = text.replace(/\s+/g, ' ');
@@ -454,11 +456,13 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
       flat.includes(
         'Fold it into a Track, place it, defer it to Future or discharge it when the tree shows it done, under the normal drain rules, and keep the line verbatim where it lands.',
       ) &&
+      flat.includes('In Future, embed it inline before `**Revisit when:**`, including in a GitHub issue pointer.') &&
+      flat.includes('In Track `_Source:`, pair it with the originating work-item ID') &&
       flat.includes(
         "Killing one for any reason needs the developer's word naming that entry, cited beside the kill; approving the whole proposal is not that word.",
       ) &&
       flat.includes('Unmarked and `Filed by: worker` entries stay under the gate.') &&
-      flat.includes('A recorded test gap keeps its own rule above, whatever its provenance.')
+      flat.includes(recordedGapAuthorization)
     );
   };
 
@@ -466,7 +470,7 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
     '### [review:files=src/export.ts] Retry may post a batch twice',
     '- **ID:** wi-d0ffee',
     '- **Deferred by:** developer, 2026-11-26: "1 - fix, file the rest, finish"',
-    '- **Description:** Retry loop may post a batch twice when the client times out after the server commits.',
+    '- **Description:** A retry may append the same batch twice to a local scratch report. Regenerating it restores the correct report.',
     '- **Evidence:** Constructed fixture shows the code path; no real run failed.',
   ].join('\n');
 
@@ -474,7 +478,7 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
     '### [review:files=src/export.ts] Retry may post a batch twice',
     '- **ID:** wi-c0ffee',
     '- **Filed by:** worker',
-    '- **Description:** Retry loop may post a batch twice when the client times out after the server commits.',
+    '- **Description:** A retry may append the same batch twice to a local scratch report. Regenerating it restores the correct report.',
     '- **Evidence:** Constructed fixture shows the code path; no real run failed.',
   ].join('\n');
 
@@ -501,8 +505,7 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
   const checkKilledListing = (text: string): boolean => {
     const flat = text.replace(/\s+/g, ' ');
     return (
-      flat.includes('each listed by ID') &&
-      flat.includes('and source') &&
+      flat.includes('each listed by ID (or `no ID`) and source (its `[source:tag]`, else its inbox path, `Future` or its Track ID)') &&
       flat.includes('never only a count') &&
       flat.includes('pruned by the manifestation gate') &&
       flat.includes("cites the developer's word")
@@ -525,9 +528,7 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
         ),
       ),
     ).toBe(false);
-    expect(
-      checkDeveloperDeferredGate(gate.replace('A recorded test gap keeps its own rule above, whatever its provenance.', '')),
-    ).toBe(false);
+    expect(checkDeveloperDeferredGate(gate.replace(recordedGapAuthorization, ''))).toBe(false);
     expect(checkDeveloperDeferredGate(gate.replace('kept in its Future bullet or Track `_Source:`', ''))).toBe(false);
 
     // Provenance routing fixtures.
@@ -541,6 +542,16 @@ describe('Track 106B developer-deferred manifestation gate and killed-entry list
     expect(() =>
       gateRoute(DEVELOPER_DEFERRED, gate.replace('`Deferred by: developer`', '`Deferred-by: developer`')),
     ).toThrow();
+  });
+
+  // Value: protects=developer-deferred item identity through early routing, dedup, renumbering and Future removal; fails_when=the skill permits title-only deletion or loses the correspondence between ID and provenance; why_new=criteria 1 and 4; seam=none; no_claim=agent behavior (static prose lock)
+  test('early routing, renumbering, and Future Apply preserve the developer-deferred entry by ID', () => {
+    const flat = roadmap.replace(/\s+/g, ' ');
+    expect(flat).toContain('A routing KILL cannot authorize killing a developer-deferred entry.');
+    expect(flat).toContain("keep each developer-deferred entry's ID and verbatim provenance together with its own disposition");
+    expect(flat).toContain('For any other proposed Future kill, read the complete bullet for provenance too.');
+    expect(flat).toContain('After renumbering, compare carried developer-provenance text by entry ID with its source');
+    expect(flat).toContain('delete only the approved killed, discharged or promoted bullet by work-item ID');
   });
 
   // Value: protects=proposal Summary, Apply summary, Step 6 commit body, and Step 7 PR-body handoff require listing every killed entry by ID and source rather than only a count; fails_when=killed listing reverts to count-only or any of the four sections drops its requirement; why_new=criteria 2 and 3; seam=none; no_claim=agent behavior (static prose lock)
@@ -893,7 +904,7 @@ describe('one-task Tracks for existing code paths sizing rule', () => {
     ruleStart >= 0 && scopeStart > ruleStart ? sizing.slice(ruleStart, scopeStart) : '';
 
   const NUMERIC_TRIGGER_RE =
-    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred)\+?(?:\s*|-)(?:lines?|LOC|tasks?|items?)\b/i;
+    /\b(?:\d+|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred)\b)\+?(?:\s*|-)(?:lines?|LOC|tasks?|items?)\b/i;
 
   const checkOneTaskSplittingRule = (text: string): boolean => {
     const flat = text.replace(/\s+/g, ' ');
@@ -979,6 +990,7 @@ describe('one-task Tracks for existing code paths sizing rule', () => {
     expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards with more than five tasks.`)).toBe(false);
     expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split any 300-line diff.`)).toBe(false);
     expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards over 200+ lines.`)).toBe(false);
+    expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Keep the \`fiveTasks\` fixture.`)).toBe(true);
   });
 
   // Value: protects=Structured proposal artifact Summary requires naming each card split into one-task Tracks and each multi-task card kept whole with its reason; fails_when=the Card sizing decisions bullet is removed or weakened; why_new=plan criteria 2 and 3; seam=none
