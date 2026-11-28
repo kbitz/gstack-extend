@@ -7,13 +7,14 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { PART_KEYS, PARTS } from '../src/review-delegate/delegate.ts';
 import { BUILD_COMMANDS, buildHelp, buildRequest, FLAG_TABLES, parseDelegationLine, PASS_STATE_FLAGS, PASS_STATES, rubricForPart } from '../src/review-state/build.ts';
 import { main } from '../src/review-state/cli.ts';
-import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5 } from '../src/review-state/export.ts';
+import { EXPORT_SCHEMA, NAMESPACE, projectState, uuidv5, type ReviewStateExport } from '../src/review-state/export.ts';
 import { allocateExclusiveFile, FIELD_FMT, isFreshForBinding, makeCtx, RENDER_EXAMPLES, RENDER_SCHEMA, RENDER_SHAPES, renderDelegationPolicyLine, tilde, unresolvedFindings, wirePart, type RenderCtx } from '../src/review-state/render.ts';
 import { SHOW_SCHEMA } from '../src/review-state/show.ts';
 import { ADDITIVE_V1_DEFAULTS, applyCommand, DELEGATE_RUNNER_EXTRA_KEYS, HEX40_RE, REASON_TABLE, REQUEST_EXAMPLES, REQUEST_SHAPES, serializeState, STATE_KEYS, validateStoredState, writerOrderKnown, WTREE_RE, type CommandName, type DelegationPolicy, type EnvChecker, type GitInfo, type ReviewRunState } from '../src/review-state/state.ts';
 import { classifyLockHolder, readHelperVersion, readLocalBootId, readLocalPidNs } from '../src/review-state/store.ts';
 import { openChildStdio, spawnSync as spawnWithFileOutput } from './helpers/child-stdio.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
+import { cleanupTelemetryFixtures, HELPER_BIN, makeTelemetryFixture } from './helpers/telemetry-env';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const BIN_PATH = join(REPO_ROOT, 'bin', 'review-state');
@@ -163,6 +164,7 @@ beforeAll(() => {
 afterAll(() => {
   if (baseTmp) rmSync(baseTmp, { recursive: true, force: true });
 });
+afterAll(cleanupTelemetryFixtures, 60_000);
 
 describe('bin/review-state', () => {
   test('replay preserves each pass timestamp and JSON numeric zero', () => {
@@ -1216,10 +1218,15 @@ describe('bin/review-state', () => {
 
     // Check stripped fields (receipt_class on findings, call_id on delegate)
     const att20 = exp.records.find((r: any) => r.op === 'pass' && r.request.attempt_id === uid(20));
-    expect(att20.request.v).toBe(2);
+    expect(att20.request.v).toBe(4);
+    expect(att20.request.findings).toMatchObject([
+      { finding_key: null, finding_class: null },
+      { finding_key: null, finding_class: null },
+    ]);
     expect(att20.request.findings[0]).not.toHaveProperty('receipt_class');
     const att21 = exp.records.find((r: any) => r.op === 'pass' && r.request.attempt_id === uid(21));
-    expect(att21.request.v).toBe(3);
+    expect(att21.request.v).toBe(4);
+    expect(att21.request.findings).toMatchObject([{ finding_key: null, finding_class: null }]);
     expect(att21.request.delegate).not.toHaveProperty('call_id');
     expect(att21.request.delegate.provider).toBe('openai');
 
@@ -2318,7 +2325,7 @@ describe('bin/review-state', () => {
       session_id: sid2,
     });
 
-    // Export of recorded interrupted segment 1 emits begin and pass, but no run end.
+    // The interrupted segment exports its partial cycle without a run end.
     const exp1 = runCli(['export', '--dir', d]);
     expect(exp1.code).toBe(0);
     expect(exp1.json.segments[0]).toMatchObject({
@@ -2328,7 +2335,9 @@ describe('bin/review-state', () => {
       derived: false,
       outcome: 'unknown',
     });
-    expect(exp1.json.records.filter((r: { session_id: string }) => r.session_id === sid1).map((r: { op: string }) => r.op)).toEqual(['begin', 'pass']);
+    const interruptedRecords = exp1.json.records.filter((r: { session_id: string }) => r.session_id === sid1);
+    expect(interruptedRecords.map((r: { op: string }) => r.op)).toEqual(['begin', 'pass', 'finding-cycles']);
+    expect(interruptedRecords[2].request.cycles).toMatchObject([{ observed: 'partial' }]);
     expect(exp1.json.stage_runs).toEqual([]);
 
     // Resume on a finished run is still refused with "finished".
@@ -4804,7 +4813,7 @@ describe('bin/review-state', () => {
     );
   });
 
-  // Value: protects=unreported delegate wall_ms and token counts stored as explicit nulls, rendered as unknown, and exported to valid workflow_metrics pass v3 with fallback correction; fails_when=null delegate counts are refused, rendered as 0/null, break all-integer parity, or fail stored-state validation; why_new=Track 83A T1; seam=CLI, render, export, and workflow_metrics.py validator
+  // Value: protects=unreported delegate wall_ms and token counts stored as explicit nulls, rendered as unknown, and exported to workflow metrics with fallback correction; fails_when=null delegate counts are refused, rendered as 0/null, break all-integer parity, or fail stored-state validation; why_new=Track 83A T1; seam=CLI, render, export, and workflow_metrics.py validator
   test('stores, replays, renders, and exports delegated attempts with unreported null counts while preserving all-integer bytes', () => {
     const d = newDir();
     const start = mkStart(860, {
@@ -8463,6 +8472,148 @@ describe('cross-cycle finding identity', () => {
     expect(result.code, result.out).toBe(0);
     return { file: result.json.files[0], text: readFileSync(result.json.files[0].path, 'utf8') };
   };
+  const exportRun = (dir: string): ReviewStateExport => {
+    const result = runCli(['export', '--dir', dir]);
+    expect(result.code, result.out).toBe(0);
+    expect(result.json.schema).toBe('review-state-export/v1');
+    return result.json;
+  };
+  const runMetrics = () => {
+    const fixture = makeTelemetryFixture('community');
+    const telemetry = (args: string[]) => {
+      const result = spawnSync(HELPER_BIN, args, { cwd: repo, env: fixture.env, encoding: 'utf8', timeout: 15_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe('');
+      return JSON.parse(result.stdout);
+    };
+    return {
+      derive: (dir: string) => telemetry(['derive', '--dir', dir]),
+      read: (sid: string) => telemetry(['metrics', 'read', '--session-id', sid]),
+      ledger: (sid: string) => readFileSync(join(fixture.home, '.gstack-extend', 'analytics', 'workflow-metrics', `${sha256(sid)}.jsonl`), 'utf8'),
+    };
+  };
+
+  // Value: protects=path-free finding attribution and evolving cycle snapshots through the real metrics writer; fails_when=mid-run re-derives conflict, drop counts, or duplicate unchanged records; why_new=105B criteria 1/4; seam=review-state export, telemetry derive and metrics read
+  test('derives path-free finding identities and appends evolving cycle snapshots only once', () => {
+    const dir = newDir();
+    const frozen = snapshot('first premise\nsecond premise on the same path\n');
+    const metrics = runMetrics();
+    expect(start(dir, 1500, { session_id: null }).json.reason).toBe('recorded');
+    begin(dir, 1510);
+
+    const projectAndRead = (cycles: unknown[], recorded: number) => {
+      const exported = exportRun(dir);
+      const sid = exported.segments[0]!.session_id;
+      const sidecar = exported.records.find(({ op }) => op === 'finding-cycles')!;
+      expect(sidecar).toEqual({
+        session_id: sid, op: 'finding-cycles', request: {
+          v: 1, stage: 'review-and-prep', session_id: sid, cycles,
+          event_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+        },
+      });
+      expect(metrics.derive(dir)).toMatchObject({
+        status: 'ok', reason: null, data: { sessions: [{ session_id: sid, recorded, failed: 0, reason: null }] },
+      });
+      expect(metrics.read(sid)).toMatchObject({ status: 'ok', data: { capture: 'ok', finding_cycles: cycles } });
+      const ledger = metrics.ledger(sid);
+      for (const records of [JSON.stringify(exported.records), ledger]) {
+        expect(records).not.toContain('file.txt');
+        expect(records).not.toContain('"path"');
+      }
+      return { exported, sidecar, ledger };
+    };
+
+    const openCycle = {
+      run: 1, cycle: 1, coverage: 'full', observed: 'partial', new: 0, carried: 0,
+      repeated_premise: 0, repeated_premise_pairs: 0, unkeyed: 0, prior: 'none',
+    };
+    const open = projectAndRead([openCycle], 3);
+    const { finding_class: _class, ...unkeyed } = finding('unkeyed');
+    record(dir, {
+      pass_id: uid(1510), state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(1511), outcome: 'completed',
+      anchor_commit: frozen,
+      findings: [finding('keyed', 1), finding('class-only', undefined, 'docs'), unkeyed],
+      delegate: {
+        provider: 'openai', model: 'gpt-5', outcome: 'credited', fallback_reason: null, replay: false,
+        wall_ms: 420, input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 20,
+        cache_creation_input_tokens: null, call_id: sha256('call-1511'),
+      },
+    });
+    select(dir, 1510, 1511);
+    complete(dir, 1510);
+    const completedCycle = { ...openCycle, observed: 'complete', new: 1, unkeyed: 2 };
+    const completed = projectAndRead([completedCycle], 4);
+    const exportedAttempt = completed.exported.records.find(({ request }) => request.attempt_id === uid(1511))!;
+    const key = readState(dir).passes[0]!.voices[0]!.attempts[0]!.findings![0]!.identity!.key;
+    expect(key).toMatch(/^fk1:[0-9a-f]{16}$/);
+    expect(exportedAttempt.request).toMatchObject({
+      v: 4, delegate: { provider: 'openai', outcome: 'credited' }, findings: [
+        { finding_id: 'keyed', finding_key: key, finding_class: 'correctness' },
+        { finding_id: 'class-only', finding_key: null, finding_class: 'docs' },
+        { finding_id: 'unkeyed', finding_key: null, finding_class: null },
+      ],
+    });
+
+    report(dir, 1520, [finding('carried', 1), finding('repeated-premise', 2)], frozen, { cycle: 2, coverage: 'delta', delta_from: baseSha });
+    const secondCycle = {
+      ...openCycle, cycle: 2, coverage: 'delta', observed: 'complete', new: 1, carried: 1,
+      repeated_premise: 1, repeated_premise_pairs: 1,
+    };
+    const completeCycles = [completedCycle, secondCycle];
+    const second = projectAndRead(completeCycles, 5);
+    const replay = projectAndRead(completeCycles, 0);
+    expect(replay.sidecar).toEqual(second.sidecar);
+    expect(replay.ledger).toBe(second.ledger);
+
+    // An empty follow-up makes cycle 2 partial again, then restores the exact completed counts.
+    begin(dir, 1522, { cycle: 2, coverage: 'delta', delta_from: baseSha });
+    const reopened = projectAndRead([completedCycle, { ...secondCycle, observed: 'partial' }], 2);
+    attempt(dir, 1522, 1523, []);
+    select(dir, 1522, 1523);
+    complete(dir, 1522);
+    const restored = projectAndRead(completeCycles, 4);
+    expect(restored.sidecar.request.cycles).toEqual(second.sidecar.request.cycles);
+    expect(restored.sidecar.request.event_id).not.toBe(second.sidecar.request.event_id);
+    const finalReplay = projectAndRead(completeCycles, 0);
+    expect(finalReplay.sidecar).toEqual(restored.sidecar);
+    expect(finalReplay.ledger).toBe(restored.ledger);
+
+    const snapshots = [open, completed, second, reopened, restored];
+    expect(new Set(snapshots.map(({ sidecar }) => sidecar.request.event_id)).size).toBe(snapshots.length);
+    const rows = restored.ledger.trimEnd().split('\n').map(line => JSON.parse(line));
+    expect(rows.filter(({ op }) => op === 'finding-cycles')).toMatchObject(
+      snapshots.map(({ sidecar }) => ({ v: 3, request: sidecar.request, event_id: sidecar.request.event_id })),
+    );
+    expect(rows.find(({ event_id }) => event_id === exportedAttempt.request.event_id)).toMatchObject({ v: 1, op: 'pass', request: exportedAttempt.request });
+  }, 30_000);
+
+  // Value: protects=first-seen cycle grouping and last-known segment ownership through pauses and legacy null segments; fails_when=a local cycle splits, moves to a null segment, or displaces an interleaved Greptile cycle; why_new=105B criterion 4; seam=stored-state export
+  test('projects each cycle once into its last known segment and skips groups with no segment', () => {
+    const dir = newDir();
+    expect(start(dir, 1530, { session_id: null }).json.reason).toBe('recorded');
+    report(dir, 1540, []);
+    report(dir, 1550, [], undefined, { scope: 'greptile' });
+    report(dir, 1560, [], undefined, { cycle: 2 });
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(1570), kind: 'pause', base: baseSha }).json.reason).toBe('recorded');
+    const recordedSid = `extend-${uid(1571)}`;
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(1571), kind: 'resume', base: baseSha, session_id: recordedSid }).json.reason).toBe('recorded');
+    report(dir, 1580, [], undefined, { coverage: 'delta', delta_from: baseSha });
+    report(dir, 1590, []);
+    report(dir, 1600, [], undefined, { cycle: 3 });
+
+    const legacy = readState(dir);
+    legacy.passes[4]!.segment = null;
+    legacy.passes[5]!.segment = null;
+    writeFileSync(join(dir, stateFile), JSON.stringify(legacy));
+    const exported = exportRun(dir);
+    expect(exported.skipped.map(({ id }) => id)).toEqual([uid(1590), uid(1600)]);
+    expect(exported.records.filter(({ op }) => op === 'finding-cycles')).toMatchObject([
+      { session_id: exported.segments[0]!.session_id, request: { cycles: [
+        { cycle: 'greptile', coverage: 'full' }, { cycle: 2, coverage: 'full' },
+      ] } },
+      { session_id: recordedSid, request: { cycles: [{ cycle: 1, coverage: 'mixed' }] } },
+    ]);
+  });
 
   // Value: protects=frozen-blob key normalization and safe downgrade; fails_when=the live file or line number enters the key, Unicode whitespace collapses, duplicate normalized lines alias or same-line same-class reports share a key; why_new=102A E1-E3; seam=direct JSON and Git objects
   test('golden fk1 vectors survive re-anchoring and distinguish classes on one line', () => {
@@ -8728,8 +8879,21 @@ describe('cross-cycle finding identity', () => {
 
     report(second, 1260, [finding('second', 1), finding('third', 2)], frozen);
     const known = show(second).finding_cycles[0];
-    expect(known).toMatchObject({ run: 2, cycle: 1, new: 1, carried: 1, repeated_premise: 1, prior: 'imported' });
+    expect(known).toEqual({
+      run: 2, cycle: 1, coverage: 'full', observed: 'complete', new: 1, carried: 1,
+      repeated_premise: 1, repeated_premise_pairs: 1, unkeyed: 0, prior: 'imported',
+    });
     const secondBytes = stop(second, 2);
+    const secondExport = exportRun(second);
+    const sid = secondExport.segments[0]!.session_id;
+    expect(secondExport.records.find(({ op }) => op === 'finding-cycles')?.request.cycles).toEqual([known]);
+    const metrics = runMetrics();
+    expect(metrics.derive(second)).toMatchObject({ status: 'ok', data: { sessions: [{ session_id: sid, failed: 0 }] } });
+    expect(metrics.read(sid)).toMatchObject({ status: 'ok', data: { capture: 'ok', finding_cycles: [known] } });
+    for (const records of [JSON.stringify(secondExport.records), metrics.ledger(sid)]) {
+      expect(records).not.toContain('file.txt');
+      expect(records).not.toContain('"path"');
+    }
 
     const third = newDir();
     expect(imports(third, 1270, secondBytes, 2).json).toMatchObject({ reason: 'recorded', detail: { prior_findings: { complete: true, entry_count: 2, source: { run_id: uid(1250) } } } });
@@ -8737,7 +8901,13 @@ describe('cross-cycle finding identity', () => {
     expect(show(third).finding_cycles[0]).toMatchObject({ run: 3, cycle: 1, new: 0, carried: 1 });
     const priorEntries = readState(third).continuation.prior_findings;
     expect(priorEntries).toMatchObject({ entries: expect.arrayContaining([{ run: 1, cycle: 1, key: expect.any(String), finding_class: 'correctness', path: 'file.txt' }, { run: 2, cycle: 1, key: expect.any(String), finding_class: 'correctness', path: 'file.txt' }]) });
-    const exportWithIdentity = runCli(['export', '--dir', third]);
+    const exportWithIdentity = exportRun(third);
+    expect(exportWithIdentity.records.find(({ request }) => request.state === 'attempt')?.request).toMatchObject({
+      v: 4, findings: [{ finding_key: expect.stringMatching(/^fk1:[0-9a-f]{16}$/), finding_class: 'correctness' }],
+    });
+    expect(exportWithIdentity.records.find(({ op }) => op === 'finding-cycles')?.request.cycles).toMatchObject([
+      { new: 0, carried: 1, unkeyed: 0, prior: 'imported' },
+    ]);
     const legacy = readState(third);
     Reflect.deleteProperty(legacy.continuation, 'prior_findings');
     Reflect.deleteProperty(legacy.continuation, 'prior_state');
@@ -8750,7 +8920,13 @@ describe('cross-cycle finding identity', () => {
     expect(legacyShow).toMatchObject({ finding_prior: 'unavailable', finding_prior_reason: 'not-recorded' });
     expect(legacyShow.finding_cycles[0]).toMatchObject({ unkeyed: 1, prior: 'unavailable:not-recorded' });
     expect(validateStoredState(legacy).ok).toBe(true);
-    expect(runCli(['export', '--dir', third]).out).toBe(exportWithIdentity.out);
+    const legacyExport = exportRun(third);
+    expect(legacyExport.records.find(({ request }) => request.state === 'attempt')?.request).toMatchObject({
+      v: 4, findings: [{ finding_key: null, finding_class: null }],
+    });
+    expect(legacyExport.records.find(({ op }) => op === 'finding-cycles')?.request.cycles).toMatchObject([
+      { unkeyed: 1, prior: 'unavailable:not-recorded' },
+    ]);
 
     const missing = newDir();
     expect(start(missing, 1290, { continuation: continued() }).json.reason).toBe('recorded');

@@ -65,6 +65,7 @@
       "tests/telemetry.test.ts"
     ],
     "bin/gstack-extend-telemetry": [
+      "tests/review-state.test.ts",
       "tests/skill-content.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
@@ -195,6 +196,7 @@
       "tests/telemetry.test.ts"
     ],
     "bin/lib/telemetry.py": [
+      "tests/review-state.test.ts",
       "tests/workflow-metrics.test.ts"
     ],
     "bin/lib/telemetry_usage.py": [
