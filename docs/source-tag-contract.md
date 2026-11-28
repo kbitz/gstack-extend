@@ -467,6 +467,8 @@ Usage: todo-file [repo-path] --tag <[source:tag]> --title <title> --field '<Key>
        todo-file --help | -h
 ```
 
+- **Repository.** If you omit `[repo-path]`, the command uses the Git worktree
+  root when available and the current directory outside a worktree.
 - **Option values.** Use `--option=value` to pass literal text that looks like
   an option, for example `--title=--help`.
 - **Lead field and evidence:** `--field` is repeatable and written in argument
@@ -484,8 +486,9 @@ Usage: todo-file [repo-path] --tag <[source:tag]> --title <title> --field '<Key>
 - **Exit codes.** `0` means the entry was filed or help was shown. `1` means a
   refusal or an I/O error. Repository refusals print the reason on stderr.
   Validation and repository checks run before creating files or directories.
-  A write failure can leave the intake directories in place. The command
-  removes an incomplete record and reports any cleanup error on stderr.
+  A write failure can leave the intake directories in place. The command tries
+  to remove an incomplete record if it can verify the file's identity and
+  reports cleanup errors on stderr.
   `2` means invalid arguments, with usage on stderr.
 
 ### Provenance examples

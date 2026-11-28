@@ -194,6 +194,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 - **Project setup:** `gstack-extend init /path/to/project --dry-run` previews the
   scaffold; `--migrate` fills missing files in an existing project. Writes require
   `jq`. See [`/gstack-extend-init`](skills/gstack-extend-init.md) and `gstack-extend init --help`.
+- **TODO intake:** Run `<checkout>/bin/todo-file --help` for the command that files
+  individual backlog records with a work-item ID and filer provenance.
+  See the [intake CLI contract](docs/source-tag-contract.md#cli-bintodo-file).
 - **Quota ledger (experimental):** `gstack-extend quota status --refresh` checks
   remaining vendor capacity; `gstack-extend doctor quota` diagnoses adapters.
   Only explicit quota commands sample vendors. [Quick start and JSON contract](docs/quota-ledger.md).
