@@ -139,14 +139,15 @@ recovery guidance remain on stderr. For installs, `setup --summary` adds an
 on failure. The block lists refreshed hosts with the number of skills written,
 skipped hosts, and selected hosts that did not finish. It precedes any
 `SETUP_SKIPPED_HOSTS` line. `--summary` cannot be used with `--uninstall`.
-`bin/update-run` requests and forwards the block and the skipped-host line;
-`UPGRADE_OK` means the checkout upgraded, while listed hosts were left untouched
-and may still have stale copies. The refreshed `/gstack-extend-upgrade` skill and
-other refreshed skills' auto-upgrade flows report both outcomes. Older copies
-preserved in a shared directory may ignore the report; follow **Shared-directory
-migration** below to refresh them. After separating shared or unsafe directories,
-rerun `setup --host auto` from that checkout to refresh installable copies without
-another upgrade. After `UPGRADE_FAILED stage=setup`,
+`bin/update-run` requests and forwards the block and the skipped-host line.
+`UPGRADE_OK` means the checkout upgraded. Hosts named in `SETUP_SKIPPED_HOSTS`
+were left untouched and may still have stale copies. The refreshed
+`/gstack-extend-upgrade` skill and other refreshed skills' auto-upgrade flows
+report both outcomes. Older copies preserved in a shared directory may ignore
+the report. Follow **Shared-directory migration** below to refresh them.
+After separating shared or unsafe directories, rerun `setup --host auto` from
+that checkout to refresh installable copies without another upgrade. After
+`UPGRADE_FAILED stage=setup`,
 rerun `<checkout>/bin/update-run <checkout>` instead so its post-setup steps
 also run.
 
@@ -506,13 +507,14 @@ skills.
 
 Setup records associated regular Claude `SKILL.md` files and skipped-host
 facts under `${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/install-status`.
-A successful setup stays quiet on stdout. The checker prints the facts. A fact
-line names the host, the skill (`-` for a whole host directory), the path, the
-reason and cause, the checkout the record names, and a Fix link in this
-checkout's `docs/installation.md`. For a preserved copy, `checkout=` is the
-checkout its `.extend-root` names; for a host fact, it is the checkout whose
-setup saw it. On a preserved-copy line, `origin=` says how that checkout was
-qualified: `this_checkout` (the checkout that recorded the fact),
+With `--quiet`, setup still prints any `SETUP_SKIPPED_HOSTS` or `INSTALL_WARN`
+notices and the host summary if `--summary` was passed. The checker prints the
+saved facts. A fact line names the host, the skill (`-` for a whole host
+directory), the path, the reason and cause, the checkout the record names, and
+a Fix link in this checkout's `docs/installation.md`. For a preserved copy,
+`checkout=` is the checkout its `.extend-root` names. For a host fact, it is
+the checkout whose setup saw it. On a preserved-copy line, `origin=` says how
+that checkout was qualified: `this_checkout` (the checkout that recorded the fact),
 `verified_checkout` (another existing gstack-extend checkout) or
 `prior_qualified` (one that has since moved or been deleted). A host line shows
 `detection=` instead: how setup selected that host (`binary`,
