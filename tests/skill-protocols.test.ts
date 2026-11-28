@@ -691,6 +691,67 @@ describe('Track 10A SHARED:upgrade-flow block', () => {
     }
   });
 
+  test('the spawned notice keeps its placement and the guard is not an updater failure', () => {
+    const from = CANONICAL_UPGRADE_FLOW.indexOf('**If `UPGRADE_SESSION=spawned`:**');
+    const to = CANONICAL_UPGRADE_FLOW.indexOf('**If `AUTO_UPGRADE=true`:**');
+    expect(CANONICAL_UPGRADE_FLOW.slice(from, to)).toContain(
+      "Put this line in the run's final message, before any fenced prompt and any result, handoff, stage or pause line the skill ends with, and never inside a fence or a versioned receipt field",
+    );
+    expect(CANONICAL_UPGRADE_FLOW).toContain(
+      "The guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output and not a failure.",
+    );
+  });
+
+  test('every preamble has one offer trigger and one just-upgraded trigger before the shared block', () => {
+    const offer = 'If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.';
+    const just = 'If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)"';
+    for (const skill of PREAMBLE_SKILLS) {
+      const lines = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8').split('\n');
+      const marker = lines.indexOf('<!-- SHARED:upgrade-flow -->');
+      for (const matches of [(line: string) => line === offer, (line: string) => line.startsWith(just)]) {
+        const indexes = lines.flatMap((line, index) => matches(line) ? [index] : []);
+        expect(indexes, skill).toHaveLength(1);
+        expect(indexes[0], skill).toBeLessThan(marker);
+      }
+    }
+  });
+
+  test('the canonical block has five ordered steps and one guarded updater fence', () => {
+    expect(CANONICAL_UPGRADE_FLOW.match(/^#### Step .*$/gm)).toEqual([
+      '#### Step 1: Session kind',
+      '#### Step 2: Ask the user (or auto-upgrade)',
+      '#### Step 3: Upgrade',
+      "#### Step 4: Show what's new",
+      '#### Step 5: Continue',
+    ]);
+    for (const wording of [
+      'Next reminder in 24h',
+      'Auto-upgrade enabled. Future updates will install automatically.',
+      'Update checks disabled. Run',
+    ]) {
+      expect(CANONICAL_UPGRADE_FLOW).toContain(wording);
+    }
+    const updaterFences = extractFences(CANONICAL_UPGRADE_FLOW).filter(f => f.body.includes('bin/update-run'));
+    expect(updaterFences).toHaveLength(1);
+    const upgrade = CANONICAL_UPGRADE_FLOW.split('#### Step 3:')[1]!.split('#### Step 4:')[0]!;
+    expect(upgrade).toContain(updaterFences[0]!.body.trim());
+    expect(updaterFences[0]!.body).toContain('in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session"');
+  });
+
+  test('Step 4 reports the installed versions, change sources and host summary', () => {
+    const step4 = CANONICAL_UPGRADE_FLOW.split('#### Step 4:')[1]!.split('#### Step 5:')[0]!;
+    for (const wording of [
+      'gstack-extend v{new} — upgraded from v{old}!',
+      "What's new:",
+      'CHANGELOG.md',
+      '### Upgrade notes',
+      'WHATS_NEW_RANGE',
+      'Upgrade summary',
+    ]) {
+      expect(step4).toContain(wording);
+    }
+  });
+
   test('canonical block orders spawned before auto_upgrade and interactive question', () => {
     const spawnedAt = CANONICAL_UPGRADE_FLOW.indexOf('**If `UPGRADE_SESSION=spawned`:**');
     const autoAt = CANONICAL_UPGRADE_FLOW.indexOf('**If `AUTO_UPGRADE=true`:**');
@@ -708,12 +769,14 @@ describe('Track 10A SHARED:upgrade-flow block', () => {
     );
 
     // The guard's own output must not read as a failed upgrade with a retry command.
-    const autoSection = CANONICAL_UPGRADE_FLOW.slice(autoAt, questionAt);
-    const skippedAt = autoSection.indexOf(
+    const step3At = CANONICAL_UPGRADE_FLOW.indexOf('#### Step 3:');
+    expect(step3At).toBeGreaterThan(questionAt);
+    const upgrade = CANONICAL_UPGRADE_FLOW.slice(step3At, CANONICAL_UPGRADE_FLOW.indexOf('#### Step 4:'));
+    const skippedAt = upgrade.indexOf(
       '- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.',
     );
     expect(skippedAt).toBeGreaterThan(-1);
-    expect(autoSection.indexOf('- On failure:')).toBeGreaterThan(skippedAt);
+    expect(upgrade.indexOf('- On failure:')).toBeGreaterThan(skippedAt);
   });
 });
 
@@ -1077,7 +1140,7 @@ describe('Track 76A Conductor removal and host-neutral prompt visibility', () =>
     }
   }
 
-  // Value: protects=no file under skills/ names Conductor, a .context/ path, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD (any later skill that mentions Conductor or a .context/ path will fail this check by intent); fails_when=any skill reintroduces Conductor, .context/, the removed SHARED marker, or an unguarded Paseo reference; why_new=Track 76A criterion 3 locks the cross-skill removal and negative detection; seam=none
+  // Value: protects=no file under skills/ names Conductor, a .context/ path, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD (any later skill that mentions Conductor or a .context/ path will fail this check by intent); fails_when=any skill reintroduces Conductor, .context/, the removed SHARED marker, or an unguarded Paseo reference; why_new=Track 76A criterion 3 locks cross-skill removal; Track 105A tests the Paseo and retired-marker branches directly; seam=none
   test('no skills/*.md names Conductor, .context/, SHARED:conductor-visibility-head, or Paseo outside WORKSPACE_GUARD, and synthetic splices fail', () => {
     expect(Object.keys(liveSkills).length).toBeGreaterThan(0);
     expect(findRemovedHostViolations(liveSkills)).toEqual([]);
@@ -1093,6 +1156,21 @@ describe('Track 76A Conductor removal and host-neutral prompt visibility', () =>
       'implement.md': `${liveSkills['implement.md']}\nSave under .context/implement/.\n`,
     };
     expect(findRemovedHostViolations(withContext)).toEqual(['implement.md: .context/']);
+
+    const withPaseo = {
+      ...liveSkills,
+      'implement.md': `${liveSkills['implement.md']}\nIn a Paseo worktree.\n`,
+    };
+    expect(findRemovedHostViolations(withPaseo)).toEqual(['implement.md: /paseo/i outside WORKSPACE_GUARD']);
+
+    const withRemovedMarker = {
+      ...liveSkills,
+      'implement.md': `${liveSkills['implement.md']}\n<!-- SHARED:conductor-visibility-head -->\n`,
+    };
+    expect(findRemovedHostViolations(withRemovedMarker)).toEqual([
+      'implement.md: SHARED:conductor-visibility-head',
+      'implement.md: /conductor/i',
+    ]);
   });
 
   // Value: protects=pair-review and full-review carry the host-neutral Prompt Visibility Rule heading and lead once before item 1, item 2 and Action receipt format; fails_when=either skill drops the lead text, duplicates it, or scrambles the item/receipt order; why_new=Track 76A T2 replaces SHARED:conductor-visibility-head with host-neutral text; seam=none
@@ -1314,6 +1392,28 @@ describe('Track 16D preamble representatives', () => {
         expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
         expect(readFileSync(r.sentinel ?? sentinel, 'utf8').trim()).toBe(root);
       }
+    }
+  });
+
+  test('the installed start command forwards both update-check notices in order', () => {
+    const home = join(extendRootTmp, 'notices-home');
+    const root = join(extendRootTmp, 'notices-root');
+    const cwd = join(extendRootTmp, 'notices-cwd');
+    const notices = ['JUST_UPGRADED 1.0.0 1.1.0', 'UPGRADE_AVAILABLE 1.1.0 1.2.0'];
+    mkdirSync(cwd);
+    mkdirSync(join(root, 'bin'), { recursive: true });
+    writeFileSync(join(root, 'bin', 'update-check'),
+      `#!/bin/sh\n${MARKER_LINE}\nprintf '%s\\n' '${notices[0]}' '${notices[1]}'\n`,
+      { mode: 0o755 });
+    plantSkillLink(home, 'pair-review', root);
+
+    for (const r of runPreamble('pair-review', home, cwd)) {
+      expect(r.status, r.shell).toBe(0);
+      expect(r.stderr, r.shell).toBe('');
+      const lines = r.stdout.split('\n');
+      const rootAt = lines.findIndex(line => line.startsWith('_EXTEND_ROOT='));
+      expect(rootAt, r.shell).toBeGreaterThan(-1);
+      expect(lines.slice(rootAt + 1, rootAt + 3), r.shell).toEqual(notices);
     }
   });
 

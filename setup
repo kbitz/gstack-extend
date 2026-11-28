@@ -8,6 +8,7 @@
 #   ./setup --host <host> --uninstall
 #   ./setup --skills-dir <path> --uninstall          # legacy v0.16.0 cleanup
 #   ./setup --quiet
+#   ./setup --host auto --quiet --summary
 set -euo pipefail
 
 _SETUP_DIR=${0%/*}
@@ -37,8 +38,10 @@ SKILLS_DIR=""
 SKILLS_DIR_GIVEN=0
 UNINSTALL=0
 QUIET=0
+SUMMARY=0
+HOSTS_RESOLVED=0
 HOST="claude"
-USAGE="Usage: ./setup [--host claude|codex|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
+USAGE="Usage: ./setup [--host claude|codex|auto] [--uninstall] [--quiet] [--summary] [--skills-dir <path> --uninstall]"
 
 # shellcheck source=bin/lib/install-safety.sh
 . "$SCRIPT_DIR/bin/lib/install-safety.sh"
@@ -84,6 +87,8 @@ HOST_DETECT_claude=""
 HOST_DETECT_codex=""
 HOST_DONE_claude=0
 HOST_DONE_codex=0
+HOST_SKILLS_claude=0
+HOST_SKILLS_codex=0
 IS_NEW_F=()
 IS_NEW_KEY=()
 IS_NEW_QUAL=()
@@ -92,6 +97,41 @@ IS_PREV_KEY=()
 IS_OUT_F=()
 IS_OUT_KEY=()
 IS_RESOLVE=()
+report_upgrade_summary() {
+  [ "$SUMMARY" -eq 1 ] && [ "$HOSTS_RESOLVED" -eq 1 ] || return 0
+  local host selected done_var count_var status count path row header
+  local -a rows=()
+  header='Upgrade summary:'
+  for host in claude codex; do
+    case "$host" in
+      claude) selected="$INSTALL_CLAUDE" ;;
+      codex) selected="$INSTALL_CODEX" ;;
+    esac
+    done_var="HOST_DONE_$host"
+    count_var="HOST_SKILLS_$host"
+    count=-
+    case ",$SKIPPED_HOSTS," in
+      *,"$host",*) status=skipped ;;
+      *)
+        [ "$selected" -eq 1 ] || continue
+        status=failed
+        if [ "${!done_var}" -eq 1 ]; then
+          status=refreshed
+          count="${!count_var}"
+        fi
+        ;;
+    esac
+    if [ "$status" != refreshed ]; then
+      header='Upgrade summary (NOT every host was refreshed; see skipped and failed rows):'
+    fi
+    path=$(host_skills_dir "$host")
+    printf -v row '%s\t%s\t%s\t%s' "$host" "$status" "$count" "~${path#"$HOME"}"
+    rows+=("$row")
+  done
+  printf '%s\nHost\tStatus\tSkills\tPath\n' "$header"
+  printf '%s\n' "${rows[@]}"
+}
+
 on_exit() {
   # Command groups and substitutions must not publish. Bash resets traps in
   # subshells today; the guard keeps a future shell from publishing twice.
@@ -108,6 +148,7 @@ on_exit() {
     [ -z "${INSTALL_STATUS_TMP:-}" ] || rm -f "$INSTALL_STATUS_TMP" 2>/dev/null || true
     install_status_release_lock || true
   fi
+  report_upgrade_summary || true
   report_skipped_hosts
 }
 finish_setup() {
@@ -124,6 +165,10 @@ while [ $# -gt 0 ]; do
       ;;
     -q|--quiet)
       QUIET=1
+      shift
+      ;;
+    --summary)
+      SUMMARY=1
       shift
       ;;
     --host)
@@ -174,6 +219,12 @@ case "$HOST" in
     exit 1
     ;;
 esac
+
+if [ "$SUMMARY" -eq 1 ] && [ "$UNINSTALL" -eq 1 ]; then
+  echo "Error: --summary cannot be used with --uninstall." >&2
+  echo "$USAGE" >&2
+  exit 1
+fi
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
   echo "Error: --skills-dir is no longer accepted for install." >&2
@@ -633,6 +684,7 @@ install_into_dir() {
     printf '%s\n' "$SCRIPT_DIR" > "$target/.extend-root"
     installed=$((installed + 1))
   done
+  printf -v "HOST_SKILLS_$host" '%s' "$installed"
   log "Installed $installed skills into $skills_dir"
 }
 
@@ -1588,6 +1640,8 @@ if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ -z "$SKIPPED_HOSTS
   INSTALL_CLAUDE=1
   [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=not_applicable
 fi
+
+HOSTS_RESOLVED=1
 
 # Every native host executes this shared helper. Validate its destination before publishing
 # skills or removing any helper so a symlink cannot redirect executable ownership outside HOME.

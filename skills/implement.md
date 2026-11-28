@@ -37,42 +37,27 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
 
-Check the session kind and whether auto-upgrade is enabled:
+#### Step 1: Session kind
+
 ```bash
 case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SESSION=spawned" ;; *) echo "UPGRADE_SESSION=interactive" ;; esac
 _AUTO=$("$_EXTEND_ROOT/bin/config" get auto_upgrade 2>/dev/null || true)
 echo "AUTO_UPGRADE=${_AUTO:-false}"
 ```
 
-**If `UPGRADE_SESSION=spawned`:** Ask nothing, never run `bin/update-run` whatever `AUTO_UPGRADE` says, write no snooze or config state, and continue with the skill. Put this line in the run's final message, before any fenced prompt and any result, handoff, stage or pause line the skill ends with, and never inside a fence or a versioned receipt field: `gstack-extend v{new} is available (running v{old}); not upgraded in this spawned session. To upgrade, run /gstack-extend-upgrade in an interactive session.` The rest of this flow applies only to `UPGRADE_SESSION=interactive`; the auto-upgrade command below checks the session kind again and prints `UPGRADE_SKIPPED spawned-session` instead of running.
+**If `UPGRADE_SESSION=spawned`:** Ask nothing, never run `bin/update-run` whatever `AUTO_UPGRADE` says, write no snooze or config state, and continue with the skill. Put this line in the run's final message, before any fenced prompt and any result, handoff, stage or pause line the skill ends with, and never inside a fence or a versioned receipt field: `gstack-extend v{new} is available (running v{old}); not upgraded in this spawned session. To upgrade, run /gstack-extend-upgrade in an interactive session.` The rest of this flow applies only to `UPGRADE_SESSION=interactive`; Step 3's command checks the session kind again and prints `UPGRADE_SKIPPED spawned-session` instead of running.
 
-Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`. The guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output and not a failure.
+#### Step 2: Ask the user (or auto-upgrade)
 
-If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host in your message: setup left its skill install untouched, so it may be stale. Relay setup's stderr reason with its fix: for a shared directory, **Shared-directory migration** in the checkout's `docs/installation.md`; for an unsafe directory, the directory fix setup printed. Never say every host was refreshed.
-
-**If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and run:
-```bash
-case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session" ;; *) "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT" ;; esac
-```
-- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.
-- On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}." Use the versions from the `UPGRADE_OK` line.
-- On failure: tell user "Auto-upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
+**If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and go to Step 3.
 
 **Otherwise**, use AskUserQuestion:
 - Question: "gstack-extend **v{new}** is available (you're on v{old}). Upgrade now?"
 - Options: ["Yes, upgrade now", "Always keep me up to date", "Not now", "Never ask again"]
 
-**If "Yes, upgrade now":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"`.
-- On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}."
-- On failure: tell user "Upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
+For "Yes" and "Always", go to Step 3.
 
-**If "Always keep me up to date":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` first. **Only on a confirmed `UPGRADE_OK <old> <new>`, enable auto-upgrade:**
-```bash
-"$_EXTEND_ROOT/bin/config" set auto_upgrade true
-```
-Then tell user "Update installed (v{old} → v{new}). Auto-upgrade enabled — future updates install automatically." On failure, do **not** enable auto-upgrade; tell user "Upgrade failed: {reason}. Auto-upgrade not enabled. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
-
-**If "Not now":** Write snooze state, then continue with the skill:
+**If "Not now":** Write snooze state using the offered version for `{new}`.
 ```bash
 _SNOOZE_FILE=~/.gstack-extend/update-snoozed
 _REMOTE_VER="{new}"
@@ -88,13 +73,42 @@ _NEW_LEVEL=$((_CUR_LEVEL + 1))
 [ "$_NEW_LEVEL" -gt 3 ] && _NEW_LEVEL=3
 echo "$_REMOTE_VER $_NEW_LEVEL $(date +%s)" > "$_SNOOZE_FILE"
 ```
-Note: `{new}` is the remote version from the `UPGRADE_AVAILABLE` output. Tell user the snooze duration (24h/48h/1 week).
+Say "Next reminder in 24h" (48h at level 2, 1 week at level 3). Tip: `"$_EXTEND_ROOT/bin/config" set auto_upgrade true`. Go to Step 5.
 
 **If "Never ask again":**
 ```bash
 "$_EXTEND_ROOT/bin/config" set update_check false
 ```
-Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
+Say "Update checks disabled. Run `"$_EXTEND_ROOT/bin/config" set update_check true` to re-enable." Go to Step 5.
+
+#### Step 3: Upgrade
+
+```bash
+case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session" ;; *) "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT" ;; esac
+```
+
+The guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output and not a failure.
+- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.
+
+If output has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host and relay setup's stderr reason and fix. See **Shared-directory migration** in `docs/installation.md` for shared paths. Never say every host was refreshed. A `failed` row means the refresh did not finish and may have left previous copies.
+
+- On failure: **Treat absent `UPGRADE_OK` as failure** after handling the guard. Relay any Upgrade summary as printed. Say "Upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Go to Step 5.
+
+For "Always": **Only on a confirmed `UPGRADE_OK <old> <new>`, enable auto-upgrade:**
+```bash
+"$_EXTEND_ROOT/bin/config" set auto_upgrade true
+```
+Say "Auto-upgrade enabled. Future updates will install automatically."
+
+#### Step 4: Show what's new
+
+On `UPGRADE_OK <old> <new>`, use those versions. Read `$_EXTEND_ROOT/CHANGELOG.md` at the installed commit (`git -C "$_EXTEND_ROOT" show <to>:CHANGELOG.md` when a range is present). Use `## [<version>]` entries newer than {old} through {new}, newest first. Compare numerically with zero padding (0.47.0 equals 0.47.0.0). Group into at most 7 bullets by theme, user-facing changes first, keeping every `### Upgrade notes` item. With `WHATS_NEW_RANGE from=<from> to=<to> channel=main`, instead summarize `git -C "$_EXTEND_ROOT" log --oneline <from>..<to>` in at most 7 bullets.
+
+Say "gstack-extend v{new} — upgraded from v{old}!", then "What's new:" and the bullets, then the Upgrade summary block as printed. Omit unavailable parts from older updaters. Close by saying this session keeps v{old} and the next invocation uses v{new}.
+
+#### Step 5: Continue
+
+Continue with the skill, following its Mid-run upgrade rule if present.
 <!-- /SHARED:upgrade-flow -->
 
 Own the implementation interval:

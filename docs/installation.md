@@ -134,7 +134,12 @@ When hosts are skipped because of shared or unsafe directories, stdout includes
 one `SETUP_SKIPPED_HOSTS <csv>` line (for example,
 `SETUP_SKIPPED_HOSTS codex`) even with `--quiet` or when setup later
 fails. No such line is printed when no host was skipped. Reasons and
-recovery guidance remain on stderr. `bin/update-run` forwards the line;
+recovery guidance remain on stderr. For installs, `setup --summary` adds an
+`Upgrade summary` block after host resolution, including with `--quiet` and
+on failure. The block lists refreshed hosts with the number of skills written,
+skipped hosts, and selected hosts that did not finish. It precedes any
+`SETUP_SKIPPED_HOSTS` line. `--summary` cannot be used with `--uninstall`.
+`bin/update-run` requests and forwards the block and the skipped-host line;
 `UPGRADE_OK` means the checkout upgraded, while listed hosts were left untouched
 and may still have stale copies. The refreshed `/gstack-extend-upgrade` skill and
 other refreshed skills' auto-upgrade flows report both outcomes. Older copies
@@ -344,6 +349,18 @@ for 24h / 48h / 1 week, or set `update_check=false`. `/plan-track` is the except
 because it asks no questions and installs nothing, it always follows the spawned
 branch below.
 
+After a successful upgrade, the flow shows what's new and relays the host
+summary. For a tagged release, it summarizes the installed `CHANGELOG.md`
+entries newer than the previous version through the installed version. For
+main tracking, including an untagged stable fallback, it summarizes the commit
+log. On success, the updater prints
+`WHATS_NEW_RANGE from=<commit> to=<commit> channel=<stable|main>` immediately
+before `UPGRADE_OK`. The range brackets the update on `main`, even when the
+updater restores another branch afterward. A direct `bin/update-run` caller
+gets the host rows and range line, without the skill's prose summary.
+The upgrade into the release that introduces this output runs the previous
+updater and skill text, so both summaries first appear on a subsequent upgrade.
+
 With `GSTACK_SESSION_KIND` set to `spawned` (or `unattended`), the flow asks nothing,
 never runs `bin/update-run` even under `auto_upgrade=true`, writes no snooze or
 config state itself, and puts the available version line in the run's final message
@@ -393,6 +410,29 @@ skill start.
 Run `bin/config set update_channel main` from the checkout to go back to main
 tracking, or `bin/config set auto_upgrade false` to restore the interactive
 upgrade prompt.
+
+### Compared with upstream gstack
+
+This comparison uses upstream gstack 1.104.2.0.
+
+| Step | Status | Comparison |
+| --- | --- | --- |
+| Fresh install command | differs on purpose | Upstream offers a one-paste shallow single-branch clone and setup. Extend uses a full clone so stable release verification and rollback have local ancestry and tags. |
+| Host selection | differs on purpose | Both offer default Claude, explicit selection, and auto detection. Extend limits managed installs to Claude Code and Codex. |
+| Prerequisite checks | differs on purpose | Both check Bun 1.3.3+, and the install requires Git. Extend also reports missing upstream gstack because workflow skills compose with it. |
+| Channel disclosure at setup | gap | Upstream reports the channel during setup. Extend documents the default and fallback without printing the effective channel. [wi-ef7087](todos/wi-ef7087.md) |
+| End-of-setup confirmation | gap | Upstream prints `gstack ready (<hosts>)`. Extend reports per-directory counts without a final host confirmation. [wi-a4f47f](todos/wi-a4f47f.md) |
+| Install listing | gap | Upstream offers `./setup --status`. Extend's first-run check resolves one checkout for one invocation. [wi-f6afdf](todos/wi-f6afdf.md) |
+| First invocation | same | Both document a starting skill and a workflow to follow. |
+| Uninstall | differs on purpose | Extend's setup removes managed artifacts and leaves checkout and state ownership with the user. Upstream's uninstall guide also covers removing its checkout and state. |
+| Session kind | differs on purpose | Extend gates upgrades before prompts because concurrent stages share the installed checkout. |
+| Ask whether to upgrade | same | The interactive flow offers yes, always, snooze, and disable choices. |
+| Enable automatic upgrades | differs on purpose | Extend changes persistent config after `UPGRADE_OK` and has no `GSTACK_AUTO_UPGRADE` override. An unsuccessful run leaves the opt-in unset. |
+| Snooze or disable update checks | same | Snooze escalates from 24 hours to 48 hours to one week. Disabling checks persists in config and can be reversed. |
+| Perform the upgrade | differs on purpose | One updater handles Git, setup, and migrations for a managed checkout. Extend's install and migration warning handling stays outside the shared flow. |
+| Show what's new and host results | differs on purpose | Both summarize changes and host refreshes. Extend closes with the version this session loaded and the version the next invocation uses. |
+| Just-upgraded notice | same | The check clears the marker and snooze and emits `JUST_UPGRADED` once. |
+| Check with no offer | differs on purpose | Extend's checker has no `CHECK_FAILED` result. The skill reports no offer because an unavailable remote can produce that same outcome. |
 
 ### Version numbers
 
