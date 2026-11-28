@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.126.0] - 2026-11-27
+
+### Added
+
+- `/implement` handoffs now include a `Verification:` block with `Ran:` and `Could not verify:` sub-lists, and `/review-and-prep` targets the listed `Could not verify:` entries first in its first review cycle.
+- `/implement` handoffs now include a `Verification:` block listing checks that ran and checks that could not be verified.
+
+### Changed
+
+- `/review-and-prep` prioritizes valid `Could not verify:` entries in its first review cycle and continues to accept older handoffs.
+
 ## [0.125.0] - 2026-11-27
 
 ### Added

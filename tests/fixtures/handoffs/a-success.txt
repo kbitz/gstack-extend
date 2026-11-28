@@ -24,6 +24,11 @@ Decisions/deviations: T3 reuses the shared formatter; the required outcome is un
 Checks run: bun test tests/export.test.ts, cwd /home/example/work/example-repo, exit 0
 - Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: none
+Verification:
+  Ran:
+  - bun test tests/export.test.ts (cwd /home/example/work/example-repo, exit 0)
+  Could not verify:
+  - none
 Risks/context: none
 Preserve: none
 X-Orchestrator-Run: run-0001

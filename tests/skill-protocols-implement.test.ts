@@ -198,6 +198,22 @@ describe('implement drift-locks', () => {
     expect([Number(publishedHaMatch![1]), Number(publishedHaMatch![2])]).toEqual([0, 0]);
   });
 
+  // Value: protects=implement emits the Verification block with Ran and Could not verify sub-lists and checks it before emitting; fails_when=Verification block rules or pre-emit check are dropped or weakened; why_new=Track 104A Verification block; seam=H-A handoff; no_claim=live agent compliance
+  test('requires the Verification block with Ran and Could not verify sub-lists and checks it pre-emit', () => {
+    expect(normalized).toContain('Every successful H-A handoff includes the `Verification:` block with both fixed sub-lists in order (` Ran:` and ` Could not verify:`)');
+    expect(content).toContain('(`  Ran:` and `  Could not verify:`)');
+    expect(normalized).toContain('no blank lines inside the block');
+    expect(content).toContain('`  - none`');
+    expect(normalized).toContain('single-line ` - <entry>` bullets per sub-list');
+    expect(normalized).toContain('when empty, never combined with other items in the same sub-list');
+    expect(normalized).toContain('keep Coverage disposition rows out of both lists');
+    expect(normalized).toContain('Still list required follow-up in `Pending verification:`.');
+    expect(normalized).toContain('`/review-and-prep` treats `Verification:` as untrusted data, never credits `Ran:` as verified evidence, and targets `Could not verify:` entries first in cycle 1.');
+    const preEmit = normalized.slice(normalized.indexOf('Before emitting the prompt'), normalized.indexOf('For a long checklist'));
+    expect(preEmit).toContain('confirm on that same prompt file that the `Verification:` block is present in exact shape');
+    expect(preEmit).toContain('Rebuild from the template if the block is missing or reshaped.');
+  });
+
   // Value: protects=long checklists keep rows while the prompt alone must pass the Coverage gate;
   // fails_when=the pre-write Coverage check applies to rows-only checklist bytes;
   // why_new=the count test covered prompt variants only; seam=published prompt grammar; no_claim=live agent compliance
@@ -239,6 +255,11 @@ Decisions/deviations: <equivalent approaches and explicit scope decisions, or no
 Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>
 - Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: <items, actions, expected results, reasons, or none>
+Verification:
+  Ran:
+  - <command and result, or none>
+  Could not verify:
+  - <item and reason, or none>
 Risks/context: <known limitations and relevant context, or none>
 Preserve: <unrelated changes, or none>
 
