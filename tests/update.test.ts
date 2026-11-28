@@ -305,6 +305,11 @@ describe('bin/update-run', () => {
       'SETUP_SKIPPED_HOSTS codex',
     ]);
     expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+    const summaryAt = result.stdout.indexOf('Upgrade summary (NOT every host was refreshed; see skipped and failed rows):');
+    const rowAt = result.stdout.indexOf('codex\tskipped\t-\t~/.codex/skills');
+    expect(summaryAt).toBeGreaterThan(-1);
+    expect(rowAt).toBeGreaterThan(summaryAt);
+    expect(result.stdout.indexOf('SETUP_SKIPPED_HOSTS codex')).toBeGreaterThan(rowAt);
     expect(result.stderr).toContain('Shared-directory migration');
     expect(lstatSync(join(claude, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
     expect(readFileSync(join(custom, 'SKILL.md'), 'utf8')).toBe('CUSTOMIZED\n');
@@ -325,6 +330,7 @@ describe('bin/update-run', () => {
     expect(result.stdout.match(/^UPGRADE_FAILED .+$/gm)).toHaveLength(1);
     expect(result.stdout).toContain('UPGRADE_FAILED stage=setup');
     expect(result.stdout).not.toContain('UPGRADE_OK');
+    expect(result.stdout).not.toContain('WHATS_NEW_RANGE');
   });
 
   // Auto-upgrades run the shared block from every preamble, so it must report skipped hosts itself.
@@ -350,6 +356,8 @@ describe('bin/update-run', () => {
     expect(installation).toContain('never runs `bin/update-run`');
     expect(installation).toContain('never runs `bin/update-run` even under `auto_upgrade=true`');
     expect(installation).toContain('`bin/update-check` keeps its own state in every session kind');
+    expect(installation).toContain('it consumes the just-upgraded marker and clears a snooze when it reports `JUST_UPGRADED`');
+    expect(installation).toContain('A spawned stage may therefore be the run that shows the "just updated" notice');
     expect(installation).toContain('The skill reads this variable from the environment only');
     expect(installation).toContain('Skill text is not enforcement');
     expect(shared).toContain('GSTACK_SESSION_KIND');
@@ -375,10 +383,12 @@ describe('bin/update-run', () => {
     let repo: string;
     let stateDir: string;
     let homeDir: string;
+    let before: string;
     let result: ReturnType<typeof runBin>;
 
     beforeAll(() => {
       repo = createFixtureRepo('happy');
+      before = fixtureGit(repo, 'rev-parse', 'HEAD');
       pushNewVersion(`${baseTmp}/happy-remote`, '1.1.0');
       stateDir = join(baseTmp, 'happy-state');
       homeDir = join(baseTmp, 'happy-home');
@@ -399,6 +409,10 @@ describe('bin/update-run', () => {
     test('upgrades from main successfully', () => {
       const out = result.stdout + result.stderr;
       expect(out).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(result.stdout.trimEnd().split('\n').slice(-2)).toEqual([
+        `WHATS_NEW_RANGE from=${before} to=${fixtureGit(repo, 'rev-parse', 'HEAD')} channel=main`,
+        'UPGRADE_OK 1.0.0 1.1.0',
+      ]);
     });
 
     test('writes just-upgraded-from marker', () => {
@@ -424,10 +438,12 @@ describe('bin/update-run', () => {
 
   describe('non-main branch auto-switch', () => {
     let repo: string;
+    let before: string;
     let result: ReturnType<typeof runBin>;
 
     beforeAll(() => {
       repo = createFixtureRepo('branch-switch');
+      before = fixtureGit(repo, 'rev-parse', 'main');
       // Create + switch to feature branch with a commit.
       spawnSync('git', ['-C', repo, 'checkout', '-b', 'feature/test', '--quiet']);
       writeFileSync(join(repo, 'branch-file.txt'), 'branch work\n');
@@ -453,6 +469,13 @@ describe('bin/update-run', () => {
 
     test('upgrade succeeds after branch switch', () => {
       expect(result.stdout + result.stderr).toContain('UPGRADE_OK');
+    });
+
+    test('reports the main range even when the feature branch is restored', () => {
+      expect(result.stdout.trimEnd().split('\n').slice(-2)).toEqual([
+        `WHATS_NEW_RANGE from=${before} to=${fixtureGit(repo, 'rev-parse', 'main')} channel=main`,
+        'UPGRADE_OK 1.0.0 1.2.0',
+      ]);
     });
 
     test('preserves feature branch (not destroyed)', () => {
@@ -1175,6 +1198,7 @@ exit 1
 
     test('setup-fail after pull: hop-from keeps window for the next hop', () => {
       const repo = createFixtureRepo('mig-setup-fail');
+      const before = fixtureGit(repo, 'rev-parse', 'HEAD');
       pushNewVersion(`${baseTmp}/mig-setup-fail-remote`, '1.1.0', {
         ...migrationPayload({ 'v1.1.0.sh': okScript }),
         setup: '#!/usr/bin/env bash\nexit 1\n',
@@ -1210,6 +1234,7 @@ exit 1
       });
       const out2 = second.stdout + second.stderr;
       expect(out2).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(second.stdout).toContain(`WHATS_NEW_RANGE from=${before} to=${fixtureGit(repo, 'rev-parse', 'HEAD')} channel=main`);
       expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
       expect(existsSync(join(stateDir, 'migrations-hop-from'))).toBe(false);
     });
@@ -1217,6 +1242,7 @@ exit 1
     test('Bun refusal after pull: supported Bun resumes the original migration window once', () => {
       const name = 'mig-bun-retry';
       const repo = createFixtureRepoWithRealSetup(name);
+      const before = fixtureGit(repo, 'rev-parse', 'HEAD');
       pushNewVersion(join(baseTmp, `${name}-remote`), '1.1.0', {
         ...migrationPayload({ 'v1.1.0.sh': okScript }),
         setup: readFileSync(SETUP, 'utf8'),
@@ -1244,11 +1270,14 @@ exit 1
       const second = runBin(UPDATE_RUN, [repo], retryOpts);
       expect(second.exitCode).toBe(0);
       expect(second.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      const installed = fixtureGit(repo, 'rev-parse', 'HEAD');
+      expect(second.stdout).toContain(`WHATS_NEW_RANGE from=${before} to=${installed} channel=main`);
       expect(readFileSync(ran, 'utf8')).toBe('ok\n');
       expect(existsSync(hopFrom)).toBe(false);
 
       const third = runBin(UPDATE_RUN, [repo], retryOpts);
       expect(third.exitCode).toBe(0);
+      expect(third.stdout).toContain(`WHATS_NEW_RANGE from=${installed} to=${installed} channel=main`);
       expect(readFileSync(ran, 'utf8')).toBe('ok\n');
     });
   });
@@ -2131,11 +2160,16 @@ describe('stable release channel', () => {
 
   test('an untagged origin falls back to the configured remote VERSION and updates via main', () => {
     const fx = releaseChannelFixture('stable-no-tags');
+    const before = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
     const main = fx.newMain('1.2.0');
     expect(fx.check('--force')).toEqual({ exitCode: 0, stdout: 'UPGRADE_AVAILABLE 1.0.0 1.2.0\n', stderr: '' });
     const upgrade = fx.upgrade();
     expect(upgrade.exitCode).toBe(0);
     expect(upgrade.stdout).toContain('UPGRADE_OK 1.0.0 1.2.0');
+    expect(upgrade.stdout.trimEnd().split('\n').slice(-2)).toEqual([
+      `WHATS_NEW_RANGE from=${before} to=${main} channel=main`,
+      'UPGRADE_OK 1.0.0 1.2.0',
+    ]);
     expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(main);
   });
 
@@ -2318,12 +2352,17 @@ describe('stable release channel', () => {
 
   test('installs the stable tag while main remains checked out and announces the upgrade once', () => {
     const fx = releaseChannelFixture('stable-install');
+    const before = fixtureGit(fx.repo, 'rev-parse', 'HEAD');
     const release = fx.release('1.1.0');
     fx.newMain('1.2.0');
     expect(fx.check('--force').stdout).toBe('UPGRADE_AVAILABLE 1.0.0 1.1.0\n');
     const upgrade = fx.upgrade();
     expect(upgrade.exitCode).toBe(0);
     expect(upgrade.stdout.match(/^UPGRADE_(OK|FAILED).*$/gm)).toEqual(['UPGRADE_OK 1.0.0 1.1.0']);
+    expect(upgrade.stdout.trimEnd().split('\n').slice(-2)).toEqual([
+      `WHATS_NEW_RANGE from=${before} to=${release} channel=stable`,
+      'UPGRADE_OK 1.0.0 1.1.0',
+    ]);
     expect(fixtureGit(fx.repo, 'rev-parse', 'HEAD')).toBe(release);
     expect(fixtureGit(fx.repo, 'branch', '--show-current')).toBe('main');
     expect(fx.check().stdout).toBe('JUST_UPGRADED 1.0.0 1.1.0\n');

@@ -88,6 +88,74 @@ function hostDir(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor')
   return join(home, '.config', 'opencode', 'skills');
 }
 
+describe('setup --summary', () => {
+  const columns = 'Host\tStatus\tSkills\tPath';
+  const incomplete = 'Upgrade summary (NOT every host was refreshed; see skipped and failed rows):';
+
+  test('a quiet Claude install reports only the selected host and skills written', () => {
+    const home = join(baseTmp, 'summary-claude');
+    mkdirSync(home);
+    const result = runSetup(['--host', 'claude', '--quiet', '--summary'], home, isolatedPath(), true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`Upgrade summary:\n${columns}\nclaude\trefreshed\t${SKILLS.length}\t~/.claude/skills\n`);
+  });
+
+  test('auto reports a shared Codex directory as skipped before the skipped-host token', () => {
+    const home = join(baseTmp, 'summary-shared');
+    const claude = hostDir(home, 'claude');
+    const codex = hostDir(home, 'codex');
+    mkdirSync(claude, { recursive: true });
+    mkdirSync(join(codex, '..'), { recursive: true });
+    symlinkSync(claude, codex);
+
+    const result = runSetup(['--host', 'auto', '--summary'], home, isolatedPath(['claude', 'codex']), true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trimEnd().split('\n').slice(-5)).toEqual([
+      incomplete,
+      columns,
+      `claude\trefreshed\t${SKILLS.length}\t~/.claude/skills`,
+      'codex\tskipped\t-\t~/.codex/skills',
+      'SETUP_SKIPPED_HOSTS codex',
+    ]);
+  });
+
+  test('a fatal Codex preflight reports both selected hosts as failed before either installs', () => {
+    const home = join(baseTmp, 'summary-failed');
+    const codex = hostDir(home, 'codex');
+    mkdirSync(codex, { recursive: true });
+    const obstruction = join(codex, 'pair-review');
+    writeFileSync(obstruction, 'keep this file\n');
+
+    const result = runSetup(['--host', 'auto', '--quiet', '--summary'], home, isolatedPath(['claude', 'codex']), true);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('exists but is not a directory');
+    expect(result.stdout.trimEnd().split('\n')).toEqual([
+      incomplete,
+      columns,
+      'claude\tfailed\t-\t~/.claude/skills',
+      'codex\tfailed\t-\t~/.codex/skills',
+    ]);
+    expect(readFileSync(obstruction, 'utf8')).toBe('keep this file\n');
+    expect(existsSync(hostDir(home, 'claude'))).toBe(false);
+  });
+
+  test('rejects --summary with --uninstall and preserves the installed skill', () => {
+    const home = join(baseTmp, 'summary-uninstall');
+    const path = isolatedPath();
+    mkdirSync(home);
+    expect(runSetup(['--host', 'claude', '--quiet'], home, path, true).exitCode).toBe(0);
+    const skill = join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md');
+    const link = readlinkSync(skill);
+
+    const result = runSetup(['--host', 'claude', '--summary', '--uninstall'], home, path, true);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('--summary cannot be used with --uninstall');
+    expect(result.stderr).toContain('Usage: ./setup');
+    expect(readlinkSync(skill)).toBe(link);
+  });
+});
+
 describe('setup --host flags', () => {
   for (const host of ['claude', 'codex'] as const) {
     test(`${host} retirement preserves a plain file at the skill path`, () => {

@@ -12,9 +12,11 @@
 #   UPGRADE_FAILED <reason>     — upgrade failed
 # Additional lines, before the result:
 #   UPGRADE_MISMATCH offered=<v> installed=<v> channel=main — main changed since the offer
+#   Upgrade summary and host rows — human-readable output forwarded from setup
 #   SETUP_SKIPPED_HOSTS <csv>   — forwarded from setup: it left these hosts untouched
 #   MIGRATION_WARN <script> exit=<n> — forwarded from run-migrations.sh: a migration or its helper failed
 #   INSTALL_WARN ...            — forwarded from setup when install diagnostics could not be saved
+#   WHATS_NEW_RANGE from=<commit> to=<commit> channel=<stable|main> — before UPGRADE_OK only
 # INSTALL_WARN is not an upgrade result. Exactly one UPGRADE_OK or UPGRADE_FAILED
 # line is still the outcome. A later update-check prints saved install facts.
 #
@@ -210,6 +212,21 @@ fi
 
 # Fast-forward only — if main has diverged locally, fail safely instead of destroying work
 _STAGE="pull-ff-only"
+FROM_COMMIT=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+# Setup can fail after main advances. Preserve the start of the upgrade
+# until a successful retry, independently of the migration version marker.
+# Key it by checkout because multiple installs can share STATE_DIR.
+RANGE_CHECKOUT=$(git -C "$INSTALL_DIR" rev-parse --absolute-git-dir | git -C "$INSTALL_DIR" hash-object --stdin)
+RANGE_FROM_FILE="$STATE_DIR/upgrade-range-from-$RANGE_CHECKOUT"
+if [ -f "$RANGE_FROM_FILE" ] &&
+   IFS= read -r SAVED_FROM < "$RANGE_FROM_FILE" &&
+   [[ "$SAVED_FROM" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] &&
+   git -C "$INSTALL_DIR" merge-base --is-ancestor "$SAVED_FROM" "$FROM_COMMIT" 2>/dev/null; then
+  FROM_COMMIT=$SAVED_FROM
+else
+  printf '%s\n' "$FROM_COMMIT" > "$RANGE_FROM_FILE"
+fi
+INSTALLED_CHANNEL=main
 if [ -n "$RELEASE_TAG" ]; then
   # Git also reports success when HEAD is already ahead of the target.
   # Require the installed commit to be the release commit.
@@ -218,13 +235,15 @@ if [ -n "$RELEASE_TAG" ]; then
      [ "$(git -C "$INSTALL_DIR" rev-parse HEAD)" != "$RELEASE_COMMIT" ]; then
     fail_upgrade "local main cannot fast-forward to release $RELEASE_TAG (ff-only failed)"
   fi
+  INSTALLED_CHANNEL=stable
 elif ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
   fail_upgrade "local main has diverged from origin/main (ff-only failed)"
 fi
+TO_COMMIT=$(git -C "$INSTALL_DIR" rev-parse HEAD)
 
 _STAGE="setup"
-# Forward setup stdout verbatim, including SETUP_SKIPPED_HOSTS even on failure.
-"$INSTALL_DIR/setup" --host auto --quiet
+# Forward the summary and SETUP_SKIPPED_HOSTS even on failure.
+"$INSTALL_DIR/setup" --host auto --quiet --summary
 
 # Read NEW after pull so the helper sees the landed VERSION. Insert before
 # checkout-restore so scripts run on the pulled main tree, not a dirty
@@ -272,7 +291,9 @@ echo "$OLD_VERSION" > "$STATE_DIR/just-upgraded-from"
 _STAGE="clear-cache"
 rm -f "$STATE_DIR/last-update-check"
 rm -f "$STATE_DIR/update-snoozed"
+rm -f "$RANGE_FROM_FILE"
 
 _STAGE="done"
 _RESULT_EMITTED=1
+printf 'WHATS_NEW_RANGE from=%s to=%s channel=%s\n' "$FROM_COMMIT" "$TO_COMMIT" "$INSTALLED_CHANNEL"
 echo "UPGRADE_OK $OLD_VERSION $NEW_VERSION"
