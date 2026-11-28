@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.127.0] - 2026-11-28
+
+### Added
+
+- After an upgrade, gstack-extend now shows a What's-new summary drawn from the changelog (or the commit log on a main-tracking install) and one row per host install, and its upgrade prompts follow upstream gstack's step order and wording.
+- Use `setup --summary` to see which hosts were refreshed, skipped, or failed and how many skills were written.
+
+### Changed
+
+- The shared upgrade flow follows upstream gstack’s prompt order and shows What’s New from the installed release notes or main commit range.
+
+### Fixed
+
+- The updater emits `WHATS_NEW_RANGE` before a successful result and preserves the original commit range across setup retries.
+
+### Upgrade notes
+
+- The upgrade into this release still runs the previous updater and upgrade text, so that upgrade shows no What's-new or per-host summary; the next upgrade shows both.
+
 ## [0.126.0] - 2026-11-27
 
 ### Added
