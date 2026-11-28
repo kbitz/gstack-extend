@@ -588,6 +588,28 @@ export function buildRequest(command: CommandName, args: readonly string[], real
 
   if (command === 'record gate') {
     const name = scalars.get('--name')!;
+    let result = scalars.get('--result')!;
+    let reason = scalars.get('--reason');
+    const derived: BuildDerived[] = [];
+    if (name.startsWith('probe-') && (result === 'reproduced' || result === 'inconclusive')) {
+      const outcome = result;
+      const rule = 'probe-outcome-to-gate-result';
+      result = outcome === 'reproduced' ? 'failed' : 'blocked';
+      over('--result', outcome, result, rule);
+      if (reason === undefined) {
+        reason = outcome;
+        derived.push({ flag: '--reason', used: reason, rule });
+      }
+    } else if (name === 'pregate' && result === 'narrowed') {
+      const raw = scalars.get('--pregate-raw-verdict')?.toLowerCase();
+      const wrapper = scalars.get('--pregate-wrapper-verdict')?.toLowerCase();
+      if (!lists.get('--skipped-lane')?.length || (raw !== 'pass' && raw !== 'passed') || (wrapper !== 'pass' && wrapper !== 'passed')) {
+        return failInvalid('--result', 'invalid-value', 'narrowed-requires-pass-verdicts-and-skipped-lane');
+      }
+      result = 'passed';
+      over('--result', 'narrowed', result, 'narrowed-pregate-recorded-as-passed');
+    }
+
     const candidate: Record<string, unknown> = { commit: scalars.get('--commit')! };
     if (scalars.has('--base')) candidate.base = scalars.get('--base')!;
     if (scalars.has('--wtree')) candidate.wtree = scalars.get('--wtree')!;
@@ -616,13 +638,13 @@ export function buildRequest(command: CommandName, args: readonly string[], real
     const req: Record<string, unknown> = {
       gate_id: scalars.get('--gate-id')!,
       name,
-      result: scalars.get('--result')!,
+      result,
     };
-    if (scalars.has('--reason')) req.reason = scalars.get('--reason')!;
+    if (reason !== undefined) req.reason = reason;
     req.candidate = candidate;
     if (details !== undefined) req.details = details;
     if (evRes.items.length > 0) req.evidence = evRes.items;
-    return { ok: true, request: req, overrides };
+    return { ok: true, request: req, overrides, ...(derived.length > 0 ? { derived } : {}) };
   }
 
   if (command === 'record audit') {

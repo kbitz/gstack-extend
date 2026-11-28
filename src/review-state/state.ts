@@ -214,11 +214,9 @@ const DELEGATE_PART_LABELS: ReadonlyMap<string, string> = new Map([
   ['adversarial', 'native-adversarial'],
   ['red-team', 'red-team'],
 ]);
-// Keys mirror upstream severity labels in src/review-delegate/delegate.ts (line 246).
-const UPSTREAM_SEVERITY_LABELS: ReadonlyMap<string, string> = new Map([
-  ['CRITICAL', 'critical'],
-  ['INFORMATIONAL', 'info'],
-]);
+// Accept upstream severity labels from src/review-delegate/delegate.ts on input.
+const INPUT_SEVERITY_LABELS = new Map<string, string>(ENUMS.severity.map((label) => [label.toLowerCase(), label]));
+INPUT_SEVERITY_LABELS.set('informational', 'info');
 export const toPartLabel = (v: unknown): string | null =>
   typeof v === 'string' ? (DELEGATE_PART_LABELS.get(v) ?? (isPart(v) ? v : null)) : null;
 export const isStr = (v: unknown, min: number, max: number, noWs = false): v is string =>
@@ -376,6 +374,8 @@ function firstDiff(stored: unknown, sent: unknown, path = ''): { path: string; s
 
 const CONTINUATION_SHAPE_MESSAGE =
   'continuation must be {prior_stops, max, continues} (40-hex iff prior_stops>=1)';
+const OPEN_PASS_FIX =
+  'Record any voice results you have, then close each listed pass with record pass --state completed. Leave voices whose attempts all failed unselected. Rerun the identical finish.';
 const CONTINUATION_SHAPE_FIX =
   'Pass continuation as {"prior_stops": 0, "max": <int>, "continues": null} on an initial run, or {"prior_stops": <k>, "max": <int>, "continues": "<40-hex Stopped at SHA>"} when prior_stops >= 1 (never {"count", "max"} or prior_stops >= 1 without continues).';
 
@@ -593,7 +593,10 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
           rawInput.findings.forEach((f, idx) => {
             const fp = `findings[${idx}]`;
             if (!isObj(f)) { v.push({ path: fp, rule: 'invalid-type', expected: 'object' }); return; }
-            const mappedSev = typeof f.severity_source === 'string' ? UPSTREAM_SEVERITY_LABELS.get(f.severity_source) : undefined;
+            const severity = f.severity_source;
+            const mappedSev = typeof severity === 'string' && !/[^A-Za-z0-9]/.test(severity)
+              ? INPUT_SEVERITY_LABELS.get(severity.toLowerCase())
+              : undefined;
             const fInput = mappedSev !== undefined ? { ...f, severity_source: mappedSev } : f;
             const fc = validateFields(fInput, ['finding_id', 'severity_source', 'severity_rubric', 'adjudication', 'resolution', 'found_by'], { duplicate_of: null, attribution_reason: null, receipt_class: null, ...FINDING_DEFAULTS }, {
               finding_id: R.safeId, severity_source: R.enum(ENUMS.severity), severity_rubric: R.enum(ENUMS.rubric),
@@ -892,7 +895,25 @@ export function applyCommand(state: ReviewRunState | null, command: CommandName,
   }
   const life = checkLifecycle();
   if (life) return life;
-  if (canon.outcome === 'prepared' && state!.passes.some((p) => p.state === 'open')) return invalid(state!.rev, [{ path: 'outcome', rule: 'open-pass', expected: 'all-passes-completed-when-prepared' }]);
+  if (canon.outcome === 'prepared') {
+    const openPasses = state!.passes.filter((p) => p.state === 'open');
+    if (openPasses.length > 0) {
+      const refusal = invalid(state!.rev, [{ path: 'outcome', rule: 'open-pass', expected: 'all-passes-completed-when-prepared' }]);
+      return {
+        ...refusal,
+        detail: {
+          ...refusal.detail,
+          open_passes: openPasses.map(({ pass_id, scope, cycle, voices }) => ({
+            pass_id, scope, cycle,
+            open_voices: voices
+              .filter((voice) => voice.required && voice.selected_attempt_id === null && voice.not_applicable === null)
+              .map((voice) => voice.voice_id),
+          })),
+        },
+        fix: OPEN_PASS_FIX,
+      };
+    }
+  }
   if (!env.commitExists(canon.base)) v.push({ path: 'base', rule: 'commit-not-found', expected: 'existing-git-commit' });
   else if (!env.isAncestor(canon.base, git.head)) v.push({ path: 'base', rule: 'not-ancestor', expected: 'ancestor-of-head' });
   if (canon.delta_base !== null && !env.commitExists(canon.delta_base)) v.push({ path: 'delta_base', rule: 'commit-not-found', expected: 'existing-git-commit' });
