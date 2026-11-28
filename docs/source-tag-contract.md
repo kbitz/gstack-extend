@@ -26,9 +26,15 @@ attribute bullets, optionally followed by prose paragraphs.
 - **Priority:** P1 | P2 | P3
 - **Hypothesis (untested):** optional reviewer guess at direction (full-review, review)
 - **Revisit when:** concrete reassessment trigger (required on deferrals)
+- **Evidence:** what was read or run that supports the item
+- **Deferred by:** developer, <YYYY-MM-DD>: "<the developer's words>"
+- **Filed by:** worker
 
 Optional free-form prose paragraphs here.
 ```
+
+`Deferred by` and `Filed by` are alternatives. See [Filer provenance](#filer-provenance)
+for their placement and UTC date format.
 
 The lead field varies by source so the framing matches the writer's epistemic
 posture:
@@ -114,6 +120,13 @@ Parsers tolerate their absence. Recommended fields:
   — so legacy entries remain valid and renderable. New writes from
   updated skills should use "Hypothesis (untested)" so the speculative
   framing is preserved.
+- `- **Evidence:**` ... — what was read or run that supports the item. Required
+  by `bin/todo-file`.
+- `- **Deferred by:**` `developer, <YYYY-MM-DD>: "<words>"` — filer
+  provenance bullet recording the developer's verbatim deferral words. See
+  [Filer provenance](#filer-provenance).
+- `- **Filed by:**` `worker` — filer provenance bullet recording that a worker
+  filed the item on its own judgment. See [Filer provenance](#filer-provenance).
 
 Skills MAY add additional `- **Key:** value` bullets. Unknown keys are
 preserved by the parser but not acted on.
@@ -426,3 +439,77 @@ See [Compatibility](compatibility.md#stable-surfaces).
   count in `signals.unprocessed_count`. `DOC_INVENTORY` labels readable intake
   Markdown files `intake doc`. `SCATTERED_TODOS` and `DOC_TYPE_MISMATCH` skip
   those files.
+
+## Filer provenance
+
+Each backlog intake record carries at most one filer provenance bullet recording
+whether a developer deferred the item or a worker filed it on its own judgment:
+
+- `- **Deferred by:** developer, <YYYY-MM-DD>: "<words>"` — written when the
+  filer passes the developer's own words, verbatim (trimmed, not escaped), with
+  the UTC date.
+- `- **Filed by:** worker` — written when a worker filed the item without
+  developer deferral words.
+
+`bin/todo-file` places the provenance bullet immediately after `- **ID:**`.
+Existing records without either bullet stay valid. Free text such as
+`Filed by /review-and-prep ...` inside a `- **Context:**` bullet is context
+prose, not a filer provenance bullet. `bin/roadmap-audit`'s `TODO_FORMAT`
+accepts both provenance bullets in `TODOS.md` and in `docs/todos/*.md` intake
+files because it does not inspect attribute keys.
+
+### CLI (`bin/todo-file`)
+
+`todo-file --help` is the contract.
+
+```text
+Usage: todo-file [repo-path] --tag <[source:tag]> --title <title> --field '<Key>: <value>'... [--developer-words <words>]
+       todo-file --help | -h
+```
+
+- **Repository.** If you omit `[repo-path]`, the command uses the Git worktree
+  root when available and the current directory outside a worktree.
+- **Option values.** Use `--option=value` to pass literal text that looks like
+  an option, for example `--title=--help`.
+- **Lead field and evidence:** `--field` is repeatable and written in argument
+  order as `- **<Key>:** <value>`. Every record requires at least one lead field keyed
+  exactly `Why`, `Description`, or `Symptom` (matching the source framing above)
+  plus `Evidence`.
+- **Reserved keys:** `ID`, `Deferred by`, and `Filed by` are refused if passed
+  via `--field`, including case and internal spacing variants.
+- **Refusal tokens (`todo-file: REFUSED <reason>: <detail>; no file was written`):**
+  `control-character`, `invalid-tag` (appending `MALFORMED_TAG`, `UNKNOWN_SOURCE`,
+  or `INJECTION_ATTEMPT`), `empty-title`, `invalid-field`, `empty-value`,
+  `reserved-field`, `duplicate-field`, `missing-why`, `missing-evidence`,
+  `empty-developer-words`, `noncanonical-record`, and `record-exists`.
+- **Output:** `FILED <id> docs/todos/<id>.md` on stdout.
+- **Exit codes.** `0` means the entry was filed or help was shown. `1` means a
+  refusal or an I/O error. Repository refusals print the reason on stderr.
+  Validation and repository checks run before creating files or directories.
+  A write failure can leave the intake directories in place. The command tries
+  to remove an incomplete record if it can verify the file's identity and
+  reports cleanup errors on stderr.
+  `2` means invalid arguments, with usage on stderr.
+
+### Provenance examples
+
+Developer-deferred intake record:
+
+```markdown
+### [manual] Defer remaining cleanup after core fix
+- **ID:** wi-d0ffee
+- **Deferred by:** developer, 2026-11-26: "1 - fix, file the rest, finish"
+- **Why:** Keep this PR focused on the core change and schedule cleanup separately.
+- **Evidence:** Reviewed the diff; remaining edits are independent of the fix.
+```
+
+Worker-filed intake record:
+
+```markdown
+### [review:files=src/export.ts] Test gap: export retry is not tested
+- **ID:** wi-c0ffee
+- **Filed by:** worker
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** No test checks whether `exportBatch` retries a temporary error.
+- **Evidence:** read the function and its existing tests; no failure was reproduced.
+```

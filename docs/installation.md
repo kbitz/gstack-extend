@@ -13,7 +13,7 @@ On install runs, `setup` warns on stderr with `GSTACK_MISSING` if it cannot find
 an executable `gstack-config` in the [helper lookup paths](telemetry.md#gstack-helper-lookup),
 even with `--quiet`. Setup continues. Install upstream gstack and rerun setup.
 
-`setup`, `gstack-extend init`, and all 15 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. `gstack-extend init` also checks Bun from the project directory (its parent for a new project), where its post-render audit runs, so a version manager that pins an older Bun there is refused before anything is written. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
+`setup`, `gstack-extend init`, and all 16 Bun-backed `bin/` launchers check Bun before writing or executing. They refuse when Bun is missing, fails the minimum-version check, returns no parseable numeric version, or when the prerequisite helper is missing or unreadable. `gstack-extend init` also checks Bun from the project directory (its parent for a new project), where its post-render audit runs, so a version manager that pins an older Bun there is refused before anything is written. Entry points in the single-line family use these refusal templates. The table lists the other output formats.
 
 ```text
 <entry>: PREREQ_BUN_MISSING Bun >= 1.3.3 is required (not on PATH); run: install Bun >= 1.3.3 (curl -fsSL https://bun.sh/install | bash and reload your shell or add ~/.bun/bin to PATH), then rerun the same command once; if it still refuses, report this line verbatim. No changes were made. See docs/installation.md#requirements.
@@ -26,8 +26,8 @@ setup: PREREQ_HELPER_MISSING prerequisite helper missing or unreadable; re-run .
 
 | Entry points | Channel and format | Exit | Error codes / causes |
 |---|---|---|---|
-| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `outside-review`, `secret-dispositions`, `pregate-deps`, `full-review-state-machines`, `review-delegate` | Single line on stderr. For missing Bun, `setup` also prints download and checksum instructions. Dry-run init warns on stderr and keeps its preview exit behavior. | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
-| `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches` | Single line on stderr. Dry-run init warns and still previews. | 1 | `PREREQ_DEPS_MISSING` |
+| `setup`, `gstack-extend init`, `roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `todo-file`, `outside-review`, `secret-dispositions`, `pregate-deps`, `full-review-state-machines`, `review-delegate` | Single line on stderr. For missing Bun, `setup` also prints download and checksum instructions. Dry-run init warns on stderr and keeps its preview exit behavior. | 1 | `PREREQ_BUN_MISSING`, `PREREQ_BUN_TOO_OLD`, `PREREQ_BUN_VERSION_UNKNOWN`, `PREREQ_HELPER_MISSING` |
+| `gstack-extend init`, `roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `todo-file` | Single line on stderr. Dry-run init warns and still previews. | 1 | `PREREQ_DEPS_MISSING` |
 | `layout-scaffold`, `docs-ship`, `upstream-check` | Two lines on stderr with `ERROR <code>:` and `FIX:`. | 5 | `bun_missing`, `bun_not_absolute`, `bun_too_old`, `bun_version_unknown` |
 | `layout-scaffold`, `docs-ship` | Two lines on stderr with `ERROR <code>:` and `FIX:` for an incomplete installation or broken launcher link. | 5 | `source_missing`, `symlink_loop` |
 | `upstream-check` | Three lines on stderr with `ERROR INTERNAL:`, version context and `FIX:` for an incomplete installation or broken launcher link. | 1 | `source_missing`, `symlink_loop` |
@@ -55,7 +55,7 @@ and includes development dependencies in a repair when Ajv is already installed.
 The audit started by `gstack-extend init` and all Bun-backed launchers use
 `--no-env-file --no-install --config=/dev/null`. Planning readers load
 `marked` from the checkout's `node_modules/` without fetching it at runtime.
-`roadmap-audit`, `roadmap-pack`, and `roadmap-touches` check the dependency
+`roadmap-audit`, `roadmap-pack`, `roadmap-touches`, and `todo-file` check the dependency
 before running. `gstack-extend init` checks it before creating the scaffold
 or registering the project.
 After a manual `git pull`, run `<checkout>/setup --host auto` to recover from

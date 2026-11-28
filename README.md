@@ -41,7 +41,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 ## Installation
 
 Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/) 1.3.3 or newer (runtime and development floor; `--no-env-file` landed in 1.3.3 while earlier versions silently ignore it and still load `.env`), and Claude Code or
-Codex. `setup`, `gstack-extend init`, and every Bun-backed launcher under `bin/` (`roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `layout-scaffold`, `merge-gate`, `outside-review`, `secret-dispositions`, `docs-ship`, `pregate-deps`, `full-review-state-machines`, `review-delegate`, `review-state` — and the experimental `gstack-extend-telemetry derive`, which runs it — and `upstream-check`) check for Bun 1.3.3+ before writing or executing and refuse with an actionable fix if it is missing or too old. Install
+Codex. `setup`, `gstack-extend init`, and every Bun-backed launcher under `bin/` (`roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `todo-file`, `layout-scaffold`, `merge-gate`, `outside-review`, `secret-dispositions`, `docs-ship`, `pregate-deps`, `full-review-state-machines`, `review-delegate`, `review-state` — and the experimental `gstack-extend-telemetry derive`, which runs it — and `upstream-check`) check for Bun 1.3.3+ before writing or executing and refuse with an actionable fix if it is missing or too old. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
 
@@ -194,6 +194,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 - **Project setup:** `gstack-extend init /path/to/project --dry-run` previews the
   scaffold; `--migrate` fills missing files in an existing project. Writes require
   `jq`. See [`/gstack-extend-init`](skills/gstack-extend-init.md) and `gstack-extend init --help`.
+- **TODO intake:** Run `<checkout>/bin/todo-file --help` for the command that files
+  individual backlog records with a work-item ID and filer provenance.
+  See the [intake CLI contract](docs/source-tag-contract.md#cli-bintodo-file).
 - **Quota ledger (experimental):** `gstack-extend quota status --refresh` checks
   remaining vendor capacity; `gstack-extend doctor quota` diagnoses adapters.
   Only explicit quota commands sample vendors. [Quick start and JSON contract](docs/quota-ledger.md).
