@@ -8487,13 +8487,15 @@ describe('review-state refusal replays', () => {
     const flags = [
       '--gate-id', uid(1520), '--name', 'pregate', '--result', 'narrowed',
       '--commit', headSha, '--base', baseSha, '--pregate-policy', 'base', '--pregate-record', recordPath,
-      '--reason', 'local selection skipped on continuation', '--pregate-wrapper-verdict', 'passed',
+      '--reason', 'local selection skipped on continuation',
     ];
     const before = readFileSync(statePath, 'utf8');
     for (const badFlags of [
-      ['--pregate-raw-verdict', 'pass'],
-      ['--pregate-raw-verdict', 'FAIL', '--skipped-lane', 'local-selection'],
-      ['--skipped-lane', 'local-selection'],
+      ['--pregate-raw-verdict', 'pass', '--pregate-wrapper-verdict', 'passed'],
+      ['--pregate-raw-verdict', 'FAIL', '--pregate-wrapper-verdict', 'passed', '--skipped-lane', 'local-selection'],
+      ['--pregate-raw-verdict', 'pass', '--pregate-wrapper-verdict', 'failed', '--skipped-lane', 'local-selection'],
+      ['--pregate-raw-verdict', 'pass', '--skipped-lane', 'local-selection'],
+      ['--pregate-wrapper-verdict', 'passed', '--skipped-lane', 'local-selection'],
     ]) {
       const refusal = build(dir, 'record gate', ...flags, ...badFlags);
       expect(refusal.json).toMatchObject({
@@ -8505,7 +8507,8 @@ describe('review-state refusal replays', () => {
       expect(readdirSync(dir).filter((name) => name.startsWith('request-record-gate-'))).toEqual([]);
     }
 
-    const recorded = build(dir, 'record gate', ...flags, '--pregate-raw-verdict', 'pass', '--skipped-lane', 'local-selection');
+    const recorded = build(dir, 'record gate', ...flags, '--pregate-raw-verdict', 'pass',
+      '--pregate-wrapper-verdict', 'passed', '--skipped-lane', 'local-selection');
     expect(recorded.json).toMatchObject({
       reason: 'recorded', detail: { overrides: [{
         flag: '--result', sent: 'narrowed', used: 'passed', rule: 'narrowed-pregate-recorded-as-passed',
@@ -8546,11 +8549,23 @@ describe('review-state refusal replays', () => {
     pass(second, 'attempt', '--voice-id', 'core', '--attempt-id', uid(1534), '--outcome', 'completed');
     pass(second, 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', uid(1534));
     pass(second, 'completed');
+    record('record gate', '--gate-id', uid(1536), '--name', 'greptile', '--result', 'not-run',
+      '--commit', headSha, '--base', baseSha, '--greptile-value', 'skipped — no root configuration');
     record('checkpoint', '--checkpoint-id', uid(1535), '--kind', 'ready', '--base', baseSha);
 
+    const render = (output: string, fields = {}) =>
+      runCli(['render', '--dir', dir, '--input', writeJson(dir, `render-${output}.json`, { output, ...fields })]);
+    const renderRef = (result: ReturnType<typeof runCli>) => {
+      expect(result.code, result.out).toBe(0);
+      const { path, sha256 } = result.json.files[0];
+      return { path: basename(path), sha256 };
+    };
+    const fullReceipt = renderRef(render('full-receipt'));
+    const postedComment = renderRef(render('comment', { full_receipt: fullReceipt }));
     const statePath = join(dir, stateFile);
     const before = readFileSync(statePath, 'utf8');
-    const finish = () => build(dir, 'finish', '--outcome', 'prepared', '--base', baseSha);
+    const finish = () => build(dir, 'finish', '--outcome', 'prepared', '--base', baseSha,
+      '--readiness-confirmed-at', '2026-11-28T16:42:00Z');
     const refusal = finish();
     expect(refusal.json.reason).toBe('invalid-input');
     expect(refusal.json.detail).toEqual({
@@ -8566,9 +8581,16 @@ describe('review-state refusal replays', () => {
     });
     expect(finish().json.reason).toBe('recorded');
     expect(runCli(['show', '--dir', dir]).json.lifecycle).toBe('finished');
-    expect(readFileSync(join(REPO_ROOT, 'docs', 'review-run-state-calls.md'), 'utf8')).toContain(
+    const pr = { url: 'https://github.com/example/review/pull/1', repo: 'example/review', number: 1,
+      head_repo: 'example/review', head_branch: 'feature', base_ref: 'main' };
+    const final = render('final', { pr, gh_login: 'fixture', full_receipt: fullReceipt,
+      comment_file: postedComment, comment_url: `${pr.url}#issuecomment-1` });
+    expect(final.code, final.out).toBe(0);
+    const callsDoc = readFileSync(join(REPO_ROOT, 'docs', 'review-run-state-calls.md'), 'utf8');
+    expect(callsDoc).toContain(
       'When `finish` refuses with violation rule `open-pass`, recover from the refusal before taking the degraded path.',
     );
+    expect(callsDoc).toContain('If a missing voice result would change the published review content, stop with a readiness discrepancy.');
   });
 });
 
