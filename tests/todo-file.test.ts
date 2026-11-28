@@ -15,7 +15,7 @@ import { parseAuditSections } from '../src/audit/sections.ts';
 import { runTodoFileCli } from '../src/audit/todo-file-cli.ts';
 import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 import { runBin } from './helpers/run-bin.ts';
-import { spawnSync } from './helpers/child-stdio.ts';
+import { openChildStdio, spawnSync } from './helpers/child-stdio.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const TODO_FILE_BIN = join(ROOT, 'bin', 'todo-file');
@@ -494,5 +494,94 @@ describe('bin/todo-file', () => {
     expect(res.exitCode).toBe(2);
     expect(res.stdout).toBe('');
     expect(res.stderr).toContain('Usage: todo-file');
+  });
+
+  const filingFields = ['--field', 'Why: Needed.', '--field', 'Evidence: Checked.'];
+
+  test.each([
+    ['--tag', ['--tag', '--unknown', '--title', 'Follow-up']],
+    ['--title', ['--tag', '[manual]', '--title', '--unknown']],
+    ['--field', ['--tag', '[manual]', '--title', 'Follow-up', '--field', '--unknown']],
+    ['--developer-words', ['--tag', '[manual]', '--title', 'Follow-up', '--developer-words', '--unknown']],
+  ])('review regression: an option token cannot supply the missing %s value', (option, args) => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const before = snapshotTree(repo);
+    const result = runTodoFileBin([repo, ...args, ...filingFields]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain(`missing value for ${option}`);
+    expect(snapshotTree(repo)).toEqual(before);
+  });
+
+  test('review regression: explicit flag-shaped text is filed without triggering help', () => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const result = runTodoFileBin([
+      repo, '--tag', '[manual]', '--title=--help', '--developer-words=-h', ...filingFields,
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    const path = /^FILED wi-[0-9a-f]{6} (docs\/todos\/wi-[0-9a-f]{6}\.md)\n$/.exec(result.stdout)?.[1];
+    expect(path).toBeDefined();
+    const record = readFileSync(join(repo, path!), 'utf8');
+    expect(record).toStartWith('### [manual] --help\n');
+    expect(record.split('\n')[2]).toMatch(/^- \*\*Deferred by:\*\* developer, \d{4}-\d{2}-\d{2}: "-h"$/);
+  });
+
+  test('review regression: spacing variants of reserved provenance keys are refused', () => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const before = snapshotTree(repo);
+    const result = runTodoFileCli([
+      repo, '--tag', '[manual]', '--title', 'Follow-up', ...filingFields,
+      '--field', 'Filed  by: example',
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('REFUSED reserved-field');
+    expect(snapshotTree(repo)).toEqual(before);
+  });
+
+  test('review regression: concurrent first filings initialize one intake directory', async () => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const invocations = Array.from({ length: 6 }, (_, index) => [
+      repo, '--tag', '[manual]', '--title', `Concurrent filing ${index}`, ...filingFields,
+    ]);
+    const outputs = invocations.map(() => openChildStdio());
+    try {
+      const children = invocations.map((args, index) => Bun.spawn([TODO_FILE_BIN, ...args], {
+        env: { ...GIT_ENV, PATH: process.env.PATH, HOME: HOME_DIR },
+        stdout: outputs[index]!.stdoutFd,
+        stderr: outputs[index]!.stderrFd,
+      }));
+      const exits = await Promise.all(children.map(child => child.exited));
+
+      for (const [index, exitCode] of exits.entries()) {
+        const output = outputs[index]!.read();
+        // An ID collision is allowed to refuse. Retry after the other filers exit.
+        const result = output.stderr.includes('REFUSED record-exists')
+          ? runTodoFileBin(invocations[index]!)
+          : { ...output, exitCode };
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(result.stdout).toStartWith('FILED ');
+      }
+    } finally {
+      outputs.forEach(output => output.dispose());
+    }
+    expect(readdirSync(join(repo, 'docs', 'todos'))).toHaveLength(invocations.length);
+  });
+
+  test('review regression: a reported write failure removes the incomplete record', () => {
+    const repo = makeEmptyRepo(BASE_TMP);
+    const result = runBin('/bin/bash', [
+      '-c', 'trap "" XFSZ; ulimit -f 1 && exec "$@"', 'limit-record-size', TODO_FILE_BIN,
+      repo, '--tag', '[manual]', '--title', 'Follow-up', '--field', 'Why: Needed.',
+      '--field', `Evidence: ${'a'.repeat(8192)}`,
+    ], {
+      home: HOME_DIR,
+      gstackExtendDir: ROOT,
+      gstackExtendStateDir: STATE_DIR,
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('EFBIG');
+    expect(readdirSync(join(repo, 'docs', 'todos'))).toEqual([]);
   });
 });

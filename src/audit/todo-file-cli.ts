@@ -5,7 +5,7 @@
  * `docs/todos/<id>.md` with a freshly minted work-item ID and filer provenance.
  */
 
-import { lstatSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, writeFileSync, type Stats } from 'node:fs';
 import { join } from 'node:path';
 
 import { collectTakenIds, resolveRepoRoot, type CliResult } from './id-cli.ts';
@@ -30,12 +30,15 @@ Options:
                             Deferred by: developer, <UTC date>: "<words>". Without it: Filed by: worker.
   -h, --help                Show this help and exit 0
 
+Use --option=value for a literal value that looks like an option.
 Output: FILED <id> docs/todos/<id>.md
-Exit: 0 filed; 1 entry or repository refused, or read/write error (no file written); 2 invalid arguments
+Exit: 0 filed (or help shown); 1 entry or repository refused, or read/write error; 2 invalid arguments
 `;
 
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F\u0085\u2028\u2029]/;
 const FIELD_KEY_RE = /^[A-Z](?:[A-Za-z0-9 ()-]*[A-Za-z0-9)])?$/;
+const OPTION_TOKEN_RE = /^(?:--[a-z0-9-]*|-[a-z])(?:=.*)?$/i;
+const VALUE_OPTIONS = new Set(['--tag', '--title', '--field', '--developer-words']);
 const RESERVED_KEYS = new Set(['id', 'deferred by', 'filed by']);
 const LEAD_KEYS = new Set(['Why', 'Description', 'Symptom']);
 
@@ -64,45 +67,67 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function inspectDocsDirectory(root: string, path: string): 'absent' | 'directory' | 'invalid' {
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (stat === undefined) return 'absent';
+  return stat.isDirectory() && readdirSync(root).includes('docs') ? 'directory' : 'invalid';
+}
+
+function createDirectoryIfMissing(path: string): void {
+  try {
+    mkdirSync(path);
+  } catch (error) {
+    // Another filer may have created it since the first check. The caller rechecks the path.
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+}
+
+function writeExclusiveRecord(path: string, content: string): void {
+  const fd = openSync(path, 'wx');
+  let opened: Stats | undefined;
+  try {
+    try {
+      opened = fstatSync(fd);
+      writeFileSync(fd, content);
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    try {
+      const current = lstatSync(path, { throwIfNoEntry: false });
+      if (current !== undefined) {
+        if (opened === undefined) throw new Error('could not verify the open file identity');
+        if (current.dev === opened.dev && current.ino === opened.ino) unlinkSync(path);
+      }
+    } catch (cleanupError) {
+      throw new Error(`${errorMessage(error)}; could not remove incomplete record: ${errorMessage(cleanupError)}`);
+    }
+    throw error;
+  }
+}
+
 function execute(argv: string[]): CliResult {
   // A. Arguments.
   if (argv.includes('--help') || argv.includes('-h')) {
     return { stdout: USAGE, stderr: '', exitCode: 0 };
   }
 
-  let tag: string | undefined;
-  let title: string | undefined;
-  let developerWords: string | undefined;
+  const values = new Map<string, string>();
   const rawFields: string[] = [];
   const positionals: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === '--tag') {
-      if (tag !== undefined) return usageError('duplicate --tag option');
-      const value = argv[++i];
-      if (value === undefined) return usageError('missing value for --tag');
-      tag = value;
-      continue;
-    }
-    if (arg === '--title') {
-      if (title !== undefined) return usageError('duplicate --title option');
-      const value = argv[++i];
-      if (value === undefined) return usageError('missing value for --title');
-      title = value;
-      continue;
-    }
-    if (arg === '--field') {
-      const value = argv[++i];
-      if (value === undefined) return usageError('missing value for --field');
-      rawFields.push(value);
-      continue;
-    }
-    if (arg === '--developer-words') {
-      if (developerWords !== undefined) return usageError('duplicate --developer-words option');
-      const value = argv[++i];
-      if (value === undefined) return usageError('missing value for --developer-words');
-      developerWords = value;
+    const equals = arg.indexOf('=');
+    const option = equals < 0 ? arg : arg.slice(0, equals);
+    if (VALUE_OPTIONS.has(option)) {
+      if (values.has(option)) return usageError(`duplicate ${option} option`);
+      const value = equals < 0 ? argv[++i] : arg.slice(equals + 1);
+      if (value === undefined || (equals < 0 && OPTION_TOKEN_RE.test(value))) {
+        return usageError(`missing value for ${option}`);
+      }
+      if (option === '--field') rawFields.push(value);
+      else values.set(option, value);
       continue;
     }
     if (arg.startsWith('-')) {
@@ -114,6 +139,9 @@ function execute(argv: string[]): CliResult {
     positionals.push(arg);
   }
 
+  const tag = values.get('--tag');
+  const title = values.get('--title');
+  const developerWords = values.get('--developer-words');
   if (positionals.length > 1) return usageError('too many positional arguments');
   if (tag === undefined) return usageError('missing required --tag option');
   if (title === undefined) return usageError('missing required --title option');
@@ -158,7 +186,7 @@ function execute(argv: string[]): CliResult {
       return refused('invalid-field', `invalid field syntax for '${key}'`);
     }
     const lowerKey = key.toLowerCase();
-    if (RESERVED_KEYS.has(lowerKey)) {
+    if (RESERVED_KEYS.has(lowerKey.replace(/ +/g, ' '))) {
       return refused('reserved-field', `field '${key}' is reserved`);
     }
     if (!FIELD_KEY_RE.test(key)) {
@@ -203,11 +231,9 @@ function execute(argv: string[]): CliResult {
 
   // D. Repository checks, still writing nothing.
   const docsPath = join(root, 'docs');
-  const docsStat = lstatSync(docsPath, { throwIfNoEntry: false });
-  if (docsStat !== undefined) {
-    if (!docsStat.isDirectory() || !readdirSync(root).includes('docs')) {
-      return failure('docs/ is a symbolic link or not a directory');
-    }
+  const docsKind = inspectDocsDirectory(root, docsPath);
+  if (docsKind === 'invalid') {
+    return failure('docs/ is a symbolic link or not a directory');
   }
 
   const intakeDir = join(docsPath, 'todos');
@@ -259,11 +285,14 @@ function execute(argv: string[]): CliResult {
   }
 
   // G. Create missing directories only now.
-  if (docsStat === undefined) {
-    mkdirSync(docsPath);
+  if (docsKind === 'absent') {
+    createDirectoryIfMissing(docsPath);
+  }
+  if (inspectDocsDirectory(root, docsPath) !== 'directory') {
+    return failure('docs/ is a symbolic link or not a directory');
   }
   if (intakeCheck.kind === 'absent') {
-    mkdirSync(intakeDir);
+    createDirectoryIfMissing(intakeDir);
   }
   if (inspectIntakeDirectory(intakeDir).kind !== 'directory') {
     return failure('refusing non-directory intake path docs/todos');
@@ -271,12 +300,12 @@ function execute(argv: string[]): CliResult {
 
   // H. Exclusive write (never overwrite).
   try {
-    writeFileSync(join(intakeDir, `${id}.md`), content, { flag: 'wx' });
+    writeExclusiveRecord(join(intakeDir, `${id}.md`), content);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
       return refused('record-exists', `${relPath} already exists`);
     }
-    return failure(errorMessage(error));
+    return { stdout: '', stderr: `todo-file: could not file ${relPath}: ${errorMessage(error)}\n`, exitCode: 1 };
   }
 
   // I. Report filed record.

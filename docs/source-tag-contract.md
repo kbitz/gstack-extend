@@ -27,11 +27,14 @@ attribute bullets, optionally followed by prose paragraphs.
 - **Hypothesis (untested):** optional reviewer guess at direction (full-review, review)
 - **Revisit when:** concrete reassessment trigger (required on deferrals)
 - **Evidence:** what was read or run that supports the item
-- **Deferred by:** developer, <YYYY-MM-DD UTC>: "<the developer's words>"
+- **Deferred by:** developer, <YYYY-MM-DD>: "<the developer's words>"
 - **Filed by:** worker
 
 Optional free-form prose paragraphs here.
 ```
+
+`Deferred by` and `Filed by` are alternatives. See [Filer provenance](#filer-provenance)
+for their placement and UTC date format.
 
 The lead field varies by source so the framing matches the writer's epistemic
 posture:
@@ -119,7 +122,7 @@ Parsers tolerate their absence. Recommended fields:
   framing is preserved.
 - `- **Evidence:**` ... — what was read or run that supports the item. Required
   by `bin/todo-file`.
-- `- **Deferred by:**` `developer, <YYYY-MM-DD UTC>: "<words>"` — filer
+- `- **Deferred by:**` `developer, <YYYY-MM-DD>: "<words>"` — filer
   provenance bullet recording the developer's verbatim deferral words. See
   [Filer provenance](#filer-provenance).
 - `- **Filed by:**` `worker` — filer provenance bullet recording that a worker
@@ -464,21 +467,26 @@ Usage: todo-file [repo-path] --tag <[source:tag]> --title <title> --field '<Key>
        todo-file --help | -h
 ```
 
+- **Option values.** Use `--option=value` to pass literal text that looks like
+  an option, for example `--title=--help`.
 - **Lead field and evidence:** `--field` is repeatable and written in argument
-  order as `- **<Key>:** <value>`. Every record requires one lead field keyed
+  order as `- **<Key>:** <value>`. Every record requires at least one lead field keyed
   exactly `Why`, `Description`, or `Symptom` (matching the source framing above)
   plus `Evidence`.
-- **Reserved keys:** `ID`, `Deferred by`, and `Filed by` (case-insensitive) are
-  owned by the helper and refused if passed via `--field`.
+- **Reserved keys:** `ID`, `Deferred by`, and `Filed by` are refused if passed
+  via `--field`, including case and internal spacing variants.
 - **Refusal tokens (`todo-file: REFUSED <reason>: <detail>; no file was written`):**
   `control-character`, `invalid-tag` (appending `MALFORMED_TAG`, `UNKNOWN_SOURCE`,
   or `INJECTION_ATTEMPT`), `empty-title`, `invalid-field`, `empty-value`,
   `reserved-field`, `duplicate-field`, `missing-why`, `missing-evidence`,
   `empty-developer-words`, `noncanonical-record`, and `record-exists`.
 - **Output:** `FILED <id> docs/todos/<id>.md` on stdout.
-- **Exit codes:** `0` filed (or `--help` / `-h`, writing nothing); `1` entry or
-  repository refused or read/write error (no file written, no directory
-  created); `2` invalid arguments (with usage on stderr).
+- **Exit codes.** `0` means the entry was filed or help was shown. `1` means a
+  refusal or an I/O error. Repository refusals print the reason on stderr.
+  Validation and repository checks run before creating files or directories.
+  A write failure can leave the intake directories in place. The command
+  removes an incomplete record and reports any cleanup error on stderr.
+  `2` means invalid arguments, with usage on stderr.
 
 ### Provenance examples
 
@@ -495,10 +503,10 @@ Developer-deferred intake record:
 Worker-filed intake record:
 
 ```markdown
-### [review:files=src/export.ts|src/export-format.ts] Test gap: empty batch is not tested
+### [review:files=src/export.ts] Test gap: export retry is not tested
 - **ID:** wi-c0ffee
 - **Filed by:** worker
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
-- **Description:** `exportBatch` has no test for an empty batch; the code path returns early and nothing asserts its output.
+- **Description:** No test checks whether `exportBatch` retries a temporary error.
 - **Evidence:** read the function and its existing tests; no failure was reproduced.
 ```
