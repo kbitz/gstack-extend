@@ -4227,8 +4227,8 @@ describe('bin/review-state', () => {
     }
   });
 
-  // Value: protects=input-only alias mapping of upstream CRITICAL and INFORMATIONAL on findings[].severity_source while keeping ENUMS.severity and validateStoredState strict; fails_when=CRITICAL or INFORMATIONAL fails to map to critical/info, other non-enum spellings are accepted, or validateStoredState accepts unmapped uppercase labels on disk; why_new=reliability Track T2/T3(c); seam=CLI and validateStoredState
-  test('attempt findings accept upstream CRITICAL and INFORMATIONAL severity labels only', () => {
+  // Value: protects=input-only severity mapping in any ASCII letter case while keeping stored-state validation strict; fails_when=CRITICAL or INFORMATIONAL fails to map to critical/info, unknown spellings are accepted, or the reader accepts unmapped labels on disk; why_new=reliability Track T2/T3(c) and Track 106A; seam=CLI and validateStoredState
+  test('attempt findings accept severity labels in any ASCII letter case', () => {
     const d = newDir();
     expect(callCmd(d, 'start', mkStart(720)).json.reason).toBe('recorded');
     expect(callCmd(d, 'record pass', mkPassStarted(721)).json.reason).toBe('recorded');
@@ -4275,7 +4275,7 @@ describe('bin/review-state', () => {
 
     // Other spellings outside ENUMS.severity are refused with the unchanged enum text.
     const beforeBytes = readFileSync(statePath, 'utf8');
-    for (const badSev of ['High', 'informational', 'INFO', 'CRITICAL ']) {
+    for (const badSev of ['CRITICAL ', 'Major', 'nit', 'p 1', 'UN\u212ANOWN']) {
       const rBad = callCmd(d, 'record pass', {
         ...baseAttempt,
         attempt_id: uid(723),
@@ -4799,6 +4799,10 @@ describe('bin/review-state', () => {
       '| C18 |',
       '| C19 |',
       '| C21 |',
+      '| C22 |',
+      '| C23 |',
+      '| C24 |',
+      '| C25 |',
     ]) {
       expect(d15, row).toContain(row);
     }
@@ -8407,6 +8411,167 @@ describe('finish outcome escalated (H-G refresh escalation)', () => {
   });
 });
 
+describe('review-state refusal replays', () => {
+  const stateFile = 'review-run-state.json';
+  const readState = (dir: string): ReviewRunState => JSON.parse(readFileSync(join(dir, stateFile), 'utf8'));
+  const build = (dir: string, command: string, ...flags: string[]) =>
+    runCli(['build', ...command.split(' '), '--dir', dir, ...flags]);
+
+  test("replays PR #317's display-case severity (C22): normalizes attempt input and keeps canonical storage", () => {
+    const dir = newDir(), passId = uid(1500);
+    expect(callCmd(dir, 'start', mkStart()).json.reason).toBe('recorded');
+    expect(callCmd(dir, 'record pass', mkPassStarted(1500)).json.reason).toBe('recorded');
+    const flags = ['--pass-id', passId, '--state', 'attempt', '--voice-id', 'core', '--part', 'core',
+      '--attempt-id', uid(1501), '--outcome', 'completed', '--finding', 'F-dependency,Medium,core'];
+    expect(build(dir, 'record pass', ...flags).json.reason).toBe('recorded');
+    expect(readState(dir).passes[0]!.voices[0]!.attempts[0]!.findings![0]!.severity_source).toBe('medium');
+    expect(build(dir, 'record pass', ...flags).json.reason).toBe('replayed');
+
+    const input = {
+      pass_id: passId, state: 'attempt', voice_id: 'core', part: 'core', attempt_id: uid(1502),
+      predecessor_attempt_id: uid(1501), outcome: 'completed',
+      findings: ['Critical', 'High', 'p1', 'INFO', 'informational'].map((severity_source, i) => ({
+        finding_id: `F-${i}`, severity_source, severity_rubric: 'core',
+        adjudication: 'unclassified', resolution: 'open', found_by: ['core'],
+      })),
+    };
+    expect(callCmd(dir, 'record pass', input).json.reason).toBe('recorded');
+    expect(readState(dir).passes[0]!.voices[0]!.attempts[1]!.findings!.map((f) => f.severity_source))
+      .toEqual(['critical', 'high', 'P1', 'info', 'info']);
+  });
+
+  test("replays PR #318's probe gate outcome (C23): maps probe words only in build", () => {
+    const dir = newDir(), name = 'probe-fc632e11fe49', rule = 'probe-outcome-to-gate-result';
+    expect(callCmd(dir, 'start', mkStart()).json.reason).toBe('recorded');
+    const gate = (id: number, gateName: string, result: string, ...extra: string[]) =>
+      build(dir, 'record gate', '--gate-id', uid(id), '--name', gateName, '--result', result,
+        '--commit', headSha, '--base', baseSha, ...extra);
+
+    const overrides = [{ flag: '--result', sent: 'reproduced', used: 'failed', rule }];
+    const reproduced = gate(1510, name, 'reproduced');
+    expect(reproduced.json).toMatchObject({
+      reason: 'recorded', detail: { overrides, derived: [{ flag: '--reason', used: 'reproduced', rule }] },
+    });
+    expect(reproduced.err).toBe('WARNING BUILD_OVERRIDE: record gate --result sent "reproduced"; used "failed"; rule probe-outcome-to-gate-result\n');
+    expect(readFileSync(join(dir, 'build-overrides.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)))
+      .toMatchObject([{ command: 'record gate', overrides }]);
+
+    const inconclusive = gate(1511, name, 'inconclusive', '--reason', 'probe did not settle the finding');
+    expect(inconclusive.json).toMatchObject({
+      reason: 'recorded', detail: { overrides: [{ flag: '--result', sent: 'inconclusive', used: 'blocked', rule }] },
+    });
+    expect(inconclusive.json.detail.derived).toBeUndefined();
+    expect(readState(dir).gates).toMatchObject([
+      { name, result: 'failed', reason: 'reproduced' },
+      { name, result: 'blocked', reason: 'probe did not settle the finding' },
+    ]);
+
+    const violation = { path: 'result', rule: 'invalid-enum' };
+    expect(gate(1512, 'tests', 'reproduced').json).toMatchObject({
+      reason: 'invalid-input', detail: { violations: [violation] },
+    });
+    const raw = callCmd(dir, 'record gate', {
+      gate_id: uid(1513), name, result: 'reproduced', candidate: { commit: headSha, base: baseSha },
+    });
+    expect(raw.json).toMatchObject({ reason: 'invalid-input', detail: { violations: [violation] } });
+  });
+
+  test("replays PR #318's narrowed pregate (C24): requires passing verdicts and skipped lanes", () => {
+    const dir = newDir();
+    expect(callCmd(dir, 'start', mkStart(1, {
+      continuation: { prior_stops: 1, max: 3, continues: headSha },
+    })).json.reason).toBe('recorded');
+    const recordPath = 'pregate-record.json';
+    const recordSha = sha256(readFileSync(writeJson(dir, recordPath, { verdict: 'pass' })));
+    const statePath = join(dir, stateFile);
+    const flags = [
+      '--gate-id', uid(1520), '--name', 'pregate', '--result', 'narrowed',
+      '--commit', headSha, '--base', baseSha, '--pregate-policy', 'base', '--pregate-record', recordPath,
+      '--reason', 'local selection skipped on continuation', '--pregate-wrapper-verdict', 'passed',
+    ];
+    const before = readFileSync(statePath, 'utf8');
+    for (const badFlags of [
+      ['--pregate-raw-verdict', 'pass'],
+      ['--pregate-raw-verdict', 'FAIL', '--skipped-lane', 'local-selection'],
+      ['--skipped-lane', 'local-selection'],
+    ]) {
+      const refusal = build(dir, 'record gate', ...flags, ...badFlags);
+      expect(refusal.json).toMatchObject({
+        reason: 'invalid-input', detail: { violations: [{
+          path: '--result', rule: 'invalid-value', expected: 'narrowed-requires-pass-verdicts-and-skipped-lane',
+        }] },
+      });
+      expect(readFileSync(statePath, 'utf8')).toBe(before);
+      expect(readdirSync(dir).filter((name) => name.startsWith('request-record-gate-'))).toEqual([]);
+    }
+
+    const recorded = build(dir, 'record gate', ...flags, '--pregate-raw-verdict', 'pass', '--skipped-lane', 'local-selection');
+    expect(recorded.json).toMatchObject({
+      reason: 'recorded', detail: { overrides: [{
+        flag: '--result', sent: 'narrowed', used: 'passed', rule: 'narrowed-pregate-recorded-as-passed',
+      }] },
+    });
+    expect(readState(dir).gates).toMatchObject([{
+      name: 'pregate', result: 'passed', reason: 'local selection skipped on continuation',
+      details: { raw_verdict: 'pass', wrapper_verdict: 'passed', policy: 'base',
+        record_path: recordPath, record_sha256: recordSha, skipped_lanes: ['local-selection'] },
+    }]);
+    const raw = callCmd(dir, 'record gate', {
+      gate_id: uid(1521), name: 'pregate', result: 'narrowed', candidate: { commit: headSha, base: baseSha },
+      details: readState(dir).gates[0]!.details,
+    });
+    expect(raw.json).toMatchObject({
+      reason: 'invalid-input', detail: { violations: [{ path: 'result', rule: 'invalid-enum' }] },
+    });
+  });
+
+  test("replays PR #322's open cycle-1 pass at finish (C25): closes the pass and retries finish", () => {
+    const dir = newDir(), first = uid(1530), second = uid(1531);
+    const record = (command: string, ...flags: string[]) => {
+      const result = build(dir, command, ...flags);
+      expect(result.json.reason, result.out).toBe('recorded');
+    };
+    const pass = (id: string, state: string, ...flags: string[]) =>
+      record('record pass', '--pass-id', id, '--state', state, ...flags);
+    const begin = (id: string, cycle: string, ...voices: string[]) =>
+      pass(id, 'started', '--scope', 'local', '--cycle', cycle, '--coverage', 'full',
+        '--commit', headSha, '--base', baseSha, ...voices.flatMap((voice) => ['--voice', voice]));
+    record('start', '--run-id', uid(1529), '--base', baseSha, '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', sha256('plan-bytes'), '--policy-source', 'none supplied', '--max-continuations', '1');
+    begin(first, '1', 'core', 'outside:structured');
+    pass(first, 'attempt', '--voice-id', 'core', '--attempt-id', uid(1532), '--outcome', 'completed');
+    pass(first, 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', uid(1532));
+    pass(first, 'attempt', '--voice-id', 'outside:structured', '--attempt-id', uid(1533), '--outcome', 'failed');
+    begin(second, '2', 'core');
+    pass(second, 'attempt', '--voice-id', 'core', '--attempt-id', uid(1534), '--outcome', 'completed');
+    pass(second, 'voice-complete', '--voice-id', 'core', '--selected-attempt-id', uid(1534));
+    pass(second, 'completed');
+    record('checkpoint', '--checkpoint-id', uid(1535), '--kind', 'ready', '--base', baseSha);
+
+    const statePath = join(dir, stateFile);
+    const before = readFileSync(statePath, 'utf8');
+    const finish = () => build(dir, 'finish', '--outcome', 'prepared', '--base', baseSha);
+    const refusal = finish();
+    expect(refusal.json.reason).toBe('invalid-input');
+    expect(refusal.json.detail).toEqual({
+      violations: [{ path: 'outcome', rule: 'open-pass', expected: 'all-passes-completed-when-prepared' }],
+      open_passes: [{ pass_id: first, scope: 'local', cycle: 1, open_voices: ['outside:structured'] }],
+    });
+    expect(refusal.json.fix).toContain('record pass --state completed');
+    expect(readFileSync(statePath, 'utf8')).toBe(before);
+
+    pass(first, 'completed');
+    expect(readState(dir).passes[0]!.voices[1]).toMatchObject({
+      voice_id: 'outside:structured', selected_attempt_id: null, not_applicable: null,
+    });
+    expect(finish().json.reason).toBe('recorded');
+    expect(runCli(['show', '--dir', dir]).json.lifecycle).toBe('finished');
+    expect(readFileSync(join(REPO_ROOT, 'docs', 'review-run-state-calls.md'), 'utf8')).toContain(
+      'When `finish` refuses with violation rule `open-pass`, recover from the refusal before taking the degraded path.',
+    );
+  });
+});
+
 describe('cross-cycle finding identity', () => {
   const stateFile = 'review-run-state.json';
   const priorFile = 'prior-run-state.json';
@@ -8768,6 +8933,32 @@ describe('cross-cycle finding identity', () => {
     expect(show(dir).finding_cycles).toMatchObject([{ new: 1, unkeyed: 0 }]);
   });
 
+  test('discarded provisional reports do not downgrade another voice’s selected finding identity', () => {
+    const dir = newDir(), frozen = snapshot('provisional citation\ncorrected citation');
+    const pass = 1540;
+    expect(start(dir, 1539).json.reason).toBe('recorded');
+    begin(dir, pass, { required_voices: ['core', 'second'] });
+    attempt(dir, pass, 1541, [finding('F-x', 1)], frozen, 'second');
+    record(dir, {
+      pass_id: uid(pass), state: 'attempt', voice_id: 'second', part: 'core', outcome: 'completed',
+      attempt_id: uid(1542), predecessor_attempt_id: uid(1541), anchor_commit: frozen, findings: [finding('F-x', 2)],
+    });
+    select(dir, pass, 1542, 'second');
+
+    const core = attempt(dir, pass, 1543, [finding('F-x', 2)], frozen);
+    expect(core.json.detail.identity_downgraded).toBeUndefined();
+    const [coreVoice, secondVoice] = readState(dir).passes[0]!.voices;
+    const key = coreVoice!.attempts[0]!.findings![0]!.identity?.key;
+    const [discarded, selected] = secondVoice!.attempts;
+    expect(key).toMatch(/^fk1:/);
+    expect(discarded!.findings![0]!.identity?.key).toMatch(/^fk1:/);
+    expect(key).toBe(selected!.findings![0]!.identity?.key);
+    expect(key).not.toBe(discarded!.findings![0]!.identity?.key);
+    select(dir, pass, 1543);
+    complete(dir, pass);
+    expect(show(dir).finding_cycles).toMatchObject([{ new: 1, unkeyed: 0, observed: 'complete' }]);
+  });
+
   // Value: protects=build file errors remain advisory and preserve valid keys; fails_when=the optional file refuses an attempt, an extra line for a different attempt downgrades a finding or a malformed row drops neighboring keys; why_new=102A E3/E9; seam=build CLI
   test('identity file errors identify affected lines and preserve 19 valid keys', () => {
     const dir = newDir();
@@ -8909,6 +9100,58 @@ describe('cross-cycle finding identity', () => {
         carried: 0, new: 5, repeated_premise: 4, repeated_premise_pairs: mode === 'concentrated' ? 1 : 4,
       });
     }
+  });
+
+  test('rejects invalid stored finding identity and continuation metadata', () => {
+    const first = newDir(), dir = newDir(), frozen = snapshot('finding citation\n');
+    expect(start(first, 1550).json.reason).toBe('recorded');
+    report(first, 1551, [finding('F-prior', 1)], frozen);
+    expect(imports(dir, 1553, stop(first)).json.reason).toBe('recorded');
+    report(dir, 1554, [finding('F-current', 1)], frozen);
+
+    const valid = readState(dir);
+    const statePath = join(dir, stateFile);
+    expect(validateStoredState(valid, stateFile).ok).toBe(true);
+    const firstFinding = (state: ReviewRunState) => state.passes[0]!.voices[0]!.attempts[0]!.findings![0]!;
+    expect(firstFinding(valid).identity?.key).toMatch(/^fk1:/);
+    const classMissing = structuredClone(valid), badKey = structuredClone(valid);
+    firstFinding(classMissing).finding_class = null;
+    firstFinding(badKey).identity!.key = 'fk1:1234';
+
+    const prior = valid.continuation.prior_findings;
+    if (prior?.status !== 'imported') throw new Error('expected imported prior findings');
+    const entry = prior.entries[0]!;
+    const withPriorEntries = (entries: unknown[]) => ({
+      ...valid, continuation: { ...valid.continuation, prior_findings: { ...prior, entries } },
+    });
+    for (const [stored, message] of [
+      [classMissing, 'invalid-value at passes[0].voices[0].attempts[0].findings[0].finding_class'],
+      [badKey, 'invalid-value at passes[0].voices[0].attempts[0].findings[0].identity.key'],
+      [withPriorEntries([{ ...entry, finding_class: 'bogus' }]), 'invalid-enum at continuation.prior_findings.entries[0].finding_class'],
+      [withPriorEntries([entry, { ...entry }]), 'duplicate-value at continuation.prior_findings.entries[1].key'],
+    ] as const) {
+      expect(validateStoredState(stored, stateFile)).toMatchObject({
+        ok: false, reason: 'corrupt', detail: { path: stateFile, message },
+      });
+    }
+    const bytes = JSON.stringify(classMissing);
+    writeFileSync(statePath, bytes);
+    expect(runCli(['show', '--dir', dir]).json.reason).toBe('corrupt');
+    expect(readFileSync(statePath, 'utf8')).toBe(bytes);
+  });
+
+  test('build start refuses a prior-state digest without its copy before writing files', () => {
+    const dir = newDir();
+    const result = runCli([
+      'build', 'start', '--dir', dir, '--run-id', uid(1556), '--base', baseSha, '--plan-ref', 'docs/plan.md',
+      '--plan-sha256', sha256('plan-bytes'), '--policy-source', 'none supplied', '--max-continuations', '3',
+      '--prior-state-sha256', sha256('prior-state-bytes'),
+    ]);
+    expect(result.code).toBe(2);
+    expect(result.json).toMatchObject({
+      reason: 'usage', detail: { message: '--prior-state-sha256 requires --prior-state-file' },
+    });
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   // Value: protects=continuation provenance, idempotent start and advisory import bounds; fails_when=wrong same-head evidence imports, missing copies erase completeness, or show discloses prior entries; why_new=102A E4/E5; seam=start, show, render and export
