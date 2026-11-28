@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.129.2] - 2026-11-28
+
+### Fixed
+
+- `/review-and-prep` now keeps recording its run state when a reviewer reports a severity label in any letter case, when a probe gate is recorded with its probe outcome word, when a narrowed pregate is recorded as narrowed, and when an earlier review pass was left open at finish, instead of falling back to inline receipts.
+- The review-state helper accepts case variants of supported severity labels and records documented probe and narrowed-pregate outcomes.
+- A refused prepared finish now identifies open passes and explains how to close them and retry without invalidating a published receipt.
+
 ## [0.129.1] - 2026-11-28
 
 ### Changed
