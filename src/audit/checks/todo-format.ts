@@ -5,6 +5,11 @@
  * candidate entry against the source-tag contract. Also validates each entry
  * in docs/todos/ against the per-record intake format.
  *
+ * Attribute bullets (`- **Key:** value`) are not validated here, so filer
+ * provenance bullets (`- **Deferred by:** developer, <date>: "<words>"` and
+ * `- **Filed by:** worker`) and other attribute fields pass unchanged, per
+ * docs/source-tag-contract.md.
+ *
  * Failure modes:
  *   - MALFORMED_INTAKE_FILE: invalid path, filename, or record structure.
  *   - MALFORMED_HEADING: compact bullet (`- **[tag] Title**`) — flagged

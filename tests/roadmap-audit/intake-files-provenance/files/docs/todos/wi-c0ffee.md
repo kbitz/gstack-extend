@@ -1,0 +1,11 @@
+### [review:files=src/export.ts|src/export-format.ts] Test gap: empty batch is not tested
+- **ID:** wi-c0ffee
+- **Filed by:** worker
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** `exportBatch` has no test for an empty batch; the code path returns early and nothing asserts its output.
+- **Hypothesis (untested):** a test that passes an empty batch and expects an empty file; re-verify the early return first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/export.ts:41
+- **Evidence:** read the function and its existing tests; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/example-org/example-repo/pull/42 at a1b2c3d (2026-11-01).
+- **Effort:** ? (user triages in /roadmap)

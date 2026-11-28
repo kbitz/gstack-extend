@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.128.0] - 2026-11-28
+
+### Added
+
+- Use `bin/todo-file` to file a TODO record with a fresh work-item ID, evidence, and explicit developer or worker provenance in `docs/todos/`.
+
 ## [0.127.0] - 2026-11-28
 
 ### Added

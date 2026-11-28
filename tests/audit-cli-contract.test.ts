@@ -458,4 +458,58 @@ describe('per-record intake audit', () => {
     }
     expect(JSON.parse(run(['--scan-state', repo]).stdout).signals.unprocessed_count).toBe(2);
   });
+
+  test('accepts developer-deferred and worker-filed provenance bullets in TODOS.md and intake files', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    seedRoadmap(repo, roadmap);
+    const docs = join(repo, 'docs');
+    const intake = join(docs, 'todos');
+    mkdirSync(intake, { recursive: true });
+    writeFileSync(
+      join(docs, 'TODOS.md'),
+      [
+        '# TODOs',
+        '',
+        '## Unprocessed',
+        '',
+        '### [manual] Defer cleanup pass',
+        '- **ID:** wi-e1e2e3',
+        '- **Deferred by:** developer, 2026-11-26: "1 - fix, file the rest, finish"',
+        '- **Why:** Keep the current PR scoped to the primary fix.',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(intake, 'wi-a1b2c3.md'),
+      [
+        '### [review] Follow-up deferred with developer words',
+        '- **ID:** wi-a1b2c3',
+        '- **Deferred by:** developer, 2026-11-26: "Keep \u201cthis\u201d and [brackets] for later"',
+        '- **Description:** Follow-up item deferred during review.',
+        '- **Evidence:** Reviewed src/a.ts:10-20.',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(intake, 'wi-d4e5f6.md'),
+      [
+        '### [review:files=src/a.ts] Test gap: missing edge test',
+        '- **ID:** wi-d4e5f6',
+        '- **Filed by:** worker',
+        '- **Test gap:** no demonstrated defect; filed under `test-gaps=record`',
+        '- **Description:** Edge branch in src/a.ts has no direct unit test.',
+        '- **Evidence:** Read src/a.ts and tests/a.test.ts; no failure reproduced.',
+        '',
+      ].join('\n'),
+    );
+
+    const audit = run([repo]);
+    expect(audit.exitCode, audit.stderr).toBe(0);
+    expect(audit.stderr).toBe('');
+    const todoFormat = section(audit.stdout, 'TODO_FORMAT');
+    expect(todoFormat).toContain('STATUS: pass');
+    expect(todoFormat).toContain('- (none)');
+    expect(section(audit.stdout, 'WORK_ITEM_IDS')).toContain('STATUS: pass');
+    expect(section(audit.stdout, 'UNPROCESSED')).toContain('INTAKE_FILES: 2');
+  });
 });

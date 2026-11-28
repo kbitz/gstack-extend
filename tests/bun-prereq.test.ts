@@ -181,6 +181,7 @@ type LauncherSpec = {
 const ALL_LAUNCHERS: LauncherSpec[] = [
   { name: 'roadmap-audit', family: 'bare', srcRel: 'src/audit/cli.ts', okArgs: ['--help'] },
   { name: 'roadmap-id', family: 'bare', srcRel: 'src/audit/id-cli.ts', okArgs: ['--help'] },
+  { name: 'todo-file', family: 'bare', srcRel: 'src/audit/todo-file-cli.ts', okArgs: ['--help'] },
   { name: 'roadmap-pack', family: 'bare', srcRel: 'src/audit/pack-cli.ts', okArgs: ['--help'] },
   { name: 'roadmap-touches', family: 'bare', srcRel: 'src/audit/touches-cli.ts', okArgs: [] },
   { name: 'roadmap-renumber', family: 'bare', srcRel: 'src/audit/renumber-cli.ts', okArgs: [] },
@@ -196,7 +197,7 @@ const ALL_LAUNCHERS: LauncherSpec[] = [
   { name: 'review-state', family: 'review-state', srcRel: 'src/review-state/cli.ts', okArgs: ['--help'] },
 ];
 
-describe('all 15 gated bin/ launchers', () => {
+describe('all 16 gated bin/ launchers', () => {
   const oldBunDir = freshDir('old-bun');
   makeDelegatingShim(oldBunDir, '1.2.0');
   const badBunDir = freshDir('bad-bun');
@@ -728,7 +729,7 @@ if [ "$1" = --help ]; then printf '%s\\n' '  --no-env-file'; exit 0; fi
 touch "$TEST_RUNTIME_HIT"
 exit 97
 `);
-  for (const file of ['gstack-extend', 'roadmap-audit', 'roadmap-pack', 'roadmap-touches']) {
+  for (const file of ['gstack-extend', 'roadmap-audit', 'roadmap-pack', 'roadmap-touches', 'todo-file']) {
     mkdirSync(join(mirror, 'bin'), { recursive: true });
     copyFileSync(join(REPO_ROOT, 'bin', file), join(mirror, 'bin', file));
   }
@@ -766,7 +767,7 @@ exit 97
 
     // Refusal formatting must work even when the caller's PATH contains only Bun.
     const launcherOptions = found === null ? { ...options, env: { ...env, PATH: shim } } : options;
-    for (const launcher of ['roadmap-audit', 'roadmap-pack', 'roadmap-touches']) {
+    for (const launcher of ['roadmap-audit', 'roadmap-pack', 'roadmap-touches', 'todo-file']) {
       const result = spawnSync('/bin/sh', [join(mirror, 'bin', launcher), '--help'], launcherOptions);
       expect(result.status).toBe(1);
       expect(result.stdout).toBe('');
