@@ -90,7 +90,7 @@ case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spa
 The guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output and not a failure.
 - On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.
 
-If output has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host and relay setup's stderr reason and fix. See **Shared-directory migration** in `docs/installation.md` for shared paths. Never say every host was refreshed. A `failed` row means the refresh did not finish and may have left previous copies.
+If output has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host and relay setup's stderr reason and fix. See **Shared-directory migration** in the checkout's `docs/installation.md` for shared paths. Never say every host was refreshed. A `failed` row means the refresh did not finish and may have left previous copies.
 
 - On failure: **Treat absent `UPGRADE_OK` as failure** after handling the guard. Relay any Upgrade summary as printed. Say "Upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Go to Step 5.
 

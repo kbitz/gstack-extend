@@ -355,8 +355,10 @@ entries newer than the previous version through the installed version. For
 main tracking, including an untagged stable fallback, it summarizes the commit
 log. On success, the updater prints
 `WHATS_NEW_RANGE from=<commit> to=<commit> channel=<stable|main>` immediately
-before `UPGRADE_OK`. The range brackets the update on `main`, even when the
-updater restores another branch afterward. A direct `bin/update-run` caller
+before `UPGRADE_OK`. The range brackets the update on `main`, including any
+commits pulled before a setup retry. The updater may restore another branch
+afterward. Skill links and helpers that resolve through the checkout then
+follow the restored branch. A direct `bin/update-run` caller
 gets the host rows and range line, without the skill's prose summary.
 The upgrade into the release that introduces this output runs the previous
 updater and skill text, so both summaries first appear on a subsequent upgrade.

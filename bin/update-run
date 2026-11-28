@@ -213,6 +213,19 @@ fi
 # Fast-forward only — if main has diverged locally, fail safely instead of destroying work
 _STAGE="pull-ff-only"
 FROM_COMMIT=$(git -C "$INSTALL_DIR" rev-parse HEAD)
+# Setup can fail after main advances. Preserve the start of the upgrade
+# until a successful retry, independently of the migration version marker.
+# Key it by checkout because multiple installs can share STATE_DIR.
+RANGE_CHECKOUT=$(git -C "$INSTALL_DIR" rev-parse --absolute-git-dir | git -C "$INSTALL_DIR" hash-object --stdin)
+RANGE_FROM_FILE="$STATE_DIR/upgrade-range-from-$RANGE_CHECKOUT"
+if [ -f "$RANGE_FROM_FILE" ] &&
+   IFS= read -r SAVED_FROM < "$RANGE_FROM_FILE" &&
+   [[ "$SAVED_FROM" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] &&
+   git -C "$INSTALL_DIR" merge-base --is-ancestor "$SAVED_FROM" "$FROM_COMMIT" 2>/dev/null; then
+  FROM_COMMIT=$SAVED_FROM
+else
+  printf '%s\n' "$FROM_COMMIT" > "$RANGE_FROM_FILE"
+fi
 INSTALLED_CHANNEL=main
 if [ -n "$RELEASE_TAG" ]; then
   # Git also reports success when HEAD is already ahead of the target.
@@ -278,6 +291,7 @@ echo "$OLD_VERSION" > "$STATE_DIR/just-upgraded-from"
 _STAGE="clear-cache"
 rm -f "$STATE_DIR/last-update-check"
 rm -f "$STATE_DIR/update-snoozed"
+rm -f "$RANGE_FROM_FILE"
 
 _STAGE="done"
 _RESULT_EMITTED=1

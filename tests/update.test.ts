@@ -1198,6 +1198,7 @@ exit 1
 
     test('setup-fail after pull: hop-from keeps window for the next hop', () => {
       const repo = createFixtureRepo('mig-setup-fail');
+      const before = fixtureGit(repo, 'rev-parse', 'HEAD');
       pushNewVersion(`${baseTmp}/mig-setup-fail-remote`, '1.1.0', {
         ...migrationPayload({ 'v1.1.0.sh': okScript }),
         setup: '#!/usr/bin/env bash\nexit 1\n',
@@ -1233,6 +1234,7 @@ exit 1
       });
       const out2 = second.stdout + second.stderr;
       expect(out2).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(second.stdout).toContain(`WHATS_NEW_RANGE from=${before} to=${fixtureGit(repo, 'rev-parse', 'HEAD')} channel=main`);
       expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
       expect(existsSync(join(stateDir, 'migrations-hop-from'))).toBe(false);
     });
@@ -1240,6 +1242,7 @@ exit 1
     test('Bun refusal after pull: supported Bun resumes the original migration window once', () => {
       const name = 'mig-bun-retry';
       const repo = createFixtureRepoWithRealSetup(name);
+      const before = fixtureGit(repo, 'rev-parse', 'HEAD');
       pushNewVersion(join(baseTmp, `${name}-remote`), '1.1.0', {
         ...migrationPayload({ 'v1.1.0.sh': okScript }),
         setup: readFileSync(SETUP, 'utf8'),
@@ -1267,11 +1270,14 @@ exit 1
       const second = runBin(UPDATE_RUN, [repo], retryOpts);
       expect(second.exitCode).toBe(0);
       expect(second.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      const installed = fixtureGit(repo, 'rev-parse', 'HEAD');
+      expect(second.stdout).toContain(`WHATS_NEW_RANGE from=${before} to=${installed} channel=main`);
       expect(readFileSync(ran, 'utf8')).toBe('ok\n');
       expect(existsSync(hopFrom)).toBe(false);
 
       const third = runBin(UPDATE_RUN, [repo], retryOpts);
       expect(third.exitCode).toBe(0);
+      expect(third.stdout).toContain(`WHATS_NEW_RANGE from=${installed} to=${installed} channel=main`);
       expect(readFileSync(ran, 'utf8')).toBe('ok\n');
     });
   });
