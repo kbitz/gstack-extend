@@ -143,7 +143,12 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
 
   const resumeCheckpoints = state.checkpoints.filter((cp) => cp.kind === 'resume');
   const records: ExportRecord[] = [];
-  const cyclesBySegment = new Map<number, { cycles: FindingCycle[]; progress: string }>();
+  type SegmentSnapshot = {
+    cycles: FindingCycle[];
+    progress: string;
+    movedCycles: FindingCycle['cycle'][];
+  };
+  const cyclesBySegment = new Map<number, SegmentSnapshot>();
   const localGroups = new Map<number, PassRecord[]>();
   const greptilePasses: PassRecord[] = [];
   for (const pass of state.passes) {
@@ -162,20 +167,30 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
     const passes = cycle.cycle === 'greptile'
       ? [greptilePasses[greptileIndex++]!]
       : localGroups.get(cycle.cycle)!;
-    let segment = null;
+    const cycleSegments = new Set<number>();
+    let owner = null;
     for (const pass of passes) {
-      if (pass.segment !== null) segment = pass.segment;
+      if (pass.segment !== null) {
+        owner = pass.segment;
+        cycleSegments.add(owner);
+      }
       const settled = pass.voices.filter((voice) => voice.selected_attempt_id !== null || voice.not_applicable !== null);
       progress.update(JSON.stringify([pass.pass_id, pass.state, settled.map(
         (voice) => [voice.voice_id, voice.selected_attempt_id, voice.not_applicable],
       )]));
     }
-    if (segment === null) continue;
-    // Earlier groups affect carried and repeated counts. Include their progress so
-    // counts that return to an earlier value still append a newer snapshot.
-    const cycles = cyclesBySegment.get(segment)?.cycles ?? [];
-    cycles.push(cycle);
-    cyclesBySegment.set(segment, { cycles, progress: progress.copy().digest('hex') });
+    for (const segment of cycleSegments) {
+      const snapshot: SegmentSnapshot = cyclesBySegment.get(segment) ?? { cycles: [], progress: '', movedCycles: [] };
+      if (segment === owner) {
+        snapshot.cycles.push(cycle);
+        // Earlier groups can affect carried and repeated counts.
+        snapshot.progress = progress.copy().digest('hex');
+      } else {
+        // A transfer can restore counts and progress from before this cycle existed.
+        snapshot.movedCycles.push(cycle.cycle);
+      }
+      cyclesBySegment.set(segment, snapshot);
+    }
   }
 
   for (const segInfo of segments) {
@@ -388,22 +403,6 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
       }
     }
 
-    const snapshot = cyclesBySegment.get(segInfo.segment);
-    if (snapshot) {
-      const digest = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
-      records.push({
-        session_id: sessionId,
-        op: 'finding-cycles',
-        request: {
-          v: 1,
-          stage: 'review-and-prep',
-          session_id: sessionId,
-          event_id: uuidv5(NAMESPACE, `${runId}:finding-cycles:${segInfo.segment}:${digest}`),
-          cycles: snapshot.cycles,
-        },
-      });
-    }
-
     // 4. Run end (only when derived === false and seg.end is paused or finished)
     if (!segInfo.derived && (segInfo.end === 'paused' || segInfo.end === 'finished')) {
       const endOutcome = segInfo.end === 'finished' && state.finish?.outcome === 'prepared' ? 'completed' : 'paused';
@@ -417,6 +416,23 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
           event_id: uuidv5(NAMESPACE, `${runId}:segment:${segInfo.segment}:end`),
           step_id: segInfo.run_step_id,
           outcome: endOutcome,
+        },
+      });
+    }
+
+    // 5. A refused advisory snapshot must not prevent an existing run end.
+    const snapshot = cyclesBySegment.get(segInfo.segment);
+    if (snapshot?.cycles.length) {
+      const digest = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+      records.push({
+        session_id: sessionId,
+        op: 'finding-cycles',
+        request: {
+          v: 1,
+          stage: 'review-and-prep',
+          session_id: sessionId,
+          event_id: uuidv5(NAMESPACE, `${runId}:finding-cycles:${segInfo.segment}:${digest}`),
+          cycles: snapshot.cycles,
         },
       });
     }

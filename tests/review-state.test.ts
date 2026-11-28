@@ -8587,6 +8587,63 @@ describe('cross-cycle finding identity', () => {
     expect(rows.find(({ event_id }) => event_id === exportedAttempt.request.event_id)).toMatchObject({ v: 1, op: 'pass', request: exportedAttempt.request });
   }, 30_000);
 
+  // Value: protects=latest segment cycle ownership after replay; fails_when=a transferred cycle leaves the former segment reporting an older snapshot; why_new=105B review regression; seam=review-state export and workflow metrics
+  test('refreshes a prior segment snapshot when a resumed pass takes ownership of a cycle', () => {
+    const dir = newDir();
+    expect(start(dir, 1700, { session_id: null }).json.reason).toBe('recorded');
+    const metrics = runMetrics();
+    report(dir, 1710, []);
+    const firstExport = exportRun(dir);
+    const firstSid = firstExport.segments[0]!.session_id;
+    expect(metrics.derive(dir)).toMatchObject({ status: 'ok' });
+    expect(metrics.read(firstSid).data.finding_cycles).toMatchObject([{ cycle: 1 }]);
+
+    report(dir, 1720, [], undefined, { cycle: 2 });
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(1730), kind: 'pause', base: baseSha }).json.reason).toBe('recorded');
+    expect(metrics.derive(dir)).toMatchObject({ status: 'ok' });
+    expect(metrics.read(firstSid).data.finding_cycles).toMatchObject([{ cycle: 1 }, { cycle: 2 }]);
+
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(1731), kind: 'resume', base: baseSha, session_id: null }).json.reason).toBe('recorded');
+    report(dir, 1740, [], undefined, { cycle: 2 });
+    const resumedExport = exportRun(dir);
+    const secondSid = resumedExport.segments[1]!.session_id;
+    const expectedCycles = resumedExport.records.filter(({ op }) => op === 'finding-cycles');
+    expect(expectedCycles).toMatchObject([
+      { session_id: firstSid, request: { cycles: [{ cycle: 1 }] } },
+      { session_id: secondSid, request: { cycles: [{ cycle: 2 }] } },
+    ]);
+    expect(metrics.derive(dir)).toMatchObject({ status: 'ok' });
+    expect(metrics.read(firstSid)).toMatchObject({ status: 'ok', data: { finding_cycles: [{ cycle: 1 }] } });
+    expect(metrics.read(secondSid)).toMatchObject({ status: 'ok', data: { finding_cycles: [{ cycle: 2 }] } });
+    expect(metrics.derive(dir)).toMatchObject({ status: 'ok', data: { sessions: [{ recorded: 0 }, { recorded: 0 }] } });
+  }, 30_000);
+
+  // Value: protects=the run end when an advisory snapshot is refused; fails_when=derive drops the terminal record on the sidecar limit; why_new=105B review regression; seam=review-state export and telemetry derive
+  test('keeps the run end when a cycle snapshot exceeds its bounds', () => {
+    const dir = newDir();
+    const fixture = makeTelemetryFixture('community');
+    const telemetry = (...args: string[]) =>
+      spawnSync(HELPER_BIN, args, { cwd: repo, env: fixture.env, encoding: 'utf8', timeout: 15_000 });
+    const started = telemetry('start', '--skill', 'extend:review-and-prep');
+    expect(started.status, started.stderr).toBe(0);
+    const sid = /session=(extend-[0-9a-f-]{36})/.exec(started.stdout)?.[1];
+    expect(sid).toBeDefined();
+    expect(start(dir, 1800, { session_id: sid }).json.reason).toBe('recorded');
+    report(dir, 1810, [], undefined, { cycle: 2 ** 31 });
+    expect(callCmd(dir, 'checkpoint', { checkpoint_id: uid(1820), kind: 'pause', base: baseSha }).json.reason).toBe('recorded');
+
+    const derived = telemetry('derive', '--dir', dir);
+    expect(derived.status, derived.stderr).toBe(0);
+    expect(JSON.parse(derived.stdout)).toMatchObject({
+      status: 'partial', data: { sessions: [{ session_id: sid, reason: 'invalid-input' }] },
+    });
+    const ledgerPath = join(fixture.home, '.gstack-extend/analytics/workflow-metrics', sha256(sid!) + '.jsonl');
+    const ledger = readFileSync(ledgerPath, 'utf8').trimEnd().split('\n').map(line => JSON.parse(line));
+    expect(ledger.map(record => [record.op, record.request.outcome ?? null])).toEqual([
+      ['begin', null], ['pass', null], ['pass', null], ['pass', null], ['pass', null], ['end', 'paused'],
+    ]);
+  }, 30_000);
+
   // Value: protects=first-seen cycle grouping and last-known segment ownership through pauses and legacy null segments; fails_when=a local cycle splits, moves to a null segment, or displaces an interleaved Greptile cycle; why_new=105B criterion 4; seam=stored-state export
   test('projects each cycle once into its last known segment and skips groups with no segment', () => {
     const dir = newDir();

@@ -750,8 +750,8 @@ counts without another append, and an absent boundary stays missing.
   [Finding attribution](#workflow-metrics-attribution). `receipt_text` does not
   carry them.
   `data.finding_cycles` holds the latest `finding-cycles` snapshot or `null`
-  when the record is absent or the read is partial. The snapshot leaves
-  `receipt_text` unchanged.
+  when the record is absent or integrity issues make the summary partial.
+  The snapshot leaves `receipt_text` unchanged.
   With `--event-id` it also returns `data.event`: that event's `status`
   (`match`, `absent` or `unknown`) with its digest and timestamp, for
   reconciliation; only a valid snapshot can report absence. Malformed rows,
@@ -887,6 +887,11 @@ remain readable with their original finding shapes. Versioned record and
 request shapes are published in the
 [workflow-metrics schema](workflow-metrics.schema.json).
 
+Finish open reviews before upgrading across this format change. If a ledger
+already contains derived v2 or v3 attempts, deriving that same run with the
+new helper can return `event-conflict` because the attempt IDs stay the same
+while their request contents change. The existing records remain readable.
+
 Example `pass` attempt ledger line with a keyed finding.
 
 ~~~json
@@ -899,6 +904,12 @@ first-pass order. Each cycle belongs to the segment of its last pass with a
 known segment. Review-state derive skips cycles with no known segment.
 The counts describe selected attempts and use the same definitions as
 [the review handoff](workflow-handoffs.md#finding-identity-and-cycle-counts).
+
+When a resumed local cycle moves to a later segment, derive refreshes the
+former segment's snapshot if it still owns other cycles. If it has none,
+its previously written snapshot stays in its ledger as history. Consumers
+combining segments of one review should use the entry from the latest
+segment for each recurring local cycle.
 
 | Field | Value |
 |---|---|
@@ -917,8 +928,9 @@ Counts are integers from 0 to 2147483647. The helper requires
 `repeated_premise_pairs <= repeated_premise <= new`, with the two
 repeated-premise counts zero together. It uses repository paths to compute
 pair counts in run state and exports only the counts. Derive uses cycle
-counts and pass progress to identify each snapshot. Repeating derive on
-unchanged state replays the existing record.
+counts, pass progress and ownership changes to identify each snapshot.
+Repeating derive on unchanged state replays the existing record. Run derives
+serially for a review so their append order follows review-state progress.
 
 Example `finding-cycles` ledger line after completing that cycle.
 
@@ -930,8 +942,10 @@ Example `finding-cycles` ledger line after completing that cycle.
 `data.finding_cycles`. The field is `null` on a pre-change ledger, when the
 segment has no snapshot, or when integrity issues make a read partial.
 An open cycle can report `observed: "partial"` in an otherwise valid read.
-The cycle records count toward `data.records` and leave pass and finding
-totals, `receipt_text` and `read --usage` unchanged.
+The cycle records count toward `data.records` and do not change the pass and
+finding reductions, `receipt_text` or `read --usage`. If the summary exceeds
+16 KiB, the reader returns the compact `partial` envelope with
+`reason: "capacity"` and only `capture` in `data`.
 
 <a id="workflow-metrics-usage"></a>
 
@@ -1174,9 +1188,12 @@ checkout after recording state, and rerun it there to recover a missed write.
 and writes the run's workflow-metrics records. These include `begin(kind=run)`,
 `pass` v2 boundaries and v4 attempts with attribution, finding identities and
 optional delegate metadata, `correction` for `finding`/`retry`/`fallback`,
-`finding-cycles` snapshots, and `end` on closed recorded segments other than
-interrupted ones. It also writes any missing `stage-runs` rows for closed
-segments whose `session_id` was `null` (`derived: true`). It uses the existing
+`end` on closed recorded segments other than interrupted ones, and
+`finding-cycles` snapshots. Derive writes the snapshot after the other records
+for that segment. If snapshot validation fails, the segment result reports
+the failure and retains its already written records. Derive also writes any
+missing `stage-runs` rows for closed segments whose `session_id` was `null`
+(`derived: true`). It uses the existing
 `workflow_metrics.mutate` and `provenance_row(..., derived=True)` write paths,
 leaving `review-run-state.json` untouched.
 
