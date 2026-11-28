@@ -21,65 +21,66 @@ same day, as were capturing the owner's hand use in telemetry ("we need to make
 sure telemetry captures my use by hand") and labelled release-note disclosures
 in plans and review handoffs ("sure if necessary").
 
-**Order.** Since the 2026-11-25 regeneration (`586dbaa`, PR #312), three Tracks
-shipped: Track 97A (`wi-2cf4fb`, PR #313, `11327a0`, `v0.118.0`, item `8b742bc1`,
-replacing hand-written fence scanning in the six planning-file block-structure
-readers with pinned `marked@18.1.3`), Track 100A (`wi-84aea9`, PR #314,
-`465e989`, `v0.119.0`, item `42dede8a`, adding `/full-review`'s
-implicit-state-machine lens and `bin/full-review-state-machines` pre-scanner,
-which landed ahead of 98A and 99A) and Track 98A (`wi-4149dd`, PR #315,
-`3f8c1e3`, `v0.120.0`, item `d2eb8431`, writing machine-generated review intake
-to per-record files under `docs/todos/<wi-id>.md` alongside `docs/TODOS.md`).
-On 2026-11-26 the developer requested a full regeneration ("Please regen the
-roadmap once this merges, before you hibernate."; "Don't hibernate until I merge
-the roadmap regen, I'll do it in the am"; "Let's do the full regen and make sure
-we have a solid plan.") and set the priority rules for this plan (verbatim,
-2026-11-26): "Anything purely for 1.0 spec reqs and no other benefit should be
-last."; "That's not what I said. I said the tracks that are purely qualification
-for 1.0 are last. If I have to test something for a track that otherwise does
-something useful, that's OK."; "101B-D don't make sense to me as to why we want
-to do them? Have we prioritized work that gives us the best bang for buck on
-efficiency and helping the process run smoothly? 101a seems obvious to me that
-it's next but the rest I'm not sure"; "Did you ensure that the roadmap worker
-did a good job coalescing things together into single tracks where it makes
-sense and has optimized for parallelization?"; and, approving the four
-review-throughput cards, "Your proposal re 100 PRs article sounds good to me."
+**Order.** Since the 2026-11-26 regeneration (`771f880`, PR #316), six Tracks
+shipped: Track 101B (`wi-5dc2f5`, PR #317, `6cd4603`, `v0.121.0`, item
+`929de338`, qualitative one-task splitting for existing-code-path cards in
+`/roadmap`), Track 101C (`wi-553a78`, PR #319, `b561d76`, `v0.122.0`, item
+`bf0129b1`, bulk work-item ID migration, Git-history ID retirement and strict
+`WORK_ITEM_IDS` enforcement), Track 101A (`wi-9cfa44`, PR #318, `ac3c4ae`,
+`v0.123.0`, item `53915c14`, merge-only refresh for moved-base reviewed PRs
+plus host-session defensive-context framing), Track 102B (`wi-b9f147`, PR #321,
+`273dd1a`, `v0.124.0`, item `5dc1771b`, stable release-tag update channel,
+non-interactive bootstrap auto-upgrade and missing-`gstack` setup warning),
+Track 102A (`wi-c6b6bd`, PR #320, `7f37ed8`, `v0.125.0`, item `aa5cff6a`,
+stable cross-cycle finding identities and per-cycle counts in `src/review-state/`,
+with the workflow-metrics consumer half of criterion 3 split off on the
+developer's word, "approve per your rec", touchpoint `b1db1a82`, 2026-11-27)
+and Track 104A (`wi-6743bd`, PR #322, `8367bcd`, `v0.126.0`, item `6d6dc150`,
+`Verification:` block on `/implement` handoffs targeted first in review cycle 1).
+Track 103A (`wi-a257f8`, blocking-only fix cycles for delegated passes and
+Greptile) was killed on the developer's word on 2026-11-27 ("Retire is fine"):
+its plan's user challenge showed `blocking=shown` already covers most of it.
 
-Under those rules, nothing is declared in flight (`## In Progress` is empty),
-and Current Plan orders efficiency and workflow-smoothness work ahead of
-purely-1.0 qualification while maximizing disjoint parallelism:
-- **Group 101** runs three disjoint Tracks in parallel: Track 101A (`wi-9cfa44`,
-  merge-only refresh for moved-base reviewed PRs, with the developer-approved
-  defensive-context paragraph folded in as criterion 6) goes first; beside it
-  run Track 101B (`wi-5dc2f5`, `/roadmap` one-task Track splits for smaller,
-  faster-reviewing PRs) and Track 101C (`wi-553a78`, former 99A, bulk work-item
-  ID migration and Git-history ID retirement, which removes noisy `WORK_ITEM_IDS`
-  warnings, prevents retired-ID reuse in per-record intake and unblocks the
-  stable channel).
-- **Group 102** runs two disjoint Tracks in parallel: Track 102A (`wi-c6b6bd`,
-  stable cross-cycle finding identity to cut long review tails) follows 101A,
-  and Track 102B (`wi-b9f147`, former 100B, stable update channel and
-  non-interactive bootstrap auto-upgrade — useful operational work that needs
-  one owner channel-upgrade check) follows 101C on `docs/compatibility.md`.
-- **Group 103** runs Track 103A (`wi-a257f8`, blocking-only fix cycles for
-  delegated passes and Greptile), kept as a separate, sequenced novel-tier PR
-  from 102A because both decide what a review gate credits.
-- **Group 104** runs Track 104A (`wi-6743bd`, `/implement` handoff
-  `Verification:` block so review cycle 1 starts from what could not be
-  verified), sequenced after 103A on `skills/review-and-prep.md` and
-  `docs/workflow-handoffs.md`.
-- **Group 105** runs Track 105A (`wi-2633cf`, former 101A, upstream-aligned
-  install/upgrade flow with grouped What's-new and per-host summaries), sequenced
-  after all skill-editing Tracks and 102B, and right before install/upgrade
-  qualification so the final UX is qualified once.
-- **Groups 106 and 107** place the four purely-1.0-qualification Tracks last:
-  three disjoint owner-run acceptance Tracks run in parallel in Group 106 —
-  install/upgrade qualification gaps U1–U3 (106A, `wi-4732d3`, former 97B),
-  remaining real review records and by-hand run-mode readbacks (106B,
-  `wi-8b4a30`, former 97C) and two-driver workflow qualification (106C,
-  `wi-9d6cf2`, former 97D) — followed by the offline O6 stage-cost study and
-  optimization decisions in Group 107 (107A, `wi-b1f0bd`, former 98B), which
-  changes no review gate, model choice or default and consumes 106C's runs.
+On 2026-11-28 the developer approved running this regeneration in parallel with
+in-flight Track 105A (verbatim: "Sure now is fine"). The developer's standing
+priority rules (verbatim) continue to govern ordering: "Anything purely for 1.0
+spec reqs and no other benefit should be last." and "I said the tracks that are
+purely qualification for 1.0 are last. If I have to test something for a track
+that otherwise does something useful, that's OK." Under those rules and Track
+101B's one-task Track policy for existing code paths:
+- **Group 105** (in progress) holds pinned Track 105A (`wi-2633cf`, in flight in
+  planning as the orchestrator's item `a52fc49e`, card text kept unchanged)
+  alongside two disjoint Layer-0 efficiency Tracks ready to launch immediately
+  in parallel: Track 105B (`wi-3f28d1`, carrying Track 102A's finding identities
+  and per-cycle counts in a new workflow-metrics record version) and Track 105C
+  (`wi-19e153`, adding `bin/todo-file` with provenance and `roadmap-audit`
+  format acceptance — split 1 of 3 from the TODO-filer card).
+- **Group 106** runs two disjoint efficiency/defect-repair Tracks in parallel:
+  Track 106A (`wi-0f466e`, hardening `bin/review-state` against the three
+  observed inline-fallback refusals from PRs #317, #318 and #322 — launches as
+  soon as 105B lands without waiting on 105A) and Track 106B (`wi-cf1ea6`,
+  sparing `Deferred by: developer` entries in `/roadmap`'s manifestation gate
+  and listing killed entries in regeneration PR bodies — split 2 of 3 from the
+  TODO-filer card).
+- **Group 107** runs Track 107A (`wi-09020e`, accepting a bound external
+  full-suite pass for the pregate full-suite sentinel under
+  `full-suite=external` — split 1 of 2 from the external-gate/doc-audit reuse
+  card; separate novel-tier review-gate trust boundary).
+- **Group 108** runs Track 108A (`wi-0e205d`, reusing an accepted documentation
+  audit across a mechanical late base merge under `doc-audit-gap=auto` — split
+  2 of 2 from the external-gate/doc-audit reuse card; separate novel-tier
+  review-gate trust boundary).
+- **Group 109** runs Track 109A (`wi-3a82ed`, wiring `/review-and-prep`,
+  `/pair-review` and `/full-review` intake filing through `bin/todo-file`,
+  plus optional `/file-todo` — split 3 of 3 from the TODO-filer card, placed
+  after the review-efficiency chain per the card's scheduling note).
+- **Groups 110 and 111** place the four purely-1.0-qualification Tracks last:
+  three disjoint owner-run acceptance Tracks run in parallel in Group 110 —
+  install/upgrade qualification gaps U1–U3 (110A, `wi-4732d3`, former 106A),
+  remaining real review records and by-hand run-mode readbacks (110B,
+  `wi-8b4a30`, former 106B) and two-driver workflow qualification (110C,
+  `wi-9d6cf2`, former 106C) — followed by the offline O6 stage-cost study and
+  optimization decisions in Group 111 (111A, `wi-b1f0bd`, former 107A).
 Owner, 2026-11-08: "A but keep 72c and 78a for 1.0", approving a proposal that
 moved the review-finding records to Future and kept docs-only test selection
 (since shipped) and the gstack alignment (now Track 105A) as 1.0 work.
@@ -95,10 +96,10 @@ skill's inline preamble with one fixed command a single permission rule can
 allow. Track 93B removed their quota and telemetry code; the first attempt
 (PR #292, closed unmerged) grew by live-reconciling stored Cursor charges, and
 the shipped version (PR #294, v0.110.0, developer: "b", then "1") deletes that
-reconciliation. Track 92A's plan follow-up 92E (name its release in the
-compatibility catalog's retired-surface entry) is carried by Track 102B (former
-100B), because this skill does not edit the catalog. The Cursor by-hand readback
-was discharged with the reason "Cursor support dropped 2026-11-21".
+reconciliation. Track 92A's plan follow-up 92E (name its release `0.109.0` in
+the compatibility catalog's retired-surface entry) shipped in Track 102B
+(`v0.124.0`, PR #321). The Cursor by-hand readback was discharged with the
+reason "Cursor support dropped 2026-11-21".
 
 **Review-gate credit (developer-approved practices, 2026-11-20).** A review
 gate's credit decision is a trust boundary, so work that changes it is planned
@@ -113,19 +114,22 @@ aside. "parking is an option when it turns out we shouldn't even do a track,
 because it's counter to our objectives, then it would make sense to park and
 re-evaluate".
 
-**Dropped: Track 35B.** The `full-suite=before-audit` value was dropped rather
-than renumbered (2026-10-31): under `full-suite=final` and
-`full-suite=external` the full suite already runs once on the final content,
-after the documentation audit (`skills/review-and-prep.md`, Review policy
-section and the external gate's slot), so that value has no second full suite
-to avoid, and no caller has asked for it. Under `full-suite=external` the
-pregate's selected test lanes ran a second time after the caller's accepted
-full-suite pass (corrected 2026-11-01); the v0.60.0 pregate narrowing skips
-that repeat when the attested command covers every selected test. That is a
-different repetition from the one 35B targeted, so 35B stays dropped and its
-design item E3 stays marked dropped in the
-[efficiency program](designs/workflow-efficiency-program.md); reinstating it is
-the owner's decision.
+**Dropped: Track 35B and Track 103A.**
+- Track 35B (`full-suite=before-audit`) was dropped rather than renumbered
+  (2026-10-31): under `full-suite=final` and `full-suite=external` the full
+  suite already runs once on the final content, after the documentation audit
+  (`skills/review-and-prep.md`, Review policy section and the external gate's
+  slot), so that value has no second full suite to avoid, and no caller has
+  asked for it. Under `full-suite=external` the pregate's selected test lanes
+  ran a second time after the caller's accepted full-suite pass (corrected
+  2026-11-01); the v0.60.0 pregate narrowing skips that repeat when the
+  attested command covers every selected test. That is a different repetition
+  from the one 35B targeted, so 35B stays dropped and its design item E3 stays
+  marked dropped in the [efficiency program](designs/workflow-efficiency-program.md);
+  reinstating it is the owner's decision.
+- Track 103A (`wi-a257f8`, blocking-only fix cycles for delegated passes and
+  Greptile) was killed on 2026-11-27 on the developer's word ("Retire is fine"):
+  its plan's user challenge showed `blocking=shown` already covers most of it.
 
 **Card size.** A Track estimated above about 300 authored lines, counting its
 tests, is split into separate Tracks unless splitting would leave a Track that
@@ -134,27 +138,31 @@ toward that threshold. Do not split when the resulting Tracks would edit the
 same files and must run one after another anyway, because each Track costs a
 full pipeline run. A card kept above the threshold says why on its
 **Scheduling:** line, and a card with copied or generated lines states them
-separately from authored ones (owner rule, 2026-10-26). Track 31A was already in
-progress when the rule was adopted and has shipped. Applied 2026-10-26 to three
-Track pairs that edit the same files and run in sequence: each pair is now one
-card, with the reason on its Scheduling line; the review-fix policy pair stayed
-split on purpose (both Tracks have shipped, 33A in v0.55.0 and 51A in v0.59.0;
-the reason is on 51A's shipped receipt).
+separately from authored ones (owner rule, 2026-10-26). Track 101B
+(`v0.121.0`, PR #317) adds the qualitative default to split cards changing
+existing code paths into one-task Tracks unless the 0-to-1 or same-files
+exception applies (and separate concerns or trust boundaries still split).
 
-**Labels.** This regeneration (2026-11-26) recorded Track 97A (`wi-2cf4fb`,
-PR #313 `11327a0` `v0.118.0`, item `8b742bc1`), Track 100A (`wi-84aea9`,
-PR #314 `465e989` `v0.119.0`, item `42dede8a`) and Track 98A (`wi-4149dd`,
-PR #315 `3f8c1e3` `v0.120.0`, item `d2eb8431`), retiring Groups 97, 98 and 100
-by tombstones (Group 99 had no shipped Track). `## In Progress` is empty. Five
-developer-approved cards were placed with newly minted immutable IDs: Track 101A
-(`wi-9cfa44`), Track 101B (`wi-5dc2f5`), Track 102A (`wi-c6b6bd`), Track 103A
-(`wi-a257f8`) and Track 104A (`wi-6743bd`). Remaining unshipped Tracks recycled
-from 101 in packer order: former 99A became 101C (`wi-553a78`); former 100B
-became 102B (`wi-b9f147`); former 101A became 105A (`wi-2633cf`); former 97B
-became 106A (`wi-4732d3`); former 97C became 106B (`wi-8b4a30`); former 97D
-became 106C (`wi-9d6cf2`); former 98B became 107A (`wi-b1f0bd`). The renames
-are in this regeneration's commit message. Shipped numbers through 98 and 100
-are reserved by tombstones; 64 was never a roadmap Group.
+**Labels.** This regeneration (2026-11-28) recorded six shipped Tracks — 101B
+(`wi-5dc2f5`, PR #317 `6cd4603` `v0.121.0`, item `929de338`), 101C
+(`wi-553a78`, PR #319 `b561d76` `v0.122.0`, item `bf0129b1`), 101A
+(`wi-9cfa44`, PR #318 `ac3c4ae` `v0.123.0`, item `53915c14`), 102B
+(`wi-b9f147`, PR #321 `273dd1a` `v0.124.0`, item `5dc1771b`), 102A
+(`wi-c6b6bd`, PR #320 `7f37ed8` `v0.125.0`, item `aa5cff6a`) and 104A
+(`wi-6743bd`, PR #322 `8367bcd` `v0.126.0`, item `6d6dc150`) — retiring
+Groups 101, 102 and 104 by tombstones (Group 103 had no shipped Track; Track
+103A `wi-a257f8` was killed). Track 105A (`wi-2633cf`, item `a52fc49e`) is
+declared pinned in `## In Progress` with its card text unchanged, and Group
+105 backfills disjoint Layer-0 Tracks 105B (`wi-3f28d1`) and 105C
+(`wi-19e153`). Seven new Tracks were minted from the three approved waiting
+cards and one observed `bin/review-state` defect: 105B (`wi-3f28d1`), 105C
+(`wi-19e153`), 106A (`wi-0f466e`), 106B (`wi-cf1ea6`), 107A (`wi-09020e`),
+108A (`wi-0e205d`) and 109A (`wi-3a82ed`). Remaining unshipped qualification
+Tracks recycled after Group 109: former 106A became 110A (`wi-4732d3`);
+former 106B became 110B (`wi-8b4a30`); former 106C became 110C (`wi-9d6cf2`);
+former 107A became 111A (`wi-b1f0bd`). The renames are in this regeneration's
+commit message. Shipped numbers through 102 and 104 are reserved by tombstones;
+64 was never a roadmap Group.
 
 Target: [SPEC](SPEC.md) O1–O6, 1.0.0 as the owner's own real use by hand and
 through an orchestrator; audience ceiling potentially-public. No workspace host
@@ -165,138 +173,11 @@ distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-
-## Current Plan
-
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 100_
-
-### Group 101: Merge-only refresh after base move ∥ one-task roadmap splits ∥ work-item ID migration and Git-history retirement
+### Group 105: Upstream-aligned install/upgrade ∥ finding identities in workflow metrics ∥ provenance TODO filer
 
 _Depends on: none_
 
-**This group delivers:** A merge-only `/review-and-prep` refresh mode for moved-base reviewed PRs plus host-session defensive context framing (Track 101A, first); qualitative one-task splitting for existing-code-path cards in `/roadmap` so PRs stay smaller and review faster (Track 101B, disjoint); and one-time idempotent work-item ID migration, Git-history ID retirement and strict `WORK_ITEM_IDS` enforcement across all planning documents (Track 101C, disjoint).
-
-##### Track 101A: Refresh a reviewed PR after a base move without a new review
-_2 tasks . ~300 LOC incl. tests . medium risk_
-_id: wi-9cfa44_
-**Outcome:** A PR that `/review-and-prep` already prepared or marked ready, and whose base then moved, can be brought current by a merge-only refresh: merge the base, resolve the conflict, review only what the merge changed, rerun the final gate and mark the PR ready again. It runs no new review cycles, delegated parts, coverage or documentation audits, or Greptile, and escalates to a full review only when the merge changes code the earlier review passed. A docs-only conflict (most often `docs/TODOS.md`) then costs minutes instead of a whole review session.
-**Supports:** [SPEC](SPEC.md) review contracts and the orchestration contract. Fixes an encountered defect.
-**Done when:** (1) `/review-and-prep` accepts a refresh invocation for a PR that holds this skill's prepared or ready receipt for an earlier head, with a stated cause of a moved base (for example `/review-and-prep refresh` with `Cause: base_moved`). Without such a receipt, or with any other cause, it refuses with a clear message and changes nothing. (2) The refresh merges the current base through the skill's existing merge step, resolves the conflicts, and classifies the merge's own delta against the reviewed head: files changed only by the base, conflict resolutions in prose, TODOS or generated files, and code hunks the earlier review covered. (3) When the merge changed no code the earlier review passed (base-only changes and prose, TODOS or generated-file resolutions), the refresh reviews only that delta, reruns the final gate (the external full-suite gate when the caller supplies it, under the same policy line), pushes, and marks the PR ready with a refresh receipt naming the reviewed head, the new head, the merge's delta classification and the gate result. It runs no new review cycle, delegated part, coverage audit, documentation audit or Greptile run. (4) When the merge changes reviewed code (a conflict resolved inside reviewed code, or a base change that alters its behaviour), the refresh stops with a fixed escalation line naming the files and the reason, leaves the PR draft, and ends with the normal `/review-and-prep` handoff, so the caller runs a full review. (5) The invocation, the refresh receipt's lines and the escalation line are documented in `docs/workflow-handoffs.md` as a compatibility surface for orchestrators, with a fixture-tested example of each outcome. (6) (Folded fix.) Near the start of `/review-and-prep`, read by the review's own host session (not only the outside-voice and red-team delegate prompts, which already carry one), one short paragraph states the defensive context: this is the repository owner's own project, reviewed at the owner's request before merge; every probe of file handling, paths or inputs is a defensive correctness check of this repository's code; no exploit code, attack technique or reproduction against other systems is wanted; and probes and findings are described in correctness terms (expected input accepted, unexpected input refused with a clear message). A skill-protocol test locks the paragraph's presence in the core skill, and skill budgets and reference digests stay valid.
-_touches: skills/review-and-prep.md, skills/references/review-and-prep/, src/review-state/, bin/review-state, docs/workflow-handoffs.md, tests/review-state.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, tests/skill-protocols-review-and-prep.test.ts_
-**Scheduling:** First in Current Plan on the developer's explicit priority order ("101a seems obvious to me that it's next"). Efficiency/smoothness payoff: eliminates full ~2-hour review reruns on docs-only base moves (minutes instead of a whole review session), and the folded criterion-6 defensive-context paragraph coalesces a small same-file `skills/review-and-prep.md` fix (approved 2026-11-26) to cut provider cybersecurity-filter interruptions on review host sessions without spending a separate pipeline run. Pairs with Track 98A (shipped, `v0.120.0`), which removed the most common `docs/TODOS.md` conflict; this Track covers every docs-only base move. Narrowed from the card's `tests/**` glob to the concrete review-state, handoff and review-and-prep protocol suites so disjoint Tracks can run in parallel in Group 101.
-_Source: external orchestrator's manager, store message `49e60fa0` (2026-11-25), quoting the developer (verbatim): "it is a MASSIVE waste of resources to run full review passes again, just because of a docs conflict"; then "card both parts and prioritize them". Encountered case: a consumer PR passed review (final gate 4807/0), then another PR merged and it conflicted only in `docs/TODOS.md`; the release script refused the carry and a full new review session cost about two hours. Criterion 6 folded in on the developer's word, 2026-11-26 03:14Z (the developer (verbatim): "Ok - let's do this, seems like there's no downside"; touchpoint `dfe2ff88`): Codex's cybersecurity content filter stopped review host sessions on 2026-11-08, 2026-11-19 and repeatedly since 2026-11-23 (Track 98A's review twice on 2026-11-26, once on the host's own path-safety probes and once while composing the outside-voice request); the host session has no defensive framing today. Measure by filter stops per review before and after; the filter is the provider's, so the paragraph reduces rather than guarantees._
-_read-first: skills/review-and-prep.md (Step 2 base merge, the readiness gate's moved-base rule, receipts), skills/ship-and-land.md (its verified-delta reuse after base integration), docs/workflow-handoffs.md_
-- **Implement merge-only refresh mode, delta classification, escalation and handoff docs** -- Add `/review-and-prep refresh` (`Cause: base_moved`) receipt validation, base merge and delta classification, docs-only fast path (review merge delta, rerun final gate, push, mark ready with refresh receipt) and reviewed-code escalation (fixed line, stay draft, normal handoff), plus `src/review-state/` / `bin/review-state` support, `docs/workflow-handoffs.md` contract entries and fixture tests for every outcome. _~255 lines incl. tests._ (M)
-- **Add host-session defensive context paragraph to `/review-and-prep` (criterion 6)** -- Add the short defensive-context paragraph near the start of `skills/review-and-prep.md`, lock its presence in `tests/skill-protocols-review-and-prep.test.ts` and keep skill budgets and reference digests valid. _~45 lines incl. tests._ (S)
-
-##### Track 101B: Have /roadmap split cards that change existing code paths into one-task Tracks
-_1 task . ~120 LOC incl. tests . low risk_
-_id: wi-5dc2f5_
-**Outcome:** `/roadmap` places a card that changes existing code paths as one-task Tracks (one PR each) instead of one multi-task Track, while a new module's first version may still land whole; the rule stays qualitative judgment in skill prose, not a numeric trigger, under this project's Design rule.
-**Supports:** [SPEC](SPEC.md) roadmap contracts; process efficiency (smaller PRs review faster and come back clean more often).
-**Done when:** (1) `skills/roadmap.md` states the rule and its exception (0-to-1 work, the developer's caveat) in qualitative terms, with the existing same-files exception still honoured. (2) The proposal Summary names each card it split and each it kept whole, with the reason. (3) A skill-protocol test locks the rule's presence; skill budgets and reference digests stay valid.
-_touches: skills/roadmap.md, skills/references/roadmap/, tests/skill-protocols-roadmap.test.ts_
-**Scheduling:** High-leverage, low-cost efficiency work (~120 LOC, 1 task) that runs in parallel in Group 101 because its file footprint is completely disjoint from Tracks 101A and 101C. Efficiency payoff: reviewed throughput data shows median review time drops from 2.74 h above 1,000 changed lines to 1.05 h under 200 lines, and half of merged PRs currently exceed 1,000 lines; landing this early makes every subsequent regeneration produce smaller, cleaner PRs. Narrowed from the card's `tests/**` glob to `tests/skill-protocols-roadmap.test.ts` so it packs beside 101A and 101C.
-_Source: external orchestrator's manager, store message `8e358b39` (2026-11-26), approved by the developer (verbatim): "Your proposal re 100 PRs article sounds good to me." Data: median review 1.05 h under 200 changed lines vs 2.74 h over 1,000, and half of merged PRs are over 1,000 lines (2026-11-26 review-throughput analysis)._
-_read-first: skills/roadmap.md (card sizing, same-files exception), CLAUDE.md (Design: judgment stays qualitative)_
-- **Add qualitative one-task splitting rule, proposal reporting and protocol lock to `/roadmap`** -- Update `skills/roadmap.md` with the qualitative one-task rule for existing code paths, its 0-to-1 exception and the retained same-files exception, require the proposal Summary to name each split or kept-whole card with its reason, add the lock in `tests/skill-protocols-roadmap.test.ts` and keep skill budgets and reference digests valid. _~120 lines incl. tests._ (S)
-
-##### Track 101C: Migrate existing planning records to work-item IDs and retire IDs across Git history
-_2 tasks . ~400 LOC incl. tests . medium risk_
-_id: wi-553a78_
-**Outcome:** Every existing `TODOS.md` entry, Future bullet, active Track and shipped-history record gets a work-item ID by a one-time, idempotent migration, and a killed, shipped or merged ID is never reused even after its record leaves the files, so the ID format added by Track 96D covers old records as well as new ones.
-**Supports:** [SPEC](SPEC.md) O2 (roadmap contracts). Completes the stable work-item IDs commitment (`wi-914dff`), split out of PR #311's review by the developer's SPLIT decision (`1f5f60a3-9712-4b45-9d8b-0912e761fe7f`).
-**Done when:** (1) A one-time migration assigns IDs to existing entries and cards across `docs/TODOS.md`, `docs/roadmap-future.md`, `docs/ROADMAP.md` and `docs/roadmap-shipped.md` (about 290 records in this repository) without changing any other text, and is idempotent. (2) ID minting checks uniqueness against IDs that appear anywhere in the project's Git history, not only the current files, so an ID is never reused after its record is killed, shipped or merged into another. (3) The migration and the history scan handle the record shapes PR #311's review found: legacy Group 1–21 Track bullets, `## Completed` headings and their neighbouring records, inline code spans that look like ID fields, descriptive Future headings, and paths reached through alternate checkout spellings, aliases or an inherited Git pathspec setting; each has a fixture. (4) Once this repository is migrated, a missing ID becomes an audit failure again (Track 96D made it advisory), and `docs/source-tag-contract.md`, `docs/compatibility.md` and release notes say so.
-_touches: src/audit/lib/work-item-id.ts, src/audit/id-cli.ts, bin/roadmap-id, src/audit/lib/git.ts, src/audit/checks/work-item-ids.ts, docs/TODOS.md, docs/roadmap-future.md, docs/ROADMAP.md, docs/roadmap-shipped.md, docs/source-tag-contract.md, docs/compatibility.md, tests/roadmap-id.test.ts, tests/check-work-item-ids.test.ts, tests/audit-snapshots.test.ts, tests/roadmap-audit/_
-_blocked-by: wi-914dff, wi-2cf4fb, wi-4149dd_
-**Scheduling:** Operational workflow smoothness, not 1.0-only qualification: completes Track 96D (`v0.117.0`), eliminates ~272 noisy `WORK_ITEM_IDS` audit warnings on every `/roadmap` run, prevents retired ID reuse across Git history in per-record intake (`docs/todos/<wi-id>.md`) and orchestrator tracking, and unblocks Track 102B (`wi-b9f147`, sharing `docs/compatibility.md`). All three technical prerequisites (`wi-914dff` Track 96D, `wi-2cf4fb` Track 97A, `wi-4149dd` Track 98A) have shipped, and its file footprint is completely disjoint from Tracks 101A and 101B so it runs in parallel in Group 101 at zero latency cost to the review-efficiency chain. Kept as one card above ~300 lines under the card-size rule's same-files exception (owner direction, 2026-10-26): the migration command, Git-history retirement scan and strict `WORK_ITEM_IDS` flip edit the same `work-item-id.ts`, `id-cli.ts`, `git.ts` and `work-item-ids.ts` files and ship together as the split half of PR #311. Plan as a parser of free-form Markdown: prefer an exact, enumerated set of record shapes with a fixture for each over interpreting variants, and say at planning which shapes are refused rather than guessed; PR #311's stop receipts (continuations 1–3) list every edge case found so far.
-_Source: the developer's SPLIT decision (`1f5f60a3-9712-4b45-9d8b-0912e761fe7f`, 2026-11-25) on item `6c091012`'s third review-cap stop at `058a6cf`; the half moved out of PR #311._
-_read-first: src/audit/lib/work-item-id.ts, src/audit/id-cli.ts, src/audit/lib/git.ts, docs/source-tag-contract.md_
-- **Implement idempotent bulk migration and Git-history ID retirement** -- Add the one-time idempotent migration across all four planning documents plus Git-history ID retirement in `bin/roadmap-id` / `src/audit/lib/git.ts`, with fixtures for legacy Group 1–21 bullets, `## Completed` headings, inline code spans, descriptive Future headings, and alternate checkout spellings/pathspecs. _~220 lines incl. tests._ (M)
-- **Migrate this repository's planning records and enforce missing IDs as audit failures** -- Run the migration across this repository's planning files, flip `WORK_ITEM_IDS` missing-ID findings from warn to fail, update `docs/source-tag-contract.md`, `docs/compatibility.md` and snapshots, and disclose the enforcement change for release notes. _~180 lines incl. tests._ (M)
-
-### Group 102: Stable cross-cycle finding identity ∥ stable update channel
-
-_Depends on: Group 101_
-
-**This group delivers:** Stable cross-cycle finding identities and premise/class counts in `/review-and-prep` so orchestrators can stop repeated-premise review tails and reserve continuations for shrinking tails (Track 102A, following 101A); and upgrades that follow a stable release channel with offered-equals-installed identity, non-interactive bootstrap auto-upgrade and missing-`gstack` reporting (Track 102B, disjoint, following 101C).
-
-##### Track 102A: Give review findings a stable identity across cycles so a review can tell new defects from carried ones
-_2 tasks . ~300 LOC incl. tests . medium risk_
-_id: wi-c6b6bd_
-**Outcome:** Every finding `/review-and-prep` records carries a stable identity that survives from one review cycle to the next (and into a continuation), plus a short premise or defect-class tag, so the run state and receipts can say which findings are new, which are carried and which share a premise with earlier ones. Orchestrators can then return a review whose new findings keep repeating one premise to planning or to the developer at the cycle cap, and keep the repair-only continuation for a genuinely shrinking tail.
-**Supports:** [SPEC](SPEC.md) review contracts and the orchestration contract; process efficiency (fewer long review tails).
-**Done when:** (1) Each finding in the review run state (`src/review-state/**`) carries an identity key derived from stable inputs (file, a normalized anchor, the finding's class), not from cycle-local numbering; the same defect found again in a later cycle or a continuation gets the same key, and a different defect at the same line gets a different one. Fixture tests cover a carried finding, a re-anchored finding after an unrelated edit above it, and two distinct findings on one line. (2) Each finding carries a premise or class tag from a closed, documented set; the stop receipt and the run state report, per cycle, counts of new, carried and repeated-premise findings. (3) The finding ledger no longer reports `cross_cycle_identity: no_cross_cycle_key`; existing ledgers without keys still load. (4) The identity, tag set and per-cycle counts are documented in `docs/workflow-handoffs.md` as a compatibility surface for orchestrators, with fixture-tested examples.
-_touches: src/review-state/, bin/review-state, skills/review-and-prep.md, skills/references/review-and-prep/, docs/workflow-handoffs.md, tests/review-state.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, tests/skill-protocols-review-and-prep.test.ts_
-_blocked-by: wi-9cfa44_
-**Scheduling:** Efficiency work ranked immediately after merge-only refresh (Track 101A, `wi-9cfa44`, sharing `skills/review-and-prep.md`, `src/review-state/` and `docs/workflow-handoffs.md`). Efficiency payoff: targets the 12–16% of reviews that currently need three or more continuations and whose findings-per-cycle curve falls 16 -> 4 -> 2 then rises again in the long tail, giving orchestrators structured per-cycle new/carried/repeated-premise counts instead of `no_cross_cycle_key`. Kept as a separate, sequenced PR from Track 103A (`wi-a257f8`, blocking-only fix cycles): both decide what a review gate credits (a trust boundary in this project, planned at novel tier), combined size would exceed the ~300-line card threshold (~500 lines), and any decision about whether a finding counts as resolved is made from an exact key or schema the gate checks, never from free-form model prose. Narrowed from the card's `tests/**` glob to the concrete review-state, handoff and review-and-prep protocol suites so Track 102B can run in parallel.
-_Source: external orchestrator's manager, store message `8e358b39` (2026-11-26), approved by the developer (verbatim): "Your proposal re 100 PRs article sounds good to me." Data: all 131 finding ledgers read so far report `cross_cycle_identity: no_cross_cycle_key`; 12–16% of reviews need three or more continuations, and findings per cycle fall 16 -> 4 -> 2 and then rise again in the long tail (2026-11-26 review-throughput analysis)._
-_read-first: src/review-state/ (the ledger and render), skills/review-and-prep.md (cycles, stop receipt), docs/workflow-handoffs.md_
-- **Add stable finding identity keys, closed premise/class tags and per-cycle counts in `src/review-state/`** -- Derive stable finding identity keys from file, normalized anchor and finding class (preserving load compatibility for existing keyless ledgers), add the closed documented premise/class tag set and per-cycle new/carried/repeated-premise counts in run state and stop receipts, and cover carried, re-anchored and same-line distinct findings in `tests/review-state.test.ts`. _~190 lines incl. tests._ (M)
-- **Wire skill instructions, handoff contract and fixture tests for cross-cycle finding identity** -- Update `skills/review-and-prep.md`, `skills/references/review-and-prep/`, `bin/review-state` and `docs/workflow-handoffs.md` with the identity key, tag set and per-cycle count surface, plus fixture tests in `tests/handoff-contract.test.ts` and `tests/skill-protocols-review-and-prep.test.ts`. _~110 lines incl. tests._ (M)
-
-##### Track 102B: Follow a stable release channel and let a bootstrap turn on auto-upgrade
-_5 tasks . ~290 LOC incl. tests . medium risk_
-_id: wi-b9f147_
-**Outcome:** gstack-extend upgrades follow a stable release channel rather than main, each upgrade installs the release it offered, and a bootstrap script can turn on auto-upgrade on that channel without a prompt, mirroring gstack's `auto_upgrade` and `update_channel` settings.
-**Supports:** [SPEC](SPEC.md) O1 (install, update and recover) and O5 (release promise). Required before 1.0. Owner, 2026-11-07: "Another we need here for 1.0 (if not already done) - on install, we should check for gstack and extend and install them if missing + turn on auto upgrade on stable for both — they are dependencies" and "This can be deferred to be done right before 1.0".
-**Done when:** An `update_channel` setting selects a stable channel (release tags, or a stable branch the release step advances, chosen in the plan) and keeps today's main-tracking behavior available, with existing main-tracking installs and the rollback recipe documented in `docs/installation.md`; `bin/update-check` offers and `bin/update-run` installs the same release identity, or reports the mismatch; a documented non-interactive command enables auto-upgrade on the channel; `setup` reports a missing gstack install actionably (installing it stays the bootstrap's job unless the plan shows otherwise); retrying an update after a Bun prerequisite refusal with a supported Bun version is covered by an update test; `bin/update-check`'s published output and install-safety stay compatible; the compatibility catalog lists the setting, and its Cursor and OpenCode retired-surface entry names Track 92A's release (`0.109.0`; Track 92A's plan follow-up 92E); a dated upgrade through the stable channel on the owner's machine is added to `docs/acceptance/install-upgrade.md`.
-_touches: bin/update-check, bin/update-run, bin/config, setup, docs/installation.md, docs/compatibility.md, tests/update.test.ts, docs/acceptance/install-upgrade.md_
-_blocked-by: Track 77A, wi-553a78_
-**Scheduling:** Operational smoothness, not 1.0-only qualification: stops `bin/update-run` from pulling untagged `main` commits, binds offered-to-installed release identity, provides a non-interactive bootstrap auto-upgrade command and flags missing `gstack` at setup. Although task 5 includes an owner channel-upgrade check in `docs/acceptance/install-upgrade.md`, the developer clarified (2026-11-26) that only purely-1.0-qualification Tracks go last ("If I have to test something for a track that otherwise does something useful, that's OK"). Completely disjoint from Track 102A, so it runs in parallel in Group 102 with zero delay to the review-efficiency chain; its technical edges are on Track 77A (shipped) and Track 101C (`wi-553a78`, sharing `docs/compatibility.md`). Prior priority edges on the purely-1.0 qualification Tracks (`wi-4732d3`, `wi-9d6cf2`) were removed under the 2026-11-26 ordering rule so Track 106A (`wi-4732d3`) now runs after this Track and qualifies the final stable-channel upgrade once. Kept separate from Track 105A (`wi-2633cf`) because combining them would exceed both the 5-task and ~300-line caps (8 tasks, ~580 lines) and would block this Track from running in parallel with 102A. Facts rechecked 2026-11-26 at `3f8c1e3`: `bin/update-run` still fast-forwards `origin main`; there is no channel setting; `setup` enforces Bun >= 1.3.3 via `bin/lib/bun-prereq.sh` (Track 94H, `v0.112.2`) and still checks no installed gstack; `bin/config set auto_upgrade true` is honored only by interactive upgrade flows, and spawned sessions never upgrade. Carries Track 94H's recorded test gap `[review:files=bin/update-run|setup|tests/update.test.ts]` ("Cover retrying an update after a Bun refusal", PR #300 coverage audit at `aaf05a0`), within 5 tasks and session weight 6. An orchestrator's bootstrap does its own install-if-missing; this repository owes the channel, the setting and the non-interactive enable path.
-_Source: owner-approved card (2026-11-07); Track 92A's plan follow-up 92E (PR #290's approved plan); merges the Future entry "Bind upgrade offers to the installed release identity" (raised during Track 28A planning, 2026-10-23); inbox `[review:files=bin/update-run|setup|tests/update.test.ts]` from PR #300 (`aaf05a0`, 2026-11-23)._
-_read-first: docs/installation.md, docs/acceptance/release-compatibility.md, docs/acceptance/install-upgrade.md_
-- **Stable channel and offered-equals-installed identity** -- The `update_channel` key and its values, the channel mechanism, and binding the installed release to the offered one, with update tests. _~170 lines incl. tests._ (M)
-- **Non-interactive enable and rollback** -- Document and test the bootstrap command and the return to main tracking. _~50 lines incl. tests._ (S)
-- **Report a missing gstack at setup** -- An actionable result when installed gstack is absent. _~20 lines incl. tests._ (S)
-- **Cover retrying an update after a Bun refusal** -- Add a disposable-remote fixture with two local Bun binaries to `tests/update.test.ts` verifying that retrying after a Bun prerequisite refusal completes pending migrations once. _~25 lines._ (S)
-- **Record a real channel upgrade** -- Upgrade the owner's install through the stable channel and record offered and installed identity in `docs/acceptance/install-upgrade.md`; list the setting in the catalog and name release `0.109.0` in its Cursor and OpenCode retired-surface entry. _~30 lines._ (S)
-
-### Group 103: Blocking-only fix cycles for delegated passes and Greptile
-
-_Depends on: Group 102_
-
-**This group delivers:** A review-gate rule so delegated passes and Greptile trigger a fix cycle only on blocking-severity findings backed by file-and-line evidence, keeping non-blocking noise in receipts and intake instead of burning extra commits and review rounds.
-
-##### Track 103A: Start a review fix cycle only for blocking findings from delegated passes and Greptile
-_2 tasks . ~200 LOC incl. tests . medium risk_
-_id: wi-a257f8_
-**Outcome:** In `/review-and-prep`, findings from the delegated parts (maintainability, adversarial, red team) and from Greptile start a fix cycle only when they are blocking severity under the existing severity taxonomy; non-blocking findings go to the receipt (and to intake where the skill already records them) instead of triggering another commit and another review round. Each finding that does start a cycle names file and line evidence.
-**Supports:** [SPEC](SPEC.md) review contracts; process efficiency (fewer fix rounds per review).
-**Done when:** (1) A delegated or Greptile finding below blocking severity never starts a fix cycle on its own; it is listed in the receipt with its severity and, where `test-gaps=record` or `blocking=shown` already applies, recorded as today. (2) A blocking finding without file-and-line evidence is not credited as blocking; the receipt says why. (3) The core review's own blocking findings, the external full-suite gate and every existing hold are unchanged. (4) Receipt lines and the rule are documented for orchestrators in `docs/workflow-handoffs.md`, with fixture tests for a non-blocking delegate finding, a blocking one with evidence and a blocking one without.
-_touches: skills/review-and-prep.md, skills/references/review-and-prep/, src/review-state/, docs/workflow-handoffs.md, tests/review-state.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, tests/skill-protocols-review-and-prep.test.ts_
-_blocked-by: wi-c6b6bd_
-**Scheduling:** High-payoff efficiency work sequenced directly after Track 102A (`wi-c6b6bd`, sharing `skills/review-and-prep.md`, `skills/references/review-and-prep/`, `src/review-state/` and `docs/workflow-handoffs.md`). Efficiency payoff: stops non-blocking delegated and Greptile findings from triggering extra commits and review rounds while keeping core blocking findings, external full-suite gates and holds intact. Kept as a separate, sequenced PR from Track 102A (and from Track 104A): it decides what a review gate credits (a trust boundary in this project, planned at novel tier), reads the existing structured severity field (never free-form prose), and keeping each trust-boundary change in its own PR (~200 LOC here, ~300 LOC in 102A) keeps both reviews small and auditable. Narrowed from the card's `tests/**` glob to the concrete review-state, handoff and review-and-prep protocol suites.
-_Source: external orchestrator's manager, store message `8e358b39` (2026-11-26), approved by the developer (verbatim): "Your proposal re 100 PRs article sounds good to me." Idea 4 of the 2026-11-26 PR-throughput brief (Anthropic's review post: "Noise costs more when the author is an agent... another commit and another round of review.")._
-_read-first: skills/review-and-prep.md (delegated parts, Greptile, fix cycles), skills/full-review.md and docs/source-tag-contract.md (severity taxonomy)_
-- **Enforce blocking-only fix-cycle credit and file-and-line evidence in `/review-and-prep` and `src/review-state/`** -- Restrict delegated-pass and Greptile fix-cycle triggers to structured blocking-severity findings with file-and-line evidence, route non-blocking and unverified-evidence findings to the receipt (and existing `test-gaps=record` / `blocking=shown` intake) with reasons, and leave core blocking findings, external full-suite gates and holds unchanged. _~120 lines incl. tests._ (S)
-- **Document receipt contract and add fixture tests for delegated and Greptile severity gating** -- Update `docs/workflow-handoffs.md` and add fixture tests covering a non-blocking delegate finding, a blocking finding with file-and-line evidence and a blocking finding without evidence across `tests/review-state.test.ts`, `tests/handoff-contract.test.ts` and `tests/skill-protocols-review-and-prep.test.ts`. _~80 lines incl. tests._ (S)
-
-### Group 104: Verification block in /implement handoff
-
-_Depends on: Group 103_
-
-**This group delivers:** A fixed `Verification:` block (`Ran:` and `Could not verify:`) on every `/implement` handoff that `/review-and-prep` targets first in cycle 1, catching unverified gaps early before review rounds accumulate.
-
-##### Track 104A: Add a Verification block to /implement's handoff so review starts from what could not be verified
-_2 tasks . ~150 LOC incl. tests . low risk_
-_id: wi-6743bd_
-**Outcome:** `/implement`'s handoff carries a fixed `Verification:` block listing what ran (commands and results) and what could not be verified (with the reason), so an orchestrator can check that the block exists, as it already checks the count line, and `/review-and-prep`'s first cycle targets the could-not-verify list first.
-**Supports:** [SPEC](SPEC.md) O2/O3 handoff contracts; process efficiency (catch problems before review).
-**Done when:** (1) Every `/implement` handoff includes a `Verification:` block with two fixed sub-lists, `Ran:` and `Could not verify:` (each may be `none`), in a documented exact shape. (2) `/review-and-prep` reads the block when present and names each could-not-verify entry in its first cycle's scope; a handoff without the block still works as today. (3) The block's shape is documented in `docs/workflow-handoffs.md` as a compatibility surface, with fixture handoffs (both lists filled, both `none`, block absent) checked by the handoff-contract tests.
-_touches: skills/implement.md, skills/review-and-prep.md, docs/workflow-handoffs.md, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, tests/skill-protocols-implement.test.ts, tests/skill-protocols-review-and-prep.test.ts_
-_blocked-by: wi-a257f8_
-**Scheduling:** Efficiency work sequenced right after Track 103A (`wi-a257f8`) because it edits `skills/review-and-prep.md`, `docs/workflow-handoffs.md` and the handoff/protocol test suites. Efficiency payoff: surfaces unverified areas before review starts and focuses cycle 1 on them first, reducing avoidable back-and-forth across review rounds. Kept separate from Track 103A so the novel-tier trust-boundary gate change in 103A stays single-concern and low-risk `/implement` handoff formatting does not widen it (combined size would also exceed ~300 lines). Narrowed from the card's `tests/**` glob to the concrete handoff and skill-protocol suites.
-_Source: external orchestrator's manager, store message `8e358b39` (2026-11-26), approved by the developer (verbatim): "Your proposal re 100 PRs article sounds good to me." Idea 5 of the 2026-11-26 PR-throughput brief (Larson: "the bottleneck wasn't pull request approval, but instead generating approvable pull requests"); external orchestrators can add a transport check that the block exists._
-_read-first: skills/implement.md (handoff shape), docs/workflow-handoffs.md, tests/handoff-contract.test.ts_
-- **Emit the fixed `Verification:` block in `/implement` and target `Could not verify:` in `/review-and-prep` cycle 1** -- Add the exact `Verification:` (`Ran:` / `Could not verify:`) block to `skills/implement.md`, teach `skills/review-and-prep.md` to read it when present and name each could-not-verify entry in cycle 1's scope while preserving absent-block compatibility, and lock both in `tests/skill-protocols-implement.test.ts` and `tests/skill-protocols-review-and-prep.test.ts`. _~85 lines incl. tests._ (S)
-- **Document the `Verification:` compatibility surface and add fixture handoff tests** -- Document the exact shape in `docs/workflow-handoffs.md` and add fixture handoffs (both lists filled, both `none`, block absent) under `tests/fixtures/handoffs/` checked by `tests/handoff-contract.test.ts`. _~65 lines incl. tests._ (S)
-
-### Group 105: Install and upgrade aligned with upstream gstack
-
-_Depends on: Group 101, Group 102, Group 104_
-
-**This group delivers:** An install and upgrade flow that looks and behaves like upstream gstack's, with a grouped What's-new summary and per-host upgrade status printed after every upgrade.
+**This group delivers:** Upstream-aligned install and upgrade flow with grouped What's-new and per-host summaries (Track 105A, in flight now as the orchestrator's item `a52fc49e`); finding identity keys, classes and per-cycle counts exported in a new workflow-metrics record version so orchestrators can clear `cross_cycle_identity: no_cross_cycle_key` (Track 105B, disjoint); and the canonical `bin/todo-file` provenance filer plus `roadmap-audit` format acceptance (Track 105C, disjoint).
 
 ##### Track 105A: Align install and upgrade with upstream gstack
 _3 tasks . ~290 LOC incl. tests, plus byte-copied shared blocks . medium risk_
@@ -313,61 +194,194 @@ _read-first: skills/gstack-extend-upgrade.md, docs/installation.md_
 - **What's-new and per-host upgrade summaries** -- Summarize `CHANGELOG.md` (or the commit log) between versions and print one row per host install. _~100 lines incl. tests._ (M)
 - **Cover the recorded skill-protocol test gaps** -- Pin the `UPGRADE_SKIPPED spawned-session` sentence and the installation guide's just-upgraded clauses, assert the per-skill `UPGRADE_AVAILABLE` and `JUST_UPGRADED` lines and the spawned branch's placement, and show `bin/update-check` output reaching stdout (`[review:files=tests/skill-protocols.test.ts|tests/update.test.ts]` and `[review:files=tests/skill-protocols.test.ts]`, Track 66A, 2026-11-04); add negative cases for an unguarded Paseo mention and the removed Conductor marker in the removed-host detector. _~45 lines._ (S)
 
-### Group 106: 1.0 qualification — install/upgrade gaps ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
+##### Track 105B: Carry finding identities in the workflow-metrics record so orchestrators can clear no_cross_cycle_key
+_1 task . ~150 LOC incl. tests . low risk_
+_id: wi-3f28d1_
+**Outcome:** The workflow-metrics ledger a review exports carries each finding's stable identity key and class and the per-cycle new, carried and repeated-premise counts that Track 102A added to the review run state, under a new record version, so an orchestrator's run-record reader can stop reporting `cross_cycle_identity: no_cross_cycle_key`.
+**Supports:** [SPEC](SPEC.md) O4/O6 orchestration and telemetry contracts; completes Track 102A's criterion 3 (consumer half), split off on the developer's word.
+**Done when:** (1) The workflow-metrics export writes a new record version that includes each finding's identity key and class and the per-cycle counts, while existing record versions stay readable and the current version's other fields are unchanged. (2) The new version and its fields are documented in `docs/workflow-handoffs.md` (and the workflow-metrics contract doc `docs/telemetry.md` and `docs/workflow-metrics.schema.json` it points to) as a compatibility surface, with a fixture-tested example and a pre-change ledger that still loads. (3) The external orchestrator's manager is told the version and fields so its reader can adopt them; clearing the string on their side is theirs, not this Track's.
+_touches: src/review-state/export.ts, bin/lib/workflow_metrics.py, docs/workflow-handoffs.md, docs/telemetry.md, docs/workflow-metrics.schema.json, tests/workflow-metrics.test.ts, tests/review-state.test.ts_
+_blocked-by: wi-c6b6bd_
+**Scheduling:** Efficiency and orchestration, not 1.0-only. Follows Track 102A (`wi-c6b6bd`, shipped `v0.125.0`). Already a one-task card (~150 LOC incl. tests), kept whole under Track 101B. Completely disjoint from in-flight Track 105A (`wi-2633cf`) and Track 105C (`wi-19e153`), so it packs into Group 105 and can launch immediately in parallel with 105A. Narrowed from the card's `src/review-state/` and `tests/` folder globs to `src/review-state/export.ts`, `tests/workflow-metrics.test.ts` and `tests/review-state.test.ts`, and added `docs/telemetry.md` and `docs/workflow-metrics.schema.json` where the workflow-metrics record schema lives.
+_Source: developer-approved card (`track-finding-identity-metrics-record.md`). The developer approved Track 102A with the plan's D17 split ("approve per your rec", touchpoint `b1db1a82`, 2026-11-27): criterion 3 verified on the producer side at merge, with clearing the consumer's `cross_cycle_identity: no_cross_cycle_key` string left to a separately owned consumer-migration card. 102A's plan amendment A8 notes the string is written by the orchestrator's reader from gstack-extend's workflow-metrics ledger, outside 102A's files._
+_read-first: src/review-state/export.ts, src/review-state/finding-identity.ts, src/review-state/finding-cycles.ts, bin/lib/workflow_metrics.py, docs/workflow-handoffs.md, docs/telemetry.md, docs/workflow-metrics.schema.json_
+- **Export finding identity keys, classes and per-cycle counts in a new workflow-metrics record version** -- Extend `src/review-state/export.ts`, `bin/lib/workflow_metrics.py`, `docs/workflow-metrics.schema.json`, `docs/telemetry.md` and `docs/workflow-handoffs.md` with a new workflow-metrics record version carrying each finding's stable identity key, class and per-cycle new/carried/repeated-premise counts while keeping pre-change ledgers readable and existing version fields unchanged, with fixture tests in `tests/workflow-metrics.test.ts` and `tests/review-state.test.ts`. _~150 lines incl. tests._ (M)
 
-_Depends on: Group 102, Group 105_
+##### Track 105C: Add a canonical TODO filer with provenance and accept provenance lines in roadmap-audit
+_1 task . ~140 LOC incl. tests . medium risk_
+_id: wi-19e153_
+**Outcome:** A single CLI helper beside `bin/roadmap-id` (for example `bin/todo-file`) mints the work-item ID and writes canonical per-record intake entries under `docs/todos/` with explicit provenance (`Deferred by: developer, <UTC date>: "<words>"` or `Filed by: worker`), refusing entries missing Why or Evidence, and `roadmap-audit` accepts both provenance lines.
+**Supports:** [SPEC](SPEC.md) O2 planning contracts. Fixes an encountered defect (split 1 of 3 from the TODO-filer provenance card under Track 101B).
+**Done when:** (1) One helper beside `bin/roadmap-id` (for example `bin/todo-file`, enforcing Bun >= 1.3.3 through `bin/lib/bun-prereq.sh` like the other Bun launchers) mints the ID and writes an entry in Track 98A's canonical per-record intake format (`docs/todos/<wi-id>.md`), refusing an entry missing Why or Evidence, recording `Deferred by: developer, <UTC date>: "<words>"` when the filer passes the developer's words and `Filed by: worker` otherwise, and keeping the `test-gaps=record` kind working as today. (2) `src/audit/checks/todo-format.ts` and `docs/source-tag-contract.md` accept both provenance lines, and fixtures in `tests/todo-file.test.ts`, `tests/audit-cli-contract.test.ts` and `tests/roadmap-audit/` cover valid developer-deferred and worker-filed records plus the helper's refusals.
+_touches: bin/todo-file (new), src/audit/todo-file-cli.ts (new), src/audit/checks/todo-format.ts, docs/source-tag-contract.md, tests/todo-file.test.ts (new), tests/audit-cli-contract.test.ts, tests/roadmap-audit/, tests/helpers/touchfiles.ts, .gstack/pregate.json_
+_blocked-by: wi-4149dd, wi-553a78_
+**Scheduling:** Operational defect fix, not 1.0-only qualification. Split from the 3-task TODO-filer card (`track-todo-filer-provenance.md`) into three one-task Tracks under Track 101B (existing code paths split): this Track builds the new helper and audit-format support with zero skill edits, Track 106B (`wi-cf1ea6`) updates `/roadmap`'s manifestation gate and PR body killed-entry list, and Track 109A (`wi-3a82ed`) wires `/review-and-prep`, `/pair-review` and `/full-review` after the review-efficiency chain. Because this Track is completely disjoint from in-flight Track 105A (`wi-2633cf`) and Track 105B (`wi-3f28d1`), it packs into Group 105 and launches in parallel at zero latency cost to the review-efficiency chain (its prerequisites `wi-4149dd` Track 98A and `wi-553a78` Track 101C have shipped). Narrowed from the card's `bin/`, `src/audit/` and `tests/**` globs to concrete files.
+_Source: developer-approved card (`track-todo-filer-provenance.md`), from an external orchestrator's manager, store messages `bd38bdb1`, `6caf1123` and `276b3ed4` (2026-11-26). Encountered case: a consumer's roadmap regeneration drained its TODOS and killed 17 review follow-ups "under the manifestation gate" that the developer had explicitly deferred on that review ("1 - fix, file the rest, finish"). The developer (verbatim), 2026-11-26: "roadmap should only do that for “auto-filed” todos, eg if I explicitly say we want to do it, it shouldn’t be killed by mechanical rules. But if it’s generated in a review step by a worker, than the mechanical rules apply." Carded on the developer's word, 2026-11-26 ("Latter then former")._
+_read-first: bin/roadmap-id, src/audit/checks/todo-format.ts, docs/source-tag-contract.md_
+- **Add `bin/todo-file` provenance filer and accept provenance lines in `roadmap-audit`** -- Add `bin/todo-file` and `src/audit/todo-file-cli.ts` minting `wi-` IDs and writing Track 98A per-record intake files with `Deferred by: developer, <UTC date>: "<words>"` or `Filed by: worker` provenance (refusing missing Why or Evidence while keeping `test-gaps=record`), update `src/audit/checks/todo-format.ts` and `docs/source-tag-contract.md`, register touchfiles/pregate deps and add CLI and audit-fixture tests. _~140 lines incl. tests._ (M)
 
-**This group delivers:** Purely 1.0 SPEC acceptance evidence run in parallel after all efficiency and product-improvement Tracks have landed: closure of the open U1–U3 install/upgrade qualification gaps (106A), the remaining real review records and non-Claude by-hand run-mode readbacks (106B), and real by-hand and orchestrated workflow evidence on the holds-first matrix PR #291 added (106C).
 
-##### Track 106A: Qualify install, upgrade and recovery on the owner's machines
+## Current Plan
+
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 100, 101, 102, 104_
+
+### Group 106: Harden review-state inline-fallback refusals ∥ /roadmap developer-deferred provenance gate
+
+_Depends on: Group 105_
+
+**This group delivers:** Hardening `bin/review-state` against the three observed refusal classes that forced inline receipt fallbacks across PRs #317, #318 and #322 (Track 106A, launching as soon as 105B lands); and updating `/roadmap`'s manifestation gate to spare `Deferred by: developer` entries and list every killed entry by ID and source in regeneration PR bodies (Track 106B, disjoint).
+
+##### Track 106A: Harden bin/review-state against the three observed inline-fallback refusals
+_4 tasks . ~210 LOC incl. tests . medium risk_
+_id: wi-0f466e_
+**Outcome:** `bin/review-state` stops forcing `/review-and-prep` into its inline receipt fallback on the three failure classes observed this week (rejected severity labels as in PR #317, rejected unsupported enum/builder values as in PR #318, and refusing to close a run while cycle 1's pass is still open as in PR #322), so recorded run state and workflow metrics survive real reviews.
+**Supports:** [SPEC](SPEC.md) O3 (default recorded review workflow) and O6.1 (measured stage effort / workflow metrics). Fixes a manifested defect from intake (three of the six merged pull requests since `771f880` hit inline fallback).
+**Done when:** (1) `src/review-state/state.ts` and `src/review-state/build.ts` accept or normalize the severity label variants and caller-passed values that triggered the PR #317 and PR #318 refusals (verified against the recorded evidence at planning time without silently dropping safety or binding invariants), and `bin/review-state` plus `docs/review-run-state-calls.md` handle closing a run when a pass is still open (as observed in PR #322) cleanly or give an explicit, recoverable close path instead of dropping to inline fallback. (2) Regression fixtures in `tests/review-state.test.ts` cover each of the three observed refusal classes. (3) The three placed Track 102A `src/review-state/{state,build}.ts` recorded test gaps (`wi-452bd5`, `wi-f81004`, `wi-7f98bd`) have passing tests.
+_touches: src/review-state/state.ts, src/review-state/build.ts, docs/review-run-state-calls.md, tests/review-state.test.ts_
+_blocked-by: wi-3f28d1_
+**Scheduling:** Manifested operational-smoothness defect admitted from intake (no pre-approved external card yet; placed as its own focused Track rather than folded into Track 105B or 107A/108A to avoid mixing separate concerns per Track 101B). Technical prerequisite only on Track 105B (`wi-3f28d1`, sharing `tests/review-state.test.ts`): launches as soon as 105B lands without waiting on Track 105A, so `bin/review-state` is hardened before Tracks 107A–109A run. Carries three directly matching PR #320 `test-gaps=record` items (`wi-452bd5`, `wi-f81004`, `wi-7f98bd`) as S tasks within `max_tasks_per_track=5` and `max_session_weight=6` (session weight 5).
+_Source: observed defect intake from an external orchestrator's manager (2026-11-28): `bin/review-state` / `src/review-state/` repeatedly forced `/review-and-prep`'s inline receipt fallback this week — rejected a severity label (PR #317), rejected an unsupported value (PR #318), and refused to close a run while cycle 1's pass was still open (PR #322). Verified at `8367bcd`: `src/review-state/state.ts:218` `UPSTREAM_SEVERITY_LABELS` maps only `CRITICAL` and `INFORMATIONAL`, and `state.ts:895` refuses `finish` with `outcome === 'prepared'` when any pass remains `open`. Also carries PR #320 `test-gaps=record` inbox files `wi-452bd5`, `wi-f81004` and `wi-7f98bd`._
+_read-first: src/review-state/state.ts, src/review-state/build.ts, docs/review-run-state-calls.md, tests/review-state.test.ts_
+- **Normalize observed severity and value refusals and handle open passes before finish** -- Inspect the PR #317, PR #318 and PR #322 refusal classes, harden `src/review-state/state.ts`, `src/review-state/build.ts` and `docs/review-run-state-calls.md` against rejected severity labels, unsupported values and closing a run with an open pass while preserving binding invariants, and add regression fixtures in `tests/review-state.test.ts`. _~150 lines incl. tests._ (M)
+- **Cover discarded provisional voice reports (`wi-452bd5`)** -- Add a synthetic multi-voice pass in `tests/review-state.test.ts` completing the selected set with a second provisional voice discarded, asserting the selected observations (`[review:files=src/review-state/state.ts]`, PR #320). _~20 lines._ (S)
+- **Cover invalid stored finding metadata (`wi-f81004`)** -- Add a shallow malformed stored-state fixture in `tests/review-state.test.ts` covering persisted invalid key/class pairs and invalid prior entries returning a clear corrupt result (`[review:files=src/review-state/state.ts]`, PR #320). _~20 lines._ (S)
+- **Cover digest flag without its copy (`wi-7f98bd`)** -- Add a fixture in `tests/review-state.test.ts` passing a prior-state digest without the copy flag to a start request and asserting the usage diagnostic and empty state directory (`[review:files=src/review-state/build.ts]`, PR #320). _~20 lines._ (S)
+
+##### Track 106B: Spare developer-deferred entries in /roadmap's manifestation gate and list killed entries in PR bodies
+_4 tasks . ~140 LOC incl. tests . low risk_
+_id: wi-cf1ea6_
+**Outcome:** `/roadmap`'s manifestation gate kills only unmarked or `Filed by: worker` entries while sparing `Deferred by: developer` entries for normal triage (fold, place or Future, requiring the developer's word to drop), and every regeneration PR body lists each killed entry by ID and source instead of only a count.
+**Supports:** [SPEC](SPEC.md) O2 planning contracts. Fixes an encountered defect (split 2 of 3 from the TODO-filer provenance card under Track 101B).
+**Done when:** (1) `skills/roadmap.md` updates **Unobserved defects wait for manifestation** so entries marked `Deferred by: developer` are skipped by the manifestation kill (triaged to fold, place or Future; dropping one requires the developer's word), while unmarked and `Filed by: worker` entries remain under the gate as today and `test-gaps=record` rows stay unaffected. (2) `skills/roadmap.md` requires a regeneration's PR body (and handoff brief/summary) to list every killed entry by ID and source, not only a count. (3) Protocol tests and fixtures in `tests/skill-protocols-roadmap.test.ts` cover a developer-deferred entry surviving the gate, a worker-filed entry killed by it, and the three placed PR #317 static protocol test gaps (`wi-3490bd`, `wi-d9974c`, `wi-efe191`); skill budgets and reference digests stay valid.
+_touches: skills/roadmap.md, tests/skill-protocols-roadmap.test.ts_
+_blocked-by: wi-19e153, wi-2633cf_
+**Scheduling:** Operational defect fix, not 1.0-only qualification. Split 2 of 3 from `track-todo-filer-provenance.md` under Track 101B (existing code paths split): depends on Track 105C (`wi-19e153`, which defines the provenance format) and Track 105A (`wi-2633cf`, which edits `skills/roadmap.md`). Completely disjoint from Track 106A (`wi-0f466e`), so both run in parallel in Group 106. Carries three directly matching PR #317 static unit-test gaps (`wi-3490bd`, `wi-d9974c`, `wi-efe191`) as S tasks (4 tasks, session weight 4); PR #317's five sampled-agent evaluation gaps went to Future because placing them would exceed `max_tasks_per_track=5`.
+_Source: developer-approved card (`track-todo-filer-provenance.md`), criteria 3, 4 and the roadmap-gate half of criterion 5 (see Track 105C for the developer's 2026-11-26 verbatim quote and encountered case). Also carries PR #317 `test-gaps=record` inbox files `wi-3490bd`, `wi-d9974c` and `wi-efe191`._
+_read-first: skills/roadmap.md (Unobserved defects wait for manifestation), docs/source-tag-contract.md, tests/skill-protocols-roadmap.test.ts_
+- **Update `/roadmap` manifestation gate for developer-deferred provenance and PR body killed-entry list** -- Update `skills/roadmap.md` to spare `Deferred by: developer` entries from mechanical manifestation kills (keeping unmarked and `Filed by: worker` under the gate and `test-gaps=record` unchanged) and require listing every killed entry by ID and source in regeneration PR bodies, with fixtures and protocol locks in `tests/skill-protocols-roadmap.test.ts`. _~80 lines incl. tests._ (S)
+- **Cover static guards for exception limits (`wi-3490bd`)** -- Extend `tests/skill-protocols-roadmap.test.ts` to mutate the exception cap condition and distinct-concerns direction while keeping its nouns and assert rejection (`[review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts]`, PR #317). _~20 lines._ (S)
+- **Cover static guard for serial edges on one-task splits (`wi-d9974c`)** -- Extend `tests/skill-protocols-roadmap.test.ts` to remove the split-specific serialized dependency phrase in a synthetic slice and require the guard to reject it (`[review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts]`, PR #317). _~20 lines._ (S)
+- **Cover static guards for alternate numeric split wording (`wi-efe191`)** -- Extend `tests/skill-protocols-roadmap.test.ts` with bounded spelled-out, hyphenated and plus-suffixed count mutations (upstream P3; `[review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts]`, PR #317). _~20 lines._ (S)
+
+### Group 107: Accept bound external full-suite pass for the pregate sentinel
+
+_Depends on: Group 105, Group 106_
+
+**This group delivers:** Crediting a bound external full-suite pass under `full-suite=external` to satisfy the pregate full-suite sentinel when a PR edits `.gstack/pregate.json`, plus four matching `tests/handoff-contract.test.ts` recorded test gaps.
+
+##### Track 107A: Accept a bound external full-suite pass for the pregate full-suite sentinel under full-suite=external
+_5 tasks . ~180 LOC incl. tests . medium risk_
+_id: wi-09020e_
+**Outcome:** Under `full-suite=external`, when a PR changes `.gstack/pregate.json` so the final pregate selects the full-suite sentinel, a recorded external full-suite pass bound to the same head and tree satisfies the sentinel and the pregate runs only its remaining lanes, eliminating avoidable full-suite reruns and developer holds.
+**Supports:** [SPEC](SPEC.md) review contracts and the orchestration contract. Fixes an encountered defect (split 1 of 2 from the external-gate/doc-audit reuse card under Track 101B).
+**Done when:** (1) Under `full-suite=external`, when a PR changes `.gstack/pregate.json` so the final pregate selects the full-suite sentinel, a recorded external full-suite pass bound to the same head and tree satisfies the sentinel and the pregate runs its remaining lanes; with no such bound pass it runs the sentinel as today. (2) The rule and its receipt lines are documented in `docs/workflow-handoffs.md` with a fixture-tested receipt example, every other gate is unchanged, and skill budgets and reference digests stay valid. (3) The four placed `tests/handoff-contract.test.ts` recorded test gaps (`wi-d637ac`, `wi-164c0b`, `wi-2cf373`, `wi-6a4355`) have passing tests.
+_touches: skills/review-and-prep.md, skills/references/review-and-prep/conditional-pregate-and-final-repair.md, src/review-state/render.ts, docs/workflow-handoffs.md, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, tests/review-state.test.ts, tests/skill-protocols-review-and-prep.test.ts_
+_blocked-by: wi-2633cf, wi-3f28d1, wi-0f466e_
+**Scheduling:** Efficiency (review tails), not 1.0-only. Split from `track-review-external-gate-reuse.md` into two one-task Tracks (107A and 108A) under Track 101B and the 2026-11-20 review-gate credit rule: crediting an external pass for the pregate sentinel (107A) and reusing an accepted doc audit across a mechanical late base merge (108A) are two separate review-gate trust boundaries (each planned at novel tier) that ship cleanly on their own. Technical blockers on Track 105A (`wi-2633cf`, sharing `skills/review-and-prep.md`), Track 105B (`wi-3f28d1`, sharing `docs/workflow-handoffs.md` and `tests/review-state.test.ts`) and Track 106A (`wi-0f466e`, sharing `tests/review-state.test.ts`). Carries four directly matching recorded test gaps (`wi-d637ac` P3 from PR #318; `wi-164c0b`, `wi-2cf373`, `wi-6a4355` from PR #322) within `max_tasks_per_track=5` and `max_session_weight=6` (session weight 6). Narrowed from the card's `skills/references/review-and-prep/`, `src/review-state/` and `tests/` folder globs to concrete files.
+_Source: developer-approved card (`track-review-external-gate-reuse.md`), from an external orchestrator's manager, store message `4569c0fb` (2026-11-27). Encountered case: on a consumer repository's PR, the external gate passed 5,003 tests, but the PR changed the lane map so the final pregate insisted on running the full suite itself and held for the developer. Also carries PR #318 `wi-d637ac` and PR #322 `wi-164c0b`, `wi-2cf373`, `wi-6a4355` `test-gaps=record` inbox files._
+_read-first: skills/review-and-prep.md (final pregate, external gate), skills/references/review-and-prep/conditional-pregate-and-final-repair.md, src/review-state/render.ts, docs/workflow-handoffs.md_
+- **Satisfy the pregate full-suite sentinel with a bound external pass under `full-suite=external`** -- Update `skills/review-and-prep.md`, `skills/references/review-and-prep/conditional-pregate-and-final-repair.md`, `src/review-state/render.ts` and `docs/workflow-handoffs.md` so a recorded external full-suite pass bound to the same head and tree satisfies the pregate full-suite sentinel when `.gstack/pregate.json` changes (running remaining lanes, or running the sentinel as today when no bound pass exists), with fixture tests in `tests/handoff-contract.test.ts`, `tests/review-state.test.ts` and `tests/skill-protocols-review-and-prep.test.ts`. _~100 lines incl. tests._ (M)
+- **Cover legacy classifier with full H-G escalation summary (`wi-d637ac`)** -- Add a fixture in `tests/handoff-contract.test.ts` passing prose, H-G escalation and stopped stage line through the legacy classifier and asserting hold rather than H-E (upstream P3; `[review:files=docs/workflow-handoffs.md|tests/handoff-contract.test.ts]`, PR #318). _~20 lines._ (S)
+- **Cover H-A verification redaction on the Ran side (`wi-164c0b`)** -- Add a fixture in `tests/handoff-contract.test.ts` placing a synthetic token in `Ran` and asserting HOLD and withholding from the verdict (`[review:files=tests/handoff-contract.test.ts]`, PR #322). _~20 lines._ (S)
+- **Cover H-A empty could-not-verify list (`wi-2cf373`)** -- Add a fixture in `tests/handoff-contract.test.ts` with a present `Could not verify:` heading and no bullets (`[review:files=tests/handoff-contract.test.ts]`, PR #322). _~20 lines._ (S)
+- **Cover H-A invalid verification bullet syntax (`wi-6a4355`)** -- Add a fixture in `tests/handoff-contract.test.ts` isolating wrong bullet indentation or wrapped continuation lines and asserting malformed with no targets (`[review:files=tests/handoff-contract.test.ts]`, PR #322). _~20 lines._ (S)
+
+### Group 108: Reuse accepted documentation audit across a mechanical late base merge
+
+_Depends on: Group 107_
+
+**This group delivers:** Reusing an accepted documentation audit under `doc-audit-gap=auto` across a mechanical late base merge with an unchanged PR delta and no SPEC paths, recording the named risk instead of escalating to the developer, plus the remaining three PR #322 `tests/handoff-contract.test.ts` recorded test gaps.
+
+##### Track 108A: Reuse an accepted documentation audit across a mechanical late base merge under doc-audit-gap=auto
+_4 tasks . ~160 LOC incl. tests . medium risk_
+_id: wi-0e205d_
+**Outcome:** Under `doc-audit-gap=auto`, a mechanical late base merge with an unchanged PR delta and no SPEC paths reuses the accepted documentation audit and records the named risk in the receipt instead of escalating to the developer, eliminating repetitive developer re-asks while keeping today's guard for every other base change.
+**Supports:** [SPEC](SPEC.md) review contracts and the orchestration contract. Fixes an encountered defect (split 2 of 2 from the external-gate/doc-audit reuse card under Track 101B).
+**Done when:** (1) Under `doc-audit-gap=auto`, a late base merge recorded as mechanical with an unchanged PR delta and no SPEC paths reuses the accepted documentation audit and records the named risk in the receipt instead of escalating to the developer; any other base change keeps today's guard. (2) The rule and its receipt example are documented in `docs/workflow-handoffs.md` with fixture tests, every other gate is unchanged, and skill budgets and reference digests stay valid. (3) The three placed PR #322 `tests/handoff-contract.test.ts` / `tests/fixtures/handoffs/cases.json` recorded test gaps (`wi-d363bd`, `wi-697149`, `wi-e3e13e`) have passing tests.
+_touches: skills/review-and-prep.md, skills/references/review-and-prep/conditional-post-audit-reuse.md, skills/references/review-and-prep/conditional-post-audit-reaudit.md, src/review-state/render.ts, docs/workflow-handoffs.md, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, tests/review-state.test.ts, tests/skill-protocols-review-and-prep.test.ts_
+_blocked-by: wi-09020e_
+**Scheduling:** Efficiency (developer re-asks), not 1.0-only. Split 2 of 2 from `track-review-external-gate-reuse.md` under Track 101B and the 2026-11-20 review-gate credit rule: sequenced directly after Track 107A (`wi-09020e`, sharing `skills/review-and-prep.md`, `src/review-state/render.ts`, `docs/workflow-handoffs.md` and the handoff/review-state/protocol suites) so each novel-tier review-gate trust boundary ships in its own small, auditable PR. Carries the remaining three PR #322 `tests/handoff-contract.test.ts` / `cases.json` recorded test gaps (`wi-d363bd`, `wi-697149`, `wi-e3e13e`) within `max_tasks_per_track=5` and `max_session_weight=6` (session weight 5). Narrowed from the card's folder globs to concrete files.
+_Source: developer-approved card (`track-review-external-gate-reuse.md`), from an external orchestrator's manager, store message `bc16e685` (2026-11-27). Encountered case: on a consumer repository's PR, a mechanical late base merge (`pr_delta_equal: true`, no SPEC paths) recorded `reuse: merge-guard-failed` and blocked for a fresh audit; the developer (verbatim): "accept - this is not something I need to confirm everytime, it happens a lot". Also carries PR #322 `wi-d363bd`, `wi-697149` and `wi-e3e13e` `test-gaps=record` inbox files._
+_read-first: skills/review-and-prep.md (late-base doc guard), skills/references/review-and-prep/conditional-post-audit-reuse.md, skills/references/review-and-prep/conditional-post-audit-reaudit.md, docs/workflow-handoffs.md_
+- **Reuse accepted doc audit across a mechanical late base merge under `doc-audit-gap=auto`** -- Update `skills/review-and-prep.md`, `skills/references/review-and-prep/conditional-post-audit-reuse.md`, `conditional-post-audit-reaudit.md`, `src/review-state/render.ts` and `docs/workflow-handoffs.md` so a mechanical late base merge with unchanged PR delta and no SPEC paths reuses the accepted documentation audit and records the named risk in the receipt while preserving today's guard for every other base change, with fixture tests in `tests/handoff-contract.test.ts`, `tests/review-state.test.ts` and `tests/skill-protocols-review-and-prep.test.ts`. _~100 lines incl. tests._ (M)
+- **Cover H-A duplicate verification headers (`wi-d363bd`)** -- Add duplicate top-level and repeated indented Verification-heading fixtures in `tests/handoff-contract.test.ts` asserting malformed with null targets (`[review:files=tests/handoff-contract.test.ts]`, PR #322). _~20 lines._ (S)
+- **Cover H-A targets with no targeted checks run (`wi-697149`)** -- Add a fixture case in `tests/fixtures/handoffs/cases.json` and `tests/handoff-contract.test.ts` with `Ran: none` alongside populated `Could not verify:` entries (`[review:files=tests/handoff-contract.test.ts|tests/fixtures/handoffs/cases.json]`, PR #322). _~20 lines._ (S)
+- **Cover H-A pending checks beside populated verification (`wi-e3e13e`)** -- Assert in `tests/handoff-contract.test.ts` and `tests/fixtures/handoffs/cases.json` that the filled fixture's pending item stays independent of verification entries (`[review:files=tests/handoff-contract.test.ts|tests/fixtures/handoffs/cases.json]`, PR #322). _~20 lines._ (S)
+
+### Group 109: Route review skills' intake filing through bin/todo-file
+
+_Depends on: Group 105, Group 108_
+
+**This group delivers:** Single-owner intake filing across `/review-and-prep`, `/pair-review` and `/full-review` through `bin/todo-file` so those skills drop their duplicated inline entry templates (and an optional planner decision on a thin `/file-todo` skill).
+
+##### Track 109A: Route /review-and-prep, /pair-review and /full-review intake filing through bin/todo-file
+_1 task . ~100 LOC incl. tests . medium risk_
+_id: wi-3a82ed_
+**Outcome:** `/review-and-prep`, `/pair-review` and `/full-review` file every TODO or intake entry through `bin/todo-file` with explicit provenance instead of carrying their own inline template copies (with an optional planner's call for a thin user-invocable `/file-todo` skill over the helper).
+**Supports:** [SPEC](SPEC.md) O2/O3 planning and review contracts. Fixes an encountered defect (split 3 of 3 from the TODO-filer provenance card under Track 101B).
+**Done when:** (1) `/review-and-prep`, `/pair-review` and `/full-review` (and their intake-writing references) file entries through `bin/todo-file` instead of inline template copies, passing the developer's words when the developer explicitly deferred the item and recording `Filed by: worker` otherwise, while keeping `test-gaps=record` working as today. (2) Optional, planner's call: add a thin user-invocable `/file-todo` skill over the helper (registered in `setup` and `tests/helpers/expected-setup-skills.ts`) for managers and hand runs, or explicitly decline it in the plan. (3) Protocol tests across the updated skills stay green and skill budgets and reference digests stay valid.
+_touches: skills/review-and-prep.md, skills/references/review-and-prep/conditional-repair-and-gaps.md, skills/pair-review.md, skills/references/pair-review/conditional-triage-and-queue.md, skills/full-review.md, setup, tests/helpers/expected-setup-skills.ts, tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols-pair-review.test.ts, tests/skill-protocols-full-review.test.ts, tests/skill-protocols.test.ts_
+_blocked-by: wi-19e153, wi-2633cf, wi-0e205d_
+**Scheduling:** Operational defect fix, not 1.0-only qualification. Split 3 of 3 from `track-todo-filer-provenance.md` under Track 101B (existing code paths split): depends on Track 105C (`wi-19e153`, the `bin/todo-file` helper), Track 105A (`wi-2633cf`, sharing the three skill files and `setup`) and Track 108A (`wi-0e205d`, sharing `skills/review-and-prep.md` and `tests/skill-protocols-review-and-prep.test.ts`, which also honors the card's scheduling note to rank after the review-efficiency chain). Kept as one mechanical caller-adoption task across the three skills rather than splitting per skill because it is a uniform template-to-helper swap (~100 LOC total). Narrowed from the card's folder globs to concrete files.
+_Source: developer-approved card (`track-todo-filer-provenance.md`), criteria 2 and optional criterion 6 (see Track 105C for the developer's 2026-11-26 verbatim quote and encountered case)._
+_read-first: bin/todo-file, skills/review-and-prep.md, skills/references/review-and-prep/conditional-repair-and-gaps.md, skills/pair-review.md, skills/references/pair-review/conditional-triage-and-queue.md, skills/full-review.md_
+- **Wire `/review-and-prep`, `/pair-review` and `/full-review` to file entries through `bin/todo-file`** -- Replace inline intake-entry templates in `skills/review-and-prep.md`, `skills/references/review-and-prep/conditional-repair-and-gaps.md`, `skills/pair-review.md`, `skills/references/pair-review/conditional-triage-and-queue.md` and `skills/full-review.md` with `bin/todo-file` calls passing provenance (plus the optional planner's call for `/file-todo` in `setup` and `tests/helpers/expected-setup-skills.ts`), and update the skill-protocol tests while keeping skill budgets and reference digests valid. _~100 lines incl. tests._ (M)
+
+### Group 110: 1.0 qualification — install/upgrade gaps ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
+
+_Depends on: Group 105, Group 106, Group 109_
+
+**This group delivers:** Purely 1.0 SPEC acceptance evidence run in parallel after all efficiency and product-improvement Tracks have landed: closure of the open U1–U3 install/upgrade qualification gaps (110A), the remaining real review records and non-Claude by-hand run-mode readbacks (110B), and real by-hand and orchestrated workflow evidence on the holds-first matrix PR #291 added (110C).
+
+##### Track 110A: Qualify install, upgrade and recovery on the owner's machines
 _2 tasks . ~100 LOC . medium risk_
 _id: wi-4732d3_
 **Outcome:** The owner can install, onboard, upgrade and recover a working skill set on a fresh machine from the published instructions, with end-to-end evidence of loaded skill identity and a real legacy four-part upgrade through the default remote.
 **Supports:** [SPEC](SPEC.md) O1 (all three criteria) and O5.2; the preserved published three-part upgrade obligation from Track 28A planning (2026-10-23), whose trigger was met by `v0.48.0`.
-**Done when:** `docs/acceptance/install-upgrade.md` closes the three open checks left after PR #303 (`5da0ec8`): (1) **U1** — authenticated onboarding and loaded skill identity verified on the exercised Claude Code and Codex profiles after install/upgrade; (2) **U2** — a real legacy four-part install (`v0.47.0.0`) upgraded through the default remote (`https://github.com/kbitz/gstack-extend.git`) following the Task 2 owner runbook, with offered and installed commit/tag identity, v2/v4 reader compatibility, working recovery and unchanged user state (or an explicit recorded owner waiver); and (3) **U3** — disposition of open defects 7 (same-version `JUST_UPGRADED`) and 9 (duplicate `~/.local/bin` tip) and owner confirmation before O1 counts in `docs/PROGRESS.md`.
+**Done when:** `docs/acceptance/install-upgrade.md` closes the three open checks left after PR #303 (`5da0ec8`) and PR #321 (`273dd1a`): (1) **U1** — authenticated onboarding and loaded skill identity verified on the exercised Claude Code and Codex profiles after install/upgrade; (2) **U2** — a real legacy four-part install (`v0.47.0.0`) upgraded through the default remote (`https://github.com/kbitz/gstack-extend.git`) following the Task 2 owner runbook, plus released-updater stable-channel qualification, with offered and installed commit/tag identity, v2/v4 reader compatibility, working recovery and unchanged user state (or an explicit recorded owner waiver); and (3) **U3** — disposition of open defects 7 (same-version `JUST_UPGRADED`) and 9 (duplicate `~/.local/bin` tip) and owner confirmation before O1 counts in `docs/PROGRESS.md`.
 _touches: docs/acceptance/install-upgrade.md_
-_blocked-by: Track 70A, Track 28A, wi-b9f147, wi-2633cf_
-**Status (2026-11-26):** Not done; gaps U1–U3 stay open (unchanged since PR #303, `5da0ec8`). PR #303 (`5da0ec8`, merged 2026-11-23, docs-only, no release) created `docs/acceptance/install-upgrade.md` covering isolated scratch-HOME fresh install and onboarding (`v0.111.0`, `54fd6df`), the live `v0.112.2` (`39c2b0c`, PR #300) Bun prerequisite re-check, one-release upgrade preservation (`v0.110.1` → `v0.111.0`), per-file recovery and rollback/resume. On the developer's "SHIP WITH GAPS OPEN" decision (PR #303, touchpoint `1777c7d5`, bound to `51813798`), U1, U2 (Task 2 published legacy upgrade — open failure) and U3 (owner confirmation of O1) were deferred as PR #303 readiness gates and remain open acceptance obligations here.
-**Scheduling:** Placed in the final qualification wave (Group 106) under the developer's 2026-11-26 rule ("Anything purely for 1.0 spec reqs and no other benefit should be last"; "the tracks that are purely qualification for 1.0 are last"): this Track changes no code or workflow efficiency and exists solely for SPEC O1/O5.2 acceptance evidence. Its edge on Track 102B (`wi-b9f147`) is technical (both append to `docs/acceptance/install-upgrade.md`); its edge on Track 105A (`wi-2633cf`) carries both the 1.0-only priority order and the practical benefit of qualifying the final upstream-aligned, stable-channel install/upgrade UX once. Technical edges on Tracks 70A (`v0.72.0`) and 28A (`v0.47.0.0`) are already satisfied. Candidate or `file://`-remote proof does not satisfy U2. Kept separate from 106B and 106C because their acceptance files are disjoint, so all three can run in parallel.
+_blocked-by: Track 70A, Track 28A, wi-b9f147, wi-2633cf, wi-cf1ea6, wi-3a82ed_
+**Status (2026-11-28):** Not done; gaps U1–U3 and released-updater qualification stay open. PR #303 (`5da0ec8`, merged 2026-11-23, docs-only, no release) created `docs/acceptance/install-upgrade.md` covering isolated scratch-HOME fresh install and onboarding (`v0.111.0`, `54fd6df`), the live `v0.112.2` (`39c2b0c`, PR #300) Bun prerequisite re-check, one-release upgrade preservation (`v0.110.1` → `v0.111.0`), per-file recovery and rollback/resume; PR #321 (`273dd1a`, `v0.124.0`, Track 102B) added a candidate-driven stable-channel upgrade check against the public remote while keeping released-updater qualification and U1–U3 open. On the developer's "SHIP WITH GAPS OPEN" decision (PR #303, touchpoint `1777c7d5`, bound to `51813798`), U1, U2 (Task 2 published legacy upgrade — open failure) and U3 (owner confirmation of O1) were deferred as PR #303 readiness gates and remain open acceptance obligations here.
+**Scheduling:** Placed in the final qualification wave (Group 110) under the developer's standing rule ("Anything purely for 1.0 spec reqs and no other benefit should be last."; "I said the tracks that are purely qualification for 1.0 are last. If I have to test something for a track that otherwise does something useful, that's OK."): this Track changes no code or workflow efficiency and exists solely for SPEC O1/O5.2 acceptance evidence. Its technical edges on Track 70A (`v0.72.0`), Track 28A (`v0.47.0.0`) and Track 102B (`wi-b9f147`, `v0.124.0`) are satisfied; its edge on Track 105A (`wi-2633cf`) carries both the 1.0-only priority order and the practical benefit of qualifying the final upstream-aligned, stable-channel install/upgrade UX once; its edges on Tracks 106B (`wi-cf1ea6`) and 109A (`wi-3a82ed`) are priority-ordering edges only (no shared files) keeping purely-1.0 qualification after all efficiency and defect-repair Tracks. Kept whole as a 2-task owner-acceptance documentation card under Track 101B's same-files exception (both tasks update `docs/acceptance/install-upgrade.md` during one owner install/upgrade qualification session). Candidate or `file://`-remote proof does not satisfy U2. Kept separate from 110B and 110C because their acceptance files are disjoint, so all three run in parallel.
 _read-first: docs/acceptance/install-upgrade.md, docs/installation.md, docs/acceptance/release-compatibility.md_
 - **Close U1 authenticated onboarding and loaded-skill identity** -- Run a first skill invocation in authenticated Claude Code and Codex sessions after install/upgrade and record loaded revision parity and any open gaps. _~35 lines._ (S)
 - **Close U2 published legacy four-part upgrade and U3 owner confirmation** -- Run the Task 2 owner runbook in `docs/acceptance/install-upgrade.md` against the default remote (or record an explicit owner waiver), disposition open defects 7 and 9, and capture owner O1 confirmation for PROGRESS. _~65 lines._ (M)
 
-##### Track 106B: Record the owner's remaining real review runs and by-hand run-mode readbacks
+##### Track 110B: Record the owner's remaining real review runs and by-hand run-mode readbacks
 _3 tasks . ~120 LOC . low risk_
 _id: wi-8b4a30_
 **Outcome:** The owner can see from dated records that a by-hand review with no caller lines still runs as before, that the attacker parts run with per-part models when an orchestrator delegates them, that tools-mode delegation works on an installed release, and that a stage run by hand in Codex, Muse, Grok Build or Antigravity reads back with the run mode the shared rule promises.
 **Supports:** [SPEC](SPEC.md) O6 and P1, O6.1, O3.3 (the by-hand driver's evidence) and O4.4. The remainder of the earlier Track 80D (PR #256, `v0.94.2`), which left attacker-parts PM1 and PM2 and tools-mode PM1 pending; the open acceptance of Track 72B (PR #221) and the post-release PM1 of the owner-approved tools-mode plan (PR #229); and the post-merge by-hand readbacks left pending by Track 90B (PR #283; Cursor discharged on 2026-11-21), Track 94J (PR #305, `v0.115.0`, qualifying Grok Build as `user-directed`/`terminal-session`) and Track 95B (PR #308, `v0.116.0`, qualifying Antigravity as `user-directed`/`terminal-session`).
 **Done when:** (1) `docs/acceptance/attacker-parts.md` records PM1 (one real by-hand `/review-and-prep` with no `Review policy:` or `Review delegates:` line, read back as unchanged, with its invocation and receipt retained) and PM2 (one orchestrated run with `delegate=adversarial,red-team` mapping the two parts to different providers or models, with its `Delegated part:` lines, v3 attempts, `found_by` labels and any fallbacks), each with date, revision, host and harness versions and PR. (2) `docs/acceptance/delegate-tools-mode.md` records its PM1 installed paired run and names the exact reviewed content its earlier dry-run evidence covers. (3) Each pending non-Claude row in `docs/acceptance/hand-use-telemetry.md`'s "Pending post-merge by-hand readbacks" (Codex, Muse, Grok Build — updated from its pre-94J `harness-unqualified` expectation to `user-directed`/`terminal-session` per Track 94J — plus Antigravity per Track 95B; the Cursor row stays discharged with "Cursor support dropped 2026-11-21") is run by hand and read back through `gstack-extend-telemetry report --by-host` and the ledger's `agent`, `run_mode` and `run_mode_source`, or stays pending with the reason. (4) A failed, unavailable or wrongly read-back run stays recorded as open, never as passed, and a wrong read-back is filed as a defect.
 _touches: docs/acceptance/attacker-parts.md, docs/acceptance/delegate-tools-mode.md, docs/acceptance/hand-use-telemetry.md_
-_blocked-by: Track 94J, Track 95B, wi-2633cf_
-**Scheduling:** Placed in the final qualification wave (Group 106) under the developer's 2026-11-26 rule ("the tracks that are purely qualification for 1.0 are last"): this Track changes no code or workflow efficiency and exists solely to close SPEC O6.1/O3.3/O4.4 acceptance records. Its edge on Track 105A (`wi-2633cf`) is a priority-ordering edge only (no shared files); its technical edges on Track 94J (`v0.115.0`, PR #305) and Track 95B (`v0.116.0`, PR #308, item `d574f7e2`) are already satisfied. It gates no other Track. PM2 already has partial observations (PRs #250 and #253 and a consumer repository's review) and waits only on harness CLI version provenance, which the run's operator can record from the harness at run time; tools-mode PM1 waits on the orchestrator's paired tools-mode run, requested on 2026-11-15. By-hand runs recorded here can also supply rows harvested by Track 106C (`wi-9d6cf2`), and keeping 106B separate from 106A and 106C lets all three disjoint acceptance Tracks run in parallel.
+_blocked-by: Track 94J, Track 95B, wi-2633cf, wi-cf1ea6, wi-3a82ed_
+**Scheduling:** Placed in the final qualification wave (Group 110) under the developer's standing rule ("the tracks that are purely qualification for 1.0 are last"): this Track changes no code or workflow efficiency and exists solely to close SPEC O6.1/O3.3/O4.4 acceptance records. Its edges on Track 105A (`wi-2633cf`), Track 106B (`wi-cf1ea6`) and Track 109A (`wi-3a82ed`) are priority-ordering edges only (no shared files); its technical edges on Track 94J (`v0.115.0`, PR #305) and Track 95B (`v0.116.0`, PR #308, item `d574f7e2`) are already satisfied. Kept whole as a 3-task owner-acceptance documentation card under Track 101B (purely documentation evidence records, not changes to existing code paths). It gates no other Track. PM2 already has partial observations (PRs #250 and #253 and a consumer repository's review) and waits only on harness CLI version provenance, which the run's operator can record from the harness at run time; tools-mode PM1 waits on the orchestrator's paired tools-mode run, requested on 2026-11-15. By-hand runs recorded here can also supply rows harvested by Track 110C (`wi-9d6cf2`), and keeping 110B separate from 110A and 110C lets all three disjoint acceptance Tracks run in parallel.
 _Source: PR #256's receipt (2026-11-15: "attacker PM1/PM2 and paired tools-mode qualification remain pending"); `docs/acceptance/attacker-parts.md` and `docs/acceptance/delegate-tools-mode.md` (PM rows pending); PR #283's receipt ("post-merge hand-run readbacks PM1–PM4 in Codex, Muse, Grok and Cursor") and `docs/acceptance/hand-use-telemetry.md` (pending Codex, Muse and Grok rows; Cursor discharged 2026-11-21); PR #305's receipt ("Live by-hand readbacks are tracked in Track 94E"); and Track 95B (PR #308, item `d574f7e2`)._
 _read-first: docs/delegated-review.md, docs/acceptance/hand-use-telemetry.md, docs/telemetry.md_
 - **Attacker parts PM1 and PM2** -- Run and read back one by-hand review with no caller lines, and finish PM2's harness version provenance. _~50 lines._ (S)
 - **Tools-mode PM1 and provenance** -- Record the installed paired run and name the content the dry-run record covers. _~40 lines._ (S)
 - **By-hand run-mode readbacks** -- Run one stage by hand in each installed non-Claude harness (Codex, Muse, Grok Build, Antigravity) as its row describes and record the readback or the reason it stays pending. _~30 lines._ (S)
 
-##### Track 106C: Qualify the workflow with two real drivers
+##### Track 110C: Qualify the workflow with two real drivers
 _2 tasks . ~240 LOC . medium risk_
 _id: wi-9d6cf2_
 **Outcome:** The owner can carry real work through every stage both by hand and through a real external orchestrator, and the evidence shows what the documented contract actually supports.
 **Supports:** [SPEC](SPEC.md) O3.3 and O4.5 (reshaped from the Paseo host Track by the owner, 2026-11-07: "72c ok").
 **Done when:** A dated record names host, harness and versions for real runs by both drivers (the owner by hand, and one real external orchestrator), each run read back in telemetry with the correct run mode, covering, between them, a complete plan-to-authorized-release workflow, interrupted resume, manual-testing pause/resume, `/full-review` finish/restart, an explicit negative hold, an external-consumer handoff consumed from artifacts, a cross-session handoff and stale/partial/held handoffs; it counts operator interventions and keeps pending approvals or failures as holds; it includes the installed `/docs-ship` acceptance below; no unexercised combination is claimed.
 _touches: docs/acceptance/workflow-drivers.md_
-_blocked-by: Track 70A, Track 72C, Track 71E, Track 74A, Track 76A, Track 75A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 79A, Track 80B, Track 87A, Track 89A, Track 90A, Track 91A, Track 90B, Track 91B, Track 92A, Track 94J, Track 95B, wi-2633cf_
-**Status (2026-11-26):** Not done; holds stay open (unchanged since PR #291, `bbcdd0a`). PR #291 (`bbcdd0a`, merged 2026-11-22, documentation only, no release) added `docs/acceptance/workflow-drivers.md` as a holds-first matrix of 23 rows (14 `WD-*` and 9 `DS-*`; 0 pass, 23 hold at `8077fa2`), the runbooks for both drivers and seven post-92A telemetry observations. Criteria 1–2 still need the owner's real by-hand runs and one real external orchestrator's runs, each read back in telemetry; no row passes without its own live evidence on `producer_version >= 0.109.0`, and pending approvals or failures stay holds.
-**Scheduling:** Placed in the final qualification wave (Group 106) under the developer's 2026-11-26 rule ("the tracks that are purely qualification for 1.0 are last"): this Track changes no code or workflow efficiency and exists solely for SPEC O3.3/O4.5 acceptance evidence. Its edge on Track 105A (`wi-2633cf`) is a priority-ordering edge only (no shared files); all technical blockers through Track 95B (`v0.116.0`, PR #308) are already satisfied. **Report-only harvest available:** once installed, this Track's by-hand rows can be harvested from the developer's real by-hand runs across Claude, Codex, Muse, Grok Build and Antigravity as a report-only readback step, alongside orchestrated runs. The other developer-run record Tracks (106A, 106B) do not gate this one and run in parallel in Group 106; a run here can supply their rows, and this Track's real runs feed Track 107A (`wi-b1f0bd`). The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
+_blocked-by: Track 70A, Track 72C, Track 71E, Track 74A, Track 76A, Track 75A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B, Track 72A, Track 79A, Track 80B, Track 87A, Track 89A, Track 90A, Track 91A, Track 90B, Track 91B, Track 92A, Track 94J, Track 95B, wi-2633cf, wi-cf1ea6, wi-3a82ed_
+**Status (2026-11-28):** Not done; holds stay open (unchanged since PR #291, `bbcdd0a`). PR #291 (`bbcdd0a`, merged 2026-11-22, documentation only, no release) added `docs/acceptance/workflow-drivers.md` as a holds-first matrix of 23 rows (14 `WD-*` and 9 `DS-*`; 0 pass, 23 hold at `8077fa2`), the runbooks for both drivers and seven post-92A telemetry observations. Criteria 1–2 still need the owner's real by-hand runs and one real external orchestrator's runs, each read back in telemetry; no row passes without its own live evidence on `producer_version >= 0.109.0`, and pending approvals or failures stay holds.
+**Scheduling:** Placed in the final qualification wave (Group 110) under the developer's standing rule ("the tracks that are purely qualification for 1.0 are last"): this Track changes no code or workflow efficiency and exists solely for SPEC O3.3/O4.5 acceptance evidence. Its edges on Track 105A (`wi-2633cf`), Track 106B (`wi-cf1ea6`) and Track 109A (`wi-3a82ed`) are priority-ordering edges only (no shared files); all technical blockers through Track 95B (`v0.116.0`, PR #308) are already satisfied. Kept whole as a 2-task owner-acceptance documentation card under Track 101B's same-files exception (both tasks fill the same `docs/acceptance/workflow-drivers.md` matrix). **Report-only harvest available:** once installed, this Track's by-hand rows can be harvested from the developer's real by-hand runs across Claude, Codex, Muse, Grok Build and Antigravity as a report-only readback step, alongside orchestrated runs. The other developer-run record Tracks (110A, 110B) do not gate this one and run in parallel in Group 110; a run here can supply their rows, and this Track's real runs feed Track 111A (`wi-b1f0bd`). The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
 - **Exercise both drivers** -- Run or harvest the matrix's rows (the record exists; this task fills it). Use real host-managed workspaces and approved accounts with the harnesses the owner uses for each stage; retain the bound PR and workspace, test stale/partial/held handoffs, confirm next-stage consumption from artifacts across sessions, include the host-attribution check deferred from Track 26A, and count operator interventions. _~200 documentation lines._ (L)
 - **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging, and its interactive merge question; include one Sonnet-class run and one `/roadmap` handoff, and compare work/wait wall time with a recent docs PR shipped through the ordinary path. _~40 lines._ (S)
 
-### Group 107: 1.0 qualification — measured stage cost and optimization decisions
+### Group 111: 1.0 qualification — measured stage cost and optimization decisions
 
-_Depends on: Group 106_
+_Depends on: Group 110_
 
 **This group delivers:** Expected cost per stage with an adopt, reject or insufficient-evidence decision for every candidate optimization and the opted-in policy records' after fields filled, completing the final 1.0 SPEC O6 acceptance evidence.
 
-##### Track 107A: Measure each stage's cost and decide each optimization
+##### Track 111A: Measure each stage's cost and decide each optimization
 _4 tasks . ~500 LOC incl. tests . medium risk_
 _id: wi-b1f0bd_
 **Outcome:** The owner can reproduce an offline report of each stage's measured cost (model work, tool/CI/human waits, reuse and rework), read a documented expected cost per stage, and see an adopt, reject or insufficient-evidence decision for every candidate optimization.
@@ -375,7 +389,7 @@ _id: wi-b1f0bd_
 **Done when:** A reproducible offline report from sanitized projections separates DOCS/FULL/release-only paths, diff/task size, repo/host, run mode, skill version, waits and fresh versus resumed runs, and reports sample size and missingness; fixtures cover each split. A documented expected cost per stage (wall time and model usage, with sample size and unknowns) is published. Each efficiency-program candidate, including first-cycle overlap (69A), fold, delegation, the docs-only selection and the review run-state redesign (E15, whose adopt decision is Track 86A's record and whose post-default `insufficient-evidence` remeasurement and bounded next measurement are Track 94F's record in `docs/acceptance/review-run-state.md` §5), has measured evidence or a named evidence gap and an adopt, reject or insufficient-evidence decision with its follow-up mapped to existing Future items. The after fields that opted-in review-policy records still hold as unknown are filled from real opted-in runs where they exist, or named as evidence gaps: `docs/acceptance/review-fix-policy.md` for Tracks 33A, 51A and 75A (including whether an installed agent judged 75A's shown evidence and post-audit change classes as the skill asks) and the three after wall times in `docs/acceptance/external-gate.md`. No review gate, model choice or default changes through the study itself.
 _touches: scripts/workflow-efficiency-report.py (new), tests/workflow-efficiency-report.test.ts (new), tests/fixtures/workflow-efficiency/ (new), tests/helpers/touchfiles.ts, docs/acceptance/workflow-efficiency.md (new), docs/acceptance/review-fix-policy.md, docs/acceptance/external-gate.md_
 _blocked-by: Track 67A, Track 52A, Track 77A, Track 75A, Track 75B, Track 86A, Track 94F, wi-9d6cf2_
-**Scheduling:** Placed last (Group 107) under both the developer's 2026-11-26 rule ("Anything purely for 1.0 spec reqs and no other benefit should be last") and its technical prerequisite on Track 106C (`wi-9d6cf2`): by design, this study changes no review gate, model choice or default itself — it delivers the SPEC O6.1–O6.3 offline cost report and formal adopt/reject/insufficient-evidence decisions from real runs supplied by Track 106C (and reads Tracks 86A and 94F instead of repeating them). Kept as one card above ~300 lines under the card-size rule's same-files exception (owner direction, 2026-10-26): the evaluation edits the same script, test and fixture files and reads the report the baseline builds. Its edge on Track 94F is satisfied (PR #299, `f6b4267`, docs-only: verdict `insufficient-evidence` with a bounded next measurement). Session weight 6.
+**Scheduling:** Placed last (Group 111) under both the developer's standing rule ("Anything purely for 1.0 spec reqs and no other benefit should be last.") and its technical prerequisite on Track 110C (`wi-9d6cf2`): by design, this study changes no review gate, model choice or default itself — it delivers the SPEC O6.1–O6.3 offline cost report and formal adopt/reject/insufficient-evidence decisions from real runs supplied by Track 110C (and reads Tracks 86A and 94F instead of repeating them). Kept whole as one 4-task card under Track 101B's 0-to-1 and same-files exceptions (and the 2026-10-26 card-size rule): it stands up a greenfield offline report script, test and fixture set and reads the report the baseline builds. Its edge on Track 94F is satisfied (PR #299, `f6b4267`, docs-only: verdict `insufficient-evidence` with a bounded next measurement). Session weight 6.
 _Source: the Future entries "Fill the external-gate record's three "after" wall times from a real opted-in run", "Fill Track 51A's criterion-7 "after" count at the first opted-in run after a release" and "Fill Track 33A's "after" measurement and pair it with a run without the values"; PR #234's receipt (Track 75A: installed-agent judgment unmeasured, "after" unknown), 2026-11-10._
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md, docs/acceptance/review-run-state.md_
 - **Build a comparable baseline and expected stage costs** -- Produce the offline report and the per-stage expected cost from it; reuse eligible release-only receipts and preserve the first-installed-no-CI timing obligation and 15-minute target; report time to push and merge gate separately from human approval. Observational differences are not causal model comparisons. _~200 lines._ (M)
@@ -391,56 +405,59 @@ Track shares a file with a Track in an earlier Group, the packer has already
 turned that into an edge here. The adjacency below is the packer's DEPENDS
 output with bin numbers replaced by Group numbers; the Track IDs after each set
 are the packer's own list of the Tracks that cause the edge, so a Group never
-waits on a blocker's siblings. In particular, Group 101 launches three disjoint
-Tracks in parallel (`101A` merge-only refresh, `101B` one-task roadmap splits
-and `101C` work-item ID migration); `102A` launches as soon as `101A` lands and
-`102B` as soon as `101C` lands; `103A` and `104A` advance the review-efficiency
-chain without waiting on `102B`; `105A` waits on `101B`, `102B` and `104A`
-(plus the shared `skills/review-and-prep.md` chain); and the four purely-1.0
-qualification Tracks run last in Groups 106–107. Document order is priority,
-not a gate. The cards label priority choices separately from technical
-prerequisites.
+waits on a blocker's siblings. In particular, Track 105A (`wi-2633cf`, item
+`a52fc49e`) is in flight now in Group 105 alongside two disjoint Layer-0 Tracks
+ready to launch immediately (`105B` finding-identity workflow-metrics record and
+`105C` `bin/todo-file` provenance filer); `106A` (`bin/review-state` fallback
+hardening) launches as soon as `105B` lands without waiting on `105A`; `106B`
+(`/roadmap` developer-deferred manifestation gate) launches once `105A` and
+`105C` land; `107A` and `108A` advance the two novel-tier review-gate reuse
+Tracks in sequence once `105A`, `105B` and `106A` land; `109A` wires the
+review skills to `bin/todo-file` after the review-efficiency chain; and the
+four purely-1.0 qualification Tracks run last in Groups 110–111. Document order
+is priority, not a gate. The cards label priority choices separately from
+technical prerequisites.
 
 ```
-- Group 101 ← {}
-- Group 102 ← {101}: Tracks 101A, 101C
-- Group 103 ← {102}: Track 102A
-- Group 104 ← {103}: Track 103A
-- Group 105 ← {101, 102, 104}: Tracks 101B, 102B, 104A
-- Group 106 ← {102, 105}: Tracks 102B, 105A
-- Group 107 ← {106}: Track 106C
+- Group 105 ← {}
+- Group 106 ← {105}: Tracks 105A, 105B, 105C
+- Group 107 ← {105, 106}: Tracks 105A, 105B, 106A
+- Group 108 ← {107}: Track 107A
+- Group 109 ← {105, 108}: Tracks 105A, 105C, 108A
+- Group 110 ← {105, 106, 109}: Tracks 105A, 106B, 109A
+- Group 111 ← {110}: Track 110C
 ```
 
 Track detail per group:
 ```
-Group 101: Merge-only refresh after base move ∥ one-task roadmap splits ∥ work-item ID migration and Git-history retirement
-  +-- Track 101A .......... ~M . 2 tasks   (first; docs-only base-move refresh + defensive context)
-  +-- Track 101B .......... ~S . 1 task    (disjoint; qualitative one-task splitting in /roadmap)
-  +-- Track 101C .......... ~M . 2 tasks   (disjoint; ID migration + Git-history retirement)
-Group 102: Stable cross-cycle finding identity ∥ stable update channel
-  +-- Track 102A .......... ~M . 2 tasks   (follows 101A; novel-tier trust boundary)
-  +-- Track 102B .......... ~M . 5 tasks   (disjoint; follows 101C; stable channel + bootstrap auto-upgrade)
-Group 103: Blocking-only fix cycles for delegated passes and Greptile
-  +-- Track 103A .......... ~S . 2 tasks   (follows 102A; separate novel-tier trust-boundary PR)
-Group 104: Verification block in /implement handoff
-  +-- Track 104A .......... ~S . 2 tasks   (follows 103A; targets could-not-verify in review cycle 1)
-Group 105: Install and upgrade aligned with upstream gstack
-  +-- Track 105A .......... ~M . 3 tasks   (follows 101B, 102B, 104A; What's-new + upstream UX)
-Group 106: 1.0 qualification — install/upgrade gaps ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
-  +-- Track 106A .......... ~M . 2 tasks   (1.0-only; U1–U3 open, follows 102B + 105A)
-  +-- Track 106B .......... ~S . 3 tasks   (1.0-only; remaining review runs + by-hand readbacks)
-  +-- Track 106C .......... ~L . 2 tasks   (1.0-only; holds open, two-driver matrix)
-Group 107: 1.0 qualification — measured stage cost and optimization decisions
-  +-- Track 107A .......... ~L . 4 tasks   (1.0-only; offline O6 cost study, follows 106C)
+Group 105: Upstream-aligned install/upgrade ∥ finding identities in workflow metrics ∥ provenance TODO filer (in progress)
+  +-- Track 105A .......... ~M . 3 tasks   (in flight: item a52fc49e; upstream-aligned install/upgrade)
+  +-- Track 105B .......... ~M . 1 task    (disjoint; finding identities in workflow-metrics record)
+  +-- Track 105C .......... ~M . 1 task    (disjoint; bin/todo-file helper + roadmap-audit format check)
+Group 106: Harden review-state inline-fallback refusals ∥ /roadmap developer-deferred provenance gate
+  +-- Track 106A .......... ~M . 4 tasks   (follows 105B; 3 observed fallback classes + 3 PR #320 test gaps)
+  +-- Track 106B .......... ~S . 4 tasks   (follows 105A, 105C; /roadmap gate + PR body list + 3 PR #317 gaps)
+Group 107: Accept bound external full-suite pass for the pregate sentinel
+  +-- Track 107A .......... ~M . 5 tasks   (follows 105A, 105B, 106A; novel-tier pregate sentinel credit + 4 gaps)
+Group 108: Reuse accepted documentation audit across a mechanical late base merge
+  +-- Track 108A .......... ~M . 4 tasks   (follows 107A; novel-tier doc-audit-gap=auto reuse + 3 PR #322 gaps)
+Group 109: Route review skills' intake filing through bin/todo-file
+  +-- Track 109A .......... ~M . 1 task    (follows 105A, 105C, 108A; wire 3 skills + optional /file-todo)
+Group 110: 1.0 qualification — install/upgrade gaps ∥ remaining real review and run-mode records ∥ two-driver workflow qualification
+  +-- Track 110A .......... ~M . 2 tasks   (1.0-only; U1–U3 open, follows 105A + efficiency chain)
+  +-- Track 110B .......... ~S . 3 tasks   (1.0-only; remaining review runs + by-hand readbacks)
+  +-- Track 110C .......... ~L . 2 tasks   (1.0-only; holds open, two-driver matrix)
+Group 111: 1.0 qualification — measured stage cost and optimization decisions
+  +-- Track 111A .......... ~L . 4 tasks   (1.0-only; offline O6 cost study, follows 110C)
 ```
 
-**7 Groups / 12 Tracks remaining**, 0 declared in progress.
+**7 Groups / 12 Tracks remaining**, 1 declared in progress (Track 105A).
 
 Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
 ## Future
 
-Deferred: docs/roadmap-future.md (140 items)
+Deferred: docs/roadmap-future.md (181 items)
 
 ## Shipped
 
