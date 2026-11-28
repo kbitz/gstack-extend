@@ -113,6 +113,7 @@ interface CaseDef {
   expect?: {
     handoff?: Kind; mismatches?: string[]; deferrals?: number; pending?: number; notes?: string[];
     releaseOnlyEligible?: boolean; extensions?: string[]; unknown?: string[];
+    verification?: { ran: string[]; couldNotVerify: string[] } | null;
   };
 }
 const FIX = JSON.parse(readFileSync(join(FIXTURES, 'cases.json'), 'utf8')) as {
@@ -173,6 +174,7 @@ const sameRepo = (a: string, b: string): boolean => a.toLowerCase() === b.toLowe
 class Verdict {
   deferrals: string[] = [];
   pending: string[] = [];
+  verification: { ran: string[]; couldNotVerify: string[] } | null = null;
   mismatches: Mismatch[] = [];
   notes: string[] = [];
   parsed: { unknown: string[]; extensions: string[] } = { unknown: [], extensions: [] };
@@ -189,6 +191,9 @@ class Verdict {
     const keep = (xs: string[]) => xs.map((x) => (tokenShaped(x) ? WITHHELD : x));
     this.deferrals = keep(this.deferrals);
     this.pending = keep(this.pending);
+    if (this.verification) {
+      this.verification = { ran: keep(this.verification.ran), couldNotVerify: keep(this.verification.couldNotVerify) };
+    }
     this.parsed = { unknown: keep(this.parsed.unknown), extensions: keep(this.parsed.extensions) };
     if (this.outcome !== TRUSTED) this.releaseOnlyEligible = false;
     return this;
@@ -386,6 +391,29 @@ function unread(v: Verdict, live: Live, keys: string[], booleans: string[] = [])
   if (missing.length > 0) v.flag('unknown', HOLD, 'every validated binding read', `not read: ${missing.join(', ')}`);
 }
 
+function parseVerificationBlock(raw: string[]): { ran: string[]; couldNotVerify: string[] } | null {
+  if (raw.length < 5 || raw[0] !== '') return null;
+  const body = raw.slice(1);
+  if (body[0] !== '  Ran:') return null;
+  const cnvIdx = body.indexOf('  Could not verify:');
+  if (cnvIdx < 2) return null;
+  if (body.indexOf('  Ran:', 1) !== -1 || body.indexOf('  Could not verify:', cnvIdx + 1) !== -1) return null;
+  const parseList = (items: string[]): string[] | null => {
+    if (items.length === 0) return null;
+    const out: string[] = [];
+    for (const line of items) {
+      const m = /^  - (\S.*)$/.exec(line);
+      if (!m) return null;
+      out.push(m[1].trim());
+    }
+    if (out.includes('none')) return out.length === 1 ? [] : null;
+    return out;
+  };
+  const ran = parseList(body.slice(1, cnvIdx));
+  const couldNotVerify = parseList(body.slice(cnvIdx + 1));
+  return ran && couldNotVerify ? { ran, couldNotVerify } : null;
+}
+
 function classifyA(lines: string[], live: Live): Verdict {
   const v = new Verdict('H-A', FULL);
   const spec = grammar('H-A');
@@ -408,6 +436,11 @@ function classifyA(lines: string[], live: Live): Verdict {
   if (/\b[1-9]\d*\s+BLOCKED\b/.test(coverage)) v.flag('blocked-row', REFUSE, 'no BLOCKED row in a handoff', 'a nonzero BLOCKED count');
   const pending = (val['Pending verification'] ?? []).map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean);
   if (!(pending.length === 1 && /^none\b/i.test(pending[0]))) v.pending = pending;
+  if (val['Verification']) {
+    const parsed = parseVerificationBlock(val['Verification']);
+    if (!parsed) v.flag('malformed', FULL, 'Verification: with Ran: and Could not verify: sub-lists', val['Verification'].join(' | '));
+    else v.verification = parsed;
+  }
   if (val['Plan'] && !/^\S.*\bapproved scope:\s*\S/i.test(val['Plan'][0])) v.flag('malformed', FULL, '<path or link> ... approved scope: <source>', val['Plan'][0]);
 
   if (unknownLive(v, live)) return v;
@@ -962,6 +995,7 @@ describe('(B) fixture consumers return the outcome the doc states', () => {
       if (want.mismatches) expect(v.mismatches.map((m) => m.binding).sort()).toEqual([...want.mismatches].sort());
       if (want.deferrals !== undefined) expect(v.deferrals.length).toBe(want.deferrals);
       if (want.pending !== undefined) expect(v.pending.length).toBe(want.pending);
+      if (want.verification !== undefined) expect(v.verification).toEqual(want.verification);
       if (want.releaseOnlyEligible !== undefined) expect(v.releaseOnlyEligible).toBe(want.releaseOnlyEligible);
       for (const n of want.notes ?? []) expect(v.notes.join('\n')).toContain(n);
       if (want.extensions) expect(v.parsed.extensions).toEqual(want.extensions);
@@ -1167,7 +1201,8 @@ function template(kind: string): string {
   expect(found, `${kind} template in skills/${skill}.md`).toHaveLength(1);
   return found[0];
 }
-const templateLabels = (t: string): string[] => t.split('\n').flatMap((l) => (/^[A-Z][A-Za-z/() -]{0,38}: /.exec(l) ? [l.split(': ')[0]] : []));
+const templateLabels = (t: string): string[] =>
+  t.split('\n').flatMap((l) => (/^[A-Z][A-Za-z/() -]{0,38}:(?: |$)/.exec(l) ? [l.slice(0, l.indexOf(':'))] : []));
 
 const FIXED_TEXT: Record<string, string[]> = {
   'H-A': ['Do not treat BUILT or ADAPTED as VERIFIED.',
@@ -1267,6 +1302,44 @@ describe('(C) doc and producers agree', () => {
       expect(lines[at + 1]).toBe(row);
     }
     expect(fixtureText(FIX.cases['A-SUCCESS'])).toContain('Coverage: 0 DEFERRED BY USER, 0 BLOCKED; ');
+  });
+
+  // Value: protects=H-A Verification block shape, redaction, and mechanical fill; fails_when=Verification block drifts, leaks tokens, or breaks older absent-block handoffs; why_new=Track 104A Verification block; seam=H-A template and Grammar H-A; no_claim=live agent compliance
+  test('H-A: Verification block sits in template and doc, fills to none, rejects malformed shapes, and withholds tokens', () => {
+    const tpl = template('H-A');
+    expect(tpl).toContain('Verification:\n  Ran:\n  - <command and result, or none>\n  Could not verify:\n  - <item and reason, or none>');
+    expect(DOC).toContain('| `Verification` | no | list |');
+    const filled = fill('H-A', tpl);
+    expect(filled).toContain('Verification:\n  Ran:\n  - none\n  Could not verify:\n  - none');
+    const clean = classify(filled, FIX.defaults.provenance, withVars(FIX.defaults.live.A));
+    expect(clean.mismatches).toEqual([]);
+    expect(clean.verification).toEqual({ ran: [], couldNotVerify: [] });
+
+    // Token-shaped values inside Verification trigger redaction (HOLD) and are withheld from v.verification.
+    const tok = run('A-VERIFICATION-FILLED', {
+      edits: [['Live webhook retry behavior', `Live webhook retry behavior with ${VARS.TOKEN}`]],
+    });
+    expect(tok.outcome).toBe(HOLD);
+    expect(tok.mismatches.map((m) => m.binding)).toContain('redaction');
+    expect(JSON.stringify(tok)).not.toContain(VARS.TOKEN);
+    expect(tok.verification?.couldNotVerify).toContain(WITHHELD);
+
+    // Malformed variants (inline header, reversed sub-lists, empty sub-list, mixing none with items) flag malformed.
+    for (const [label, edits] of [
+      ['inline header', [['Verification:\n', 'Verification: inline\n']]],
+      ['reversed sub-lists', [[
+        '  Ran:\n  - bun test tests/export.test.ts (cwd /home/example/work/example-repo, exit 0)\n  - bun test tests/cli.test.ts (cwd /home/example/work/example-repo, exit 0)\n  Could not verify:\n  - Full test suite (left to /review-and-prep and /ship-and-land under their test policy)\n  - Live webhook retry behavior (no staging endpoint available in this workspace)',
+        '  Could not verify:\n  - Full test suite (left to /review-and-prep and /ship-and-land under their test policy)\n  Ran:\n  - bun test tests/export.test.ts (cwd /home/example/work/example-repo, exit 0)',
+      ]]],
+      ['empty sub-list', [['  - bun test tests/export.test.ts (cwd /home/example/work/example-repo, exit 0)\n  - bun test tests/cli.test.ts (cwd /home/example/work/example-repo, exit 0)\n', '']]],
+      ['none mixed with item', [['  - none\n  Could not verify:', '  - none\n  - extra item\n  Could not verify:']]],
+    ] as Array<[string, Array<[string, string]>]>) {
+      const base = label === 'none mixed with item' ? 'A-VERIFICATION-NONE' : 'A-VERIFICATION-FILLED';
+      const bad = run(base, { edits });
+      expect(bad.outcome, label).toBe(FULL);
+      expect(bad.mismatches.map((m) => m.binding), label).toContain('malformed');
+      expect(bad.verification, label).toBeNull();
+    }
   });
 
   test('the legacy anchors are verbatim in their producer and in the doc', () => {

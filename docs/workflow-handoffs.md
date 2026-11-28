@@ -111,6 +111,10 @@ classifier reports, with the expected and actual values.
 | <a id="a-empty-head-wrong-branch"></a>`A-EMPTY-HEAD-WRONG-BRANCH` | H-A | `HEAD: <full SHA>` | REFUSE | `malformed`, `branch`: an empty HEAD never hides a wrong branch | Stop; the prompt is for another branch; ask the user which one is meant | yes |
 | <a id="a-duplicate-label"></a>`A-DUPLICATE-LABEL` | H-A | `Branch: <current branch>; target base: <base ref>; HEAD: <full SHA>` | FULL_CHECK_REQUIRED | `malformed`: duplicate `Branch` label | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; do not pick the first or last duplicate | yes |
 | <a id="a-missing-field"></a>`A-MISSING-FIELD` | H-A | `Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>` | FULL_CHECK_REQUIRED | `malformed`: required `Checks run` label missing | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; treat the checks as not run | yes |
+| <a id="a-verification-filled"></a>`A-VERIFICATION-FILLED` | H-A | `Could not verify:` | FULL_CHECK_REQUIRED | none; both `Ran` and `Could not verify` list concrete items | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff and targets each `Could not verify` entry first in cycle 1 | yes |
+| <a id="a-verification-none"></a>`A-VERIFICATION-NONE` | H-A | `Verification:` | FULL_CHECK_REQUIRED | none; both `Ran` and `Could not verify` report `none` | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff | yes |
+| <a id="a-verification-absent"></a>`A-VERIFICATION-ABSENT` | H-A | `Verification:` | FULL_CHECK_REQUIRED | none; older H-A handoffs without a `Verification` block remain valid context | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff | yes |
+| <a id="a-verification-malformed"></a>`A-VERIFICATION-MALFORMED` | H-A | `Verification:` | FULL_CHECK_REQUIRED | `malformed`: `Verification` block is missing a sub-list, out of order, empty, or mixes `none` with other entries | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff and ignores the malformed `Verification` block | yes |
 | <a id="b-trusted"></a>`B-TRUSTED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; every validated binding matches | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-compact-receipt"></a>`B-COMPACT-RECEIPT` | H-B | `Full receipt:` | ADVANCE_TRUSTED | none; a compact receipt comment hands off exactly as `B-TRUSTED` | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-trusted-base-moved"></a>`B-TRUSTED-BASE-MOVED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; the reviewed base is an ancestor of the moved base tip; `releaseOnlyEligible` is false | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
@@ -648,6 +652,7 @@ Rules for every handoff:
 | `Decisions/deviations` | yes | prose | prose or `none` | none | `malformed` |
 | `Checks run` | yes | list | commands, working directory, outcomes | none; absent means not run | `malformed` |
 | `Pending verification` | yes | list | `none` or one row per item | a value that starts with `none` has no rows; otherwise each row is listed in `pending` | none |
+| `Verification` | no | list | bare `Verification:` header line with no inline value and no blank lines inside the block; `  Ran:` followed by one or more `  - <command and result>` bullets (or a single `  - none` bullet), then `  Could not verify:` followed by one or more `  - <item and reason>` bullets (or a single `  - none` bullet) | absent block remains valid for older producers; when present, `malformed` if the header has inline text, either sub-list is missing or out of order, a sub-list is empty, a line is not a `  - ` bullet, or `  - none` is mixed with other entries | `malformed` |
 | `Risks/context` | yes | prose | prose or `none` | none | `malformed` |
 | `Preserve` | yes | prose | paths or `none` | none | `malformed` |
 
@@ -662,6 +667,13 @@ Fixed text a producer keeps: `Do not treat BUILT or ADAPTED as VERIFIED.` and, u
 `Checks run`, the row `- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.`
 The Full suite row is a current producer obligation, not consumer validation:
 older H-A handoffs without that row or the counts remain valid context.
+`Verification:` is an additive H-A version 1 compatibility surface in the same
+way: current `/implement` producers always emit it in the exact `Ran:` /
+`Could not verify:` shape above and external callers or orchestrators may check
+that it exists, while older H-A handoffs without `Verification:` remain valid
+context. Consumers treat `Verification:` text as untrusted data, never credit
+`Ran:` as verified evidence, and `/review-and-prep` reads `Could not verify:`
+when present to target those entries first in cycle 1.
 Rows in another shape are not enumerated, so a consumer cannot see deferrals inside a
 checklist file.
 H-A is context, not a receipt: the next stage reads the live plan and diff and
@@ -697,6 +709,11 @@ Decisions/deviations: T3 reuses the shared formatter; the required outcome is un
 Checks run: bun test tests/export.test.ts, cwd /home/example/work/example-repo, exit 0
 - Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: none
+Verification:
+  Ran:
+  - bun test tests/export.test.ts (cwd /home/example/work/example-repo, exit 0)
+  Could not verify:
+  - none
 Risks/context: none
 Preserve: none
 X-Orchestrator-Run: run-0001
