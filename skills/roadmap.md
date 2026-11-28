@@ -441,6 +441,8 @@ for tag in <each unprocessed item's tag>: "$_EXTEND_ROOT/bin/roadmap-route" "$ta
 
 `route_source_tag` returns `action=KEEP|KILL|PROMPT` plus reason; `compute_dedup_hash` lets you collapse duplicates surfaced by different reviewers before regeneration sees them. These are evidence-handling priors, not admission decisions: KEEP retains an item for evaluation, never promises a Track. A review's `defer=true` requires target-based reassessment. A concrete in-scope defect can override an inherited edge-case label.
 
+Read filer provenance before using either result. A routing KILL cannot authorize killing a developer-deferred entry. When merging duplicates, keep each developer-deferred entry's ID and verbatim provenance together with its own disposition. Keep those records separate if the merge would lose that mapping.
+
 **Origin tags vs recycled numbers.** `[pair-review:group=N]` aimed at a **Shipped** or declared pinned active Group keeps using the number. A tag aimed at other unfinished work is resolved by **normalized title** and dated lineage at inbox-drain time, not number alone. If `group=91` no longer matches that title, consult the renames table, then ask. Do not invent a second ID namespace.
 
 **Migration shortcut.** When the audit reports `STATE_SECTIONS: fail` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — In Progress + Current Plan must be re-emitted in v2 grammar. Verify identity/full completion of inline-marked work, preview independent receipts (or verified fully shipped Group history) and report the conversion count. Existing Future bullets move verbatim into `docs/roadmap-future.md`. The complete candidate gate and Hold/refusal preservation apply to migration too.
@@ -565,8 +567,11 @@ substantive run; pruning Future this way is a kill, not a reassessment. It
 judges defect claims only. Capability work, acceptance obligations and approved
 scope commitments keep their existing rules.
 
+**Developer-deferred entries skip the kill.** An entry marked `Deferred by: developer` (its intake record's `- **Deferred by:**` bullet, or that line kept in its Future bullet or Track `_Source:`) is never killed by this gate. Fold it into a Track, place it, defer it to Future or discharge it when the tree shows it done, under the normal drain rules, and keep the line verbatim where it lands. In Future, embed it inline before `**Revisit when:**`, including in a GitHub issue pointer. In Track `_Source:`, pair it with the originating work-item ID and carry both with that entry if it moves or splits. Killing one for any reason needs the developer's word naming that entry, cited beside the kill; approving the whole proposal is not that word. Unmarked and `Filed by: worker` entries stay under the gate. A recorded test gap keeps its own routing and discharge rules above; a marked entry still needs that authorization for a kill when its paths are gone.
+
 Before pruning a Future defect, read its complete bullet and referenced
-evidence needed for classification. This targeted read is an exception to
+evidence needed for classification. For any other proposed Future kill, read
+the complete bullet for provenance too. This targeted read is an exception to
 Step 1b's index-only default: missing evidence in the abbreviated index does
 not establish non-manifestation. Keep unrelated Future essays unread.
 
@@ -780,6 +785,8 @@ bun -e 'const [extendDir, draftPath, mapArg] = process.argv.slice(1); const { ap
 ```
 
 The helper (a) applies every pair in one pass, (b) matches with digit/letter lookarounds so `Group 147_` italics work (`\b` does not — `_` is a word char), and (c) skips dated-historical mentions (absorption notes, "split from", "the retired 104C", anything next to an ISO date). Date-qualify lineage instead of remapping it to a live ID.
+After renumbering, compare carried developer-provenance text by entry ID with
+its source and restore any changed words before validating the candidate.
 
 The CLI's writing mode sweeps several docs, including the archive. Do not run
 it against live files before candidate approval, or let it rewrite frozen history.
@@ -838,7 +845,7 @@ Format:
 - Version recommendation: policy mode, newly satisfied checkpoint/compatibility change, evidence and bump level (not a reserved version)
 - N Groups newly added to Current Plan
 - M items deferred to Future
-- K items killed (with reasons; H of them unobserved defects pruned by the manifestation gate)
+- K items killed, each listed by ID (or `no ID`) and source (its `[source:tag]`, else its inbox path, `Future` or its Track ID) with its reason, never only a count; H of them unobserved defects pruned by the manifestation gate; a killed `Deferred by: developer` entry cites the developer's word
 - D items discharged (already done — sha + one-line evidence each)
 - J Hotfix Groups proposed
 - Migration: v1 → v2 (when applicable)
@@ -878,7 +885,7 @@ single approval.
 > B) Revise — specify what to change
 > C) Hold — keep current plan; apply only the presented complete no-repack closure candidate if partition/dependencies and every blocking/identity/history/pin gate pass; otherwise write neither active nor archive and require full regeneration
 
-The v1 placement-batch and deferral-batch clusters no longer exist. In Progress + Current Plan are regenerated as one document; Future apply is a title-keyed membership edit, not a one-shot rewrite.
+The v1 placement-batch and deferral-batch clusters no longer exist. In Progress + Current Plan are regenerated as one document; Future apply edits individual approved entries by work-item ID.
 
 **Cluster 3 — Ambiguity** (genuine uncertainty between two equally plausible structural shapes): per the Confusion Protocol — name the ambiguity in one sentence, present 2-3 options with tradeoffs.
 
@@ -909,7 +916,7 @@ active is resume: reuse the receipt, propose only remaining removal/repack and
 recheck all gates. Inactive identical work is no-op; contradictory/unrelated ID
 reuse is refusal under Exceptions and recovery.
 
-- **Whole-block replacement** of `## In Progress` and `## Current Plan`. Future is **surgical**: delete bullets whose titles were killed, discharged, or promoted; append every newly deferred item (full richness), including leftover Current Plan work deferred by admission, or the one-line issue pointer for a successfully filed GitHub deferral; leave every other line in `docs/roadmap-future.md` untouched, except adding a missing inline trigger to an entry the approved proposal reassessed or migrated. A migration appends only ` **Revisit when:** <trigger>.` (or ` — **Revisit when:** <trigger>.` for a bullet without a separator) to the end of its bullet, or fills an existing empty marker. Write satellite files first, then ROADMAP.
+- **Whole-block replacement** of `## In Progress` and `## Current Plan`. Future is **surgical**: delete only the approved killed, discharged or promoted bullet by work-item ID (exact bullet bytes if it has no ID); stop on ambiguity. Append every newly deferred item (full richness), including leftover Current Plan work deferred by admission, or the one-line issue pointer for a successfully filed GitHub deferral; leave every other line in `docs/roadmap-future.md` untouched, except adding a missing inline trigger to an entry the approved proposal reassessed or migrated. A migration appends only ` **Revisit when:** <trigger>.` (or ` — **Revisit when:** <trigger>.` for a bullet without a separator) to the end of its bullet, or fills an existing empty marker. Write satellite files first, then ROADMAP.
   Under Hold, apply only the approved validated closure-only candidate; retain
   all other plan/inbox/Future content and the unfinished partition/dependencies.
 - **Always write both pointers** in ROADMAP, including `(0 items)` when Future is empty:
@@ -959,7 +966,7 @@ Before commit, assert that every item the proposal placed/killed/deferred/discha
 
 ### Apply summary
 
-Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."` Report each record from both inbox sources with its filed priority (or unprioritized) and landing as recorded in the proposal Summary.
+Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."` Report each record from both inbox sources with its filed priority (or unprioritized) and landing as recorded in the proposal Summary. Then list every killed entry by ID and source, as in the proposal Summary.
 
 **ID renames table.** After `"$_EXTEND_ROOT/bin/roadmap-renumber"` (or a title-matched
 diff against the pre-edit ROADMAP.md), include the map in the apply
@@ -1114,7 +1121,7 @@ else. When the instruction
 source is an in-repo symlink, stage its target, and confirm the staged set
 equals the written set before committing.
 
-Commit message reflects what ran. Examples:
+Commit message reflects what ran. When the run killed entries, the commit body lists each by ID and source. Examples:
 - Greenfield: `docs: bootstrap roadmap (v2 state-section model)`
 - Regeneration with structural changes: `docs: regenerate roadmap — N new Tracks, M deferred to Future`
 - Migration v1 → v2: `docs: migrate roadmap to v2 state-section model`
@@ -1134,7 +1141,7 @@ workspace. Do not push, open a PR or run `/docs-ship` here. Skip the handoff
 when nothing was committed. Under `/project-spec` composition, return these
 values to the wrapper, which prints the handoff; a run composed into
 `/project-spec` ends in that skill's Step 3, which prints the stage line, so
-this step returns its values and prints none.
+this step returns its values and prints none. The brief's Summary and the Step 6 commit body list every killed entry by ID and source; the PR body `/docs-ship` writes from them must keep that list, not only a count.
 
 ```text
 Run /docs-ship
