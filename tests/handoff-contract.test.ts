@@ -150,6 +150,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const PR_URL = /https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/;
 const LABEL_LINE = /^(X-[A-Za-z0-9-]+|[A-Z][A-Za-z/() -]{0,38}):(?: (.*))?$/;
 const QUALIFIED_LABEL = /^([A-Z][A-Za-z/ -]{0,38}?) \([^()\n]*\):(?: (.*))?$/;
+const LIST_LINE = /^(\s+|[-*]\s)/;
 const DISPOSITION = 'BUILT|ADAPTED|DEFERRED BY USER|BLOCKED';
 const ROW_LABEL = new RegExp(`\\b(?:${DISPOSITION})$`);
 // One separator class on each side of the disposition keeps matching linear on long whitespace runs.
@@ -278,7 +279,7 @@ function parseFields(lines: string[], spec: Spec[]): Fields {
       const values = [l.value];
       fields.set(l.label, [...(fields.get(l.label) ?? []), values]);
       cur = { values, mode: spec.find((s) => s.label === l.label)!.lines };
-    } else if (cur && (cur.mode === 'prose' || (cur.mode === 'list' && /^(\s+|[-*]\s)/.test(line)))) cur.values.push(line);
+    } else if (cur && (cur.mode === 'prose' || (cur.mode === 'list' && LIST_LINE.test(line)))) cur.values.push(line);
     else cur = null;
   }
   return { fields, unknown, extensions };
@@ -391,8 +392,12 @@ function unread(v: Verdict, live: Live, keys: string[], booleans: string[] = [])
   if (missing.length > 0) v.flag('unknown', HOLD, 'every validated binding read', `not read: ${missing.join(', ')}`);
 }
 
-function parseVerificationBlock(raw: string[]): { ran: string[]; couldNotVerify: string[] } | null {
-  if (raw.length < 5 || raw[0] !== '') return null;
+function parseVerificationBlock(raw: string[], lines: string[]): { ran: string[]; couldNotVerify: string[] } | null {
+  const header = lines.findIndex((line) => labelOf(line, ['Verification'])?.kind === 'known');
+  if (lines[header] !== 'Verification:' || raw.length < 5) return null;
+  // The field parser stops at blank lines. Reject a list that resumes after one.
+  const nextLine = lines.slice(header + raw.length).find((line) => line !== '');
+  if (nextLine && LIST_LINE.test(nextLine)) return null;
   const body = raw.slice(1);
   if (body[0] !== '  Ran:') return null;
   const cnvIdx = body.indexOf('  Could not verify:');
@@ -437,7 +442,7 @@ function classifyA(lines: string[], live: Live): Verdict {
   const pending = (val['Pending verification'] ?? []).map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean);
   if (!(pending.length === 1 && /^none\b/i.test(pending[0]))) v.pending = pending;
   if (val['Verification']) {
-    const parsed = parseVerificationBlock(val['Verification']);
+    const parsed = parseVerificationBlock(val['Verification'], lines);
     if (!parsed) v.flag('malformed', FULL, 'Verification: with Ran: and Could not verify: sub-lists', val['Verification'].join(' | '));
     else v.verification = parsed;
   }
@@ -1340,6 +1345,18 @@ describe('(C) doc and producers agree', () => {
       expect(bad.mismatches.map((m) => m.binding), label).toContain('malformed');
       expect(bad.verification, label).toBeNull();
     }
+  });
+
+  // Value: protects=the exact H-A Verification shape after generic field parsing;
+  // fails_when=generic qualifiers or a truncated list lead to a partially trusted block;
+  // why_new=both malformed shapes parsed cleanly before the repair; seam=H-A fixture consumer
+  test.each([
+    ['qualified header', 'Verification:\n', 'Verification (all cwd /tmp/example):\n'],
+    ['blank between bullets', '  - Live webhook retry behavior', '\n  - Live webhook retry behavior'],
+  ])('Track 104A verification rejects %s', (_label, before, after) => {
+    const v = run('A-VERIFICATION-FILLED', { edits: [[before, after]] });
+    expect(v.mismatches.map((m) => m.binding)).toContain('malformed');
+    expect(v.verification).toBeNull();
   });
 
   test('the legacy anchors are verbatim in their producer and in the doc', () => {

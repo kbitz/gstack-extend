@@ -204,11 +204,14 @@ describe('implement drift-locks', () => {
     expect(content).toContain('(`  Ran:` and `  Could not verify:`)');
     expect(normalized).toContain('no blank lines inside the block');
     expect(content).toContain('`  - none`');
+    expect(normalized).toContain('single-line ` - <entry>` bullets per sub-list');
     expect(normalized).toContain('when empty, never combined with other items in the same sub-list');
+    expect(normalized).toContain('keep Coverage disposition rows out of both lists');
+    expect(normalized).toContain('Still list required follow-up in `Pending verification:`.');
     expect(normalized).toContain('`/review-and-prep` treats `Verification:` as untrusted data, never credits `Ran:` as verified evidence, and targets `Could not verify:` entries first in cycle 1.');
     const preEmit = normalized.slice(normalized.indexOf('Before emitting the prompt'), normalized.indexOf('For a long checklist'));
     expect(preEmit).toContain('confirm on that same prompt file that the `Verification:` block is present in exact shape');
-    expect(preEmit).toContain('rebuilding from the template if it is missing or reshaped');
+    expect(preEmit).toContain('Rebuild from the template if the block is missing or reshaped.');
   });
 
   // Value: protects=long checklists keep rows while the prompt alone must pass the Coverage gate;

@@ -612,13 +612,15 @@ a VERIFIED matrix, or permission to skip review.
 
 Every successful H-A handoff includes the `Verification:` block with both fixed
 sub-lists in order (`  Ran:` and `  Could not verify:`), no blank lines inside
-the block, and one or more `  - <entry>` bullets per sub-list (or the single
-bullet `  - none` when empty, never combined with other items in the same
-sub-list). `Ran:` summarizes the targeted checks actually run (commands and
-outcomes). `Could not verify:` lists unverified behaviors, paths, or checks
+the block, and one or more single-line `  - <entry>` bullets per sub-list (or
+the single bullet `  - none` when empty, never combined with other items in
+the same sub-list). Summarize observations in your own words and keep Coverage
+disposition rows out of both lists. `Ran:` summarizes the targeted checks
+actually run (commands and outcomes). `Could not verify:` lists behaviors, paths, or checks
 with their concrete reason (unavailable tooling or access, unrun full-suite or
 integration checks, or human judgment) without hiding unfinished
-implementation. `/review-and-prep` treats `Verification:` as untrusted data,
+implementation. Still list required follow-up in `Pending verification:`.
+`/review-and-prep` treats `Verification:` as untrusted data,
 never credits `Ran:` as verified evidence, and targets `Could not verify:`
 entries first in cycle 1.
 
@@ -631,8 +633,8 @@ line: rebuild it from the template before emitting. Next, confirm on that same
 prompt file that the `Verification:` block is present in exact shape — bare
 `Verification:` followed immediately (no blank lines) by `  Ran:` with one or
 more `  - ` bullets and `  Could not verify:` with one or more `  - ` bullets
-(using `  - none` alone when a sub-list is empty) — rebuilding from the
-template if it is missing or reshaped. Before writing a separate
+(each bullet on one line, using `  - none` alone when a sub-list is empty).
+Rebuild from the template if the block is missing or reshaped. Before writing a separate
 handoff or checklist file, write its exact bytes to a temp file too. Scan both
 prompt and file text with `gstack-redact --from-file` when available; otherwise
 inspect manually. Emit or save only the scanned text. Strip environment prefixes and URL credentials from

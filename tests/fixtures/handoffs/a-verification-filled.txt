@@ -23,7 +23,7 @@ Coverage: 0 DEFERRED BY USER, 0 BLOCKED; 3 items, one row each below
 Decisions/deviations: T3 reuses the shared formatter; the required outcome is unchanged.
 Checks run: bun test tests/export.test.ts, cwd /home/example/work/example-repo, exit 0
 - Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
-Pending verification: none
+Pending verification: Confirm webhook retries once a staging endpoint is available
 Verification:
   Ran:
   - bun test tests/export.test.ts (cwd /home/example/work/example-repo, exit 0)
