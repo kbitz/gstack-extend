@@ -1,0 +1,12 @@
+### [review:files=skills/roadmap.md|skills/docs-ship.md] Test gap: Check that a fresh docs-ship session carries each killed entry to its PR body
+- **ID:** wi-84ad7b
+- **Filed by:** worker
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The approved brief and commit list every killed entry; no downstream run verifies that the new session copies the list instead of substituting a count.
+- **Hypothesis (untested):** Revisit at the next handoff change and check a synthetic PR-body projection with two entries before any GitHub write.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/roadmap.md:1144
+- **Evidence:** Track 106B coverage audit on 02c4454, with 1,429 targeted tests passed and one skip. No failing supported run was demonstrated for this case.
+- **Context:** Filed by /review-and-prep during Track 106B review (2026-11-28).
+- **Revisit when:** a Track touches the listed files.
+- **Effort:** ? (triage in /roadmap)
