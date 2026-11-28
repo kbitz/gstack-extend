@@ -1,0 +1,11 @@
+### [review:files=bin/lib/workflow_metrics.py|tests/workflow-metrics.test.ts] Test gap: Exercise the combined snapshot and attribution read limit
+- **ID:** wi-fb53cc
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The maximum cycle snapshot and the high-attribution summary are tested separately. Their documented compact capacity fallback lacks a combined fixture.
+- **Hypothesis (untested):** Read a valid ledger combining enough attribution and cycles to exceed 16 KiB. Check the partial capacity envelope and exact ledger byte preservation.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/workflow_metrics.py:227`
+- **Evidence:** Track 105B coverage audit of the repaired diff and native tests. No failure was reproduced for this path.
+- **Context:** Filed by /review-and-prep on branch `mmm/478a561d` at `604c41d` (2026-11-28).
+- **Revisit when:** The read size limit, attribution budget, or maximum cycle count changes.
+- **Effort:** ? (user triages in /roadmap)

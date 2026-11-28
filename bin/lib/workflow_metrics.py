@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 V = 1
-PASS_VERSIONS = (1, 2, 3)  # only `pass` takes v=2 (attributed findings) or v=3 (v=2 plus a delegated attempt); the record wrapper and every other op stay v=1
+PASS_VERSIONS = (1, 2, 3, 4)
 STDIN_LIMIT = 16 * 1024
 MAX_DEPTH = 8
 MAX_ARRAY = 256
@@ -37,7 +37,8 @@ RECEIPT_LIMIT = 2 * 1024
 STDIN_DEADLINE_S = 0.25
 GIT_DEADLINE_S = 0.25
 OPS = ("begin", "end", "decision", "pass", "correction", "read")
-RECORD_OPS = ("begin", "end", "decision", "pass", "correction", "usage")
+RECORD_OPS = ("begin", "end", "decision", "pass", "correction", "usage", "finding-cycles")
+RECORD_VERSIONS = {"usage": 2, "finding-cycles": 3}
 USAGE_STATUSES = ("ok", "partial", "unavailable")
 USAGE_HARNESSES = ("claude", "codex", "cursor", "grok", "unknown")
 USAGE_RELATIONS = ("own", "subagent", "nested", "cross-harness")
@@ -91,10 +92,21 @@ FALLBACK_REASONS = ("unresolved-claim", "timeout", "failed", "refused", "needs-c
 NAMESPACE = "9aa572eb-215f-452f-99e8-2bfdf0329cf3"
 DELEGATE_COUNTS = ("wall_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 MAX_PROVIDERS = 8  # distinct provider labels in a read
+# Finding identities and snapshots (docs/telemetry.md#workflow-metrics-finding-identities).
+FINDING_KEY_RE = re.compile(r"fk1:[0-9a-f]{16}")
+FINDING_CLASSES = ("safety", "concurrency", "contract", "validation", "scope", "test-gap",
+                   "docs", "performance", "maintainability", "correctness", "other")
+FINDING_CYCLE_COVERAGES = ("full", "delta", "mixed")
+FINDING_CYCLE_OBSERVED = ("complete", "partial")
+FINDING_CYCLE_PRIORS = ("none", "imported", "partial", "unavailable:not-supplied",
+                        "unavailable:corrupt", "unavailable:newer-schema", "unavailable:not-stopped",
+                        "unavailable:head-mismatch", "unavailable:binding-mismatch", "unavailable:digest-mismatch",
+                        "unavailable:unusable-file", "unavailable:not-recorded")
+MAX_FINDING_CYCLES = 32
 FIX_TEXT = {
     "capture-disabled": "Detailed capture is off; no action is needed.",
     "invalid-input": "Send one valid JSON object on stdin; see the operation help.",
-    "unsupported-version": "Use v=1 (a pass alone may use v=2 for attributed findings or v=3 for a delegated attempt), or upgrade gstack-extend.",
+    "unsupported-version": "Use v=1 (a pass alone may use v=2 for attributed findings, v=3 for a delegated attempt, or v=4 for finding identities), or upgrade gstack-extend.",
     "identity-missing": "Provide the exact GE_TELEMETRY start session ID, or continue without capture.",
     "identity-mismatch": "Use the start ID from this invocation in this checkout, or continue without capture.",
     "unsafe-path": "Inspect the configured state root; nothing was moved, deleted or chmodded.",
@@ -426,8 +438,9 @@ def _finding(value, version=1):
         raise _bad("findings[]", "object")
     # v1 keeps its exact key set: found_by / attribution_reason on a v1 finding is an unknown key.
     attribution = ("found_by", "attribution_reason") if version >= 2 else ()
+    identity = ("finding_key", "finding_class") if version >= 4 else ()
     _keys(value, ("finding_id", "severity_source", "severity_rubric", "adjudication",
-                  "resolution", "duplicate_of") + attribution, (), "findings[]")
+                  "resolution", "duplicate_of") + attribution + identity, (), "findings[]")
     if not (isinstance(value["finding_id"], str) and SAFE_ID_RE.fullmatch(value["finding_id"])):
         raise _bad("findings[].finding_id", "bounded-identifier")
     _enum(value, "severity_source", SEVERITIES)
@@ -445,6 +458,18 @@ def _finding(value, version=1):
         raise _bad("findings[].duplicate_of", "another-finding")
     if version >= 2:
         _attribution(value)
+    if version >= 4:
+        _finding_identity(value)
+
+
+def _finding_identity(value):
+    key, finding_class = value["finding_key"], value["finding_class"]
+    if key is not None and not (isinstance(key, str) and FINDING_KEY_RE.fullmatch(key)):
+        raise _bad("findings[].finding_key", "fk1-lowercase-hex16-or-null")
+    if finding_class is not None and finding_class not in FINDING_CLASSES:
+        raise _bad("findings[].finding_class", "|".join(FINDING_CLASSES) + "|null")
+    if key is not None and finding_class is None:
+        raise _bad("findings[].finding_class", "required-when-finding-key-set")
 
 
 def _delegate(value, attempt_outcome):
@@ -498,11 +523,11 @@ def _attribution(value):
 
 def validate_request(op, req):
     if type(req.get("v")) is not int:
-        raise _bad("v", "integer-1|2|3" if op == "pass" else "integer-1")
+        raise _bad("v", "integer-1|2|3|4" if op == "pass" else "integer-1")
     if req["v"] not in (PASS_VERSIONS if op == "pass" else (V,)):
         actual = req["v"] if -(1 << 31) <= req["v"] < (1 << 31) else None  # never echo an unbounded value
         raise Fail("unavailable", "unsupported-version", field="v",
-                   expected="1|2|3" if op == "pass" else "1", actual=actual)
+                   expected="1|2|3|4" if op == "pass" else "1", actual=actual)
     _enum(req, "stage", STAGES)
     _session(req.get("session_id"), "session_id")
     _uuid(req.get("event_id"), "event_id")
@@ -550,6 +575,8 @@ def validate_request(op, req):
         _validate_correction(base, req)
     elif op == "usage":
         _validate_usage(base, req)
+    elif op == "finding-cycles":
+        _validate_finding_cycles(base, req)
     else:
         raise _bad("operation", "|".join(OPS))
     return req
@@ -570,9 +597,8 @@ def _validate_pass(base, req):
             if not (isinstance(voice, str) and VOICE_RE.fullmatch(voice)):
                 raise _bad("required_voice_ids[]", "voice-id")
     elif state == "attempt":
-        # Only a v=3 attempt may carry `delegate`; on v=1/v=2 it is an unknown key.
         _keys(req, common + ("voice_id", "attempt_id", "predecessor_attempt_id", "attempt_outcome"),
-              ("findings", "model_context", "context") + (("delegate",) if req["v"] == 3 else ()), "pass.attempt")
+              ("findings", "model_context", "context") + (("delegate",) if req["v"] >= 3 else ()), "pass.attempt")
         if not (isinstance(req["voice_id"], str) and VOICE_RE.fullmatch(req["voice_id"])):
             raise _bad("voice_id", "voice-id")
         _uuid(req["attempt_id"], "attempt_id")
@@ -612,6 +638,35 @@ def _validate_pass(base, req):
     _enum(req, "scope", ("local", "greptile"))
     if "context" in req:
         _context(req["context"], full=False)
+
+
+def _validate_finding_cycles(base, req):
+    _keys(req, base + ("cycles",), (), "finding-cycles")
+    cycles = req["cycles"]
+    if not isinstance(cycles, list) or not 1 <= len(cycles) <= MAX_FINDING_CYCLES:
+        raise _bad("cycles", "array-of-1-to-%d-cycles" % MAX_FINDING_CYCLES)
+    counts = ("new", "carried", "repeated_premise", "repeated_premise_pairs", "unkeyed")
+    for cycle in cycles:
+        if not isinstance(cycle, dict):
+            raise _bad("cycles[]", "object")
+        _keys(cycle, ("run", "cycle", "coverage", "observed", "prior") + counts, (), "cycles[]")
+        run, number = cycle["run"], cycle["cycle"]
+        if type(run) is not int or not 1 <= run < (1 << 31):
+            raise _bad("cycles[].run", "positive-int32")
+        if number != "greptile" and (type(number) is not int or not 1 <= number < (1 << 31)):
+            raise _bad("cycles[].cycle", "positive-int32-or-greptile")
+        for field in counts:
+            value = cycle[field]
+            if type(value) is not int or not 0 <= value < (1 << 31):
+                raise _bad("cycles[]." + field, "non-negative-int32")
+        _enum(cycle, "coverage", FINDING_CYCLE_COVERAGES)
+        _enum(cycle, "observed", FINDING_CYCLE_OBSERVED)
+        _enum(cycle, "prior", FINDING_CYCLE_PRIORS)
+        repeated, pairs = cycle["repeated_premise"], cycle["repeated_premise_pairs"]
+        if repeated > cycle["new"]:
+            raise _bad("cycles[].repeated_premise", "at-most-new")
+        if pairs > repeated or (pairs == 0) != (repeated == 0):
+            raise _bad("cycles[].repeated_premise_pairs", "at-most-repeated-premise-and-zero-only-together")
 
 
 def _validate_correction(base, req):
@@ -929,7 +984,7 @@ def _validate_record(record):
           (), "record")
     if record["op"] not in RECORD_OPS:
         raise ValueError("op")
-    expected_v = 2 if record["op"] == "usage" else V
+    expected_v = RECORD_VERSIONS.get(record["op"], V)
     if type(record["v"]) is not int or record["v"] != expected_v:
         raise ValueError("version")
     _uuid(record["event_id"], "event_id")
@@ -1067,7 +1122,7 @@ def mutate(op, req, binder=bind_initial, bound_event_ids=None):
         if not initial and bound is None:
             raise Fail("unavailable", "capture-missing", cause="no-bound-run")
         captured = _now_ms()
-        rec_v = 2 if op == "usage" else V
+        rec_v = RECORD_VERSIONS.get(op, V)
         record = {"v": rec_v, "op": op, "event_id": req["event_id"], "request_digest": digest,
                   "captured_at_ms": captured, "producer_version": producer_version(), "request": req}
         line = (json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n").encode()
@@ -1284,7 +1339,8 @@ def summarize(records, malformed, partial_tail, overflow):
         effective = [r for r in effective if r["event_id"] not in conflicts]
         by_event = {r["event_id"]: r for r in effective}
     total_records = len(effective)
-    effective = [r for r in effective if r["op"] != "usage"]
+    cycle_records = [r for r in effective if r["op"] == "finding-cycles"]
+    effective = [r for r in effective if r["op"] not in ("usage", "finding-cycles")]
     by_event = {r["event_id"]: r for r in effective}
     stages = {r["request"]["stage"] for r in effective}
     run_begins = [r for r in effective if r["op"] == "begin" and r["request"].get("kind") == "run"]
@@ -1337,6 +1393,7 @@ def summarize(records, malformed, partial_tail, overflow):
         "greptile_attempted": passes["greptile"]["attempted"],
         "fix_cycles": None if fix_unknown else fix_completed, "findings": passes["local"]["findings"],
         "greptile_findings": passes["greptile"]["findings"],
+        "finding_cycles": None if integrity or not cycle_records else list(cycle_records[-1]["request"]["cycles"]),
         "excluded_na_voices": passes["excluded_na"],
         "delegated": delegated,
         "corrections": corrections,
@@ -2084,7 +2141,7 @@ def summarize_usage(records, malformed, partial_tail, overflow):
 
 HELP = """Usage: gstack-extend-telemetry metrics <operation>
 Operations: begin, end, decision, pass, correction, read.
-Producers take exactly one JSON object (v=1; a pass alone may send v=2 or v=3) on stdin (16 KiB max) and print one
+Producers take exactly one JSON object (v=1; a pass alone may send v=2, v=3 or v=4) on stdin (16 KiB max) and print one
 JSON result envelope; inspect its status, the launcher always exits 0.
 metrics <operation> --help shows that operation's fields. metrics read takes
 --session-id <extend-UUID> [--event-id <UUID> | --usage] and never writes.
@@ -2100,7 +2157,7 @@ OP_HELP = {
            "optional candidate context override.",
     "decision": "decision: v, stage, session_id, event_id, step_id, phase, decision=RUN|REUSE|N/A, "
                 "reason (controlled). One per visited phase; begin/end only around executed work.",
-    "pass": "pass: v=1|2|3, stage, session_id, event_id, pass_id, scope=local|greptile, "
+    "pass": "pass: v=1|2|3|4, stage, session_id, event_id, pass_id, scope=local|greptile, "
             "state=started|attempt|voice-complete|completed with that state's fields; a completed attempt "
             "carries findings (empty means zero); voice-complete selects one attempt or records N/A. "
             "v=2 (pass only) adds found_by (at most 8 unique parts: specialist:<name>, red-team, "
@@ -2108,7 +2165,9 @@ OP_HELP = {
             "attribution_reason (null when found_by is nonempty, else not-reported|unlisted-part|unsupported) "
             "to every finding; v=1 findings carry neither. v=3 (pass only) is v=2 and lets an attempt carry delegate "
             "(provider, model, outcome=credited|fell-back, fallback_reason, replay, wall_ms and four token counts, "
-            "null when unknown): credited needs a completed attempt and no reason, fell-back needs a failed one.",
+            "null when unknown): credited needs a completed attempt and no reason, fell-back needs a failed one. "
+            "v=4 adds finding_key (fk1 followed by a colon and 16 lowercase hex digits, or null) and "
+            "finding_class (controlled class, or null when the key is null) to every finding.",
     "correction": "correction: v, stage, session_id, event_id, correction_kind=retry|fallback|parent|finding|fix-cycle "
                   "plus the explicit referenced IDs for that kind; corrections append, never rewrite.",
     "read": "read: --session-id <extend-UUID> [--event-id <UUID> | --usage]. Observation-free named-run summary "

@@ -646,10 +646,9 @@ pending payload leaves the affected capture unknown; IDs are never guessed.
 `gstack-extend-telemetry metrics --help` and `metrics <operation> --help`
 print the field lists without touching stdin or state. Producers (`begin`,
 `end`, `decision`, `pass`, `correction`) take one JSON object on stdin with
-`v:1` (a `pass` may send `v:2` or `v:3`, below; any other operation answers
-`unsupported-version` to it), `stage`, `session_id` and a caller-stable UUID
-`event_id`, and print
-one envelope `{v, status, reason, session_id, event_id, data, diagnostics}`.
+`v:1` (`pass` also accepts `v:2`, `v:3` and `v:4`), `stage`, `session_id`
+and a caller-stable UUID `event_id`. They print one envelope
+`{v, status, reason, session_id, event_id, data, diagnostics}`.
 Statuses: `recorded`, `replayed`, `disabled`, `unavailable`, `conflict`,
 `partial`, `unconfirmed`, and `ok` (a clean read). The launcher exits 0 in
 every case — inspect `status`; a missing or invalid envelope after a crash is
@@ -710,15 +709,14 @@ counts without another append, and an absent boundary stays missing.
   finding. A `pass` may send `v:2`, which adds `found_by` and
   `attribution_reason` to every finding; the request's `v` selects the
   finding shape, so a v1 finding carrying either key is `invalid-input` and a
-  v2 finding missing one is too. Stored lines keep the record wrapper `v:1`
-  whatever the request's `v` is, and a helper older than this change reads a
-  stored v2 line as `malformed-record` (an older helper also answers
-  `unsupported-version` to a v2 `pass`, so that capture is unavailable). A
-  `pass` may also send `v:3`, which is v2 plus an optional `delegate` object on
-  an `attempt` ([delegated attempts](#workflow-metrics-delegated)); a v3
-  finding takes the v2 shape, and an older helper answers
-  `unsupported-version` to a v3 `pass` and reads a stored v3 line as
-  `malformed-record`.
+  v2 finding missing one is too. A `v:3` request keeps the v2 finding shape
+  and allows an optional `delegate` object on an `attempt` (see
+  [delegated attempts](#workflow-metrics-delegated)). A `v:4` request also
+  adds `finding_key` and `finding_class` to each finding (see
+  [finding identities](#workflow-metrics-finding-identities)). Stored
+  `pass` lines keep the record wrapper `v:1` for every request version.
+  Helpers that predate a request version answer `unsupported-version` to
+  that request and read the stored line as `malformed-record`.
 - `correction`: append-only `retry|fallback|parent|finding|fix-cycle` records
   referencing existing IDs. Supersession is explicit (`supersedes_event_id`),
   acyclic and unambiguous, or the affected totals stay unknown — never
@@ -734,6 +732,9 @@ counts without another append, and an absent boundary stays missing.
   attempt was recorded (a fix lands: `resolution:"fixed"`), `retry` or
   `fallback` when a voice attempt is retried or replaced, and `fix-cycle`
   when a fix batch closes.
+- `finding-cycles`: review-state derive appends a snapshot of the segment's
+  advisory cycle counts as a `v:3` record (`record_v3`) with request `v:1`.
+  See [finding identities and cycle counts](#workflow-metrics-finding-identities).
 - `read --session-id <id> [--event-id <uuid> | --usage]`: the only reader, for one named
   run. It creates nothing, takes no lock, and returns compact phase/wait/pass
   summaries (never raw events), the clock qualification above, and a
@@ -748,6 +749,9 @@ counts without another append, and an absent boundary stays missing.
   including the read-only `v1-record`); see
   [Finding attribution](#workflow-metrics-attribution). `receipt_text` does not
   carry them.
+  `data.finding_cycles` holds the latest `finding-cycles` snapshot or `null`
+  when the record is absent or integrity issues make the summary partial.
+  The snapshot leaves `receipt_text` unchanged.
   With `--event-id` it also returns `data.event`: that event's `status`
   (`match`, `absent` or `unknown`) with its digest and timestamp, for
   reconciliation; only a valid snapshot can report absence. Malformed rows,
@@ -784,14 +788,14 @@ mapping in the same change.
 
 #### Finding attribution (v2 `pass`)
 
-A `pass` request with `v:2` names, on every finding, the part that reported it.
+A `pass` request with `v:2` or later names, on every finding, the part that reported it.
 `found_by` is an array of at most 8 unique labels and `attribution_reason`
 explains an empty one:
 
 - Labels: `specialist:<name>` (the `specialist` field of a specialist's
   finding; `<name>` is lowercase letters, digits and hyphens), `red-team` (one
   spelling: `specialist:red-team` is invalid), `native-adversarial` (the
-  in-host adversarial pass, or a delegated `adversarial` part whose v3
+  in-host adversarial pass, or a delegated `adversarial` part whose
   `delegate` object names the provider), `core` (the core checklist), `qa`
   (exploratory QA probes), `greptile`, and `outside:challenge` or
   `outside:structured` (an outside voice, by its phase).
@@ -822,9 +826,9 @@ scope's totals are unknown.
 
 A `/review-and-prep` part that a caller sent to a configured provider
 ([delegated review](delegated-review.md)) is one `attempt`. A `pass` request with
-`v:3` may add a `delegate` object to an `attempt` and to nothing else: on a
-v1 or v2 request, or on any other state, it is `invalid-input`. The object has
-exactly these keys:
+`v:3` or `v:4` may add a `delegate` object to an `attempt`. The helper
+returns `invalid-input` for delegation on v1 or v2 requests or on any other
+state. The object has exactly these keys:
 
 - `provider`: the configuration's label (`[a-z][a-z0-9-]{0,31}`), and `model`:
   the configured model name (the same identifier grammar as `model_context`).
@@ -857,6 +861,91 @@ unknown. With no delegated attempt it is `{}`, and it is null when the read is
 partial. A run with more than 8 distinct provider labels leaves it null and adds
 the non-integrity reason `too-many-providers`, so the read stays `ok`. The
 `receipt_text` line is unchanged.
+
+<a id="workflow-metrics-finding-identities"></a>
+
+#### Finding identities and cycle counts (v4 `pass` and v3 `finding-cycles` record)
+
+Review-state derive exports every `pass` attempt with request `v:4` inside
+record wrapper `v:1`. A completed attempt carries `finding_v4` objects.
+The optional `delegate` shape is the same as on a v3 attempt.
+
+| Field | Value |
+|---|---|
+| `finding_id` | ID unique within the attempt. |
+| `severity_source`, `severity_rubric` | Severity and rubric from the source finding. |
+| `adjudication`, `resolution` | Review disposition and fix status. |
+| `duplicate_of` | ID of another finding or `null`. A duplicate requires the other finding's ID. |
+| `found_by`, `attribution_reason` | Reporting part labels and reason when none are known, as in [finding attribution](#workflow-metrics-attribution). |
+| `finding_key` | Opaque `fk1:` followed by 16 lowercase hexadecimal digits, or `null` when no key is available. A non-null key requires a non-null class. |
+| `finding_class` | `safety`, `concurrency`, `contract`, `validation`, `scope`, `test-gap`, `docs`, `performance`, `maintainability`, `correctness`, `other`, or `null` when no class is available. A class can be present without a key. |
+
+Both keys are required on a v4 finding, including when the value is `null`.
+The ledger carries the opaque key and class without the repository file
+path, source line or receipt classification. Older `pass` request versions
+remain readable with their original finding shapes. Versioned record and
+request shapes are published in the
+[workflow-metrics schema](workflow-metrics.schema.json).
+
+Finish open reviews before upgrading across this format change. If a ledger
+already contains derived v2 or v3 attempts, deriving that same run with the
+new helper can return `event-conflict` because the attempt IDs stay the same
+while their request contents change. The existing records remain readable.
+
+Example `pass` attempt ledger line with a keyed finding.
+
+~~~json
+{"v":1,"op":"pass","event_id":"00000000-0000-4000-8000-000000000005","request_digest":"a47959ff5add0bf40224dfcc19486fe4adc66787f7c824799e84f396211d3756","captured_at_ms":1700000000002,"producer_version":null,"request":{"v":4,"stage":"review-and-prep","session_id":"extend-00000000-0000-4000-8000-000000000001","event_id":"00000000-0000-4000-8000-000000000005","state":"attempt","scope":"local","pass_id":"00000000-0000-4000-8000-000000000003","voice_id":"core","attempt_id":"00000000-0000-4000-8000-000000000004","predecessor_attempt_id":null,"attempt_outcome":"completed","findings":[{"finding_id":"core-1","severity_source":"P2","severity_rubric":"core","adjudication":"accepted","resolution":"open","duplicate_of":null,"found_by":["core"],"attribution_reason":null,"finding_key":"fk1:0123456789abcdef","finding_class":"correctness"}]}}
+~~~
+
+A `finding-cycles` record uses wrapper `v:3` (`record_v3`) and request
+`v:1`. Its `request.cycles` holds 1 to 32 `finding_cycle` objects in
+first-pass order. Each cycle belongs to the segment of its last pass with a
+known segment. Review-state derive skips cycles with no known segment.
+The counts describe selected attempts and use the same definitions as
+[the review handoff](workflow-handoffs.md#finding-identity-and-cycle-counts).
+
+When a resumed local cycle moves to a later segment, derive refreshes the
+former segment's snapshot if it still owns other cycles. If it has none,
+its previously written snapshot stays in its ledger as history. Consumers
+combining segments of one review should use the entry from the latest
+segment for each recurring local cycle.
+
+| Field | Value |
+|---|---|
+| `run` | Number of distinct prior stops plus one. Integer from 1 to 2147483647. |
+| `cycle` | Local cycle number from 1 to 2147483647, or `greptile`. |
+| `coverage` | `full`, `delta`, or `mixed` when the cycle has both. |
+| `observed` | `complete` or `partial`. Partial means a pass is open or a required voice has neither a selected attempt nor an explicit N/A. |
+| `new` | Distinct keyed findings without an earlier match. |
+| `carried` | Distinct keyed findings matching an earlier key or run-local ID. |
+| `repeated_premise` | New findings whose path and class match an earlier pair. |
+| `repeated_premise_pairs` | Distinct earlier pairs hit by those new findings. |
+| `unkeyed` | Distinct findings with no keyed report. |
+| `prior` | `none`, `imported`, `partial`, `unavailable:not-supplied`, `unavailable:corrupt`, `unavailable:newer-schema`, `unavailable:not-stopped`, `unavailable:head-mismatch`, `unavailable:binding-mismatch`, `unavailable:digest-mismatch`, `unavailable:unusable-file`, or `unavailable:not-recorded`. |
+
+Counts are integers from 0 to 2147483647. The helper requires
+`repeated_premise_pairs <= repeated_premise <= new`, with the two
+repeated-premise counts zero together. It uses repository paths to compute
+pair counts in run state and exports only the counts. Derive uses cycle
+counts, pass progress and ownership changes to identify each snapshot.
+Repeating derive on unchanged state replays the existing record. Run derives
+serially for a review so their append order follows review-state progress.
+
+Example `finding-cycles` ledger line after completing that cycle.
+
+~~~json
+{"v":3,"op":"finding-cycles","event_id":"00000000-0000-4000-8000-000000000008","request_digest":"381e8b6b506ee4c566952c64da8ff970660e00e0cf30ca02dbae9c7a1cb1cb9e","captured_at_ms":1700000000005,"producer_version":null,"request":{"v":1,"stage":"review-and-prep","session_id":"extend-00000000-0000-4000-8000-000000000001","event_id":"00000000-0000-4000-8000-000000000008","cycles":[{"run":1,"cycle":1,"coverage":"full","observed":"complete","new":1,"carried":0,"repeated_premise":0,"repeated_premise_pairs":0,"unkeyed":0,"prior":"none"}]}}
+~~~
+
+`metrics read` exposes the latest appended snapshot in
+`data.finding_cycles`. The field is `null` on a pre-change ledger, when the
+segment has no snapshot, or when integrity issues make a read partial.
+An open cycle can report `observed: "partial"` in an otherwise valid read.
+The cycle records count toward `data.records` and do not change the pass and
+finding reductions, `receipt_text` or `read --usage`. If the summary exceeds
+16 KiB, the reader returns the compact `partial` envelope with
+`reason: "capacity"` and only `capture` in `data`.
 
 <a id="workflow-metrics-usage"></a>
 
@@ -1096,10 +1185,15 @@ This command and [`review-state export`](designs/review-run-state.md#d8-commands
 checkout after recording state, and rerun it there to recover a missed write.
 
 `gstack-extend-telemetry derive --dir DIR` invokes `bin/review-state export --dir DIR`
-and writes the run's workflow-metrics records (`begin(kind=run)`, `pass` v2/v3 with
-`found_by` attribution and `delegate` metadata, `correction` for `finding`/`retry`/`fallback`,
-and `end` on closed recorded segments other than interrupted ones) and any missing `stage-runs` rows for closed
-segments whose `session_id` was `null` (`derived: true`) through the existing
+and writes the run's workflow-metrics records. These include `begin(kind=run)`,
+`pass` v2 boundaries and v4 attempts with attribution, finding identities and
+optional delegate metadata, `correction` for `finding`/`retry`/`fallback`,
+`end` on closed recorded segments other than interrupted ones, and
+`finding-cycles` snapshots. Derive writes the snapshot after the other records
+for that segment. If snapshot validation fails, the segment result reports
+the failure and retains its already written records. Derive also writes any
+missing `stage-runs` rows for closed segments whose `session_id` was `null`
+(`derived: true`). It uses the existing
 `workflow_metrics.mutate` and `provenance_row(..., derived=True)` write paths,
 leaving `review-run-state.json` untouched.
 
@@ -1119,7 +1213,7 @@ leaving `review-run-state.json` untouched.
   `fixed_in`-only corrections), so `metrics read` never reports `missing-reference` for
   a cross-segment or skipped correction.
 - **Delegated counts and fallback corrections:** a recorded delegated attempt's unreported
-  counts (`wall_ms` or any of the four token counts) derive as `null` in the `pass` v3
+  counts (`wall_ms` or any of the four token counts) derive as `null` in the `pass` v4
   `delegate`, and a host attempt that names a failed delegated attempt as its predecessor
   derives a `fallback` correction.
 - **Stage-runs rows for derived segments:** closed `derived: true` segments append one
@@ -1498,7 +1592,7 @@ Each reason has one fixed action; messages contain no copied user text.
 |---|---|
 | <a id="workflow-metrics-capture-disabled"></a>`capture-disabled` | None needed; detailed capture is off. |
 | <a id="workflow-metrics-invalid-input"></a>`invalid-input` | Send one valid object (the diagnostic names the field/constraint and safe counts); see `metrics <operation> --help`. |
-| <a id="workflow-metrics-unsupported-version"></a>`unsupported-version` | Use `v:1` (a `pass` alone may use `v:2`), or upgrade gstack-extend; unknown versions are never reinterpreted. |
+| <a id="workflow-metrics-unsupported-version"></a>`unsupported-version` | Use request `v:1` or upgrade gstack-extend. A `pass` also accepts `v:2` for attribution, `v:3` for delegated attempts and `v:4` for finding identities. |
 | <a id="workflow-metrics-identity-missing"></a>`identity-missing` | Provide the original start ID, or continue unavailable; never start or adopt another legacy run for metrics. |
 | <a id="workflow-metrics-identity-mismatch"></a>`identity-mismatch` | Use this invocation's ID in its own checkout/stage, or continue unavailable. |
 | <a id="workflow-metrics-ambiguous-binding"></a>`ambiguous-binding` | Run the first metrics call from the same git checkout as the legacy start, or continue unavailable. |

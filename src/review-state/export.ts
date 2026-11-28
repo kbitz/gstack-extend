@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
-import { CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, storedWriterOrderKnown, truncate80, validateStoredState, VOICE_RE, type ReasonCode, type ReviewRunState } from './state.ts';
+import { findingCycles, type FindingCycle } from './finding-cycles.ts';
+import { CORRUPT_ORDER_FIX, CORRUPT_READ_FIX, storedWriterOrderKnown, truncate80, validateStoredState, VOICE_RE, type PassRecord, type ReasonCode, type ReviewRunState } from './state.ts';
 import { makeEnvelope, readHelperVersion, runGit, validateStateDir, type StoreResult } from './store.ts';
 
 export const NAMESPACE = '9aa572eb-215f-452f-99e8-2bfdf0329cf3';
@@ -42,7 +43,7 @@ export type ExportSkippedItem = {
 
 export type ExportRecord = {
   session_id: string;
-  op: 'begin' | 'pass' | 'correction' | 'end';
+  op: 'begin' | 'pass' | 'correction' | 'end' | 'finding-cycles';
   request: Record<string, unknown>;
 };
 
@@ -142,6 +143,55 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
 
   const resumeCheckpoints = state.checkpoints.filter((cp) => cp.kind === 'resume');
   const records: ExportRecord[] = [];
+  type SegmentSnapshot = {
+    cycles: FindingCycle[];
+    progress: string;
+    movedCycles: FindingCycle['cycle'][];
+  };
+  const cyclesBySegment = new Map<number, SegmentSnapshot>();
+  const localGroups = new Map<number, PassRecord[]>();
+  const greptilePasses: PassRecord[] = [];
+  for (const pass of state.passes) {
+    if (pass.scope === 'local') {
+      const group = localGroups.get(pass.cycle) ?? [];
+      group.push(pass);
+      localGroups.set(pass.cycle, group);
+    } else {
+      greptilePasses.push(pass);
+    }
+  }
+  // Local passes share a group by cycle. Each Greptile pass has its own group.
+  const progress = createHash('sha256');
+  let greptileIndex = 0;
+  for (const cycle of findingCycles(state)) {
+    const passes = cycle.cycle === 'greptile'
+      ? [greptilePasses[greptileIndex++]!]
+      : localGroups.get(cycle.cycle)!;
+    const cycleSegments = new Set<number>();
+    let owner = null;
+    for (const pass of passes) {
+      if (pass.segment !== null) {
+        owner = pass.segment;
+        cycleSegments.add(owner);
+      }
+      const settled = pass.voices.filter((voice) => voice.selected_attempt_id !== null || voice.not_applicable !== null);
+      progress.update(JSON.stringify([pass.pass_id, pass.state, settled.map(
+        (voice) => [voice.voice_id, voice.selected_attempt_id, voice.not_applicable],
+      )]));
+    }
+    for (const segment of cycleSegments) {
+      const snapshot: SegmentSnapshot = cyclesBySegment.get(segment) ?? { cycles: [], progress: '', movedCycles: [] };
+      if (segment === owner) {
+        snapshot.cycles.push(cycle);
+        // Earlier groups can affect carried and repeated counts.
+        snapshot.progress = progress.copy().digest('hex');
+      } else {
+        // A transfer can restore counts and progress from before this cycle existed.
+        snapshot.movedCycles.push(cycle.cycle);
+      }
+      cyclesBySegment.set(segment, snapshot);
+    }
+  }
 
   for (const segInfo of segments) {
     const sessionId = segInfo.session_id;
@@ -203,7 +253,7 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
       for (const voice of pass.voices) {
         for (const att of voice.attempts) {
           const attemptReq: Record<string, unknown> = {
-            v: att.delegate !== null ? 3 : 2,
+            v: 4,
             stage: 'review-and-prep',
             session_id: sessionId,
             event_id: uuidv5(NAMESPACE, `${runId}:attempt:${pass.pass_id}:${voice.voice_id}:${att.attempt_id}`),
@@ -225,6 +275,8 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
               duplicate_of: f.duplicate_of,
               found_by: [...f.found_by],
               attribution_reason: f.attribution_reason,
+              finding_key: f.identity?.key ?? null,
+              finding_class: f.finding_class ?? null,
             }));
           }
           if (att.delegate !== null) {
@@ -364,6 +416,23 @@ export function projectState(state: ReviewRunState, helperVersion: string | null
           event_id: uuidv5(NAMESPACE, `${runId}:segment:${segInfo.segment}:end`),
           step_id: segInfo.run_step_id,
           outcome: endOutcome,
+        },
+      });
+    }
+
+    // 5. A refused advisory snapshot must not prevent an existing run end.
+    const snapshot = cyclesBySegment.get(segInfo.segment);
+    if (snapshot?.cycles.length) {
+      const digest = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+      records.push({
+        session_id: sessionId,
+        op: 'finding-cycles',
+        request: {
+          v: 1,
+          stage: 'review-and-prep',
+          session_id: sessionId,
+          event_id: uuidv5(NAMESPACE, `${runId}:finding-cycles:${segInfo.segment}:${digest}`),
+          cycles: snapshot.cycles,
         },
       });
     }

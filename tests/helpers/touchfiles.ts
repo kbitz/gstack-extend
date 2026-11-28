@@ -123,7 +123,11 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'bin/lib/bun-prereq.sh', 'src/secret-dispositions/**', '.gstack/secret-dispositions.json', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
   'tests/outside-review.test.ts': ['bin/outside-review', 'bin/lib/bun-prereq.sh', skill('review-and-prep'), skillRefs('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
-  'tests/review-state.test.ts': ['bin/review-state', 'bin/lib/bun-prereq.sh', 'bin/lib/workflow_metrics.py', 'docs/designs/review-run-state.md', 'docs/review-run-state-calls.md'],
+  'tests/review-state.test.ts': [
+    'bin/review-state', 'bin/lib/bun-prereq.sh', 'bin/gstack-extend-telemetry',
+    'bin/lib/telemetry.py', 'bin/lib/workflow_metrics.py',
+    'docs/designs/review-run-state.md', 'docs/review-run-state-calls.md',
+  ],
   // The runner reads the skill's delegate anchor paragraph at run time and its docs example is validated.
   'tests/review-delegate.test.ts': [
     'bin/review-delegate', 'bin/lib/bun-prereq.sh',
