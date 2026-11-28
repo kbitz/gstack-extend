@@ -41,7 +41,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 ## Installation
 
 Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/) 1.3.3 or newer (runtime and development floor; `--no-env-file` landed in 1.3.3 while earlier versions silently ignore it and still load `.env`), and Claude Code or
-Codex. `setup`, `gstack-extend init`, and every Bun-backed launcher under `bin/` (`roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `layout-scaffold`, `merge-gate`, `outside-review`, `secret-dispositions`, `docs-ship`, `pregate-deps`, `full-review-state-machines`, `review-delegate`, `review-state` — and the experimental `gstack-extend-telemetry derive`, which runs it — and `upstream-check`) check for Bun 1.3.3+ before writing or executing and refuse with an actionable fix if it is missing or too old. Install
+Codex. `setup`, `gstack-extend init`, and every Bun-backed launcher under `bin/` (`roadmap-audit`, `roadmap-id`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `todo-file`, `layout-scaffold`, `merge-gate`, `outside-review`, `secret-dispositions`, `docs-ship`, `pregate-deps`, `full-review-state-machines`, `review-delegate`, `review-state` — and the experimental `gstack-extend-telemetry derive`, which runs it — and `upstream-check`) check for Bun 1.3.3+ before writing or executing and refuse with an actionable fix if it is missing or too old. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
 

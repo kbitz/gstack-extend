@@ -100,6 +100,7 @@
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts",
+      "tests/todo-file.test.ts",
       "tests/update.test.ts",
       "tests/upstream-check.test.ts",
       "tests/workflow-metrics.test.ts"
@@ -245,6 +246,7 @@
       "tests/layout-scaffold.test.ts",
       "tests/roadmap-id.test.ts",
       "tests/setup-init-wire.test.ts",
+      "tests/todo-file.test.ts",
       "tests/update.test.ts"
     ],
     "bin/roadmap-id": [
@@ -280,6 +282,10 @@
     "bin/secret-dispositions": [
       "tests/bun-prereq.test.ts",
       "tests/secret-dispositions.test.ts"
+    ],
+    "bin/todo-file": [
+      "tests/bun-prereq.test.ts",
+      "tests/todo-file.test.ts"
     ],
     "bin/update-check": [
       "tests/setup-hosts.test.ts",
@@ -372,7 +378,8 @@
     ],
     "docs/source-tag-contract.md": [
       "tests/audit-compliance.test.ts",
-      "tests/full-review-state-machines.test.ts"
+      "tests/full-review-state-machines.test.ts",
+      "tests/todo-file.test.ts"
     ],
     "docs/stage-runs.schema.json": [
       "tests/telemetry-contract.test.ts",

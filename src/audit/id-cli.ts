@@ -62,7 +62,7 @@ const MIGRATE_DOCS: ReadonlyArray<{ name: string; kind: MigrateDocKind }> = [
 ];
 const MINT_ID_SPACE = 16 ** WORK_ITEM_ID_DEFAULT_HEX + 16 ** (WORK_ITEM_ID_MAX_HEX - 1) + 16 ** WORK_ITEM_ID_MAX_HEX;
 
-function resolveRepoRoot(positional: string | undefined): string {
+export function resolveRepoRoot(positional: string | undefined): string {
   const cwd = process.cwd();
   if (positional === undefined) {
     const result = createGitGateway({ cwd, isolateEnv: true }).projectToplevel();
