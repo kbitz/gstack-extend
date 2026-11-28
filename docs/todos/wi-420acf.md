@@ -1,0 +1,12 @@
+### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: Protect developer provenance through later Track moves and splits
+- **ID:** wi-420acf
+- **Filed by:** worker
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The static guard pairs the field with the originating ID but does not pin carrying that pair along when the entry is moved or split.
+- **Hypothesis (untested):** Add a negative guard for a missing carry-forward clause on a folded entry.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/roadmap.md:570
+- **Evidence:** Track 106B coverage audit on 02c4454, with 1,429 targeted tests passed and one skip. No failing supported run was demonstrated for this case.
+- **Context:** Filed by /review-and-prep during Track 106B review (2026-11-28).
+- **Revisit when:** a Track touches the listed files.
+- **Effort:** ? (triage in /roadmap)

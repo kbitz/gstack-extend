@@ -1,0 +1,12 @@
+### [review:files=skills/roadmap.md|tests/skill-protocols-roadmap.test.ts] Test gap: Keep dedup entries separate when protected provenance cannot be retained
+- **ID:** wi-c8fa3b
+- **Filed by:** worker
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The static test covers a kept ID, its provenance and disposition but can pass if the keep-separate fallback is removed.
+- **Hypothesis (untested):** Mutate only the fallback with two same-title intake records and check the preservation invariant.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/roadmap.md:444
+- **Evidence:** Track 106B coverage audit on 02c4454, with 1,429 targeted tests passed and one skip. No failing supported run was demonstrated for this case.
+- **Context:** Filed by /review-and-prep during Track 106B review (2026-11-28).
+- **Revisit when:** a Track touches the listed files.
+- **Effort:** ? (triage in /roadmap)

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.129.1] - 2026-11-28
+
+### Changed
+
+- `/roadmap` no longer kills an entry marked `Deferred by: developer` under its manifestation gate, and each regeneration lists every killed entry by ID and source in its proposal summary, apply summary and commit message.
+- Roadmap regeneration preserves developer-deferred entries and requires item-specific approval to kill them.
+- Roadmap regeneration lists every killed entry by ID and source in its summary, commit body, and pull request handoff.
+
+### Upgrade notes
+
+- An existing entry that mentions a developer's deferral only in prose, without a `Deferred by: developer` line, is still judged by the manifestation gate.
+
 ## [0.129.0] - 2026-11-28
 
 ### Added
