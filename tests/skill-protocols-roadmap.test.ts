@@ -421,6 +421,153 @@ describe('Track 51A recorded test gaps at drain', () => {
   });
 });
 
+describe('Track 106B developer-deferred manifestation gate and killed-entry listing', () => {
+  const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+  const gate = roadmap.slice(
+    roadmap.indexOf('### Unobserved defects wait for manifestation'),
+    roadmap.indexOf('### Admission before decomposition'),
+  );
+  const proposalStart = roadmap.indexOf('### Structured proposal artifact');
+  const summaryStart = roadmap.indexOf('## Summary', proposalStart);
+  const dischargedStart = roadmap.indexOf('## Discharged', summaryStart);
+  const proposalSummary = roadmap.slice(summaryStart, dischargedStart);
+  const applySummary = roadmap.slice(
+    roadmap.indexOf('### Apply summary'),
+    roadmap.indexOf('## Step 4: PROGRESS.md staleness check'),
+  );
+  const step6 = roadmap.slice(
+    roadmap.indexOf('## Step 6: Commit'),
+    roadmap.indexOf('## Step 7: Hand off to /docs-ship'),
+  );
+  const step7 = roadmap.slice(
+    roadmap.indexOf('## Step 7: Hand off to /docs-ship'),
+    roadmap.indexOf('Stage handoff:', roadmap.indexOf('## Step 7: Hand off to /docs-ship')),
+  );
+
+  const checkDeveloperDeferredGate = (text: string): boolean => {
+    const flat = text.replace(/\s+/g, ' ');
+    return (
+      flat.includes('**Developer-deferred entries skip the kill.**') &&
+      flat.includes(
+        "An entry marked `Deferred by: developer` (its intake record's `- **Deferred by:**` bullet, or that line kept in its Future bullet or Track `_Source:`) is never killed by this gate.",
+      ) &&
+      flat.includes(
+        'Fold it into a Track, place it, defer it to Future or discharge it when the tree shows it done, under the normal drain rules, and keep the line verbatim where it lands.',
+      ) &&
+      flat.includes(
+        "Killing one for any reason needs the developer's word naming that entry, cited beside the kill; approving the whole proposal is not that word.",
+      ) &&
+      flat.includes('Unmarked and `Filed by: worker` entries stay under the gate.') &&
+      flat.includes('A recorded test gap keeps its own rule above, whatever its provenance.')
+    );
+  };
+
+  const DEVELOPER_DEFERRED = [
+    '### [review:files=src/export.ts] Retry may post a batch twice',
+    '- **ID:** wi-d0ffee',
+    '- **Deferred by:** developer, 2026-11-26: "1 - fix, file the rest, finish"',
+    '- **Description:** Retry loop may post a batch twice when the client times out after the server commits.',
+    '- **Evidence:** Constructed fixture shows the code path; no real run failed.',
+  ].join('\n');
+
+  const WORKER_FILED = [
+    '### [review:files=src/export.ts] Retry may post a batch twice',
+    '- **ID:** wi-c0ffee',
+    '- **Filed by:** worker',
+    '- **Description:** Retry loop may post a batch twice when the client times out after the server commits.',
+    '- **Evidence:** Constructed fixture shows the code path; no real run failed.',
+  ].join('\n');
+
+  const UNMARKED = WORKER_FILED.replace('- **Filed by:** worker\n', '');
+
+  const WORKER_TEST_GAP = [
+    '### [review:files=src/export.ts] Cover retry batch idempotency',
+    '- **ID:** wi-b0ffee',
+    '- **Filed by:** worker',
+    '- **Test gap:** no demonstrated defect; filed under `test-gaps=record`',
+  ].join('\n');
+
+  const gateRoute = (record: string, gateText: string): 'test-gap rule' | 'triage' | 'gate' => {
+    const flatGate = gateText.replace(/\s+/g, ' ');
+    if (!flatGate.includes('`Deferred by: developer`') || !flatGate.includes('`Filed by: worker`')) {
+      throw new Error('manifestation gate is missing required provenance markers');
+    }
+    const stripped = record.replace(/\*\*/g, '');
+    if (/^- Test gap: no demonstrated defect/m.test(stripped)) return 'test-gap rule';
+    if (/^- Deferred by: developer, /m.test(stripped)) return 'triage';
+    return 'gate';
+  };
+
+  const checkKilledListing = (text: string): boolean => {
+    const flat = text.replace(/\s+/g, ' ');
+    return (
+      flat.includes('each listed by ID') &&
+      flat.includes('and source') &&
+      flat.includes('never only a count') &&
+      flat.includes('pruned by the manifestation gate') &&
+      flat.includes("cites the developer's word")
+    );
+  };
+
+  // Value: protects=manifestation gate spares Deferred by: developer entries, keeps the marker on Future/Track landings, requires developer's word per entry, keeps unmarked and worker-filed under the gate, and leaves recorded test gaps under their own rule; fails_when=any clause is weakened or dropped or provenance markers drift; why_new=criteria 1, 3 and 4; seam=none; no_claim=agent behavior (static prose lock)
+  test('manifestation gate spares developer-deferred entries and routes provenance fixtures', () => {
+    expect(gate.length).toBeGreaterThan(0);
+    expect(checkDeveloperDeferredGate(gate)).toBe(true);
+
+    // Synthetic failing mutations prove each clause is enforced.
+    expect(checkDeveloperDeferredGate(gate.replace('is never killed by this gate', 'is killed by this gate'))).toBe(false);
+    expect(checkDeveloperDeferredGate(gate.replace('; approving the whole proposal is not that word', ''))).toBe(false);
+    expect(
+      checkDeveloperDeferredGate(
+        gate.replace(
+          'Unmarked and `Filed by: worker` entries stay under the gate',
+          'Unmarked and `Filed by: worker` entries skip the gate',
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      checkDeveloperDeferredGate(gate.replace('A recorded test gap keeps its own rule above, whatever its provenance.', '')),
+    ).toBe(false);
+    expect(checkDeveloperDeferredGate(gate.replace('kept in its Future bullet or Track `_Source:`', ''))).toBe(false);
+
+    // Provenance routing fixtures.
+    expect(gateRoute(DEVELOPER_DEFERRED, gate)).toBe('triage');
+    expect(gateRoute(WORKER_FILED, gate)).toBe('gate');
+    expect(gate.replace(/\s+/g, ' ')).toContain('`unobserved; <reversible|inconsequential>; reopen if it manifests`');
+    expect(gateRoute(UNMARKED, gate)).toBe('gate');
+    expect(gateRoute(WORKER_TEST_GAP, gate)).toBe('test-gap rule');
+
+    // Respelled marker in gate text breaks routing.
+    expect(() =>
+      gateRoute(DEVELOPER_DEFERRED, gate.replace('`Deferred by: developer`', '`Deferred-by: developer`')),
+    ).toThrow();
+  });
+
+  // Value: protects=proposal Summary, Apply summary, Step 6 commit body, and Step 7 PR-body handoff require listing every killed entry by ID and source rather than only a count; fails_when=killed listing reverts to count-only or any of the four sections drops its requirement; why_new=criteria 2 and 3; seam=none; no_claim=agent behavior (static prose lock)
+  test('proposal Summary, Apply summary, Step 6, and Step 7 require listing every killed entry by ID and source', () => {
+    expect(proposalSummary.length).toBeGreaterThan(0);
+    expect(applySummary.length).toBeGreaterThan(0);
+    expect(step6.length).toBeGreaterThan(0);
+    expect(step7.length).toBeGreaterThan(0);
+
+    expect(checkKilledListing(proposalSummary)).toBe(true);
+    const oldCountOnly = '- K items killed (with reasons; H of them unobserved defects pruned by the manifestation gate)';
+    const mutatedSummary = proposalSummary.replace(/^- K items killed,.*$/m, oldCountOnly);
+    expect(mutatedSummary).not.toBe(proposalSummary);
+    expect(checkKilledListing(mutatedSummary)).toBe(false);
+
+    expect(applySummary.replace(/\s+/g, ' ')).toContain(
+      'Then list every killed entry by ID and source, as in the proposal Summary.',
+    );
+    expect(step6.replace(/\s+/g, ' ')).toContain(
+      'When the run killed entries, the commit body lists each by ID and source.',
+    );
+    expect(step7.replace(/\s+/g, ' ')).toContain(
+      "The brief's Summary and the Step 6 commit body list every killed entry by ID and source; the PR body `/docs-ship` writes from them must keep that list, not only a count.",
+    );
+  });
+});
+
 describe('collision-driven grouping prose and shared_docs marker', () => {
   const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
   const section = roadmap.slice(
@@ -745,25 +892,27 @@ describe('one-task Tracks for existing code paths sizing rule', () => {
   const oneTaskSubsection =
     ruleStart >= 0 && scopeStart > ruleStart ? sizing.slice(ruleStart, scopeStart) : '';
 
-  const NUMERIC_TRIGGER_RE = /\b\d+\s*(?:lines?|LOC|tasks?|items?)\b/i;
+  const NUMERIC_TRIGGER_RE =
+    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|hundred)\+?(?:\s*|-)(?:lines?|LOC|tasks?|items?)\b/i;
 
   const checkOneTaskSplittingRule = (text: string): boolean => {
     const flat = text.replace(/\s+/g, ' ');
     if (!flat.includes(ruleLead)) return false;
     if (!flat.includes('When a card changes existing code paths, default to one-task Tracks')) return false;
-    if (!flat.includes('one PR each')) return false;
+    if (!flat.includes('one PR each, linked with `_blocked-by:` where sequential')) return false;
     if (!flat.includes('qualitative judgment in skill prose')) return false;
     if (!flat.includes('never use a line-count, task-count, or other numeric threshold to trigger a split')) return false;
     if (!flat.includes("remain the audit's mechanical ceiling, not the decomposition rule")) return false;
+    if (!flat.includes('Two exceptions allow a multi-task Track (still within the audit caps above)')) return false;
     if (!flat.includes('**0-to-1 exception**')) return false;
     if (!flat.includes("new module's first version")) return false;
     if (!flat.includes('cannot ship meaningfully on their own')) return false;
     if (!flat.includes('**same-files exception**')) return false;
     if (!flat.includes('edit the same files and force strictly sequential PRs')) return false;
     if (!flat.includes('cannot ship cleanly alone')) return false;
-    if (!flat.includes('separate concerns or trust boundaries')) return false;
-    const withoutZeroToOne = flat.replace(/\b0-to-1\b/g, '');
-    if (NUMERIC_TRIGGER_RE.test(withoutZeroToOne)) return false;
+    if (!flat.includes('unless the combined work spans separate concerns or trust boundaries that merit distinct PRs')) return false;
+    const withoutAllowed = flat.replace(/\b0-to-1\b/g, '').replace(/\bone-task\b/gi, '');
+    if (NUMERIC_TRIGGER_RE.test(withoutAllowed)) return false;
     return true;
   };
 
@@ -800,6 +949,36 @@ describe('one-task Tracks for existing code paths sizing rule', () => {
     expect(checkOneTaskSplittingRule(oneTaskSubsection.replace('**same-files exception**', ''))).toBe(false);
     expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards over 200 lines.`)).toBe(false);
     expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards with 3 tasks.`)).toBe(false);
+  });
+
+  // Value: protects=checkOneTaskSplittingRule enforces the audit-cap bound on multi-task exceptions and the negative direction of the distinct-concerns clause; fails_when=the cap is inverted or the distinct-concerns clause flips polarity while keeping the same nouns; why_new=criterion 3 (wi-3490bd); seam=none; no_claim=agent behavior (static prose lock)
+  test('wi-3490bd: rejects inverted exception cap and flipped distinct-concerns direction', () => {
+    expect(
+      checkOneTaskSplittingRule(
+        oneTaskSubsection.replace('still within the audit caps above', 'even beyond the audit caps above'),
+      ),
+    ).toBe(false);
+    expect(
+      checkOneTaskSplittingRule(
+        oneTaskSubsection.replace('unless the combined work spans', 'especially when the combined work spans'),
+      ),
+    ).toBe(false);
+  });
+
+  // Value: protects=checkOneTaskSplittingRule enforces the _blocked-by: serial-edge phrase on one-task splits; fails_when=the serial-edge linking phrase is removed while keeping one PR each; why_new=criterion 3 (wi-d9974c); seam=none; no_claim=agent behavior (static prose lock)
+  test('wi-d9974c: rejects dropping the _blocked-by: serial-edge phrase on one-task splits', () => {
+    expect(
+      checkOneTaskSplittingRule(
+        oneTaskSubsection.replace(', linked with `_blocked-by:` where sequential', ''),
+      ),
+    ).toBe(false);
+  });
+
+  // Value: protects=NUMERIC_TRIGGER_RE catches spelled-out counts, hyphenated counts, and plus-suffixed counts without false-positiving on the live subsection; fails_when=any of those numeric trigger shapes slips past checkOneTaskSplittingRule; why_new=criterion 3 (wi-efe191); seam=none; no_claim=agent behavior (static prose lock)
+  test('wi-efe191: rejects spelled-out, hyphenated, and plus-suffixed numeric triggers', () => {
+    expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards with more than five tasks.`)).toBe(false);
+    expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split any 300-line diff.`)).toBe(false);
+    expect(checkOneTaskSplittingRule(`${oneTaskSubsection} Split cards over 200+ lines.`)).toBe(false);
   });
 
   // Value: protects=Structured proposal artifact Summary requires naming each card split into one-task Tracks and each multi-task card kept whole with its reason; fails_when=the Card sizing decisions bullet is removed or weakened; why_new=plan criteria 2 and 3; seam=none

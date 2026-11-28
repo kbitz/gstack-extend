@@ -565,6 +565,8 @@ substantive run; pruning Future this way is a kill, not a reassessment. It
 judges defect claims only. Capability work, acceptance obligations and approved
 scope commitments keep their existing rules.
 
+**Developer-deferred entries skip the kill.** An entry marked `Deferred by: developer` (its intake record's `- **Deferred by:**` bullet, or that line kept in its Future bullet or Track `_Source:`) is never killed by this gate. Fold it into a Track, place it, defer it to Future or discharge it when the tree shows it done, under the normal drain rules, and keep the line verbatim where it lands. Killing one for any reason needs the developer's word naming that entry, cited beside the kill; approving the whole proposal is not that word. Unmarked and `Filed by: worker` entries stay under the gate. A recorded test gap keeps its own rule above, whatever its provenance.
+
 Before pruning a Future defect, read its complete bullet and referenced
 evidence needed for classification. This targeted read is an exception to
 Step 1b's index-only default: missing evidence in the abbreviated index does
@@ -838,7 +840,7 @@ Format:
 - Version recommendation: policy mode, newly satisfied checkpoint/compatibility change, evidence and bump level (not a reserved version)
 - N Groups newly added to Current Plan
 - M items deferred to Future
-- K items killed (with reasons; H of them unobserved defects pruned by the manifestation gate)
+- K items killed, each listed by ID (or `no ID`) and source (its `[source:tag]`, else `Future` or its Track ID) with its reason, never only a count; H of them unobserved defects pruned by the manifestation gate; a killed `Deferred by: developer` entry cites the developer's word
 - D items discharged (already done — sha + one-line evidence each)
 - J Hotfix Groups proposed
 - Migration: v1 → v2 (when applicable)
@@ -959,7 +961,7 @@ Before commit, assert that every item the proposal placed/killed/deferred/discha
 
 ### Apply summary
 
-Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."` Report each record from both inbox sources with its filed priority (or unprioritized) and landing as recorded in the proposal Summary.
+Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."` Report each record from both inbox sources with its filed priority (or unprioritized) and landing as recorded in the proposal Summary. Then list every killed entry by ID and source, as in the proposal Summary.
 
 **ID renames table.** After `"$_EXTEND_ROOT/bin/roadmap-renumber"` (or a title-matched
 diff against the pre-edit ROADMAP.md), include the map in the apply
@@ -1114,7 +1116,7 @@ else. When the instruction
 source is an in-repo symlink, stage its target, and confirm the staged set
 equals the written set before committing.
 
-Commit message reflects what ran. Examples:
+Commit message reflects what ran. When the run killed entries, the commit body lists each by ID and source. Examples:
 - Greenfield: `docs: bootstrap roadmap (v2 state-section model)`
 - Regeneration with structural changes: `docs: regenerate roadmap — N new Tracks, M deferred to Future`
 - Migration v1 → v2: `docs: migrate roadmap to v2 state-section model`
@@ -1134,7 +1136,7 @@ workspace. Do not push, open a PR or run `/docs-ship` here. Skip the handoff
 when nothing was committed. Under `/project-spec` composition, return these
 values to the wrapper, which prints the handoff; a run composed into
 `/project-spec` ends in that skill's Step 3, which prints the stage line, so
-this step returns its values and prints none.
+this step returns its values and prints none. The brief's Summary and the Step 6 commit body list every killed entry by ID and source; the PR body `/docs-ship` writes from them must keep that list, not only a count.
 
 ```text
 Run /docs-ship

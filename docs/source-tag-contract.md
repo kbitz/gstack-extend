@@ -174,7 +174,10 @@ those decisions already settle it. Malformed or unknown tags still need the
 user's explicit decision. Source/severity alone never admits work. KEEP does
 not exempt an unobserved defect from `/roadmap`'s manifestation gate: unless it
 risks irreversible, consequential harm (data loss, exposure, an unretractable
-outward action), it is killed until it manifests.
+outward action), it is killed until it manifests. A record carrying
+`Deferred by: developer` provenance is the exception: `/roadmap` triages it
+instead and kills it only on the developer's word (see
+[Filer provenance](#filer-provenance)).
 For placement, `/roadmap` must explain the concrete impact on SPEC's intended
 users, supported conditions and acceptance. A deferral requires why it can wait
 and a revisit trigger. Existing explicit commitments require an approved scope
